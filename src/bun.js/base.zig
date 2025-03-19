@@ -978,8 +978,6 @@ pub fn DOMCall(
         pub const is_dom_call = true;
         const Slowpath = @field(Container, functionName);
         const SlowpathType = @TypeOf(@field(Container, functionName));
-        pub const shim = JSC.Shimmer(className, functionName, @This());
-        pub const name = class_name ++ "__" ++ functionName;
 
         // Zig doesn't support @frameAddress(1)
         // so we have to add a small wrapper fujnction
@@ -995,18 +993,18 @@ pub fn DOMCall(
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
+        const PutFnType = *const fn (globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.c) void;
+        const put_fn = @extern(PutFnType, .{ .name = className ++ "__" ++ functionName ++ "__put" });
 
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-            shim.cppFn("put", .{ globalObject, value });
+            put_fn(globalObject, value);
         }
 
         pub const effect = dom_effect;
 
-        pub const Extern = [_][]const u8{"put"};
-
         comptime {
-            @export(&slowpath, .{ .name = shim.symbolName("slowpath") });
-            @export(&fastpath, .{ .name = shim.symbolName("fastpath") });
+            @export(&slowpath, .{ .name = className ++ "__" ++ functionName ++ "__slowpath" });
+            @export(&fastpath, .{ .name = className ++ "__" ++ functionName ++ "__fastpath" });
         }
     };
 }

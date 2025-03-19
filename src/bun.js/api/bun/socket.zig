@@ -1660,7 +1660,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn closeAndDetach(this: *This, code: uws.CloseCode) void {
+        pub fn closeAndDetach(this: *This, code: uws.Socket.CloseCode) void {
             const socket = this.socket;
             this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
 
@@ -2108,12 +2108,10 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var buf: [64]u8 = [_]u8{0} ** 64;
-            var length: i32 = 64;
             var text_buf: [512]u8 = undefined;
 
-            this.socket.remoteAddress(&buf, &length);
-            const address_bytes = buf[0..@as(usize, @intCast(length))];
-            const address: std.net.Address = switch (length) {
+            const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return JSValue.jsUndefined();
+            const address: std.net.Address = switch (address_bytes.len) {
                 4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
                 16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
                 else => return JSValue.jsUndefined(),
@@ -2250,7 +2248,7 @@ fn NewSocket(comptime ssl: bool) type {
                 if (comptime !ssl and Environment.isPosix) {
                     // fast-ish path: use writev() to avoid cloning to another buffer.
                     if (this.socket.socket == .connected and buffer.slice().len > 0) {
-                        const rc = this.socket.socket.connected.write2(this.buffered_data_for_node_net.slice(), buffer.slice());
+                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice());
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {

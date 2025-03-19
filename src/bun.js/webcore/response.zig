@@ -1163,17 +1163,11 @@ pub const Fetch = struct {
             this.abortListener(err);
             return JSValue.jsUndefined();
         }
-        pub const shim = JSC.Shimmer("Bun", "FetchTasklet", @This());
-
-        pub const Export = shim.exportFunctions(.{
-            .onResolveRequestStream = onResolveRequestStream,
-            .onRejectRequestStream = onRejectRequestStream,
-        });
         comptime {
             const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
-            @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveRequestStream, .{ .name = "Bun__FetchTasklet__onResolveRequestStream" });
             const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
-            @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectRequestStream, .{ .name = "Bun__FetchTasklet__onRejectRequestStream" });
         }
 
         pub fn startRequestStream(this: *FetchTasklet) void {

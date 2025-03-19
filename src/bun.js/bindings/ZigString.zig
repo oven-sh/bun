@@ -12,6 +12,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const JSString = @import("JSString.zig").JSString;
 const C_API = bun.JSC.C;
+const Environment = bun.Environment;
+const Mimalloc = bun.Mimalloc;
 
 /// Prefer using bun.String instead of ZigString in new code.
 pub const ZigString = extern struct {
@@ -871,3 +873,23 @@ pub const StringPointer = struct {
     offset: usize = 0,
     length: usize = 0,
 };
+
+export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
+    var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
+    var ptr = ZigString.init(raw[0..len]).slice().ptr;
+    if (comptime Environment.allow_assert) {
+        bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
+    }
+    const str = ptr[0..len];
+
+    allocator.free(str);
+}
+
+export fn ZigString__freeGlobal(ptr: [*]const u8, len: usize) void {
+    const untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
+    if (comptime Environment.allow_assert) {
+        bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
+    }
+    // we must untag the string pointer
+    Mimalloc.mi_free(untagged);
+}

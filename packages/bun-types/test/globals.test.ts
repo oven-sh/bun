@@ -307,3 +307,9 @@ clearInterval(1);
 clearTimeout(1);
 setImmediate(() => {});
 clearImmediate(1);
+
+{
+  const uint8array = new Uint8Array([202, 254, 208, 13]);
+  const arrHex = uint8array.toHex();
+  expectType<string>(arrHex);
+}

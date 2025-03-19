@@ -221,11 +221,16 @@ const json = struct {
             // Use ExternalString to avoid copying data if possible.
             // This is only possible for ascii data, as that fits into latin1
             // otherwise we have to convert it utf-8 into utf16-le.
-            var str = if (is_ascii)
+            var str = if (is_ascii) ascii: {
+
                 // .dead if `json_data` exceeds max length
-                try bun.String.createExternal(*bool, json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB).unwrap()
-            else
-                bun.String.fromUTF8(json_data);
+                const s = bun.String.createExternal(*bool, json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB);
+                if (s.tag == .Dead) {
+                    @branchHint(.unlikely);
+                    return IPCDecodeError.OutOfMemory;
+                }
+                break :ascii s;
+            } else bun.String.fromUTF8(json_data);
 
             defer {
                 str.deref();

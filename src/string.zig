@@ -189,27 +189,6 @@ pub const String = extern struct {
         return this;
     }
 
-    /// Convert dead strings into `error.OutOfMemory`.
-    ///
-    /// When building with assertions, this also checks that Strings backed by a
-    /// `WTF::StringImpl` have at least one reference.
-    pub inline fn unwrap(this: String) OOM!String {
-        switch (this.tag) {
-            .Dead => {
-                @branchHint(.unlikely);
-                return error.OutOfMemory;
-            },
-            .WTFStringImpl => {
-                @branchHint(.likely);
-                if (comptime bun.Environment.allow_assert) {
-                    bun.assert(this.value.WTFStringImpl.hasAtLeastOneRef());
-                }
-                return this;
-            },
-            else => return this,
-        }
-    }
-
     pub fn createUTF8(bytes: []const u8) String {
         return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
     }

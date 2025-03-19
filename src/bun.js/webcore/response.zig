@@ -2621,7 +2621,7 @@ pub const Fetch = struct {
                             }
 
                             if (try tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
-                                if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                if (checkServerIdentity.isCell() and checkServerIdentity.isCallable()) {
                                     check_server_identity = checkServerIdentity;
                                 }
                             }

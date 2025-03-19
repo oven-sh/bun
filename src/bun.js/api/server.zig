@@ -1398,7 +1398,7 @@ pub const ServerConfig = struct {
                         continue;
                     }
 
-                    if (value.isCallable(global.vm())) {
+                    if (value.isCallable()) {
                         try validateRouteName(global, path);
                         args.user_routes_to_build.append(.{
                             .route = .{
@@ -1424,7 +1424,7 @@ pub const ServerConfig = struct {
                         var found = false;
                         inline for (methods) |method| {
                             if (value.getOwn(global, @tagName(method))) |function| {
-                                if (!function.isCallable(global.vm())) {
+                                if (!function.isCallable()) {
                                     return global.throwInvalidArguments("Expected {s} in {} route to be a function", .{ @tagName(method), bun.fmt.quote(path) });
                                 }
                                 if (!found) {
@@ -1654,7 +1654,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthyComptime(global, "error")) |onError| {
-                if (!onError.isCallable(global.vm())) {
+                if (!onError.isCallable()) {
                     return global.throwInvalidArguments("Expected error to be a function", .{});
                 }
                 const onErrorSnapshot = onError.withAsyncContextIfNeeded(global);
@@ -1664,7 +1664,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthy(global, "onNodeHTTPRequest")) |onRequest_| {
-                if (!onRequest_.isCallable(global.vm())) {
+                if (!onRequest_.isCallable()) {
                     return global.throwInvalidArguments("Expected onNodeHTTPRequest to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
@@ -1673,7 +1673,7 @@ pub const ServerConfig = struct {
             }
 
             if (try arg.getTruthy(global, "fetch")) |onRequest_| {
-                if (!onRequest_.isCallable(global.vm())) {
+                if (!onRequest_.isCallable()) {
                     return global.throwInvalidArguments("Expected fetch() to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
@@ -4599,13 +4599,12 @@ pub const WebSocketServer = struct {
         }
 
         pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!Handler {
-            const vm = globalObject.vm();
             var handler = Handler{ .globalObject = globalObject, .vm = VirtualMachine.get() };
 
             var valid = false;
 
             if (try object.getTruthyComptime(globalObject, "message")) |message_| {
-                if (!message_.isCallable(vm)) {
+                if (!message_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                 }
                 const message = message_.withAsyncContextIfNeeded(globalObject);
@@ -4615,7 +4614,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "open")) |open_| {
-                if (!open_.isCallable(vm)) {
+                if (!open_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
                 }
                 const open = open_.withAsyncContextIfNeeded(globalObject);
@@ -4625,7 +4624,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "close")) |close_| {
-                if (!close_.isCallable(vm)) {
+                if (!close_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
                 }
                 const close = close_.withAsyncContextIfNeeded(globalObject);
@@ -4635,7 +4634,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "drain")) |drain_| {
-                if (!drain_.isCallable(vm)) {
+                if (!drain_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
                 }
                 const drain = drain_.withAsyncContextIfNeeded(globalObject);
@@ -4645,7 +4644,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "onError")) |onError_| {
-                if (!onError_.isCallable(vm)) {
+                if (!onError_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
                 }
                 const onError = onError_.withAsyncContextIfNeeded(globalObject);
@@ -4654,7 +4653,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "ping")) |cb| {
-                if (!cb.isCallable(vm)) {
+                if (!cb.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the ping option", .{});
                 }
                 handler.onPing = cb;
@@ -4663,7 +4662,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "pong")) |cb| {
-                if (!cb.isCallable(vm)) {
+                if (!cb.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the pong option", .{});
                 }
                 handler.onPong = cb;
@@ -5549,7 +5548,7 @@ pub const ServerWebSocket = struct {
         }
 
         const callback = args.ptr[0];
-        if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable(globalThis.vm())) {
+        if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable()) {
             return globalThis.throwInvalidArgumentTypeValue("cork", "callback", callback);
         }
 
@@ -6912,13 +6911,13 @@ pub const NodeHTTPResponse = struct {
         const input_value = if (arguments.len > 0) arguments[0] else .undefined;
         var encoding_value = if (arguments.len > 1) arguments[1] else .undefined;
         const callback_value = brk: {
-            if ((encoding_value != .null and encoding_value != .undefined) and encoding_value.isCallable(globalObject.vm())) {
+            if ((encoding_value != .null and encoding_value != .undefined) and encoding_value.isCallable()) {
                 encoding_value = .undefined;
                 break :brk arguments[1];
             }
 
             if (arguments.len > 2 and arguments[2] != .undefined) {
-                if (!arguments[2].isCallable(globalObject.vm())) {
+                if (!arguments[2].isCallable()) {
                     return globalObject.throwInvalidArgumentTypeValue("callback", "function", arguments[2]);
                 }
 
@@ -7120,7 +7119,7 @@ pub const NodeHTTPResponse = struct {
             return globalObject.throwNotEnoughArguments("cork", 1, 0);
         }
 
-        if (!arguments[0].isCallable(globalObject.vm())) {
+        if (!arguments[0].isCallable()) {
             return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
         }
 
@@ -8229,10 +8228,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;
-                    var len: i32 = 1024;
-                    listener.socket().remoteAddress(&buf, &len);
-                    if (len > 0) {
-                        this.cached_hostname = bun.String.createUTF8(buf[0..@as(usize, @intCast(len))]);
+
+                    if (listener.socket().remoteAddress(buf[0..1024])) |addr| {
+                        if (addr.len > 0) {
+                            this.cached_hostname = bun.String.createUTF8(addr);
+                        }
                     }
                 }
 

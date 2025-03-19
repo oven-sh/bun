@@ -3275,7 +3275,7 @@ pub fn ReadableStreamSource(
                     return true;
                 }
 
-                if (!value.isCallable(globalObject.vm())) {
+                if (!value.isCallable()) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function") catch {};
                     return false;
                 }
@@ -3293,7 +3293,7 @@ pub fn ReadableStreamSource(
                     return true;
                 }
 
-                if (!value.isCallable(globalObject.vm())) {
+                if (!value.isCallable()) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function") catch {};
                     return false;
                 }

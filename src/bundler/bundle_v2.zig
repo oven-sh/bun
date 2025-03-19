@@ -10732,7 +10732,7 @@ pub const LinkerContext = struct {
                 for (part.scopes) |scope| {
                     r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
                 }
-                r.number_scope_pool.hive.available = @TypeOf(r.number_scope_pool.hive.available).initFull();
+                r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
             }
         }
 

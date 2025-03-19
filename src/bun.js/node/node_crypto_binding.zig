@@ -17,6 +17,101 @@ const JSError = bun.JSError;
 const String = bun.String;
 const UUID = bun.UUID;
 
+fn ExternCryptoJob(
+    comptime name: []const u8,
+    comptime externRunTask: fn (*anyopaque, *JSGlobalObject) callconv(.c) void,
+    comptime externRunFromJS: fn (*anyopaque, *JSGlobalObject) callconv(.c) void,
+    comptime externDeinit: fn (*anyopaque) callconv(.c) void,
+) type {
+    return struct {
+        vm: *JSC.VirtualMachine,
+        task: JSC.WorkPoolTask,
+        any_task: JSC.AnyTask,
+
+        ctx: *anyopaque,
+
+        pub fn create(global: *JSGlobalObject, ctx: *anyopaque) callconv(.c) *@This() {
+            const vm = global.bunVM();
+            const job = bun.new(@This(), .{
+                .vm = vm,
+                .task = .{
+                    .callback = &runTask,
+                },
+                .any_task = undefined,
+                .ctx = ctx,
+            });
+            job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+            return job;
+        }
+
+        pub fn createAndSchedule(global: *JSGlobalObject, ctx: *anyopaque) callconv(.c) void {
+            var job = create(global, ctx);
+            job.schedule();
+        }
+
+        pub fn runTask(task: *JSC.WorkPoolTask) void {
+            const job: *@This() = @fieldParentPtr("task", task);
+            var vm = job.vm;
+            defer vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+
+            externRunTask(job.ctx, vm.global);
+        }
+
+        pub fn runFromJS(this: *@This()) void {
+            defer this.deinit();
+            const vm = this.vm;
+
+            if (vm.isShuttingDown()) {
+                return;
+            }
+
+            externRunFromJS(this.ctx, vm.global);
+        }
+
+        fn deinit(this: *@This()) void {
+            externDeinit(this.ctx);
+            bun.destroy(this);
+        }
+
+        pub fn schedule(this: *@This()) callconv(.c) void {
+            JSC.WorkPool.schedule(&this.task);
+        }
+
+        comptime {
+            @export(&create, .{ .name = "Bun__" ++ name ++ "__create" });
+            @export(&schedule, .{ .name = "Bun__" ++ name ++ "__schedule" });
+            @export(&createAndSchedule, .{ .name = "Bun__" ++ name ++ "__createAndSchedule" });
+        }
+    };
+}
+
+extern fn Bun__CheckPrimeJobCtx__runTask(ctx: *anyopaque, global: *JSGlobalObject) void;
+extern fn Bun__CheckPrimeJobCtx__runFromJS(ctx: *anyopaque, global: *JSGlobalObject) void;
+extern fn Bun__CheckPrimeJobCtx__deinit(ctx: *anyopaque) void;
+
+const CheckPrimeJob = ExternCryptoJob(
+    "CheckPrimeJob",
+    Bun__CheckPrimeJobCtx__runTask,
+    Bun__CheckPrimeJobCtx__runFromJS,
+    Bun__CheckPrimeJobCtx__deinit,
+);
+
+extern fn Bun__GeneratePrimeJobCtx__runTask(ctx: *anyopaque, global: *JSGlobalObject) void;
+extern fn Bun__GeneratePrimeJobCtx__runFromJS(ctx: *anyopaque, global: *JSGlobalObject) void;
+extern fn Bun__GeneratePrimeJobCtx__deinit(ctx: *anyopaque) void;
+
+const GeneratePrimeJob = ExternCryptoJob(
+    "GeneratePrimeJob",
+    Bun__GeneratePrimeJobCtx__runTask,
+    Bun__GeneratePrimeJobCtx__runFromJS,
+    Bun__GeneratePrimeJobCtx__deinit,
+);
+
+comptime {
+    _ = CheckPrimeJob;
+    _ = GeneratePrimeJob;
+}
+
 const random = struct {
     const max_possible_length = @min(JSC.ArrayBuffer.max_size, std.math.maxInt(i32));
     const max_range = 0xffff_ffff_ffff;
@@ -25,7 +120,7 @@ const random = struct {
         var min_value, var max_value, var callback = callFrame.argumentsAsArray(3);
 
         var min_specified = true;
-        if (max_value.isUndefined() or max_value.isFunction()) {
+        if (max_value.isUndefined() or max_value.isCallable()) {
             callback = max_value;
             max_value = min_value;
             min_value = JSValue.jsNumber(0);
@@ -128,10 +223,8 @@ const random = struct {
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
 
-        promise: JSC.JSPromise.Strong,
-        poll: bun.Async.KeepAlive = .{},
-
-        value: JSC.Strong,
+        callback: JSValue,
+        value: JSValue,
         bytes: [*]u8,
         offset: u32,
         length: usize,
@@ -151,14 +244,12 @@ const random = struct {
                 return;
             }
 
-            const global = this.vm.global;
-            const promise = this.promise.swap();
-
-            promise.resolve(global, this.value.swap());
+            vm.eventLoop().runCallback(this.callback, vm.global, .undefined, &.{ .null, this.value });
         }
 
-        pub fn create(global: *JSGlobalObject, value: JSValue, bytes: [*]u8, offset: u32, length: usize) *Job {
+        pub fn create(global: *JSGlobalObject, value: JSValue, bytes: [*]u8, offset: u32, length: usize, callback: JSValue) *Job {
             const vm = global.bunVM();
+
             const job = bun.new(Job, .{
                 .vm = vm,
                 .task = .{
@@ -166,22 +257,25 @@ const random = struct {
                 },
                 .any_task = undefined,
 
-                .promise = JSC.JSPromise.Strong.init(global),
-
-                .value = JSC.Strong.create(value, global),
+                .callback = callback,
+                .value = value,
                 .bytes = bytes,
                 .offset = offset,
                 .length = length,
             });
-
+            job.callback.protect();
+            job.value.protect();
             job.any_task = JSC.AnyTask.New(Job, &Job.runFromJS).init(job);
-            job.poll.ref(vm);
-            JSC.WorkPool.schedule(&job.task);
             return job;
         }
 
+        fn schedule(this: *Job) void {
+            JSC.WorkPool.schedule(&this.task);
+        }
+
         fn deinit(this: *Job) void {
-            this.poll.unref(this.vm);
+            this.value.unprotect();
+            this.callback.unprotect();
             bun.destroy(this);
         }
     };
@@ -202,9 +296,9 @@ const random = struct {
             return result;
         }
 
-        const job = Job.create(global, result, bytes.ptr, 0, size);
-
-        return job.promise.value();
+        const job = Job.create(global, result, bytes.ptr, 0, size, callback);
+        job.schedule();
+        return .undefined;
     }
 
     fn randomFillSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
@@ -238,7 +332,7 @@ const random = struct {
     }
 
     fn randomFill(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
-        const buf_value, const offset_value, const size_value, const callback =
+        const buf_value, var offset_value, var size_value, var callback =
             callFrame.argumentsAsArray(4);
 
         const buf = buf_value.asArrayBuffer(global) orelse {
@@ -247,9 +341,19 @@ const random = struct {
 
         const element_size = buf.bytesPerElement() orelse 1;
 
-        _ = try validators.validateFunction(global, "callback", callback);
-
-        const offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
+        var offset: u32 = 0;
+        if (offset_value.isCallable()) {
+            callback = offset_value;
+            offset = try assertOffset(global, JSValue.jsNumber(0), element_size, buf.byte_len);
+            size_value = JSValue.jsNumber(buf.len);
+        } else if (size_value.isCallable()) {
+            callback = size_value;
+            offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
+            size_value = JSValue.jsNumber(buf.len - offset);
+        } else {
+            _ = try validators.validateFunction(global, "callback", callback);
+            offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
+        }
 
         const size = if (size_value.isUndefined())
             buf.byte_len - offset
@@ -257,12 +361,13 @@ const random = struct {
             try assertSize(global, size_value, element_size, offset, buf.byte_len);
 
         if (size == 0) {
-            return JSC.JSPromise.resolvedPromiseValue(global, callback);
+            _ = try callback.call(global, .undefined, &.{ .null, JSValue.jsNumber(0) });
+            return .undefined;
         }
 
-        const job = Job.create(global, buf_value, buf.slice().ptr, offset, size);
-
-        return job.promise.value();
+        const job = Job.create(global, buf_value, buf.slice().ptr, offset, size, callback);
+        job.schedule();
+        return .undefined;
     }
 };
 

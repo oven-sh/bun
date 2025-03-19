@@ -944,6 +944,10 @@ pub const VirtualMachine = struct {
         return this.debugger != null;
     }
 
+    pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
+        return this.isShuttingDown();
+    }
+
     pub fn isShuttingDown(this: *const VirtualMachine) bool {
         return this.is_shutting_down;
     }

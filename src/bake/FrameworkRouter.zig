@@ -430,7 +430,7 @@ pub const Style = union(enum) {
             if (map.get(utf8.slice())) |style| {
                 return style;
             }
-        } else if (value.isCallable(global.vm())) {
+        } else if (value.isCallable()) {
             return .{ .javascript_defined = JSC.Strong.create(value, global) };
         }
 

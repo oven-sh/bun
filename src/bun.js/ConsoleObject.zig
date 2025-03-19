@@ -1238,7 +1238,7 @@ pub const Formatter = struct {
             if (js_type.canGet() and js_type != .ProxyObject and !opts.disable_inspect_custom) {
                 // Attempt to get custom formatter
                 if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
-                    if (callback_value.isCallable(globalThis.vm())) {
+                    if (callback_value.isCallable()) {
                         return .{
                             .tag = .{
                                 .CustomFormattedObject = .{
@@ -1262,7 +1262,7 @@ pub const Formatter = struct {
 
             // If we check an Object has a method table and it does not
             // it will crash
-            if (js_type != .Object and js_type != .ProxyObject and value.isCallable(globalThis.vm())) {
+            if (js_type != .Object and js_type != .ProxyObject and value.isCallable()) {
                 if (value.isClass(globalThis)) {
                     return .{
                         .tag = .{ .Class = {} },
@@ -2638,7 +2638,7 @@ pub const Formatter = struct {
                 } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
-                    if (value.isCallable(this.globalThis.vm())) {
+                    if (value.isCallable()) {
                         return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
@@ -3038,7 +3038,7 @@ pub const Formatter = struct {
                     if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
                         try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
-                    } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
+                    } else if (_tag.cell.isObject() or type_value.isCallable()) {
                         type_value.getNameProperty(this.globalThis, &tag_name_str);
                         if (tag_name_str.len == 0) {
                             tag_name_str = ZigString.init("NoName");
@@ -3136,15 +3136,15 @@ pub const Formatter = struct {
                                 }
 
                                 if (!this.single_line and (
-                                // count_without_children is necessary to prevent printing an extra newline
-                                // if there are children and one prop and the child prop is the last prop
+                                    // count_without_children is necessary to prevent printing an extra newline
+                                    // if there are children and one prop and the child prop is the last prop
                                     props_iter.i + 1 < count_without_children and
-                                    // 3 is arbitrary but basically
-                                    //  <input type="text" value="foo" />
-                                    //  ^ should be one line
-                                    // <input type="text" value="foo" bar="true" baz={false} />
-                                    //  ^ should be multiple lines
-                                    props_iter.i > 3))
+                                        // 3 is arbitrary but basically
+                                        //  <input type="text" value="foo" />
+                                        //  ^ should be one line
+                                        // <input type="text" value="foo" bar="true" baz={false} />
+                                        //  ^ should be multiple lines
+                                        props_iter.i > 3))
                                 {
                                     writer.writeAll("\n");
                                     this.writeIndent(Writer, writer_) catch unreachable;
@@ -3316,7 +3316,7 @@ pub const Formatter = struct {
                 if (iter.i == 0) {
                     if (value.isClass(this.globalThis))
                         try this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
-                    else if (value.isCallable(this.globalThis.vm()))
+                    else if (value.isCallable())
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
                         if (getObjectName(this.globalThis, value)) |name_str| {

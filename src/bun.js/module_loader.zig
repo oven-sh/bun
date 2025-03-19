@@ -1780,7 +1780,7 @@ pub const ModuleLoader = struct {
                         .already_bundled = true,
                         .hash = 0,
                         .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
-                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .bytecode_cache_size = bytecode_slice.len,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }

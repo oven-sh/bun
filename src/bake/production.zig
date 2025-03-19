@@ -375,7 +375,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         const server_render_func = brk: {
             const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
                 break :brk null;
-            if (!raw.isCallable(vm.jsc)) {
+            if (!raw.isCallable()) {
                 break :brk null;
             }
             break :brk raw;
@@ -391,7 +391,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             brk: {
                 const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
                     break :brk null;
-                if (!raw.isCallable(vm.jsc)) {
+                if (!raw.isCallable()) {
                     break :brk null;
                 }
                 break :brk raw;

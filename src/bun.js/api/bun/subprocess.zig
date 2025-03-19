@@ -1954,7 +1954,7 @@ pub fn spawnMaybeSync(
             // This must run before the stdio parsing happens
             if (!is_sync) {
                 if (try args.getTruthy(globalThis, "ipc")) |val| {
-                    if (val.isCell() and val.isCallable(globalThis.vm())) {
+                    if (val.isCell() and val.isCallable()) {
                         maybe_ipc_mode = ipc_mode: {
                             if (try args.getTruthy(globalThis, "serialization")) |mode_val| {
                                 if (mode_val.isString()) {
@@ -1988,7 +1988,7 @@ pub fn spawnMaybeSync(
             }
 
             if (try args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
-                if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
+                if (!onDisconnect_.isCell() or !onDisconnect_.isCallable()) {
                     return globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
                 }
 
@@ -1999,7 +1999,7 @@ pub fn spawnMaybeSync(
             }
 
             if (try args.getTruthy(globalThis, "onExit")) |onExit_| {
-                if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
+                if (!onExit_.isCell() or !onExit_.isCallable()) {
                     return globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                 }
 

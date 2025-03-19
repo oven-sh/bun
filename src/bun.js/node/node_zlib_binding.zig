@@ -134,8 +134,8 @@ pub fn CompressionStream(comptime T: type) type {
         };
 
         pub fn runFromJSThread(this: *T) void {
-            const globalThis: *JSC.JSGlobalObject = this.globalThis;
-            const vm = globalThis.bunVM();
+            const global: *JSC.JSGlobalObject = this.globalThis;
+            const vm = global.bunVM();
             this.poll_ref.unref(vm);
             defer this.deref();
 
@@ -149,7 +149,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this_value.ensureStillAlive();
 
-            if (!(this.checkError(globalThis, this_value) catch return globalThis.reportActiveExceptionAsUnhandled(error.JSError))) {
+            if (!(this.checkError(global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
                 return;
             }
 
@@ -157,7 +157,8 @@ pub fn CompressionStream(comptime T: type) type {
             this_value.ensureStillAlive();
 
             const write_callback: JSC.JSValue = T.writeCallbackGetCached(this_value).?;
-            _ = write_callback.call(globalThis, this_value, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+
+            vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
             if (this.pending_close) _ = this._close();
         }

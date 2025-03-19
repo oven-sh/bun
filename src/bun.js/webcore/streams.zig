@@ -3277,7 +3277,7 @@ pub fn ReadableStreamSource(
                     return true;
                 }
 
-                if (!value.isCallable(globalObject.vm())) {
+                if (!value.isCallable()) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function") catch {};
                     return false;
                 }
@@ -3295,7 +3295,7 @@ pub fn ReadableStreamSource(
                     return true;
                 }
 
-                if (!value.isCallable(globalObject.vm())) {
+                if (!value.isCallable()) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function") catch {};
                     return false;
                 }
@@ -4154,8 +4154,8 @@ pub const FileReader = struct {
                 if ((file.is_atty orelse false) or
                     (fd.int() < 3 and std.posix.isatty(fd.cast())) or
                     (file.pathlike == .fd and
-                    bun.FDTag.get(file.pathlike.fd) != .none and
-                    std.posix.isatty(file.pathlike.fd.cast())))
+                        bun.FDTag.get(file.pathlike.fd) != .none and
+                        std.posix.isatty(file.pathlike.fd.cast())))
                 {
                     // var termios = std.mem.zeroes(std.posix.termios);
                     // _ = std.c.tcgetattr(fd.cast(), &termios);
@@ -4996,7 +4996,8 @@ pub const ByteStream = struct {
         // #define LIBUS_RECV_BUFFER_LENGTH 524288
         // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
         // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        return .{ .chunk_size = @min(512 * 1024 + std.mem.page_size, @max(this.highWaterMark, std.mem.page_size)) };
+        const page_size: Blob.SizeType = @intCast(std.heap.pageSize());
+        return .{ .chunk_size = @min(512 * 1024 + page_size, @max(this.highWaterMark, page_size)) };
     }
 
     pub fn value(this: *@This()) JSValue {

@@ -384,8 +384,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         return JSValue::encode(jsUndefined());
     }
 
-    if (thisObject->m_overridenParent) {
-        return JSValue::encode(thisObject->m_overridenParent.get());
+    if (thisObject->m_overriddenParent) {
+        return JSValue::encode(thisObject->m_overriddenParent.get());
     }
 
     if (thisObject->m_parent) {
@@ -400,7 +400,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         auto id = idValue->value(globalObject);
         auto idStr = Bun::toString(id);
         if (Bun__isBunMain(globalObject, &idStr)) {
-            thisObject->m_overridenParent.set(globalObject->vm(), thisObject, jsNull());
+            thisObject->m_overriddenParent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
         }
     }
@@ -494,10 +494,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
 
     if (auto* parent = jsDynamicCast<JSCommonJSModule*>(decodedValue)) {
         thisObject->m_parent = parent;
-        thisObject->m_overridenParent.clear();
+        thisObject->m_overriddenParent.clear();
     } else {
         thisObject->m_parent = {};
-        thisObject->m_overridenParent.set(globalObject->vm(), thisObject, JSValue::decode(value));
+        thisObject->m_overriddenParent.set(globalObject->vm(), thisObject, JSValue::decode(value));
     }
 
     return true;
@@ -643,7 +643,7 @@ public:
     }
 };
 
-const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "ModulePrototype"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
+const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, const JSC::SourceCode& sourceCode)
 {
@@ -726,10 +726,10 @@ JSCommonJSModule* JSCommonJSModule::create(
         if (auto* parentModule = jsDynamicCast<JSCommonJSModule*>(parent)) {
             out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
         } else {
-            out->m_overridenParent.set(vm, out, parent);
+            out->m_overriddenParent.set(vm, out, parent);
         }
     } else if (parent) {
-        out->m_overridenParent.set(vm, out, parent);
+        out->m_overriddenParent.set(vm, out, parent);
     }
 
     return out;
@@ -1022,7 +1022,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_filename);
     visitor.appendHidden(thisObject->m_dirname);
     visitor.appendHidden(thisObject->m_paths);
-    visitor.appendHidden(thisObject->m_overridenParent);
+    visitor.appendHidden(thisObject->m_overriddenParent);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -1061,8 +1061,8 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         }
     }
 
-    if (thisObject->m_overridenParent) {
-        JSValue overridenParent = thisObject->m_overridenParent.get();
+    if (thisObject->m_overriddenParent) {
+        JSValue overridenParent = thisObject->m_overriddenParent.get();
         if (overridenParent.isCell()) {
             const Identifier overridenParentIdentifier = Identifier::fromString(vm, "parent"_s);
             analyzer.analyzePropertyNameEdge(cell, overridenParent.asCell(), overridenParentIdentifier.impl());

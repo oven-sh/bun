@@ -818,7 +818,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected object", .{}, globalThis);
         }
 
-        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable(globalThis.vm())) {
+        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable()) {
             return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
         }
 
@@ -1253,11 +1253,10 @@ pub const FFI = struct {
             }
         }
 
-        var lib = allocator.create(FFI) catch unreachable;
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = null,
             .functions = symbols,
-        };
+        });
 
         const js_object = lib.toJS(global);
         JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);

@@ -625,6 +625,18 @@ pub const JSValue = enum(i64) {
         ).unwrap();
     }
 
+    pub fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
+        if (Environment.isDebug) {
+            bun.assert(function.isCallable());
+        }
+        const num_args = @typeInfo(@TypeOf(args)).array.len;
+        switch (num_args) {
+            1 => JSC.Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
+            2 => JSC.Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
+            else => @compileError("needs more copy paste"),
+        }
+    }
+
     /// The value cannot be empty. Check `!this.isEmpty()` before calling this function
     pub fn jsType(
         this: JSValue,
@@ -1386,8 +1398,8 @@ pub const JSValue = enum(i64) {
         return cppFn("asCell", .{this});
     }
 
-    pub fn isCallable(this: JSValue, vm: *VM) bool {
-        return cppFn("isCallable", .{ this, vm });
+    pub fn isCallable(this: JSValue) bool {
+        return cppFn("isCallable", .{this});
     }
 
     pub fn isException(this: JSValue, vm: *VM) bool {
@@ -1772,7 +1784,7 @@ pub const JSValue = enum(i64) {
             return false;
         const function = this.fastGet(global, BuiltinName.toString) orelse
             return false;
-        return function.isCell() and function.isCallable(global.vm());
+        return function.isCell() and function.isCallable();
     }
 
     // TODO: replace calls to this function with `getOptional`
@@ -1988,7 +2000,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
-            if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
+            if (!prop.isCell() or !prop.isCallable()) {
                 return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
@@ -2000,7 +2012,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOwnFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
-            if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
+            if (!prop.isCell() or !prop.isCallable()) {
                 return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
@@ -2699,3 +2711,4 @@ const JSHostFunctionType = JSC.JSHostFunctionType;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 const FetchHeaders = JSC.FetchHeaders;
+const Environment = bun.Environment;

@@ -64,3 +64,12 @@ fn findPathInner(
     );
     return errorable.unwrap() catch null;
 }
+
+pub fn _stat(path: []const u8) i32 {
+    const exists = bun.sys.existsAtType(.cwd(), path).unwrap() catch
+        return -1; // Returns a negative integer for any other kind of strings.
+    return switch (exists) {
+        .file => 0, // Returns 0 for files.
+        .directory => 1, // Returns 1 for directories.
+    };
+}

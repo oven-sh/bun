@@ -54,6 +54,7 @@ const kMaxLongStringLength = 512;
 function copyError(source) {
   const target = ObjectAssign({ __proto__: ObjectGetPrototypeOf(source) }, source);
   ObjectDefineProperty(target, "message", {
+    __proto__: null,
     value: source.message,
   });
   if (ObjectPrototypeHasOwnProperty.$call(source, "cause")) {
@@ -63,7 +64,7 @@ function copyError(source) {
       cause = copyError(cause);
     }
 
-    ObjectDefineProperty(target, "cause", { value: cause });
+    ObjectDefineProperty(target, "cause", { __proto__: null, value: cause });
   }
   return target;
 }
@@ -356,6 +357,7 @@ class AssertionError extends Error {
 
     this.generatedMessage = !message;
     ObjectDefineProperty(this, "name", {
+      __proto__: null,
       value: "AssertionError [ERR_ASSERTION]",
       enumerable: false,
       writable: true,

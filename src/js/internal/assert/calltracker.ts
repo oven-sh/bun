@@ -98,6 +98,7 @@ class CallTracker {
       name: fn.name || "calls",
     });
     const tracked = new Proxy(fn, {
+      __proto__: null,
       apply(fn, thisArg, argList) {
         context.track(thisArg, argList);
         return fn.$apply(thisArg, argList);

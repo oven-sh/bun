@@ -1803,8 +1803,8 @@ declare global {
       base64: string,
       options?: {
         alphabet?: "base64" | "base64url";
-        lastChunkHandling?: "loose" | "strict" | "stop-before-partial"
-      }
+        lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+      },
     ): Uint8Array;
   }
 }

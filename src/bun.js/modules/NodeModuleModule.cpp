@@ -353,8 +353,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             globalObject,
             JSC::JSValue::encode(moduleName), JSValue::encode(fromValue),
             false,
-            true
-        );
+            true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {

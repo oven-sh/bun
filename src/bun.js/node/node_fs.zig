@@ -1734,7 +1734,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -1777,7 +1777,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "throwIfNoEntry")) |throw_if_no_entry_val| {
@@ -1813,7 +1813,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {

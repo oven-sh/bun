@@ -378,8 +378,13 @@ pub fn Printer(comptime Writer: type) type {
 
         pub fn writeIdentOrRef(this: *This, ident: css.css_values.ident.IdentOrRef, handle_css_module: bool) PrintErr!void {
             if (!handle_css_module) {
-                bun.assert(ident.isIdent());
-                return css.serializer.serializeIdentifier(ident.asIdent().?.v, this) catch return this.addFmtError();
+                if (ident.asIdent()) |identifier| {
+                    return css.serializer.serializeIdentifier(identifier.v, this) catch return this.addFmtError();
+                } else {
+                    const ref = ident.asRef().?;
+                    const symbol = this.symbols.get(ref) orelse return this.addFmtError();
+                    return css.serializer.serializeIdentifier(symbol.original_name, this) catch return this.addFmtError();
+                }
             }
 
             const str = this.lookupIdentOrRef(ident);

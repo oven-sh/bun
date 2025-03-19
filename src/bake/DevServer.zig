@@ -945,7 +945,7 @@ fn initServerRuntime(dev: *DevServer) void {
     if (!interface.isObject()) @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
     const fetch_function = interface.get(dev.vm.global, "handleRequest") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
-    bun.assert(fetch_function.isCallable(dev.vm.jsc));
+    bun.assert(fetch_function.isCallable());
     dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
     const register_update = interface.get(dev.vm.global, "registerUpdate") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");

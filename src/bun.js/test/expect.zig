@@ -3236,7 +3236,7 @@ pub const Expect = struct {
         var whatIsTheType: []const u8 = "";
 
         // Checking for function/class should be done before everything else, or it will fail.
-        if (value.isCallable(globalThis.vm())) {
+        if (value.isCallable()) {
             whatIsTheType = "function";
         } else if (value.isObject() or value.jsType().isArray() or value.isNull()) {
             whatIsTheType = "object";
@@ -3674,7 +3674,7 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const not = this.flags.not;
-        const pass = value.isCallable(globalThis.vm()) != not;
+        const pass = value.isCallable() != not;
 
         if (pass) return .undefined;
 
@@ -3942,7 +3942,7 @@ pub const Expect = struct {
         const predicate = arguments[0];
         predicate.ensureStillAlive();
 
-        if (!predicate.isCallable(globalThis.vm())) {
+        if (!predicate.isCallable()) {
             return globalThis.throw("toSatisfy() argument must be a function", .{});
         }
 
@@ -4825,7 +4825,7 @@ pub const Expect = struct {
                     pass = pass_value.toBoolean();
 
                     if (result.fastGet(globalThis, .message)) |message_value| {
-                        if (!message_value.isString() and !message_value.isCallable(globalThis.vm())) {
+                        if (!message_value.isString() and !message_value.isCallable()) {
                             break :valid false;
                         }
                         message = message_value;
@@ -4854,7 +4854,7 @@ pub const Expect = struct {
             message_text = try message.toBunString(globalThis);
         } else {
             if (comptime Environment.allow_assert)
-                assert(message.isCallable(globalThis.vm())); // checked above
+                assert(message.isCallable()); // checked above
 
             const message_result = try message.callWithGlobalThis(globalThis, &.{});
             message_text = try bun.String.fromJS2(message_result, globalThis);

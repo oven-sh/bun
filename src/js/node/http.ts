@@ -569,7 +569,7 @@ Agent.prototype.createConnection = function () {
 };
 
 Agent.prototype.getName = function (options = kEmptyObject) {
-  let name = `http:${options.host || "localhost"}:`;
+  let name = `${options.host || "localhost"}:`;
   if (options.port) name += options.port;
   name += ":";
   if (options.localAddress) name += options.localAddress;

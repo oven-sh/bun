@@ -1775,6 +1775,12 @@ declare global {
     toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
 
     /**
+     * Convert the Uint8Array to hex
+     * @returns The string with hex representation of the Uint8Array
+     */
+    toHex(): string;
+
+    /**
      * Set the contents of the Uint8Array from a base64 encoded string
      * @param base64 The base64 encoded string to decode into the array
      * @param offset Optional starting index to begin setting the decoded bytes (default: 0)

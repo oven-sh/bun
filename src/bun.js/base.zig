@@ -993,7 +993,7 @@ pub fn DOMCall(
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
-        const PutFnType = *const fn (globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) void;
+        const PutFnType = *const fn (globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.c) void;
         const put_fn = @extern(PutFnType, .{ .name = className ++ "__" ++ functionName ++ "__put" });
 
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {

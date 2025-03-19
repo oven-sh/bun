@@ -3311,11 +3311,11 @@ pub const VirtualMachine = struct {
                 current_exception_list: ?*ExceptionList = null,
                 formatter: *ConsoleObject.Formatter,
 
-                pub fn iteratorWithColor(_vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, ctx.?, true);
+                pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, ctx.?, false);
+                pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, false);
                 }
                 inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));

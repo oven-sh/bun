@@ -2649,7 +2649,15 @@ function ClientRequest(input, options, cb) {
       url = path;
       proxy = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
     } else {
-      url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+      // Always include the port when globalAgent.defaultPort has been explicitly changed
+      // or when the port is not the standard default (80 for http, 443 for https)
+      const includePort =
+        !this[kUseDefaultPort] ||
+        (this[kAgent] &&
+          this[kPort] === this[kAgent].defaultPort &&
+          ((protocol === "http:" && this[kPort] !== 80) || (protocol === "https:" && this[kPort] !== 443)));
+
+      url = `${protocol}//${host}${includePort ? ":" + this[kPort] : ""}${path}`;
       // support agent proxy url/string for http/https
       try {
         // getters can throw
@@ -2922,9 +2930,13 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
-  this[kUseDefaultPort] = this[kPort] === defaultPort;
+  // Ensure we use the latest defaultPort value from the agent
+  const defaultPort = options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || 80;
+  const port = (this[kPort] = options.port || defaultPort);
+
+  // When port is explicitly specified, we need to include it in the URL
+  // When port is equal to the agent's default port, we can omit it
+  this[kUseDefaultPort] = (this[kPort] === 80 && defaultPort === 80) || (this[kPort] === 443 && defaultPort === 443);
   const host =
     (this[kHost] =
     options.host =
@@ -3078,26 +3090,33 @@ function ClientRequest(input, options, cb) {
       }
     }
 
-    // if (host && !this.getHeader("host") && setHost) {
-    //   let hostHeader = host;
+    // Always set the Host header if not already set
+    if (host && !this.getHeader("host")) {
+      let hostHeader = host;
 
-    //   // For the Host header, ensure that IPv6 addresses are enclosed
-    //   // in square brackets, as defined by URI formatting
-    //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-    //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-    //   if (
-    //     posColon !== -1 &&
-    //     StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
-    //     StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
-    //   ) {
-    //     hostHeader = `[${hostHeader}]`;
-    //   }
+      // For the Host header, ensure that IPv6 addresses are enclosed
+      // in square brackets, as defined by URI formatting
+      // https://tools.ietf.org/html/rfc3986#section-3.2.2
+      const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+      if (
+        posColon !== -1 &&
+        StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
+        StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
+      ) {
+        hostHeader = `[${hostHeader}]`;
+      }
 
-    //   if (port && +port !== defaultPort) {
-    //     hostHeader += ":" + port;
-    //   }
-    //   this.setHeader("Host", hostHeader);
-    // }
+      // Only include the port in the Host header if it's not the default port for the protocol
+      // Also check the agent.defaultPort as some tests set it programmatically
+      const defaultPort =
+        options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || (protocol === "https:" ? 443 : 80);
+
+      if (port && +port !== defaultPort) {
+        hostHeader += ":" + port;
+      }
+
+      this.setHeader("Host", hostHeader);
+    }
 
     var auth = options.auth;
     if (auth && !this.getHeader("Authorization")) {

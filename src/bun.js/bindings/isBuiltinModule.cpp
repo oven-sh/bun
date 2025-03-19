@@ -44,6 +44,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_tls_wrap"_s,
     "constants"_s,
     "inspector"_s,
+    "node:test"_s,
     "bun:sqlite"_s,
     "path/posix"_s,
     "path/win32"_s,
@@ -78,7 +79,6 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "inspector/promises"_s,
     "_stream_passthrough"_s,
     "diagnostics_channel"_s,
-    "node:test"_s,
 };
 
 namespace Bun {

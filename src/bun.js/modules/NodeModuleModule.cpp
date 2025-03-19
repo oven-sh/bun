@@ -57,12 +57,12 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "assert/strict"_s,
     "async_hooks"_s,
     "buffer"_s,
-    "bun"_s,
     "bun:ffi"_s,
     "bun:jsc"_s,
     "bun:sqlite"_s,
     "bun:test"_s,
     "bun:wrap"_s,
+    "bun"_s,
     "child_process"_s,
     "cluster"_s,
     "console"_s,
@@ -83,6 +83,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "inspector/promises"_s,
     "module"_s,
     "net"_s,
+    "node:test"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -115,7 +116,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "worker_threads"_s,
     "ws"_s,
     "zlib"_s,
-    "node:test"_s,
 };
 
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])

@@ -39,6 +39,7 @@
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 #include "JavaScriptCore/UnlinkedFunctionExecutable.h"
+#include "NodeValidator.h"
 
 #include "JavaScriptCore/JSCInlines.h"
 
@@ -375,82 +376,321 @@ void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_sandbox);
 }
 
-class ScriptOptions {
+class BaseOptions {
 public:
     String filename = String();
     OrdinalNumber lineOffset;
     OrdinalNumber columnOffset;
-    String cachedData = String();
-    bool produceCachedData = false;
-    bool importModuleDynamically = false;
+    bool failed;
 
-    static std::optional<ScriptOptions> fromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue optionsArg, bool& failed)
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
     {
-        auto& vm = JSC::getVM(globalObject);
-        ScriptOptions opts;
-        JSObject* options;
+        JSObject* options = nullptr;
         bool any = false;
+
         if (!optionsArg.isUndefined()) {
             if (optionsArg.isObject()) {
                 options = asObject(optionsArg);
-            } else if (optionsArg.isString()) {
-                options = constructEmptyObject(globalObject);
-                options->putDirect(vm, Identifier::fromString(vm, "filename"_s), optionsArg);
             } else {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                throwVMTypeError(globalObject, scope, "options must be an object or a string"_s);
-                failed = true;
-                return std::nullopt;
+                auto _ = ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
+                return false;
             }
 
             if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
                 if (filenameOpt.isString()) {
-                    opts.filename = filenameOpt.toWTFString(globalObject);
+                    this->filename = filenameOpt.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                     any = true;
+                } else if (!filenameOpt.isUndefined()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
+                    return false;
                 }
             }
 
             if (JSValue lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s))) {
                 if (lineOffsetOpt.isAnyInt()) {
-                    opts.lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetOpt.asAnyInt());
+                    if (!lineOffsetOpt.isInt32()) {
+                        ERR::OUT_OF_RANGE(scope, globalObject, "options.lineOffset"_s, std::numeric_limits<int32_t>().min(), std::numeric_limits<int32_t>().max(), lineOffsetOpt);
+                        return false;
+                    }
+                    this->lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetOpt.asInt32());
                     any = true;
+                } else if (lineOffsetOpt.isNumber()) {
+                    ERR::OUT_OF_RANGE(scope, globalObject, "options.lineOffset"_s, "an integer"_s, lineOffsetOpt);
+                    return false;
+                } else if (!lineOffsetOpt.isUndefined()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.lineOffset"_s, "number"_s, lineOffsetOpt);
+                    return false;
                 }
             }
+
             if (JSValue columnOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s))) {
                 if (columnOffsetOpt.isAnyInt()) {
-                    opts.columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetOpt.asAnyInt());
+                    if (!columnOffsetOpt.isInt32()) {
+                        ERR::OUT_OF_RANGE(scope, globalObject, "options.columnOffset"_s, std::numeric_limits<int32_t>().min(), std::numeric_limits<int32_t>().max(), columnOffsetOpt);
+                        return false;
+                    }
+                    int columnOffsetValue = columnOffsetOpt.asInt32();
+
+                    this->columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetValue);
                     any = true;
+                } else if (columnOffsetOpt.isNumber()) {
+                    ERR::OUT_OF_RANGE(scope, globalObject, "options.columnOffset"_s, "an integer"_s, columnOffsetOpt);
+                    return false;
+                } else if (!columnOffsetOpt.isUndefined()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.columnOffset"_s, "number"_s, columnOffsetOpt);
+                    return false;
                 }
             }
+        }
+
+        return any;
+    }
+
+    bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool* outProduceCachedData)
+    {
+        if (JSValue produceCachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!produceCachedDataOpt.isBoolean()) {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.produceCachedData"_s, "boolean"_s, produceCachedDataOpt);
+                return false;
+            }
+            *outProduceCachedData = produceCachedDataOpt.asBoolean();
+            return true;
+        }
+        return false;
+    }
+
+    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options)
+    {
+        if (JSValue cachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!cachedDataOpt.isCell()) {
+                ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
+                return false;
+            }
+
+            // If it's a cell, verify it's a Buffer, TypedArray, or DataView
+            if (cachedDataOpt.isCell()) {
+                JSCell* cell = cachedDataOpt.asCell();
+                bool isValidType = false;
+
+                // Check if it's a Buffer, TypedArray, or DataView
+                if (cell->inherits<JSC::JSArrayBufferView>() || cell->inherits<JSC::JSArrayBuffer>()) {
+                    isValidType = true;
+                } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(cachedDataOpt)) {
+                    isValidType = !view->isDetached();
+                }
+
+                if (!isValidType) {
+                    ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
+                    return false;
+                }
+                return true;
+
+                // TODO: actually use it
+                // this->cachedData = true;
+            }
+        }
+        return false;
+    }
+
+    bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>* outTimeout)
+    {
+        if (JSValue timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s))) {
+            if (!timeoutOpt.isNumber()) {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.timeout"_s, "number"_s, timeoutOpt);
+                return false;
+            }
+
+            int64_t timeoutValue;
+            V::validateInteger(scope, globalObject, timeoutOpt, "options.timeout"_s, jsNumber(1), jsNumber(std::numeric_limits<int64_t>().max()), &timeoutValue);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            *outTimeout = timeoutValue;
+            return true;
+        }
+        return false;
+    }
+};
+
+class ScriptOptions : public BaseOptions {
+public:
+    bool importModuleDynamically = false;
+    std::optional<int64_t> timeout = std::nullopt;
+    bool cachedData = false;
+    bool produceCachedData = false;
+
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
+    {
+        bool any = BaseOptions::fromJS(globalObject, vm, scope, optionsArg);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if (!optionsArg.isUndefined() && !optionsArg.isString()) {
+            JSObject* options = asObject(optionsArg);
 
             // Validate contextName and contextOrigin are strings
             if (JSValue contextNameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextName"_s))) {
                 if (!contextNameOpt.isUndefined() && !contextNameOpt.isString()) {
-                    auto scope = DECLARE_THROW_SCOPE(vm);
                     ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextName"_s, "string"_s, contextNameOpt);
-                    failed = true;
-                    return std::nullopt;
+                    return false;
                 }
                 any = true;
             }
 
             if (JSValue contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s))) {
                 if (!contextOriginOpt.isUndefined() && !contextOriginOpt.isString()) {
-                    auto scope = DECLARE_THROW_SCOPE(vm);
                     ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextOrigin"_s, "string"_s, contextOriginOpt);
-                    failed = true;
-                    return std::nullopt;
+                    return false;
                 }
                 any = true;
             }
 
-            // TODO: cachedData
-            // TODO: importModuleDynamically
+            if (validateTimeout(globalObject, vm, scope, options, &this->timeout)) {
+                RETURN_IF_EXCEPTION(scope, false);
+                any = true;
+            }
+
+            if (validateProduceCachedData(globalObject, vm, scope, options, &this->produceCachedData)) {
+                RETURN_IF_EXCEPTION(scope, false);
+                any = true;
+            }
+
+            if (validateCachedData(globalObject, vm, scope, options)) {
+                RETURN_IF_EXCEPTION(scope, false);
+                any = true;
+                // TODO: actually use it
+                this->cachedData = true;
+            }
         }
 
-        if (any)
-            return opts;
-        return std::nullopt;
+        return any;
+    }
+};
+
+class RunningScriptOptions : public BaseOptions {
+public:
+    bool displayErrors = true;
+    std::optional<int64_t> timeout = std::nullopt;
+    bool breakOnSigint = false;
+
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
+    {
+        bool any = BaseOptions::fromJS(globalObject, vm, scope, optionsArg);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if (!optionsArg.isUndefined() && !optionsArg.isString()) {
+            JSObject* options = asObject(optionsArg);
+
+            if (JSValue displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s))) {
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!displayErrorsOpt.isBoolean()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.displayErrors"_s, "boolean"_s, displayErrorsOpt);
+                    return false;
+                }
+                this->displayErrors = displayErrorsOpt.asBoolean();
+                any = true;
+            }
+
+            if (validateTimeout(globalObject, vm, scope, options, &this->timeout)) {
+                RETURN_IF_EXCEPTION(scope, false);
+                any = true;
+            }
+
+            if (JSValue breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s))) {
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!breakOnSigintOpt.isBoolean()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.breakOnSigint"_s, "boolean"_s, breakOnSigintOpt);
+                    return false;
+                }
+                this->breakOnSigint = breakOnSigintOpt.asBoolean();
+                any = true;
+            }
+        }
+
+        return any;
+    }
+};
+
+class CompileFunctionOptions : public BaseOptions {
+public:
+    bool cachedData = false;
+    bool produceCachedData;
+    JSGlobalObject* parsingContext;
+    JSValue contextExtensions;
+
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
+    {
+        this->parsingContext = globalObject;
+        bool any = BaseOptions::fromJS(globalObject, vm, scope, optionsArg);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if (!optionsArg.isUndefined() && !optionsArg.isString()) {
+            JSObject* options = asObject(optionsArg);
+
+            if (validateProduceCachedData(globalObject, vm, scope, options, &this->produceCachedData)) {
+                RETURN_IF_EXCEPTION(scope, false);
+                any = true;
+            }
+
+            if (validateCachedData(globalObject, vm, scope, options)) {
+                RETURN_IF_EXCEPTION(scope, false);
+                any = true;
+                // TODO: actually use it
+                this->cachedData = true;
+            }
+
+            JSValue parsingContextValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (!parsingContextValue.isEmpty()) {
+                if (parsingContextValue.isNull() || !parsingContextValue.isObject())
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
+
+                JSObject* context = asObject(parsingContextValue);
+                auto* zigGlobalObject = defaultGlobalObject(globalObject);
+                JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
+
+                if (scopeValue.isUndefined())
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
+
+                parsingContext = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
+                if (!parsingContext)
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
+
+                any = true;
+            }
+
+            // Handle contextExtensions option
+            JSValue contextExtensionsValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextExtensions"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (!contextExtensionsValue.isEmpty()) {
+                if (contextExtensionsValue.isNull() || !contextExtensionsValue.isObject())
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+
+                if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
+                    if (!isArray(globalObject, contextExtensionsObject))
+                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+
+                    // Validate that all items in the array are objects
+                    auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
+                    unsigned length = contextExtensionsArray->length();
+                    for (unsigned i = 0; i < length; i++) {
+                        JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                        if (!extension.isObject())
+                            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
+                    }
+                } else {
+                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+                }
+
+                this->contextExtensions = contextExtensionsValue;
+                any = true;
+            }
+        }
+
+        return any;
     }
 };
 
@@ -458,19 +698,21 @@ static EncodedJSValue
 constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = JSValue())
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
     String sourceString = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
 
     JSValue optionsArg = args.at(1);
-    bool didThrow = false;
     ScriptOptions options;
-    if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsArg, didThrow)) {
-        options = scriptOptions.value();
+    if (optionsArg.isString()) {
+        options.filename = optionsArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+        options = {};
     }
-
-    if (didThrow)
-        return JSValue::encode(jsUndefined());
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
@@ -488,7 +730,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         scope.release();
     }
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode source(
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
@@ -527,16 +768,25 @@ static bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<Excep
     return false;
 }
 
-static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg)
+static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMGlobalObject* ctxGlobalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    RunningScriptOptions options;
+    if (allowStringInPlaceOfOptions && optionsArg.isString()) {
+        options.filename = optionsArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else if (!options.fromJS(globalObject, vm, throwScope, optionsArg)) {
+        RETURN_IF_EXCEPTION(throwScope, {});
+        options = {};
+    }
+
     // Set the contextified object before evaluating
-    globalObject->setContextifiedObject(contextifiedObject);
+    ctxGlobalObject->setContextifiedObject(contextifiedObject);
 
     NakedPtr<Exception> exception;
-    JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+    JSValue result = JSC::evaluate(ctxGlobalObject, script->source(), ctxGlobalObject, exception);
 
     if (UNLIKELY(exception)) {
         if (handleException(globalObject, vm, exception, throwScope)) {
@@ -583,7 +833,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     ArgList args(callFrame);
     JSValue contextArg = args.at(0);
-    if (contextArg.isUndefined()) {
+    if (contextArg.isUndefinedOrNull()) {
         // contextArg = JSC::constructEmptyObject(globalObject);
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
     }
@@ -604,7 +854,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
         return INVALID_ARG_VALUE_STUPID_NODE_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
     }
 
-    return runInContext(nodeVmGlobalObject, script, context, args.at(1));
+    return runInContext(globalObject, nodeVmGlobalObject, script, context, args.at(1));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -627,10 +877,14 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         return ERR::INVALID_ARG_TYPE(throwScope, globalObject, "context"_s, "object"_s, contextArg);
     }
 
-    JSObject* context = asObject(contextArg);
+    RunningScriptOptions options;
+    if (!options.fromJS(globalObject, vm, throwScope, contextArg)) {
+        RETURN_IF_EXCEPTION(throwScope, {});
+        options = {};
+    }
 
     NakedPtr<Exception> exception;
-    JSValue result = JSC::evaluateWithScopeExtension(globalObject, script->source(), JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), context), exception);
+    JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
 
     if (UNLIKELY(exception)) {
         if (handleException(globalObject, vm, exception, throwScope)) {
@@ -684,15 +938,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     context->setContextifiedObject(sandbox);
 
     JSValue optionsArg = callFrame->argument(2);
+
     ScriptOptions options;
-    {
-        bool didThrow = false;
-        if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsArg, didThrow)) {
-            options = scriptOptions.value();
-        }
-        if (UNLIKELY(didThrow)) {
-            return encodedJSValue();
-        }
+    if (optionsArg.isString()) {
+        options.filename = optionsArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
+        RETURN_IF_EXCEPTION(scope, {});
+        options = {};
     }
 
     auto sourceCode = SourceCode(
@@ -709,11 +962,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
 
     if (UNLIKELY(exception)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        if (handleException(globalObject, vm, exception, throwScope)) {
+        if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
-        JSC::throwException(globalObject, throwScope, exception.get());
+        JSC::throwException(globalObject, scope, exception.get());
         return {};
     }
 
@@ -731,18 +983,18 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     }
 
     auto sourceString = sourceStringValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
 
+    JSValue optionsArg = callFrame->argument(1);
     ScriptOptions options;
-    {
-        bool didThrow = false;
-
-        if (auto scriptOptions = ScriptOptions::fromJS(globalObject, callFrame->argument(1), didThrow)) {
-            options = scriptOptions.value();
-        }
-        if (UNLIKELY(didThrow)) {
-            return JSValue::encode({});
-        }
+    if (optionsArg.isString()) {
+        options.filename = optionsArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else if (!options.fromJS(globalObject, vm, throwScope, optionsArg)) {
+        RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
+        options = {};
     }
+
     SourceCode source(
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
@@ -791,127 +1043,11 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
     // Get options argument
     JSValue optionsArg = callFrame->argument(2);
-    ScriptOptions options;
-    bool didThrow = false;
-    JSGlobalObject* parsingContext = globalObject;
-    JSValue contextExtensionsValue = jsUndefined();
-
-    if (!optionsArg.isUndefined()) {
-        if (!optionsArg.isObject())
-            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
-
-        if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsArg, didThrow)) {
-            options = scriptOptions.value();
-        }
+    CompileFunctionOptions options;
+    if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
         RETURN_IF_EXCEPTION(scope, {});
-
-        // Handle parsingContext option
-        JSObject* optionsObject = asObject(optionsArg);
-
-        // Explicitly validate option types that are required for vm.compileFunction
-        // filename validation
-        if (JSValue filenameOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!filenameOpt.isUndefined() && !filenameOpt.isString()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
-            }
-        }
-
-        // lineOffset validation
-        if (JSValue lineOffsetOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!lineOffsetOpt.isUndefined() && !lineOffsetOpt.isNumber()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.lineOffset"_s, "number"_s, lineOffsetOpt);
-            }
-        }
-
-        // columnOffset validation
-        if (JSValue columnOffsetOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!columnOffsetOpt.isUndefined() && !columnOffsetOpt.isNumber()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.columnOffset"_s, "number"_s, columnOffsetOpt);
-            }
-        }
-
-        // cachedData validation
-        if (JSValue cachedDataOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!cachedDataOpt.isUndefined() && !cachedDataOpt.isCell()) {
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
-            }
-
-            // If it's a cell, verify it's a Buffer, TypedArray, or DataView
-            if (cachedDataOpt.isCell()) {
-                JSCell* cell = cachedDataOpt.asCell();
-                bool isValidType = false;
-
-                // Check if it's a Buffer, TypedArray, or DataView
-                if (cell->inherits<JSC::JSArrayBufferView>() || cell->inherits<JSC::JSArrayBuffer>()) {
-                    isValidType = true;
-                } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(cachedDataOpt)) {
-                    isValidType = !view->isDetached();
-                }
-
-                if (!isValidType) {
-                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
-                }
-            }
-        }
-
-        // produceCachedData validation
-        if (JSValue produceCachedDataOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!produceCachedDataOpt.isUndefined() && !produceCachedDataOpt.isBoolean()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.produceCachedData"_s, "boolean"_s, produceCachedDataOpt);
-            }
-        }
-
-        JSValue parsingContextValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!parsingContextValue.isUndefined() && !parsingContextValue.isEmpty()) {
-            if (parsingContextValue.isNull() || !parsingContextValue.isObject())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            JSObject* context = asObject(parsingContextValue);
-            auto* zigGlobalObject = defaultGlobalObject(globalObject);
-            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-
-            if (scopeValue.isUndefined())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            parsingContext = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
-            if (!parsingContext)
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-        }
-
-        // Handle contextExtensions option
-        contextExtensionsValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextExtensions"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!contextExtensionsValue.isUndefined() && !contextExtensionsValue.isEmpty()) {
-            if (contextExtensionsValue.isNull() || !contextExtensionsValue.isObject())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
-
-            if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
-                if (!isArray(globalObject, contextExtensionsObject))
-                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
-
-                // Validate that all items in the array are objects
-                auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
-                unsigned length = contextExtensionsArray->length();
-                for (unsigned i = 0; i < length; i++) {
-                    JSValue extension = contextExtensionsArray->getIndexQuickly(i);
-                    if (!extension.isObject())
-                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
-                }
-            } else {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
-            }
-        }
-
-        // TODO: Handle additional options not in ScriptOptions:
-        // - importModuleDynamically (function)
+        options = {};
+        options.parsingContext = globalObject;
     }
 
     // Step 3: Create a new function
@@ -934,22 +1070,22 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     SourceOrigin sourceOrigin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename));
 
     // Process contextExtensions if they exist
-    JSScope* functionScope = !!parsingContext ? parsingContext : globalObject;
+    JSScope* functionScope = !!options.parsingContext ? options.parsingContext : globalObject;
 
-    if (!contextExtensionsValue.isUndefinedOrNull() && !contextExtensionsValue.isEmpty() && contextExtensionsValue.isObject() && isArray(globalObject, contextExtensionsValue)) {
-        auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
+    if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
+        auto* contextExtensionsArray = jsCast<JSArray*>(options.contextExtensions);
         unsigned length = contextExtensionsArray->length();
 
         if (length > 0) {
             // Get the global scope from the parsing context
-            JSScope* currentScope = parsingContext->globalScope();
+            JSScope* currentScope = options.parsingContext->globalScope();
 
             // Create JSWithScope objects for each context extension
             for (unsigned i = 0; i < length; i++) {
                 JSValue extension = contextExtensionsArray->getIndexQuickly(i);
                 if (extension.isObject()) {
                     JSObject* extensionObject = asObject(extension);
-                    currentScope = JSWithScope::create(vm, parsingContext, currentScope, extensionObject);
+                    currentScope = JSWithScope::create(vm, options.parsingContext, currentScope, extensionObject);
                 }
             }
 
@@ -958,7 +1094,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         }
     }
 
-    parsingContext->setGlobalScopeExtension(functionScope);
+    options.parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
@@ -1003,7 +1139,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto* targetContext = NodeVMGlobalObject::create(
         vm, zigGlobal->NodeVMGlobalObjectStructure());
 
-    return runInContext(targetContext, script, context, callFrame->argument(0));
+    return runInContext(targetContext, targetContext, script, context, callFrame->argument(1));
 }
 
 Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)

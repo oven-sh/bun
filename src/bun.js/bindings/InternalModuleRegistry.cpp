@@ -75,7 +75,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     return result;
 }
 
-JSC::JSValue generateNativeModule(
+ALWAYS_INLINE JSC::JSValue generateNativeModule(
     JSC::JSGlobalObject* globalObject,
     JSC::VM& vm,
     const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
@@ -91,7 +91,10 @@ JSC::JSValue generateNativeModule(
     RETURN_IF_EXCEPTION(throwScope, {});
     // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
     // assigns the `default` export first.
-    ASSERT(propertyNames.at(0) == vm.propertyNames->defaultKeyword);
+    ASSERT_WITH_MESSAGE(
+        propertyNames.at(0) == vm.propertyNames->defaultKeyword,
+        "The native module must export a default value first."
+    );
     JSValue defaultValue = arguments.at(0);
     ASSERT(defaultValue);
     return defaultValue;

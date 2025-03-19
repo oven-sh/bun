@@ -73,6 +73,10 @@ pub const ResolveMessage = struct {
     }
 
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
+        if (bun.strings.hasPrefixComptime(specifier, "node:")) {
+            // This matches Node.js exactly.
+            return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
+        }
         switch (err) {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
@@ -88,10 +92,6 @@ pub const ResolveMessage = struct {
                 return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             error.InvalidURL => {
-                if (bun.strings.hasPrefixComptime(specifier, "node:")) {
-                    // This matches Node.js exactly.
-                    return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
-                }
                 return try std.fmt.allocPrint(allocator, "Cannot resolve invalid URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {

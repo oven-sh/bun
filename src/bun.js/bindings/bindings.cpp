@@ -1760,7 +1760,8 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
                 *values = { i, value.length() };
                 i += value.length();
             } else {
-                ASSERT_WITH_MESSAGE(value.containsOnlyASCII(), "Header value must be ASCII. This should already be validated before calling this function.");
+                // HTTP headers can contain non-ASCII characters according to RFC 7230
+                // Non-ASCII content should be properly encoded
                 WTF::CString valueCString = value.utf8();
                 memcpy(&buf[i], valueCString.data(), valueCString.length());
                 *values = { i, static_cast<uint32_t>(valueCString.length()) };

@@ -6410,7 +6410,7 @@ pub const NodeHTTPResponse = struct {
     pub fn create(
         any_server_tag: u64,
         globalObject: *JSC.JSGlobalObject,
-        has_body: *i32,
+        has_body: *bool,
         request: *uws.Request,
         is_ssl: i32,
         response_ptr: *anyopaque,
@@ -6427,7 +6427,7 @@ pub const NodeHTTPResponse = struct {
                 break :brk 0;
             };
 
-            has_body.* = @intFromBool(req_len > 0 or request.header("transfer-encoding") != null);
+            has_body.* = req_len > 0 or request.header("transfer-encoding") != null;
         }
 
         const response = NodeHTTPResponse.new(.{
@@ -6440,14 +6440,14 @@ pub const NodeHTTPResponse = struct {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
                 false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
             },
-            .body_read_state = if (has_body.* != 0) .pending else .none,
+            .body_read_state = if (has_body.*) .pending else .none,
             // 1 - the HTTP response
             // 1 - the JS object
             // 1 - the Server handler.
-            // 1 - the onData callback (request bod)
-            .ref_count = if (has_body.* != 0) 4 else 3,
+            // 1 - the onData callback (request body)
+            .ref_count = if (has_body.*) 4 else 3,
         });
-        if (has_body.* != 0) {
+        if (has_body.*) {
             response.body_read_ref.ref(vm);
         }
         response.js_ref.ref(vm);

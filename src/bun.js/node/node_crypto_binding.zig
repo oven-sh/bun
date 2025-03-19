@@ -17,21 +17,23 @@ const JSError = bun.JSError;
 const String = bun.String;
 const UUID = bun.UUID;
 
-fn CryptoJob(
-    comptime name: []const u8,
-    comptime T: type,
-    comptime externRunTask: fn (*T, *JSGlobalObject) callconv(.c) void,
-    comptime externRunFromJS: fn (*T, *JSGlobalObject) callconv(.c) void,
-    comptime externDeinit: fn (*T) callconv(.c) void,
-) type {
+fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {
         vm: *JSC.VirtualMachine,
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
 
-        ctx: *T,
+        ctx: *Ctx,
+        callback: JSValue,
 
-        pub fn create(global: *JSGlobalObject, ctx: *T) callconv(.c) *@This() {
+        const Ctx = opaque {
+            const ctx_name = name ++ "Ctx";
+            pub const runTask = @extern(*const fn (*Ctx, *JSGlobalObject) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runTask" }).*;
+            pub const runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+            pub const deinit = @extern(*const fn (*Ctx) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__deinit" }).*;
+        };
+
+        pub fn create(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) *@This() {
             const vm = global.bunVM();
             const job = bun.new(@This(), .{
                 .vm = vm,
@@ -40,13 +42,15 @@ fn CryptoJob(
                 },
                 .any_task = undefined,
                 .ctx = ctx,
+                .callback = callback,
             });
             job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+            job.callback.protect();
             return job;
         }
 
-        pub fn createAndSchedule(global: *JSGlobalObject, ctx: *T) callconv(.c) void {
-            var job = create(global, ctx);
+        pub fn createAndSchedule(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) void {
+            var job = create(global, ctx, callback);
             job.schedule();
         }
 
@@ -55,7 +59,7 @@ fn CryptoJob(
             var vm = job.vm;
             defer vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
 
-            externRunTask(job.ctx, vm.global);
+            job.ctx.runTask(vm.global);
         }
 
         pub fn runFromJS(this: *@This()) void {
@@ -66,11 +70,12 @@ fn CryptoJob(
                 return;
             }
 
-            externRunFromJS(this.ctx, vm.global);
+            this.ctx.runFromJS(vm.global, this.callback);
         }
 
         fn deinit(this: *@This()) void {
-            externDeinit(this.ctx);
+            this.ctx.deinit();
+            this.callback.unprotect();
             bun.destroy(this);
         }
 
@@ -86,57 +91,15 @@ fn CryptoJob(
     };
 }
 
-extern fn Bun__CheckPrimeJobCtx__runTask(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__CheckPrimeJobCtx__runFromJS(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__CheckPrimeJobCtx__deinit(ctx: *anyopaque) void;
-
-const CheckPrimeJob = CryptoJob(
-    "CheckPrimeJob",
-    anyopaque,
-    Bun__CheckPrimeJobCtx__runTask,
-    Bun__CheckPrimeJobCtx__runFromJS,
-    Bun__CheckPrimeJobCtx__deinit,
-);
-
-extern fn Bun__GeneratePrimeJobCtx__runTask(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__GeneratePrimeJobCtx__runFromJS(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__GeneratePrimeJobCtx__deinit(ctx: *anyopaque) void;
-
-const GeneratePrimeJob = CryptoJob(
-    "GeneratePrimeJob",
-    anyopaque,
-    Bun__GeneratePrimeJobCtx__runTask,
-    Bun__GeneratePrimeJobCtx__runFromJS,
-    Bun__GeneratePrimeJobCtx__deinit,
-);
-
-const HkdfJobCtx = struct {
-    //
-};
-
-// const HkdfJob = CryptoJob(
-//     "HkdfJob",
-// );
+// Definitions for job structs created from c++
+pub const CheckPrimeJob = ExternCryptoJob("CheckPrimeJob");
+pub const GeneratePrimeJob = ExternCryptoJob("GeneratePrimeJob");
+pub const HkdfJob = ExternCryptoJob("HkdfJob");
 
 comptime {
     _ = CheckPrimeJob;
     _ = GeneratePrimeJob;
-}
-
-fn hkdfSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
-    const hash_value, const key_value, const salt_value, const info_value, const length_value =
-        callFrame.argumentsAsArray(5);
-
-    try validators.validateString(global, hash_value, "digest", .{});
-
-    _ = key_value;
-    _ = salt_value;
-    _ = info_value;
-    _ = length_value;
-
-    return .undefined;
-
-    // const hash_value = bun.String.tryFromJS(hash_value, global);
+    _ = HkdfJob;
 }
 
 const random = struct {
@@ -457,7 +420,6 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
 
     crypto.put(global, String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
     crypto.put(global, String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
-    crypto.put(global, String.init("hkdfSync"), JSC.JSFunction.create(global, "hkdfSync", hkdfSync, 5, .{}));
     crypto.put(global, String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", random.randomInt, 2, .{}));
     crypto.put(global, String.init("randomFill"), JSC.JSFunction.create(global, "randomFill", random.randomFill, 4, .{}));
     crypto.put(global, String.init("randomFillSync"), JSC.JSFunction.create(global, "randomFillSync", random.randomFillSync, 3, .{}));

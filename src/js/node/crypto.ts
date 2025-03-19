@@ -46,13 +46,13 @@ const {
   checkPrimeSync,
   generatePrime,
   generatePrimeSync,
+  hkdf,
+  hkdfSync,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
   pbkdf2: _pbkdf2,
   pbkdf2Sync,
-  hkdf,
-  hkdfSync,
   timingSafeEqual,
   randomInt,
   randomUUID,

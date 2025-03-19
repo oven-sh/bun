@@ -243,6 +243,11 @@ template<typename T>
 struct Buffer {
     T* data = nullptr;
     size_t len = 0;
+
+    static Buffer from(std::span<T> input)
+    {
+        return { input.data(), input.size() };
+    }
 };
 
 class Digest final {

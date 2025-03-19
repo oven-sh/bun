@@ -8,4 +8,5 @@ fixtures/repl*
 .tmp.*
 *shadow-realm*
 !test-shadow-realm.js
+!test-shadow-realm-prepare-stack-trace.js
 **/fails.txt

@@ -1580,7 +1580,9 @@ pub const JSValue = enum(i64) {
     ///
     /// ## References
     /// - [ECMA-262 7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
-    pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
+    pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) callconv(bun.callconv_inline) *JSObject {
+        // NOTE: This function is inlined to ensure this assertion gets stripped
+        // when callers check that `this` isn't nullish
         bun.unsafeAssert(!this.isUndefinedOrNull());
 
         const obj = cppFn("toObject", .{ this, globalThis });

@@ -385,7 +385,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       $isCallable(callback) && callback(err);
       return;
     }
-    
+
     this.#closeHandle(handle, callback);
   }
 
@@ -3331,6 +3331,7 @@ const METHODS = [
   "PROPPATCH",
   "PURGE",
   "PUT",
+  "QUERY",
   "REBIND",
   "REPORT",
   "SEARCH",

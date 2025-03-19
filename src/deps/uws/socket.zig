@@ -96,6 +96,8 @@ pub const Socket = opaque {
         us_socket_nodelay(this, @intFromBool(enabled));
     }
 
+    /// Returns error code. `0` on success. error codes depend on platform an
+    /// configured event loop.
     pub fn setKeepalive(this: *Socket, enabled: bool, delay: u32) i32 {
         return us_socket_keepalive(this, @intFromBool(enabled), @intCast(delay));
     }

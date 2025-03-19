@@ -434,7 +434,6 @@ async function spawnSafe(options) {
   };
   await new Promise(resolve => {
     try {
-      console.log("spawn()", command, args, env, cwd);
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout,

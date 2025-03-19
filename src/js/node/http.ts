@@ -389,6 +389,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       $isCallable(callback) && callback(err);
       return;
     }
+
     this.#closeHandle(handle, callback);
   }
 
@@ -1969,7 +1970,10 @@ const ServerResponsePrototype = {
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
-    const isFinished = this.finished || handle?.finished;
+    if (handle.aborted) {
+      return this;
+    }
+
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;

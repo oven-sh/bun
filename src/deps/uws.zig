@@ -1678,7 +1678,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn localAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
                 .connected => |sock| sock.localAddress(is_ssl, buf) catch |e| {
-                    bun.Output.panic("Failed to get socket's remote address: {s}", .{@errorName(e)});
+                    bun.Output.panic("Failed to get socket's local address: {s}", .{@errorName(e)});
                 },
                 .pipe, .upgradedDuplex, .connecting, .detached => null,
             };

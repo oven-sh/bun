@@ -121,6 +121,7 @@ const ObjectDefineProperty = Object.defineProperty;
 
 const GlobalPromise = globalThis.Promise;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+
 /**
  * True if val contains an invalid field-vchar
  *  field-value    = *( field-content / obs-fold )
@@ -393,7 +394,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       $isCallable(callback) && callback(err);
       return;
     }
-    
+
     this.#closeHandle(handle, callback);
   }
 
@@ -608,79 +609,82 @@ function emitListeningNextTick(self, hostname, port) {
 type Server = InstanceType<typeof Server>;
 const Server = function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
+
+  if (typeof options === "function") {
+    callback = options;
+    options = kEmptyObject;
+  } else if ($isUndefinedOrNull(options)) {
+    options = kEmptyObject;
+  } else {
+    validateObject(options, "options");
+    // we store options; cloning it keeps unexpected user mutations from affecting Server.
+    options = { ...options };
+  }
+
   EventEmitter.$call(this);
 
   this.listening = false;
   this._unref = false;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
+  this[tlsSymbol] = null;
+  this[optionsSymbol] = options;
 
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  } else if (options == null || typeof options === "object") {
-    options = { ...options };
-    this[tlsSymbol] = null;
-    let key = options.key;
-    if (key) {
-      if (!isValidTLSArray(key)) {
-        throw new TypeError(
-          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      }
-      this[isTlsSymbol] = true;
+  let key = options.key;
+  if (key) {
+    if (!isValidTLSArray(key)) {
+      throw new TypeError(
+        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
     }
-    let cert = options.cert;
-    if (cert) {
-      if (!isValidTLSArray(cert)) {
-        throw new TypeError(
-          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      }
-      this[isTlsSymbol] = true;
+    this[isTlsSymbol] = true;
+  }
+  let cert = options.cert;
+  if (cert) {
+    if (!isValidTLSArray(cert)) {
+      throw new TypeError(
+        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
     }
-
-    let ca = options.ca;
-    if (ca) {
-      if (!isValidTLSArray(ca)) {
-        throw new TypeError(
-          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      }
-      this[isTlsSymbol] = true;
-    }
-    let passphrase = options.passphrase;
-    if (passphrase && typeof passphrase !== "string") {
-      throw new TypeError("passphrase argument must be an string");
-    }
-
-    let serverName = options.servername;
-    if (serverName && typeof serverName !== "string") {
-      throw new TypeError("servername argument must be an string");
-    }
-
-    let secureOptions = options.secureOptions || 0;
-    if (secureOptions && typeof secureOptions !== "number") {
-      throw new TypeError("secureOptions argument must be an number");
-    }
-
-    if (this[isTlsSymbol]) {
-      this[tlsSymbol] = {
-        serverName,
-        key,
-        cert,
-        ca,
-        passphrase,
-        secureOptions,
-      };
-    } else {
-      this[tlsSymbol] = null;
-    }
-  } else {
-    throw new Error("bun-http-polyfill: invalid arguments");
+    this[isTlsSymbol] = true;
   }
 
-  this[optionsSymbol] = options;
+  let ca = options.ca;
+  if (ca) {
+    if (!isValidTLSArray(ca)) {
+      throw new TypeError(
+        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    }
+    this[isTlsSymbol] = true;
+  }
+  let passphrase = options.passphrase;
+  if (passphrase && typeof passphrase !== "string") {
+    throw new TypeError("passphrase argument must be an string");
+  }
+
+  let serverName = options.servername;
+  if (serverName && typeof serverName !== "string") {
+    throw new TypeError("servername argument must be an string");
+  }
+
+  let secureOptions = options.secureOptions || 0;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw new TypeError("secureOptions argument must be an number");
+  }
+
+  if (this[isTlsSymbol]) {
+    this[tlsSymbol] = {
+      serverName,
+      key,
+      cert,
+      ca,
+      passphrase,
+      secureOptions,
+    };
+  } else {
+    this[tlsSymbol] = null;
+  }
 
   if (callback) this.on("request", callback);
   return this;
@@ -1971,7 +1975,6 @@ const ServerResponsePrototype = {
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
-    const isFinished = this.finished || handle?.finished;
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;

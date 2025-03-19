@@ -1394,8 +1394,18 @@ pub const JSValue = enum(i64) {
         return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
     }
 
+    /// Calling this on a non-cell is safety-checked undefined behavior.
     pub fn asCell(this: JSValue) *JSCell {
+        // NOTE: asCell already asserts this, but since we're crossing an FFI
+        // boundary, that assertion is opaque to the Zig compiler. By asserting
+        // it twice we let Zig possibly optimize out other checks.
+        bun.unsafeAssert(this.isCell());
         return cppFn("asCell", .{this});
+    }
+
+    /// Statically cast a value to a cell. Returns `null` for non-cells.
+    pub fn toCell(this: JSValue) ?*JSCell {
+        return if (this.isCell()) this.asCell() else null;
     }
 
     pub fn isCallable(this: JSValue) bool {
@@ -1559,8 +1569,19 @@ pub const JSValue = enum(i64) {
         };
     }
 
+    /// Runtime conversion to an object. This can have side effects.
+    ///
+    /// For values that are already objects, this is effectively a reinterpret
+    /// cast.
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
         return cppFn("toObject", .{ this, globalThis });
+    }
+
+    /// Statically cast a value to a JSObject.
+    ///
+    /// Returns _null_ for non-objects. Use `toObject` to runtime-cast them instead.
+    pub fn getObject(this: JSValue) ?*JSObject {
+        return if (this.isObject()) this.uncheckedPtrCast(JSObject) else null;
     }
 
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {
@@ -1969,18 +1990,6 @@ pub const JSValue = enum(i64) {
     pub fn getOwnArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
             return coerceToArray(prop, globalThis, property_name);
-        }
-
-        return null;
-    }
-
-    pub fn getObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
-        if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
-            if (!prop.jsTypeLoose().isObject()) {
-                return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-            }
-
-            return prop;
         }
 
         return null;
@@ -2466,12 +2475,6 @@ pub const JSValue = enum(i64) {
             }
         }
         return this.asNullableVoid().?;
-    }
-
-    /// Returns null if not an object.
-    // TODO: replace "getObject" to this, which would match JSC::JSValue in C++
-    pub inline fn getObject2(value: JSValue) ?*JSObject {
-        return if (value.isObject()) value.uncheckedPtrCast(JSObject) else null;
     }
 
     pub fn uncheckedPtrCast(value: JSValue, comptime T: type) *T {

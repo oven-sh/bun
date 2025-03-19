@@ -1335,10 +1335,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
-            const socket = this.socket.get() orelse return;
-            // _ = us_socket_open(comptime ssl_int, socket,
-            // @intFromBool(is_client), null, 0);
-            socket.open(is_ssl, is_client, null);
+            if (this.socket.get()) |socket| socket.open(is_ssl, is_client, null);
         }
 
         pub fn ssl(this: ThisSocket) ?*BoringSSL.SSL {
@@ -1664,7 +1661,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// `buf` cannot be longer than 2^31 bytes long.
         pub fn remoteAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
-                .connected => |sock| sock.remoteAddress(is_ssl, buf) catch unreachable, // fixme
+                .connected => |sock| sock.remoteAddress(is_ssl, buf) catch |e| {
+                    bun.Output.panic("Failed to get socket's remote address: {s}", .{@errorName(e)});
+                },
                 .pipe, .upgradedDuplex, .connecting, .detached => null,
             };
         }
@@ -1678,7 +1677,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
-                .connected => |sock| sock.localAddress(is_ssl, buf) catch unreachable, // fixme
+                .connected => |sock| sock.localAddress(is_ssl, buf) catch |e| {
+                    bun.Output.panic("Failed to get socket's remote address: {s}", .{@errorName(e)});
+                },
                 .pipe, .upgradedDuplex, .connecting, .detached => null,
             };
         }

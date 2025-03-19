@@ -62,23 +62,31 @@ pub const Socket = opaque {
         return us_socket_local_port(@intFromBool(ssl), this);
     }
 
-    /// Returned slice is a view into `buf`. On error, `errno` should be set
-    pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) error{LocalAddress}![]const u8 {
+    /// Returned slice is a view into `buf`.
+    pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) ![]const u8 {
         var length: i32 = @intCast(buf.len);
 
         us_socket_local_address(@intFromBool(ssl), this, buf.ptr, &length);
-        if (length < 0) return error.LocalAddress;
+        if (length < 0) {
+            const errno = bun.C.getErrno(length);
+            bun.debugAssert(errno != .SUCCESS);
+            return bun.errnoToZigErr(errno);
+        }
         bun.unsafeAssert(buf.len >= length);
 
         return buf[0..@intCast(length)];
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set
-    pub fn remoteAddress(this: *Socket, ssl: bool, buf: []u8) error{RemoteAddress}![]const u8 {
+    pub fn remoteAddress(this: *Socket, ssl: bool, buf: []u8) ![]const u8 {
         var length: i32 = @intCast(buf.len);
 
         us_socket_remote_address(@intFromBool(ssl), this, buf.ptr, &length);
-        if (length < 0) return error.RemoteAddress;
+        if (length < 0) {
+            const errno = bun.C.getErrno(length);
+            bun.debugAssert(errno != .SUCCESS);
+            return bun.errnoToZigErr(errno);
+        }
         bun.unsafeAssert(buf.len >= length);
 
         return buf[0..@intCast(length)];

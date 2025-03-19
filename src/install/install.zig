@@ -3539,7 +3539,7 @@ pub const PackageManager = struct {
         node: *Progress.Node,
         name: string,
         emoji: string,
-        comptime is_first: bool,
+        is_first: bool,
     ) void {
         if (Output.isEmojiEnabled()) {
             if (is_first) {
@@ -4311,7 +4311,7 @@ pub const PackageManager = struct {
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
         install_peer: bool,
-        comptime successFn: SuccessFn,
+        successFn: SuccessFn,
     ) !?ResolvedPackageResult {
         const should_update = this.to_update and
             // If updating, only update packages in the current workspace
@@ -4589,7 +4589,7 @@ pub const PackageManager = struct {
         dependency_id: DependencyID,
         resolution: PackageID,
         install_peer: bool,
-        comptime successFn: SuccessFn,
+        successFn: SuccessFn,
     ) !?ResolvedPackageResult {
         if (install_peer and behavior.isPeer()) {
             if (this.lockfile.package_index.get(name_hash)) |index| {
@@ -5164,8 +5164,8 @@ pub const PackageManager = struct {
         dependency: *const Dependency,
         resolution: PackageID,
         install_peer: bool,
-        comptime successFn: SuccessFn,
-        comptime failFn: ?FailFn,
+        successFn: SuccessFn,
+        failFn: ?FailFn,
     ) !void {
         if (dependency.behavior.isOptionalPeer()) return;
 
@@ -5455,8 +5455,13 @@ pub const PackageManager = struct {
                                 manifest_entry_parse.value_ptr.* = TaskCallbackList{};
                             }
 
-                            const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                            try manifest_entry_parse.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+                            try manifest_entry_parse.value_ptr.append(this.allocator, brk: {
+                                if (successFn == assignRootResolution) {
+                                    break :brk TaskCallbackContext{ .root_dependency = id };
+                                } else {
+                                    break :brk TaskCallbackContext{ .dependency = id };
+                                }
+                            });
                         }
                         return;
                     }
@@ -5481,11 +5486,10 @@ pub const PackageManager = struct {
                 const alias = this.lockfile.str(&dependency.name);
                 const url = this.lockfile.str(&dep.repo);
                 const clone_id = Task.Id.forGitClone(url);
-                const ctx = @unionInit(
-                    TaskCallbackContext,
-                    if (successFn == assignRootResolution) "root_dependency" else "dependency",
-                    id,
-                );
+                const ctx = switch (successFn == assignRootResolution) {
+                    true => TaskCallbackContext{ .root_dependency = id },
+                    false => TaskCallbackContext{ .dependency = id },
+                };
 
                 if (comptime Environment.allow_assert)
                     debug(
@@ -5587,8 +5591,13 @@ pub const PackageManager = struct {
                         },
                     );
 
-                const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+                try entry.value_ptr.append(
+                    this.allocator,
+                    switch (successFn == assignRootResolution) {
+                        true => TaskCallbackContext{ .root_dependency = id },
+                        false => TaskCallbackContext{ .dependency = id },
+                    },
+                );
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
@@ -5774,8 +5783,10 @@ pub const PackageManager = struct {
                         },
                     );
 
-                const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+                try entry.value_ptr.append(this.allocator, switch (successFn == assignRootResolution) {
+                    true => TaskCallbackContext{ .root_dependency = id },
+                    false => TaskCallbackContext{ .dependency = id },
+                });
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
@@ -12620,7 +12631,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             tree_id: Lockfile.Tree.Id,
             maybe_destination_dir: ?*LazyPackageDestinationDir,
-            comptime should_install_packages: bool,
+            should_install_packages: bool,
             log_level: Options.LogLevel,
         ) void {
             if (comptime Environment.allow_assert) {
@@ -12661,7 +12672,7 @@ pub const PackageManager = struct {
                 }
             }
 
-            if (comptime should_install_packages) {
+            if (should_install_packages) {
                 const force = false;
                 this.installAvailablePackages(log_level, force);
             }

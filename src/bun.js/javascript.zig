@@ -2685,7 +2685,7 @@ pub const VirtualMachine = struct {
 
         if (JSC.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
             res.* = ErrorableString.ok(
-                if (is_user_require_resolve)
+                if (is_user_require_resolve and hardcoded.node_builtin)
                     specifier
                 else
                     bun.String.init(hardcoded.path),

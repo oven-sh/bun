@@ -2702,11 +2702,15 @@ pub const HardcodedModule = enum {
     pub const Alias = struct {
         path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
+        node_builtin: bool = false,
 
         fn nodeEntry(path: [:0]const u8) struct { string, Alias } {
             return .{
                 path,
-                .{ .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path },
+                .{
+                    .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
+                    .node_builtin = true,
+                },
             };
         }
         fn entry(path: [:0]const u8) struct { string, Alias } {
@@ -2824,39 +2828,39 @@ pub const HardcodedModule = enum {
             nodeEntry("zlib"),
 
             // sys is a deprecated alias for util
-            .{ "sys", .{ .path = "node:util" } },
-            .{ "node:sys", .{ .path = "node:util" } },
+            .{ "sys", .{ .path = "node:util", .node_builtin = true } },
+            .{ "node:sys", .{ .path = "node:util", .node_builtin = true } },
 
             // These are returned in builtinModules, but probably not many
             // packages use them so we will just alias them.
-            .{ "node:_http_agent", .{ .path = "node:http" } },
-            .{ "node:_http_client", .{ .path = "node:http" } },
-            .{ "node:_http_common", .{ .path = "node:http" } },
-            .{ "node:_http_incoming", .{ .path = "node:http" } },
-            .{ "node:_http_outgoing", .{ .path = "node:http" } },
-            .{ "node:_http_server", .{ .path = "node:http" } },
-            .{ "node:_stream_duplex", .{ .path = "node:_stream_duplex" } },
-            .{ "node:_stream_passthrough", .{ .path = "node:_stream_passthrough" } },
-            .{ "node:_stream_readable", .{ .path = "node:_stream_readable" } },
-            .{ "node:_stream_transform", .{ .path = "node:_stream_transform" } },
-            .{ "node:_stream_wrap", .{ .path = "node:_stream_wrap" } },
-            .{ "node:_stream_writable", .{ .path = "node:_stream_writable" } },
-            .{ "node:_tls_wrap", .{ .path = "node:tls" } },
-            .{ "node:_tls_common", .{ .path = "node:_tls_common" } },
-            .{ "_http_agent", .{ .path = "node:http" } },
-            .{ "_http_client", .{ .path = "node:http" } },
-            .{ "_http_common", .{ .path = "node:http" } },
-            .{ "_http_incoming", .{ .path = "node:http" } },
-            .{ "_http_outgoing", .{ .path = "node:http" } },
-            .{ "_http_server", .{ .path = "node:http" } },
-            .{ "_stream_duplex", .{ .path = "node:_stream_duplex" } },
-            .{ "_stream_passthrough", .{ .path = "node:_stream_passthrough" } },
-            .{ "_stream_readable", .{ .path = "node:_stream_readable" } },
-            .{ "_stream_transform", .{ .path = "node:_stream_transform" } },
-            .{ "_stream_wrap", .{ .path = "node:_stream_wrap" } },
-            .{ "_stream_writable", .{ .path = "node:_stream_writable" } },
-            .{ "_tls_wrap", .{ .path = "node:tls" } },
-            .{ "_tls_common", .{ .path = "node:_tls_common" } },
+            .{ "node:_http_agent", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_client", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_common", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_incoming", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_server", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
+            .{ "node:_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
+            .{ "node:_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
+            .{ "node:_stream_transform", .{ .path = "node:_stream_transform", .node_builtin = true } },
+            .{ "node:_stream_wrap", .{ .path = "node:_stream_wrap", .node_builtin = true } },
+            .{ "node:_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
+            .{ "node:_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
+            .{ "node:_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
+            .{ "_http_agent", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_client", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_common", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_incoming", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_server", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
+            .{ "_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
+            .{ "_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
+            .{ "_stream_transform", .{ .path = "node:_stream_transform", .node_builtin = true } },
+            .{ "_stream_wrap", .{ .path = "node:_stream_wrap", .node_builtin = true } },
+            .{ "_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
+            .{ "_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
+            .{ "_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
         };
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
@@ -2870,8 +2874,8 @@ pub const HardcodedModule = enum {
             .{ "ffi", .{ .path = "bun:ffi" } },
 
             // inspector/promises is not implemented, it is an alias of inspector
-            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
-            .{ "inspector/promises", .{ .path = "node:inspector" } },
+            .{ "node:inspector/promises", .{ .path = "node:inspector", .node_builtin = true } },
+            .{ "inspector/promises", .{ .path = "node:inspector", .node_builtin = true } },
 
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
@@ -2912,15 +2916,6 @@ pub const HardcodedModule = enum {
             }
             return null;
         }
-
-        // pub fn getWithEql(name: anytype, comptime eql: anytype, target: options.Target) ?Alias {
-        //     if (target.isBun()) {
-        //         return bun_aliases.getWithEql(name, eql);
-        //     } else if (target.isNode()) {
-        //         return node_aliases.getWithEql(name, eql);
-        //     }
-        //     return null;
-        // }
     };
 };
 

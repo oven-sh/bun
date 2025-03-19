@@ -86,7 +86,6 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
       throw E;
     }
-    $assert($requireMap.$get(id) === mod);
   } else {
     var out = this.$require(
       id,

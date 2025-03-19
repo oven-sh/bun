@@ -50,6 +50,8 @@
 #include "PathInlines.h"
 #include "wtf/text/StringView.h"
 
+#include "isBuiltinModule.h"
+
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
@@ -320,7 +322,19 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     auto bunStr = Bun::toString(parentIdStr);
                     args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 
-                    return JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
+                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!isRequireDotResolve) {
+                        JSString* string = result.toString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        auto str = string->value(globalObject);
+                        WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
+                        if (!prefixed.isNull()) {
+                            return JSValue::encode(jsString(vm, prefixed));
+                        }
+                        return JSC::JSValue::encode(string);
+                    }
+                    return JSC::JSValue::encode(result);
                 }
             }
         }

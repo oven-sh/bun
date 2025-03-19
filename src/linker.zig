@@ -187,15 +187,11 @@ pub const Linker = struct {
 
                     if (comptime is_bun) {
                         if (JSC.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
-                            if (replacement.tag == .none and import_record.kind.isCommonJS())
+                            if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
                             import_record.is_external_without_side_effects = true;
-                            if (replacement.tag != .none) {
-                                externals.append(@intCast(record_index)) catch unreachable;
-                                continue;
-                            }
                         }
                         if (strings.startsWith(import_record.path.text, "node:")) {
                             // if a module is not found here, it is not found at all

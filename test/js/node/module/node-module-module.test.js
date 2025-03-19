@@ -5,7 +5,7 @@ import path from "path";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
-  expect(builtinModules).toHaveLength(76);
+  expect(builtinModules).toHaveLength(77);
 });
 
 test("isBuiltin() works", () => {
@@ -17,6 +17,8 @@ test("isBuiltin() works", () => {
   expect(isBuiltin("events")).toBe(true);
   expect(isBuiltin("node:events")).toBe(true);
   expect(isBuiltin("node:bacon")).toBe(false);
+  expect(isBuiltin("node:test")).toBe(true);
+  expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
 });
 
 test("module.globalPaths exists", () => {

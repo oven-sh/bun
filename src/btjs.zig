@@ -29,7 +29,7 @@ pub export fn dumpBtjsTrace() [*:0]const u8 {
     var context: std.debug.ThreadContext = undefined;
     const has_context = std.debug.getContext(&context);
 
-    var it: std.debug.StackIterator = (if (has_context) blk: {
+    var it: std.debug.StackIterator = (if (has_context and !bun.Environment.isWindows) blk: {
         break :blk std.debug.StackIterator.initWithContext(null, debug_info, &context) catch null;
     } else null) orelse std.debug.StackIterator.init(null, null);
     defer it.deinit();
@@ -182,7 +182,7 @@ fn printLineFromFileAnyOs(out_stream: anytype, source_location: std.debug.Source
     defer f.close();
     // TODO fstat and make sure that the file has the correct size
 
-    var buf: [std.mem.page_size]u8 = undefined;
+    var buf: [4096]u8 = undefined;
     var amt_read = try f.read(buf[0..]);
     const line_start = seek: {
         var current_line_start: usize = 0;

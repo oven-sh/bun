@@ -1794,7 +1794,7 @@ pub const ModuleLoader = struct {
                         .already_bundled = true,
                         .hash = 0,
                         .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
-                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .bytecode_cache_size = bytecode_slice.len,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
@@ -2957,7 +2957,8 @@ pub const HardcodedModule = enum {
             .{ "stream/promises", .{ .path = "stream/promises" } },
             .{ "stream/web", .{ .path = "stream/web" } },
             .{ "string_decoder", .{ .path = "string_decoder" } },
-            // .{ "test", .{ .path = "test" } },
+            // Node.js does not support "test", only "node:test"
+            // .{ "test", .{ .path = "node:test" } },
             .{ "timers", .{ .path = "timers" } },
             .{ "timers/promises", .{ .path = "timers/promises" } },
             .{ "tls", .{ .path = "tls" } },

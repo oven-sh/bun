@@ -1173,10 +1173,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;

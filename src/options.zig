@@ -222,6 +222,7 @@ pub const ExternalModules = struct {
         "stream",
         "string_decoder",
         "sys",
+        "test",
         "timers",
         "tls",
         "trace_events",

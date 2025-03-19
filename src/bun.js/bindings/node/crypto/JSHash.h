@@ -6,7 +6,7 @@
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include "ncrypto.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
 #include <JavaScriptCore/LazyProperty.h>

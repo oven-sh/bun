@@ -733,17 +733,17 @@ pub const Resolver = struct {
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if (kind != .entry_point_build and kind != .entry_point_run and
             (r.isExternalPattern(import_path) or
-            // "fill: url(#filter);"
-            (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
+                // "fill: url(#filter);"
+                (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 
-            // "background: url(http://example.com/images/image.png);"
-            strings.startsWith(import_path, "http://") or
+                // "background: url(http://example.com/images/image.png);"
+                strings.startsWith(import_path, "http://") or
 
-            // "background: url(https://example.com/images/image.png);"
-            strings.startsWith(import_path, "https://") or
+                // "background: url(https://example.com/images/image.png);"
+                strings.startsWith(import_path, "https://") or
 
-            // "background: url(//example.com/images/image.png);"
-            strings.startsWith(import_path, "//")))
+                // "background: url(//example.com/images/image.png);"
+                strings.startsWith(import_path, "//")))
         {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this path as implicitly external");
@@ -1122,9 +1122,9 @@ pub const Resolver = struct {
                 const platform = bun.path.Platform.auto;
                 const ends_with_dir = platform.isSeparator(import_path[import_path.len - 1]) or
                     (import_path.len > 3 and
-                    platform.isSeparator(import_path[import_path.len - 3]) and
-                    import_path[import_path.len - 2] == '.' and
-                    import_path[import_path.len - 1] == '.');
+                        platform.isSeparator(import_path[import_path.len - 3]) and
+                        import_path[import_path.len - 2] == '.' and
+                        import_path[import_path.len - 1] == '.');
                 const buf = bufs(.relative_abs_path);
                 import_path = r.fs.absBuf(&.{import_path}, buf);
                 if (ends_with_dir) {
@@ -1324,7 +1324,7 @@ pub const Resolver = struct {
                 // Always mark "fs" as disabled, matching Webpack v4 behavior
                 if (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[2] == '/'))
+                        import_path_without_node_prefix[2] == '/'))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
@@ -3029,7 +3029,7 @@ pub const Resolver = struct {
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
                     (prefix.len > longest_match_prefix_length or
-                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
+                        (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));
@@ -4170,10 +4170,10 @@ pub const Resolver = struct {
                         }
                     }
 
-                    var merged_config = parent_configs.pop();
+                    var merged_config = parent_configs.pop().?;
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
-                    while (parent_configs.popOrNull()) |parent_config| {
+                    while (parent_configs.pop()) |parent_config| {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;

@@ -448,10 +448,34 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #if OS(WINDOWS)
         DWORD errorId = GetLastError();
         LPWSTR messageBuffer = nullptr;
-        size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
-        WTF::String msg = makeString("LoadLibrary failed: "_s, WTF::StringView(std::span { (UCHAR*)messageBuffer, size }));
-        LocalFree(messageBuffer);
+        DWORD charCount = FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, // Prevents automatic line breaks
+            NULL, // No source needed when using FORMAT_MESSAGE_FROM_SYSTEM
+            errorId,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
+            (LPWSTR)&messageBuffer, // Buffer will be allocated by the function
+            0, // Minimum size to allocate - 0 means "determine size automatically"
+            NULL // No arguments since we're using FORMAT_MESSAGE_IGNORE_INSERTS
+        );
+
+        WTF::StringBuilder errorBuilder;
+        errorBuilder.append("LoadLibrary failed: "_s);
+        if (messageBuffer && charCount > 0) {
+            // Trim trailing whitespace, carriage returns, and newlines that FormatMessageW often includes
+            while (charCount > 0 && (messageBuffer[charCount - 1] == L'\r' || messageBuffer[charCount - 1] == L'\n' || messageBuffer[charCount - 1] == L' '))
+                charCount--;
+
+            // Create a span of the wide characters
+            auto wideCharSpan = std::span<const UChar>(reinterpret_cast<const UChar*>(messageBuffer), charCount);
+            errorBuilder.append(WTF::StringView(wideCharSpan));
+        } else {
+            errorBuilder.append("error code "_s);
+            errorBuilder.append(WTF::String::number(errorId));
+        }
+
+        WTF::String msg = errorBuilder.toString();
+        if (messageBuffer)
+            LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
@@ -1365,14 +1389,14 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
             //    throw warning;
             // });
             auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_throwValue, JSC::ImplementationVisibility::Private);
-            process->queueNextTick(vm, globalObject, func, errorInstance);
+            process->queueNextTick(globalObject, func, errorInstance);
             return jsUndefined();
         }
     }
 
     //   process.nextTick(doEmitWarning, warning);
     auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_emitWarning, JSC::ImplementationVisibility::Private);
-    process->queueNextTick(vm, globalObject, func, errorInstance);
+    process->queueNextTick(globalObject, func, errorInstance);
     return jsUndefined();
 }
 
@@ -2272,7 +2296,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
     auto finishFn = JSC::JSFunction::create(vm, globalObject, 0, String("finish"_s), processDisonnectFinish, ImplementationVisibility::Public);
     auto process = jsCast<Process*>(global->processObject());
 
-    process->queueNextTick(vm, globalObject, finishFn);
+    process->queueNextTick(globalObject, finishFn);
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -3096,8 +3120,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args)
+void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args)
 {
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!this->m_nextTickFunction) {
         this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
@@ -3110,16 +3135,16 @@ void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, cons
     RELEASE_AND_RETURN(scope, void());
 }
 
-void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value)
+void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
     if (value != 0)
         args.append(value);
-    this->queueNextTick(vm, globalObject, args);
+    this->queueNextTick(globalObject, args);
 }
 
-void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)
+void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
@@ -3129,16 +3154,34 @@ void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSVa
             args.append(arg1);
         }
     }
-    this->queueNextTick(vm, globalObject, args);
+    this->queueNextTick(globalObject, args);
 }
 
-extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue value, EncodedJSValue arg1)
+template<size_t NumArgs>
+void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs])
+{
+    ASSERT_WITH_MESSAGE(func.isCallable(), "Must be a function for us to call");
+    MarkedArgumentBuffer argsBuffer;
+    argsBuffer.ensureCapacity(NumArgs + 1);
+    if (func != 0) {
+        argsBuffer.append(func);
+        for (size_t i = 0; i < NumArgs; i++) {
+            argsBuffer.append(args[i]);
+        }
+    }
+    this->queueNextTick(globalObject, argsBuffer);
+}
+
+extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1)
 {
     auto process = jsCast<Process*>(globalObject->processObject());
-    auto& vm = JSC::getVM(globalObject);
-    process->queueNextTick(vm, globalObject, JSValue::decode(value), JSValue::decode(arg1));
+    process->queueNextTick(globalObject, JSValue::decode(func), JSValue::decode(arg1));
 }
-JSC_DECLARE_HOST_FUNCTION(Bun__Process__queueNextTick1);
+extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1, EncodedJSValue arg2)
+{
+    auto process = jsCast<Process*>(globalObject->processObject());
+    process->queueNextTick<2>(globalObject, JSValue::decode(func), { JSValue::decode(arg1), JSValue::decode(arg2) });
+}
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {

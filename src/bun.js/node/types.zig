@@ -18,7 +18,6 @@ const Fs = @import("../../fs.zig");
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSC = bun.JSC;
 const Mode = bun.Mode;
-const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;

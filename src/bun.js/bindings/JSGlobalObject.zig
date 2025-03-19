@@ -232,7 +232,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
 
             // Ensure we clone it.
@@ -372,6 +372,11 @@ pub const JSGlobalObject = opaque {
     pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
         this.vm().throwError(this, value);
         return error.JSError;
+    }
+
+    pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = this.createTypeErrorInstance(fmt, args);
+        return this.throwValue(instance);
     }
 
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {

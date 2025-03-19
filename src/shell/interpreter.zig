@@ -666,10 +666,9 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const value1 = callframe.argument(0);
-        if (!value1.isObject()) {
+        const value1 = callframe.argument(0).getObject() orelse {
             return globalThis.throwInvalidArguments("env must be an object", .{});
-        }
+        };
 
         var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,

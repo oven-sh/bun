@@ -3248,9 +3248,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         };
 
-        if (!headers_arg.isObject()) {
+        const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
-        }
+        };
 
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
@@ -3266,7 +3266,7 @@ pub const H2FrameParser = struct {
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_arg);
+        }).init(globalObject, headers_obj);
         defer iter.deinit();
 
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
@@ -3597,9 +3597,9 @@ pub const H2FrameParser = struct {
         const headers_arg = args_list.ptr[2];
         const sensitive_arg = args_list.ptr[3];
 
-        if (!headers_arg.isObject()) {
+        const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
-        }
+        };
 
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
@@ -3619,7 +3619,7 @@ pub const H2FrameParser = struct {
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_arg);
+        }).init(globalObject, headers_obj);
         defer iter.deinit();
         var header_count: u32 = 0;
 

@@ -3014,11 +3014,15 @@ pub const Expect = struct {
                     }.anythingInIterator);
                     pass = !any_properties_in_iterator;
                 } else {
+                    const cell = value.toCell() orelse {
+                        return globalThis.throwTypeError("Expected value to be a string, object, or iterable", .{});
+                    };
                     var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = false,
                         .own_properties_only = false,
                         .include_value = true,
-                    }).init(globalThis, value);
+                        // FIXME: can we do this?
+                    }).init(globalThis, cell.toObject(globalThis));
                     defer props_iter.deinit();
                     pass = props_iter.len == 0;
                 }
@@ -4683,7 +4687,8 @@ pub const Expect = struct {
         var expect_constructor = Expect.getConstructor(globalThis);
         var expect_static_proto = ExpectStatic__getPrototype(globalThis);
 
-        const matchers_to_register = args[0];
+        // SAFETY: already checked that args[0] is an object
+        const matchers_to_register = args[0].getObject().?;
         {
             var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,

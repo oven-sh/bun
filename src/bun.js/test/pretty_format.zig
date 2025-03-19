@@ -1572,14 +1572,15 @@ pub const JestPrettyFormat = struct {
 
                     if (value.get_unsafe(this.globalThis, "props")) |props| {
                         const prev_quote_strings = this.quote_strings;
-                        this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
+                        this.quote_strings = true;
 
+                        // SAFETY: JSX props are always an object.
+                        const props_obj = props.getObject().?;
                         var props_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = true,
-
                             .include_value = true,
-                        }).init(this.globalThis, props);
+                        }).init(this.globalThis, props_obj);
                         defer props_iter.deinit();
 
                         const children_prop = props.get_unsafe(this.globalThis, "children");

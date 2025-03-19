@@ -86,6 +86,12 @@ pub const JSObject = extern struct {
 
     extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
 
+    /// When the GC sees a JSValue referenced in the stack, it knows not to free it
+    /// This mimics the implementation in JavaScriptCore's C++
+    pub inline fn ensureStillAlive(this: *JSObject) void {
+        std.mem.doNotOptimizeAway(this);
+    }
+
     pub const ExternColumnIdentifier = extern struct {
         tag: u8 = 0,
         value: extern union {
@@ -106,6 +112,7 @@ pub const JSObject = extern struct {
             }
         }
     };
+
     pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         JSC.markBinding(@src());
         return JSC__createStructure(global, owner.asCell(), length, names);

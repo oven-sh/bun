@@ -87,6 +87,7 @@ pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub inline fn markMemberBinding(comptime class: anytype, src: std.builtin.SourceLocation) void {
+    if (!bun.Environment.enable_logs) return;
     const classname = switch (@typeInfo(@TypeOf(class))) {
         .pointer => class, // assumed to be a static string
         else => @typeName(class),

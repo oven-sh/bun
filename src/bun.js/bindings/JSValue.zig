@@ -1573,8 +1573,24 @@ pub const JSValue = enum(i64) {
     ///
     /// For values that are already objects, this is effectively a reinterpret
     /// cast.
+    ///
+    /// ## Safety
+    /// Calling `toObject` on `null` or `undefined` values triggers safety-checked
+    /// **Illegal Behavior**.
+    ///
+    /// ## References
+    /// - [ECMA-262 7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
-        return cppFn("toObject", .{ this, globalThis });
+        bun.unsafeAssert(!this.isUndefinedOrNull());
+
+        const obj = cppFn("toObject", .{ this, globalThis });
+        if (comptime bun.Environment.isDebug) {
+            // toObjectSlowCase throws for null/undefined. Above assertion means
+            // this should never happen.
+            bun.assert(!globalThis.hasException());
+        }
+
+        return obj;
     }
 
     /// Statically cast a value to a JSObject.
@@ -1995,13 +2011,13 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?*JSC.JSObject {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
-            if (!prop.jsTypeLoose().isObject()) {
+            const obj = prop.getObject() orelse {
                 return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-            }
+            };
 
-            return prop;
+            return obj;
         }
 
         return null;

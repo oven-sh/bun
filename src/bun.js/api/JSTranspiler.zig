@@ -332,15 +332,15 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 break :define;
             }
 
-            if (!define.isObject()) {
+            const define_obj = define.getObject() orelse {
                 return globalObject.throwInvalidArguments("define must be an object", .{});
-            }
+            };
 
             var define_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
 
                 .include_value = true,
-            }).init(globalThis, define);
+            }).init(globalThis, define_obj);
             defer define_iter.deinit();
 
             // cannot be a temporary because it may be loaded on different threads.
@@ -616,14 +616,14 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
 
         if (try exports.getTruthy(globalThis, "replace")) |replace| {
-            if (!replace.isObject()) {
+            const replace_obj = replace.getObject() orelse {
                 return globalObject.throwInvalidArguments("replace must be an object", .{});
-            }
+            };
 
             var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
-            }).init(globalThis, replace);
+            }).init(globalThis, replace_obj);
             defer iter.deinit();
 
             if (iter.len > 0) {

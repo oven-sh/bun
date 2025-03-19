@@ -193,6 +193,16 @@ function validateMsecs(numberlike: any, field: string) {
     throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
+  // Ensure that msecs fits into signed int32
+  const TIMEOUT_MAX = 2 ** 31 - 1;
+  if (numberlike > TIMEOUT_MAX) {
+    process.emitWarning(
+      `${numberlike} does not fit into a 32-bit signed integer.` + `\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+      "TimeoutOverflowWarning"
+    );
+    return TIMEOUT_MAX;
+  }
+
   return numberlike;
 }
 
@@ -3206,6 +3216,20 @@ function ClientRequest(input, options, cb) {
 const ClientRequestPrototype = {
   constructor: ClientRequest,
   __proto__: OutgoingMessage.prototype,
+
+  clearTimeout(callback) {
+    const timeoutTimer = this[kTimeoutTimer];
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      this[kTimeoutTimer] = undefined;
+      if (callback) {
+        this.removeListener("timeout", callback);
+      } else {
+        this.removeAllListeners("timeout");
+      }
+    }
+    return this;
+  },
 
   get path() {
     return this[kPath];

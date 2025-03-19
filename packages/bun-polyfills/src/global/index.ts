@@ -44,6 +44,9 @@ Reflect.set(
     }
 );
 
+//? Polyfill because this isn't implemented.
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array/toHex
+
 Uint8Array.prototype.toHex = function (): string {
     return Array.from(this)
         .map(byte => byte.toString(16).padStart(2, '0')) // Convert each byte to hex and pad with zeros

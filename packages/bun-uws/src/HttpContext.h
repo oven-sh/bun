@@ -362,9 +362,8 @@ private:
 
         /* Handle HTTP write out (note: SSL_read may trigger this spuriously, the app need to handle spurious calls) */
         us_socket_context_on_writable(SSL, getSocketContext(), [](us_socket_t *s) {
-
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
+            auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+            auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
@@ -373,7 +372,7 @@ private:
 
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
-                bool success = httpResponseData->callOnWritable((HttpResponse<SSL> *)asyncSocket, httpResponseData->offset);
+                bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
 
                 /* The developer indicated that their onWritable failed. */
                 if (!success) {
@@ -400,28 +399,26 @@ private:
             }
 
             /* Expect another writable event, or another request within the timeout */
-            ((HttpResponse<SSL> *) s)->resetTimeout();
+            reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
 
             return s;
         });
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
-            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
-
+            auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+            asyncSocket->uncorkWithoutSending();
             /* We do not care for half closed sockets */
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
             return asyncSocket->close();
-
         });
 
         /* Handle socket timeouts, simply close them so to not confuse client with FIN */
         us_socket_context_on_timeout(SSL, getSocketContext(), [](us_socket_t *s) {
 
             /* Force close rather than gracefully shutdown and risk confusing the client with a complete download */
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
+            AsyncSocket<SSL> *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             // Node.js by default closes the connection but they emit the timeout event before that
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
+            HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
             if (httpResponseData->onTimeout) {
                 httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);

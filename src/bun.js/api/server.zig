@@ -5186,6 +5186,10 @@ pub const ServerWebSocket = struct {
         const signal = this.signal;
         this.signal = null;
 
+        if (ServerWebSocket.socketGetCached(this.getThisValue())) |socket| {
+            Bun__setNodeHTTPServerSocketUsSocketValue(socket, null);
+        }
+
         defer {
             if (signal) |sig| {
                 sig.pendingActivityUnref();
@@ -6245,8 +6249,6 @@ pub const NodeHTTPResponse = struct {
         return Bun__getNodeHTTPServerSocketThisValue(this.response == .SSL, this.response.socket());
     }
 
-    extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, *anyopaque) void;
-
     pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
         const upgrade_ctx = this.upgrade_context.context orelse return false;
         const ws_handler = this.server.webSocketHandler() orelse return false;
@@ -6267,6 +6269,7 @@ pub const NodeHTTPResponse = struct {
         defer if (new_socket) |socket| {
             this.upgraded = true;
             Bun__setNodeHTTPServerSocketUsSocketValue(socketValue, socket);
+            ServerWebSocket.socketSetCached(ws.getThisValue(), ws_handler.globalObject, socketValue);
             defer this.js_ref.unref(JSC.VirtualMachine.get());
             switch (this.response) {
                 .SSL => this.response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
@@ -9941,3 +9944,5 @@ extern "c" fn Bun__ServerRouteList__create(
     paths: [*]ZigString,
     pathsLength: usize,
 ) JSC.JSValue;
+
+extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, ?*anyopaque) void;

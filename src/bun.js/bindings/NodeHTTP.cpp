@@ -125,7 +125,6 @@ public:
 
     void close()
     {
-        auto* socket = this->socket;
         if (socket) {
             us_socket_close(is_ssl, socket, 0, nullptr);
         }

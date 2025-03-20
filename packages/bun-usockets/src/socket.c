@@ -168,7 +168,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     if (!c->pending_resolve_callback) {
         us_connecting_socket_free(ssl, c);
     }
-} 
+}
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
     if(ssl) {
@@ -217,7 +217,6 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
             return s->context->on_close(s, code, reason);
         }
-        
     }
     return s;
 }
@@ -435,18 +434,18 @@ int us_connecting_socket_get_error(int ssl, struct us_connecting_socket_t *c) {
     return c->error;
 }
 
-/* 
+/*
     Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
           context ext will not be copied to the new context, new context will contain us_wrapped_socket_context_t on ext
 */
 struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size) {
     // only accepts non-TLS sockets
     if (ssl) {
-        return NULL; 
+        return NULL;
     }
 
     return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, socket_ext_size);
-}  
+}
 
 // if a TLS socket calls this, it will start SSL call open event and TLS handshake if required
 // will have no effect if the socket is closed or is not TLS

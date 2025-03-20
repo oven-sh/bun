@@ -297,6 +297,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
+    values: ["socket"],
   }),
 
   define({

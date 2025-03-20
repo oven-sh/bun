@@ -73,6 +73,7 @@ static uint8_t x86_cpu_features()
 #include <sys/sysctl.h>
 #elif OS(LINUX)
 #include <sys/auxv.h>
+#include <asm/hwcap.h>
 #endif
 
 static uint8_t aarch64_cpu_features()
@@ -84,21 +85,21 @@ static uint8_t aarch64_cpu_features()
 #elif OS(MACOS)
     int value = 0;
     size_t size = sizeof(value);
-    if (sysctlbyname("hw.optional.arm.FEAT_NEON", &value, &size, NULL, 0) == 0 && value == 1)
+    if (sysctlbyname("hw.optional.AdvSIMD", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::neon);
-    if (sysctlbyname("hw.optional.arm.FEAT_FP", &value, &size, NULL, 0) == 0 && value == 1)
+    if (sysctlbyname("hw.optional.floatingpoint", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::fp);
     if (sysctlbyname("hw.optional.arm.FEAT_AES", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::aes);
-    if (sysctlbyname("hw.optional.FEAT_CRC32", &value, &size, NULL, 0) == 0 && value == 1)
+    if (sysctlbyname("hw.optional.armv8_crc32", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::crc32);
-    if (sysctlbyname("hw.optional.armv8_1_atomics", &value, &size, NULL, 0) == 0 && value == 1)
+    if (sysctlbyname("hw.optional.arm.FEAT_LSE", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::atomics);
     if (sysctlbyname("hw.optional.arm.FEAT_SVE", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::sve);
 #elif OS(LINUX)
     unsigned long hwcaps = getauxval(AT_HWCAP);
-    if (hwcaps & HWCAP_NEON)
+    if (hwcaps & HWCAP_ASIMD)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::neon);
     if (hwcaps & HWCAP_FP)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::fp);

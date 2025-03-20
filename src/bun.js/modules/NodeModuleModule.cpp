@@ -637,8 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue a = callFrame->argument(0);
     JSValue b = callFrame->argument(1);
-    Zig::GlobalObject* global = jsDynamicCast<Zig::GlobalObject*>(globalObject);
-    if (!global) return JSC::JSValue::encode(JSC::jsUndefined());
+    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
     String aString = a.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
@@ -654,7 +653,7 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
         EncodedJSValue thisValue,
         PropertyName propertyName))
 {
-    // This does not cache anything because it is assumed nobody
+    // This does not cache anything because it is assumed nobody reads it more than once.
     VM& vm = global->vm();
     JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::moduleGetWrapperArrayProxyCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);

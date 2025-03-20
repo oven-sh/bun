@@ -133,7 +133,7 @@ function splitEscapedAltNames(altNames) {
       currentToken += StringPrototypeSubstring.$call(altNames, offset, nextQuote);
       const match = RegExpPrototypeExec.$call(jsonStringPattern, StringPrototypeSubstring.$call(altNames, nextQuote));
       if (!match) {
-        throw $ERR_TLS_CERT_ALTNAME_FORMAT("Invalid subject alternative name string");
+        throw $ERR_TLS_CERT_ALTNAME_FORMAT();
       }
       currentToken += JSON.parse(match[0]);
       offset = nextQuote + match[0].length;
@@ -200,16 +200,18 @@ function checkServerIdentity(hostname, cert) {
     reason = "Cert does not contain a DNS name";
   }
   if (!valid) {
-    let error = $ERR_TLS_CERT_ALTNAME_INVALID(`Hostname/IP does not match certificate's altnames: ${reason}`);
-    error.reason = reason;
-    error.host = hostname;
-    error.cert = cert;
-    return error;
+    return $ERR_TLS_CERT_ALTNAME_INVALID(reason, hostname, cert);
   }
 }
 
 var InternalSecureContext = class SecureContext {
   context;
+  key;
+  cert;
+  ca;
+  passphrase;
+  servername;
+  secureOptions;
 
   constructor(options) {
     const context = {};
@@ -430,7 +432,7 @@ TLSSocket.prototype.enableTrace = function enableTrace() {
 
 TLSSocket.prototype.setServername = function setServername(name) {
   if (this.isServer) {
-    throw $ERR_TLS_SNI_FROM_SERVER("Cannot issue SNI from a TLS server-side socket");
+    throw $ERR_TLS_SNI_FROM_SERVER();
   }
   // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
   this.servername = name;

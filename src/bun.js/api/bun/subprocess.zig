@@ -768,7 +768,6 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
         }
     };
 
-    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(global);
     const ipc_data = &(this.ipc_data orelse {
         if (this.hasExited()) {
             return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
@@ -788,17 +787,17 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     if (good) {
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(zigGlobal, callback, .null);
+            JSC.Bun__Process__queueNextTick1(global, callback, .null);
             // we need to wait until the send is actually completed to trigger the callback
         }
     } else {
         const ex = global.createTypeErrorInstance("process.send() failed", .{});
         ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+            JSC.Bun__Process__queueNextTick1(global, callback, ex);
         } else {
             const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            JSC.Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+            JSC.Bun__Process__queueNextTick1(global, fnvalue, ex);
         }
     }
 

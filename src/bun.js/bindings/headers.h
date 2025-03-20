@@ -559,7 +559,6 @@ CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg
 #ifdef __cplusplus
 
 ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3);
-ZIG_DECL ErrorableString Zig__GlobalObject__import(JSC__JSGlobalObject* arg0, BunString* arg1, BunString* arg2);
 ZIG_DECL void Zig__GlobalObject__onCrash();
 ZIG_DECL JSC__JSValue Zig__GlobalObject__promiseRejectionTracker(JSC__JSGlobalObject* arg0, JSC__JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
 ZIG_DECL JSC__JSValue Zig__GlobalObject__reportUncaughtException(JSC__JSGlobalObject* arg0, JSC__Exception* arg1);

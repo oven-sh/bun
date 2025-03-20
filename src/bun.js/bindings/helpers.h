@@ -193,19 +193,9 @@ static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* globa
     return JSC::jsOwnedString(global->vm(), toString(str));
 }
 
-static const JSC::JSValue toJSStringValue(ZigString str, JSC::JSGlobalObject* global)
-{
-    return JSC::JSValue(toJSString(str, global));
-}
-
-static const JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
+static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));
-}
-
-static const JSC::JSValue toJSStringValueGC(ZigString str, JSC::JSGlobalObject* global)
-{
-    return JSC::JSValue(toJSStringGC(str, global));
 }
 
 static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };

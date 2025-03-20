@@ -1,7 +1,6 @@
 const EventEmitter = require("node:events");
 
 const ObjectFreeze = Object.freeze;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 

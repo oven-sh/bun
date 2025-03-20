@@ -106,3 +106,11 @@
   while (0) {                                                                  \
   }
 
+namespace Zig {
+#define FORWARD_DECL_GENERATOR(id, enumName) \
+void generateNativeModule_##enumName( \
+  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey, \
+  Vector<JSC::Identifier, 4> &exportNames, \
+  JSC::MarkedArgumentBuffer &exportValues);
+BUN_FOREACH_ESM_NATIVE_MODULE(FORWARD_DECL_GENERATOR)
+} // namespace Zig

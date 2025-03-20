@@ -15,6 +15,9 @@ function urlToHttpOptions(url) {
   if (url.username || url.password) {
     options.auth = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
   }
+  if ("headers" in url) {
+    options.headers = url.headers;
+  }
   return options;
 }
 

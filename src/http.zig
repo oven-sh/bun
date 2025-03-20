@@ -45,7 +45,7 @@ var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
-const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("./ptr.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
@@ -583,7 +583,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = .empty,
+        pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
+
+        pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();
@@ -742,7 +744,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             ) void {
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    return client.onOpen(comptime ssl, socket);
+                    if (client.onOpen(comptime ssl, socket)) |_| {
+                        return;
+                    } else |_| {
+                        log("Unable to open socket", .{});
+                        terminateSocket(socket);
+                        return;
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -944,7 +952,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
-            var iter = this.pending_sockets.available.iterator(.{ .kind = .unset });
+            var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
 
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
@@ -1005,7 +1013,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
-                    client.onOpen(comptime ssl, sock);
+                    try client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
                         client.firstCall(comptime ssl, sock);
                     }
@@ -1196,9 +1204,11 @@ pub const HTTPThread = struct {
             .loop = undefined,
             .http_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
             },
             .https_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
             },
             .timer = std.time.Timer.start() catch unreachable,
         };
@@ -1388,7 +1398,7 @@ pub const HTTPThread = struct {
             this.queued_writes.clearRetainingCapacity();
         }
 
-        while (this.queued_proxy_deref.popOrNull()) |http| {
+        while (this.queued_proxy_deref.pop()) |http| {
             http.deref();
         }
 
@@ -1604,7 +1614,7 @@ pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
-) void {
+) !void {
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -1617,7 +1627,7 @@ pub fn onOpen(
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
-        return;
+        return error.ClientAborted;
     }
 
     if (comptime is_ssl) {
@@ -3072,6 +3082,9 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     if (comptime Environment.allow_assert) {
+        // Comparing `ptr` is safe here because it is only done if the vtable pointers are equal,
+        // which means they are both mimalloc arenas and therefore have non-undefined context
+        // pointers.
         if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
             @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
         }
@@ -3317,7 +3330,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
-                // we sent everything, but there's some body leftover
+                // we sent everything, but there's some body left over
                 if (try_sending_more_data) {
                     this.onWritable(false, is_ssl, socket);
                 }

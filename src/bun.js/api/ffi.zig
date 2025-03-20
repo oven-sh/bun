@@ -818,7 +818,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected object", .{}, globalThis);
         }
 
-        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable(globalThis.vm())) {
+        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable()) {
             return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
         }
 
@@ -1009,10 +1009,7 @@ pub const FFI = struct {
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         const vm = VirtualMachine.get();
-        var scope = bun.AllocationScope.init(bun.default_allocator);
-        defer scope.deinit();
-        const allocator = scope.allocator();
-        var name_slice = name_str.toSlice(allocator);
+        var name_slice = name_str.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
@@ -1044,12 +1041,12 @@ pub const FFI = struct {
         }
 
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
-        if (generateSymbols(global, allocator, &symbols, object) catch JSC.JSValue.zero) |val| {
+        if (generateSymbols(global, bun.default_allocator, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
-                allocator.free(@constCast(key));
+                bun.default_allocator.free(@constCast(key));
             }
-            symbols.clearAndFree(allocator);
+            symbols.clearAndFree(bun.default_allocator);
             return val;
         }
         if (symbols.count() == 0) {
@@ -1091,10 +1088,10 @@ pub const FFI = struct {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
                     const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name }, global);
                     for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
+                        bun.default_allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
+                        value.arg_types.clearAndFree(bun.default_allocator);
                     }
-                    symbols.clearAndFree(allocator);
+                    symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return ret;
                 };
@@ -1111,7 +1108,7 @@ pub const FFI = struct {
                 for (symbols.values()) |*value| {
                     value.deinit(global);
                 }
-                symbols.clearAndFree(allocator);
+                symbols.clearAndFree(bun.default_allocator);
                 dylib.close();
                 return ret;
             };
@@ -1122,7 +1119,7 @@ pub const FFI = struct {
                     };
 
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    symbols.clearAndFree(allocator);
+                    symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return res;
                 },
@@ -1130,7 +1127,7 @@ pub const FFI = struct {
                     for (symbols.values()) |*other_function| {
                         other_function.deinit(global);
                     }
-                    symbols.clearAndFree(allocator);
+                    symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
@@ -1151,11 +1148,10 @@ pub const FFI = struct {
             }
         }
 
-        var lib = allocator.create(FFI) catch unreachable;
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = dylib,
             .functions = symbols,
-        };
+        });
 
         const js_object = lib.toJS(global);
         JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
@@ -1257,11 +1253,10 @@ pub const FFI = struct {
             }
         }
 
-        var lib = allocator.create(FFI) catch unreachable;
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = null,
             .functions = symbols,
-        };
+        });
 
         const js_object = lib.toJS(global);
         JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
@@ -2370,12 +2365,12 @@ const CompilerRT = struct {
         UINT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
         bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
     };
-    const headers = @import("../bindings/headers.zig");
+    const headers = JSValue.exposed_to_ffi;
     var workaround: MyFunctionSStructWorkAround = .{
-        .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
-        .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
-        .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
-        .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
+        .JSVALUE_TO_INT64 = headers.JSVALUE_TO_INT64,
+        .JSVALUE_TO_UINT64 = headers.JSVALUE_TO_UINT64,
+        .INT64_TO_JSVALUE = headers.INT64_TO_JSVALUE,
+        .UINT64_TO_JSVALUE = headers.UINT64_TO_JSVALUE,
         .bun_call = &JSC.C.JSObjectCallAsFunction,
     };
 
@@ -2425,10 +2420,6 @@ const CompilerRT = struct {
 
         state.addSymbol("JSVALUE_TO_INT64_SLOW", workaround.JSVALUE_TO_INT64) catch unreachable;
         state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
         state.addSymbol("INT64_TO_JSVALUE_SLOW", workaround.INT64_TO_JSVALUE) catch unreachable;
         state.addSymbol("UINT64_TO_JSVALUE_SLOW", workaround.UINT64_TO_JSVALUE) catch unreachable;
     }

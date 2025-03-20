@@ -711,6 +711,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
     s3                                             BunObject_getter_wrap_s3                                            DontDelete|PropertyCallback
+    CSRF                                           BunObject_getter_wrap_CSRF                                          DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
@@ -859,6 +860,9 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, void());
 
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(object);
+
     for (const auto& propertyName : propertyNames) {
         exportNames.append(propertyName);
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
@@ -872,9 +876,6 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         }
         exportValues.append(value);
     }
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
 }
 
 }

@@ -26,6 +26,14 @@ interface Config {
   roots: FileIndex[];
 }
 
+declare namespace DEBUG {
+  /** 
+   * Set globally in debug builds.
+   * Removed using --drop=DEBUG.ASSERT in releases.
+   */
+  declare function ASSERT(condition: any, message?: string): asserts condition;
+}
+
 /** All modules for the initial bundle. */
 declare const unloadedModuleRegistry: Record<string, UnloadedModule>;
 declare type UnloadedModule = UnloadedESM | UnloadedCommonJS;
@@ -40,11 +48,12 @@ declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
   hmr: import("./hmr-module").HMRModule,
   module: import("./hmr-module").HMRModule["cjs"],
-) => any;
+  exports: unknown,
+) => unknown;
 declare type CommonJSModule = {
   id: Id;
   exports: any;
-  require: (id: Id) => any;
+  require: (id: Id) => unknown;
 };
 
 declare const config: Config;

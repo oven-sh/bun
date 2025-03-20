@@ -1,4 +1,4 @@
-export { };
+export {};
 
 type _Event = {
   /** This is not used in Node.js and is provided purely for completeness. */
@@ -76,6 +76,17 @@ declare global {
       revision: string;
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
+      _exiting: boolean;
+      noDeprecation: boolean;
+
+      binding(m: string): object;
+      binding(m: "constants"): {
+        os: typeof import("node:os").constants;
+        fs: typeof import("node:fs").constants;
+        crypto: typeof import("node:crypto").constants;
+        zlib: typeof import("node:zlib").constants;
+        trace: typeof import("node:trace").constants;
+      };
     }
   }
 
@@ -1772,17 +1783,50 @@ declare global {
      * Convert the Uint8Array to a base64 encoded string
      * @returns The base64 encoded string representation of the Uint8Array
      */
-    toBase64(options?: {
-      alphabet?: 'base64' | 'base64url';
-      omitPadding?: boolean;
-    }): string;
+    toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
 
     /**
      * Set the contents of the Uint8Array from a base64 encoded string
      * @param base64 The base64 encoded string to decode into the array
      * @param offset Optional starting index to begin setting the decoded bytes (default: 0)
      */
-    setFromBase64(base64: string, offset?: number): void;
+    setFromBase64(
+      base64: string,
+      offset?: number,
+    ): {
+      /**
+       * The number of bytes read from the base64 string
+       */
+      read: number;
+      /**
+       * The number of bytes written to the Uint8Array
+       * Will never be greater than the `.byteLength` of this Uint8Array
+       */
+      written: number;
+    };
+
+    /**
+     * Convert the Uint8Array to a hex encoded string
+     * @returns The hex encoded string representation of the Uint8Array
+     */
+    toHex(): string;
+
+    /**
+     * Set the contents of the Uint8Array from a hex encoded string
+     * @param hex The hex encoded string to decode into the array. The string must have
+     * an even number of characters, be valid hexadecimal characters and contain no whitespace.
+     */
+    setFromHex(hex: string): {
+      /**
+       * The number of bytes read from the hex string
+       */
+      read: number;
+      /**
+       * The number of bytes written to the Uint8Array
+       * Will never be greater than the `.byteLength` of this Uint8Array
+       */
+      written: number;
+    };
   }
 
   interface Uint8ArrayConstructor {
@@ -1791,6 +1835,12 @@ declare global {
      * @param base64 The base64 encoded string to convert to a Uint8Array
      * @returns A new Uint8Array containing the decoded data
      */
-    fromBase64(base64: string): Uint8Array;
+    fromBase64(
+      base64: string,
+      options?: {
+        alphabet?: "base64" | "base64url";
+        lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+      },
+    ): Uint8Array;
   }
 }

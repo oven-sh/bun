@@ -202,6 +202,7 @@ CPP_DECL JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0, JSC_
 
 CPP_DECL JSC__JSObject* JSC__JSCell__getObject(JSC__JSCell* arg0);
 CPP_DECL unsigned char JSC__JSCell__getType(JSC__JSCell* arg0);
+CPP_DECL JSC__JSObject* JSC__JSCell__toObject(JSC__JSCell* cell, JSC__JSGlobalObject* globalObject);
 
 #pragma mark - JSC::JSString
 
@@ -342,7 +343,7 @@ CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt32(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1);
+CPP_DECL bool JSC__JSValue__isCallable(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0);
@@ -558,7 +559,6 @@ CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg
 #ifdef __cplusplus
 
 ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3);
-ZIG_DECL ErrorableString Zig__GlobalObject__import(JSC__JSGlobalObject* arg0, BunString* arg1, BunString* arg2);
 ZIG_DECL void Zig__GlobalObject__onCrash();
 ZIG_DECL JSC__JSValue Zig__GlobalObject__promiseRejectionTracker(JSC__JSGlobalObject* arg0, JSC__JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
 ZIG_DECL JSC__JSValue Zig__GlobalObject__reportUncaughtException(JSC__JSGlobalObject* arg0, JSC__Exception* arg1);
@@ -810,6 +810,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onRejectStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 
 #endif
 

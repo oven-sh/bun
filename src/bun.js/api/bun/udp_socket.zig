@@ -197,7 +197,7 @@ pub const UDPSocketConfig = struct {
 
             inline for (handlers) |handler| {
                 if (try socket.getTruthyComptime(globalThis, handler.@"0")) |value| {
-                    if (!value.isCell() or !value.isCallable(globalThis.vm())) {
+                    if (!value.isCell() or !value.isCallable()) {
                         return globalThis.throwInvalidArguments("Expected \"socket.{s}\" to be a function", .{handler.@"0"});
                     }
                     @field(config, handler.@"1") = value;
@@ -943,7 +943,9 @@ pub const UDPSocket = struct {
         this.connect_info = .{
             .port = port,
         };
-        // TODO reset cached remoteAddress property
+
+        UDPSocket.addressSetCached(callFrame.this(), globalThis, .zero);
+        UDPSocket.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
 
         return .undefined;
     }

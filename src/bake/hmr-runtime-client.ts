@@ -1,5 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
+import './debug';
 import {
   loadModuleAsync,
   replaceModules,
@@ -153,8 +154,12 @@ const handlers = {
           onRuntimeError(e, true, false);
           return;
         }
+        emitEvent("bun:error", e);
         throw e;
       }
+    } else {
+      // Needed for testing.
+      emitEvent("bun:afterUpdate", null);
     }
   },
   [MessageId.set_url_response](view) {
@@ -216,6 +221,8 @@ try {
   }
 
   await loadModuleAsync(config.main, false, null);
+
+  emitEvent("bun:ready", null);
 } catch (e) {
   console.error(e);
   onRuntimeError(e, true, false);

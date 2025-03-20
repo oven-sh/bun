@@ -90,20 +90,28 @@ function parseTestFlags(filename = process.argv[1]) {
   fs.closeSync(fd);
   const source = buffer.toString('utf8', 0, bytesRead);
 
+  const flags = [];
   const flagStart = source.search(/\/\/ Flags:\s+--/) + 10;
 
+  const isNodeTest = source.includes('node:test');
+  if (isNodeTest) {
+    flags.push('test');
+  }
+
   if (flagStart === 9) {
-    return [];
+    return flags;
   }
   let flagEnd = source.indexOf('\n', flagStart);
   // Normalize different EOL.
   if (source[flagEnd - 1] === '\r') {
     flagEnd--;
   }
+
   return source
     .substring(flagStart, flagEnd)
     .split(/\s+/)
-    .filter(Boolean);
+    .filter(Boolean)
+    .concat(flags);
 }
 
 // Check for flags. Skip this for workers (both, the `cluster` module and
@@ -127,6 +135,10 @@ if (process.argv.length === 2 &&
         break;
       }
       if (flag === "--expose-internals" && process.versions.bun) {
+        process.env.SKIP_FLAG_CHECK = "1";
+        break;
+      }
+      if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;
       }
@@ -856,6 +868,13 @@ function invalidArgTypeHelper(input) {
       return ` Received an instance of ${input.constructor.name}`;
     }
     return ` Received ${inspect(input, { depth: -1 })}`;
+  }
+  if (typeof input === 'string') {
+    input.length > 28 && (input = `${input.slice(0, 25)}...`);
+    if (input.indexOf("'") === -1) {
+      return ` Received type string ('${input}')`;
+    }
+    return ` Received type string (${JSON.stringify(input)})`;
   }
 
   let inspected = inspect(input, { colors: false });

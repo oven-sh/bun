@@ -376,14 +376,14 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
+
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     if (argument0.value().isUndefined()) {
         auto res = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0);
         RELEASE_AND_RETURN(throwScope, JSValue::encode(res));
     }
-    JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
+    JSC::JSString* input = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::EncodedJSValue res;
     StringView str;
     if (input->is8Bit()) {

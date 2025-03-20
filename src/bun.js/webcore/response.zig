@@ -111,6 +111,58 @@ pub const Response = struct {
         return &this.body.value;
     }
 
+    pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        _ = globalObject; // autofix
+        const arguments = callframe.arguments_old(1);
+        const this_value = arguments.ptr[0];
+        if (this_value.isEmptyOrUndefinedOrNull()) {
+            return .false;
+        }
+
+        if (this_value.as(Response)) |response| {
+            return JSC.JSValue.jsBoolean(!response.body.value.isDefinitelyEmpty());
+        } else if (this_value.as(Request)) |request| {
+            return JSC.JSValue.jsBoolean(!request.body.value.isDefinitelyEmpty());
+        }
+
+        return .false;
+    }
+
+    pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments_old(1);
+        const this_value = arguments.ptr[0];
+        if (this_value.isEmptyOrUndefinedOrNull()) {
+            return .undefined;
+        }
+
+        const body: *Body.Value = brk: {
+            if (this_value.as(Response)) |response| {
+                break :brk &response.body.value;
+            } else if (this_value.as(Request)) |request| {
+                break :brk &request.body.value;
+            }
+
+            return .undefined;
+        };
+
+        // Get the body if it's available synchronously.
+        switch (body.*) {
+            .Used, .Empty, .Null => return .undefined,
+            .Blob => |*blob| {
+                if (blob.isBunFile()) {
+                    return .undefined;
+                }
+                defer body.* = .{ .Used = {} };
+                return blob.toArrayBuffer(globalObject, .transfer) catch return .zero;
+            },
+            .WTFStringImpl, .InternalBlob => {
+                var any_blob = body.useAsAnyBlob();
+                return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
+            },
+            .Error, .Locked => return .undefined,
+        }
+    }
+
     pub fn getFetchHeaders(
         this: *Response,
     ) ?*FetchHeaders {
@@ -1119,17 +1171,11 @@ pub const Fetch = struct {
             this.abortListener(err);
             return JSValue.jsUndefined();
         }
-        pub const shim = JSC.Shimmer("Bun", "FetchTasklet", @This());
-
-        pub const Export = shim.exportFunctions(.{
-            .onResolveRequestStream = onResolveRequestStream,
-            .onRejectRequestStream = onRejectRequestStream,
-        });
         comptime {
             const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
-            @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveRequestStream, .{ .name = "Bun__FetchTasklet__onResolveRequestStream" });
             const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
-            @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectRequestStream, .{ .name = "Bun__FetchTasklet__onRejectRequestStream" });
         }
 
         pub fn startRequestStream(this: *FetchTasklet) void {
@@ -2575,7 +2621,7 @@ pub const Fetch = struct {
                             }
 
                             if (try tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
-                                if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                if (checkServerIdentity.isCell() and checkServerIdentity.isCallable()) {
                                     check_server_identity = checkServerIdentity;
                                 }
                             }

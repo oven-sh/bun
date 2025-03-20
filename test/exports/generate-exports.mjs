@@ -90,7 +90,6 @@ const bunBuiltins = [
   "bun:main",
   "bun:sqlite",
   "bun:events_native",
-  "detect-libc",
   "node:assert",
   "node:assert/strict",
   "node:async_hooks",

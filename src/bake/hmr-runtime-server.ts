@@ -1,5 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
+import './debug';
 import type { Bake } from "bun";
 import { loadExports, replaceModules, ssrManifest, serverManifest, HMRModule } from "./hmr-module";
 

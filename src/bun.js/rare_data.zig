@@ -51,6 +51,7 @@ temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 aws_signature_cache: AWSSignatureCache = .{},
 
 s3_default_client: JSC.Strong = .empty,
+default_csrf_secret: []const u8 = "",
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
@@ -244,7 +245,7 @@ pub const EntropyCache = struct {
     }
 
     pub fn fill(this: *EntropyCache) void {
-        bun.rand(&this.cache);
+        bun.csprng(&this.cache);
         this.index = 0;
     }
 
@@ -475,6 +476,15 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSV
     };
 }
 
+pub fn defaultCSRFSecret(this: *RareData) []const u8 {
+    if (this.default_csrf_secret.len == 0) {
+        const secret = bun.default_allocator.alloc(u8, 16) catch bun.outOfMemory();
+        bun.csprng(secret);
+        this.default_csrf_secret = secret;
+    }
+    return this.default_csrf_secret;
+}
+
 pub fn deinit(this: *RareData) void {
     if (this.temp_pipe_read_buffer) |pipe| {
         this.temp_pipe_read_buffer = null;
@@ -486,6 +496,9 @@ pub fn deinit(this: *RareData) void {
     this.s3_default_client.deinit();
     if (this.boring_ssl_engine) |engine| {
         _ = bun.BoringSSL.c.ENGINE_free(engine);
+    }
+    if (this.default_csrf_secret.len > 0) {
+        bun.default_allocator.free(this.default_csrf_secret);
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);

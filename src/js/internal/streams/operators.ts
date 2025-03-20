@@ -335,7 +335,7 @@ function toIntegerOrInfinity(number) {
   return number;
 }
 
-function drop(number, options = undefined) {
+function drop(number, options?) {
   if (options != null) {
     validateObject(options, "options");
   }

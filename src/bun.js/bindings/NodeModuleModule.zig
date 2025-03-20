@@ -54,13 +54,30 @@ fn findPathInner(
     global: *JSGlobalObject,
 ) ?bun.String {
     var errorable: ErrorableString = undefined;
-    JSC.VirtualMachine.resolve(
+    JSC.VirtualMachine.resolveMaybeNeedsTrailingSlash(
         &errorable,
         global,
         request,
         cur_path,
         null,
         false,
-    );
+        true,
+        true,
+    ) catch |err| switch (err) {
+        error.JSError => {
+            global.clearException();
+            return null;
+        },
+        else => return null,
+    };
     return errorable.unwrap() catch null;
+}
+
+pub fn _stat(path: []const u8) i32 {
+    const exists = bun.sys.existsAtType(.cwd(), path).unwrap() catch
+        return -1; // Returns a negative integer for any other kind of strings.
+    return switch (exists) {
+        .file => 0, // Returns 0 for files.
+        .directory => 1, // Returns 1 for directories.
+    };
 }

@@ -18,6 +18,14 @@ declare global {
 
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
+      binding(m: string): object;
+      binding(m: "constants"): {
+        os: typeof import("node:os").constants;
+        fs: typeof import("node:fs").constants;
+        crypto: typeof import("node:crypto").constants;
+        zlib: typeof import("node:zlib").constants;
+        trace: typeof import("node:trace").constants;
+      };
     }
 
     interface ProcessVersions extends Dict<string> {

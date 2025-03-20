@@ -339,15 +339,12 @@ pub const TrustCommand = struct {
 
                     const output_in_foreground = false;
                     const optional = false;
-                    switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(
-                            ctx,
-                            info.scripts_list,
-                            optional,
-                            log_level,
-                            output_in_foreground,
-                        ),
-                    }
+                    try pm.spawnPackageLifecycleScripts(
+                        ctx,
+                        info.scripts_list,
+                        optional,
+                        output_in_foreground,
+                    );
 
                     if (pm.options.log_level.showProgress()) {
                         scripts_node.activate();

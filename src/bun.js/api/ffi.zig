@@ -2365,12 +2365,12 @@ const CompilerRT = struct {
         UINT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
         bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
     };
-    const headers = @import("../bindings/headers.zig");
+    const headers = JSValue.exposed_to_ffi;
     var workaround: MyFunctionSStructWorkAround = .{
-        .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
-        .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
-        .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
-        .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
+        .JSVALUE_TO_INT64 = headers.JSVALUE_TO_INT64,
+        .JSVALUE_TO_UINT64 = headers.JSVALUE_TO_UINT64,
+        .INT64_TO_JSVALUE = headers.INT64_TO_JSVALUE,
+        .UINT64_TO_JSVALUE = headers.UINT64_TO_JSVALUE,
         .bun_call = &JSC.C.JSObjectCallAsFunction,
     };
 
@@ -2420,10 +2420,6 @@ const CompilerRT = struct {
 
         state.addSymbol("JSVALUE_TO_INT64_SLOW", workaround.JSVALUE_TO_INT64) catch unreachable;
         state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
         state.addSymbol("INT64_TO_JSVALUE_SLOW", workaround.INT64_TO_JSVALUE) catch unreachable;
         state.addSymbol("UINT64_TO_JSVALUE_SLOW", workaround.UINT64_TO_JSVALUE) catch unreachable;
     }

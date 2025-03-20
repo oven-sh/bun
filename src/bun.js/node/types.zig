@@ -18,7 +18,6 @@ const Fs = @import("../../fs.zig");
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSC = bun.JSC;
 const Mode = bun.Mode;
-const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
@@ -58,7 +57,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         /// creating the `err` variant of this type
         /// resulted in Zig incorrectly setting the tag, leading to a switch
         /// statement to just not work.
-        /// we (Zack, Dylan, Dave, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
+        /// we (Zack, Dylan, Chloe, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
         pub const Tag = enum(u8) { err, result };
 
         pub const retry: @This() = if (has_retry) .{ .err = ErrorType.retry } else .{ .err = .{} };

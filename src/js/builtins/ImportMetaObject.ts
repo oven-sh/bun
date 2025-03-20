@@ -51,7 +51,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
       }
 
       // this pulls it out of the promise without delaying by a tick
-      // the promise is already fullfilled by $fullfillModuleSync
+      // the promise is already fulfilled by $fulfillModuleSync
       const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
       moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
     }
@@ -125,7 +125,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
 }
 
 $visibility = "Private";
-export function requireESM(this: ImportMetaObject, resolved) {
+export function requireESM(this: ImportMetaObject, resolved: string) {
   var entry = Loader.registry.$get(resolved);
 
   if (!entry || !entry.evaluated) {

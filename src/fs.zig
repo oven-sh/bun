@@ -1718,7 +1718,7 @@ pub const Path = struct {
     /// an absolute path with native slashes.
     text: string,
     namespace: string,
-    // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
+    // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,

@@ -311,7 +311,7 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             switch (out.*) {
                 .pipe => |pipe| {
                     if (pipe.state == .done) {
-                        out.* = .{ .buffer = pipe.state.done };
+                        out.* = .{ .buffer = CowString.initOwned(pipe.state.done, bun.default_allocator) };
                         pipe.state = .{ .done = &.{} };
                     } else {
                         out.* = .{ .ignore = {} };
@@ -376,12 +376,18 @@ const Readable = union(enum) {
     inherit: void,
     ignore: void,
     closed: void,
-    buffer: []u8,
+    /// Eventually we will implement Readables created from blobs and array buffers.
+    /// When we do that, `buffer` will be borrowed from those objects.
+    ///
+    /// When a buffered `pipe` finishes reading from its file descriptor,
+    /// the owning `Readable` will be convered into this variant and the pipe's
+    /// buffer will be taken as an owned `CowString`.
+    buffer: CowString,
 
     pub fn memoryCost(this: *const Readable) usize {
         return switch (this.*) {
             .pipe => @sizeOf(PipeReader) + this.pipe.memoryCost(),
-            .buffer => this.buffer.len,
+            .buffer => this.buffer.length(),
             else => 0,
         };
     }
@@ -484,6 +490,9 @@ const Readable = union(enum) {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
             },
+            .buffer => |buf| {
+                buf.deinit(bun.default_allocator);
+            },
             else => {},
         }
     }
@@ -502,14 +511,17 @@ const Readable = union(enum) {
                 this.* = .{ .closed = {} };
                 return pipe.toJS(globalThis);
             },
-            .buffer => |buffer| {
+            .buffer => |*buffer| {
                 defer this.* = .{ .closed = {} };
 
-                if (buffer.len == 0) {
+                if (buffer.length() == 0) {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 }
 
-                const blob = JSC.WebCore.Blob.init(buffer, bun.default_allocator, globalThis);
+                const own = buffer.takeSlice(bun.default_allocator) catch {
+                    globalThis.throwOutOfMemory() catch return .zero;
+                };
+                const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
                 return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
             },
             else => {
@@ -535,10 +547,13 @@ const Readable = union(enum) {
                 this.* = .{ .closed = {} };
                 return pipe.toBuffer(globalThis);
             },
-            .buffer => |buf| {
-                this.* = .{ .closed = {} };
+            .buffer => |*buf| {
+                defer this.* = .{ .closed = {} };
+                const own = buf.takeSlice(bun.default_allocator) catch {
+                    return globalThis.throwOutOfMemory();
+                };
 
-                return JSC.MarkedArrayBuffer.fromBytes(buf, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSValue.jsUndefined();
@@ -568,6 +583,9 @@ pub fn getStdout(
     globalThis: *JSGlobalObject,
 ) JSValue {
     this.observable_getters.insert(.stdout);
+    // NOTE: ownership of internal buffers is transferred to the JSValue, which
+    // gets cached on JSSubprocess (created via bindgen). This makes it
+    // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
     return this.stdout.toJS(globalThis, this.hasExited());
 }
 
@@ -750,7 +768,6 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
         }
     };
 
-    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(global);
     const ipc_data = &(this.ipc_data orelse {
         if (this.hasExited()) {
             return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
@@ -770,17 +787,17 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     if (good) {
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(zigGlobal, callback, .null);
+            JSC.Bun__Process__queueNextTick1(global, callback, .null);
             // we need to wait until the send is actually completed to trigger the callback
         }
     } else {
         const ex = global.createTypeErrorInstance("process.send() failed", .{});
         ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+            JSC.Bun__Process__queueNextTick1(global, callback, ex);
         } else {
             const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            JSC.Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+            JSC.Bun__Process__queueNextTick1(global, fnvalue, ex);
         }
     }
 
@@ -2597,6 +2614,7 @@ const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
+const CowString = bun.ptr.CowString;
 const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;

@@ -132,7 +132,7 @@ function checkInvalidHeaderChar(val: string) {
   return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
-const validateHeaderName = (name, label) => {
+const validateHeaderName = name => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
     throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
@@ -1698,6 +1698,8 @@ const OutgoingMessagePrototype = {
 
   setHeader(name, value) {
     validateHeaderName(name);
+    validateHeaderValue(name, value);
+
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
     return this;
@@ -2287,6 +2289,8 @@ const ServerResponsePrototype = {
       _writeHead(statusCode, statusMessage, headers, this);
       updateHasBody(this, statusCode);
       this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+    } else {
+      throw $ERR_HTTP_HEADERS_SENT("write");
     }
 
     return this;
@@ -3591,7 +3595,7 @@ function _writeHead(statusCode, reason, obj, response) {
     let k;
     if (Array.isArray(obj)) {
       if (obj.length % 2 !== 0) {
-        throw new Error("raw headers must have an even number of elements");
+        throw $ERR_INVALID_ARG_VALUE("headers", obj, "must be an object or an array with even number of elements");
       }
 
       for (let n = 0; n < obj.length; n += 2) {

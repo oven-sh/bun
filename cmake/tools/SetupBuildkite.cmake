@@ -148,6 +148,9 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
           ${BUILD_PATH}
         OUTPUT
           ${BUILD_PATH}/libbun-profile.a
+        DEPENDS
+          ${BUILD_PATH}/libbun-profile.a.xz
+
       )
     endif()
   endforeach()

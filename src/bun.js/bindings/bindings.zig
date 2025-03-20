@@ -62,7 +62,7 @@ pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.zig").ScriptE
 pub const DeferredError = @import("./DeferredError.zig").DeferredError;
 pub const Sizes = @import("./sizes.zig");
 
-// TODO(@paperdave): delete and inline these functions
+// TODO(@paperclover): delete and inline these functions
 pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
         const importNotImpl = "Import not implemented";

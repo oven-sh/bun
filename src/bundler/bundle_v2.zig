@@ -1386,7 +1386,7 @@ pub const BundleV2 = struct {
             scbs.items(.ssr_source_index),
         ) |use, source_id, ssr_index| {
             if (use == .client) {
-                // TODO(@paperdave/bake): this file is being generated far too
+                // TODO(@paperclover/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
                 // are live. Tree-shaking figures that out. However,
                 // tree-shaking happens after import binding, which would
@@ -2756,7 +2756,7 @@ pub const BundleV2 = struct {
             },
             .content = .{
                 .javascript = .{
-                    // TODO(@paperdave): remove this ptrCast when Source Index is fixed
+                    // TODO(@paperclover): remove this ptrCast when Source Index is fixed
                     .files_in_chunk_order = @ptrCast(js_reachable_files),
                     .parts_in_chunk_in_order = js_part_ranges,
                 },
@@ -14551,7 +14551,7 @@ pub const LinkerContext = struct {
         bun.assert(chunks.len > 0);
 
         {
-            // TODO(@paperdave/bake): instead of running a renamer per chunk, run it per file
+            // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
             debug(" START {d} renamers", .{chunks.len});
             defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);

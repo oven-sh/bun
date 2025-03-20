@@ -2,7 +2,13 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
-import { bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunExe,
+  isMacOS,
+  isMacOSVersionAtLeast,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -59,8 +65,12 @@ describe("as", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
     db.run("INSERT INTO test (name) VALUES ('Hello')");
-    expect(() => db.query("SELECT * FROM test").as(null)).toThrow("Expected class to be a constructor or undefined");
-    expect(() => db.query("SELECT * FROM test").as(() => {})).toThrow("Expected a constructor");
+    expect(() => db.query("SELECT * FROM test").as(null)).toThrow(
+      "Expected class to be a constructor or undefined",
+    );
+    expect(() => db.query("SELECT * FROM test").as(() => {})).toThrow(
+      "Expected a constructor",
+    );
     function BadClass() {}
     BadClass.prototype = 123;
     expect(() => db.query("SELECT * FROM test").as(BadClass)).toThrow(
@@ -72,20 +82,36 @@ describe("as", () => {
 describe("safeIntegers", () => {
   it("should default to false", () => {
     const db = Database.open(":memory:");
-    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
-    db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+    db.exec(
+      "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)",
+    );
+    db.run(
+      "INSERT INTO foo (age) VALUES (?)",
+      BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+    );
     const query = db.query("SELECT * FROM foo");
     expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
     query.safeIntegers(true);
-    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+    expect(query.all()).toEqual([{
+      id: 1n,
+      age: BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+    }]);
   });
 
   it("should allow overwriting default", () => {
     const db = Database.open(":memory:", { safeIntegers: true });
-    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
-    db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+    db.exec(
+      "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)",
+    );
+    db.run(
+      "INSERT INTO foo (age) VALUES (?)",
+      BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+    );
     const query = db.query("SELECT * FROM foo");
-    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+    expect(query.all()).toEqual([{
+      id: 1n,
+      age: BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+    }]);
     query.safeIntegers(false);
     query.as;
     expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
@@ -97,9 +123,11 @@ describe("safeIntegers", () => {
 
     const query = db.query("INSERT INTO test (value) VALUES ($value)");
 
-    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n }))
+      .toThrow(RangeError);
     query.safeIntegers(false);
-    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).not.toThrow(RangeError);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n }))
+      .not.toThrow(RangeError);
   });
 });
 
@@ -131,20 +159,38 @@ describe("safeIntegers", () => {
           db.exec(
             "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
           );
-          const { changes, lastInsertRowid } = db.run(`INSERT INTO cats (name, age) VALUES (${query})`, input);
+          const { changes, lastInsertRowid } = db.run(
+            `INSERT INTO cats (name, age) VALUES (${query})`,
+            input,
+          );
           expect(changes).toBe(1);
           expect(lastInsertRowid).toBe(1);
 
-          expect(db.query("SELECT * FROM cats").all()).toStrictEqual([{ id: 1, name: "myname", age: 42 }]);
-          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).all(input)).toStrictEqual([
+          expect(db.query("SELECT * FROM cats").all()).toStrictEqual([{
+            id: 1,
+            name: "myname",
+            age: 42,
+          }]);
+          expect(
+            db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).all(
+              input,
+            ),
+          ).toStrictEqual([
             { id: 1, name: "myname", age: 42 },
           ]);
-          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).get(input)).toStrictEqual({
+          expect(
+            db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).get(
+              input,
+            ),
+          ).toStrictEqual({
             id: 1,
             name: "myname",
             age: 42,
           });
-          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).values(input)).toStrictEqual([
+          expect(
+            db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`)
+              .values(input),
+          ).toStrictEqual([
             [1, "myname", 42],
           ]);
         });
@@ -156,10 +202,14 @@ describe("safeIntegers", () => {
             it(`${method}()`, () => {
               const db = Database.open(":memory:", { strict: true });
 
-              db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+              db.exec(
+                "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)",
+              );
 
               expect(() => {
-                const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
+                const query = db.query(
+                  "INSERT INTO cats (name, age) VALUES (@name, @age)",
+                );
 
                 query[method]({
                   "name": "Joey",
@@ -173,70 +223,87 @@ describe("safeIntegers", () => {
   }
 }
 
-var encode = text => new TextEncoder().encode(text);
+var encode = (text) => new TextEncoder().encode(text);
 
 // Use different numbers of columns to ensure we crash if using initializeIndex() on a large array can cause bugs.
 // https://github.com/oven-sh/bun/issues/11747
-it.each([1, 16, 256, 512, 768])("should work with duplicate columns in values() of length %d", columnCount => {
-  const db = new Database(":memory:");
+it.each([1, 16, 256, 512, 768])(
+  "should work with duplicate columns in values() of length %d",
+  (columnCount) => {
+    const db = new Database(":memory:");
 
-  db.prepare(
-    `create table \`users\` ( id integer primary key autoincrement, name text, reportTo integer, ${Array.from(
-      {
-        length: columnCount,
-      },
-      (_, i) => `column${i} text DEFAULT "make GC happen!!" NOT NULL${i === columnCount - 1 ? "" : ","}`,
-    ).join("")} );`,
-  ).run();
-  const names = [
-    ["dan", null],
-    ["alef", 1],
-    ["bob", 2],
-    ["carl", 3],
-    ["dave", 4],
-    ["eve", 5],
-    ["fred", 6],
-    ["george", 7],
-    ["harry", 8],
-    ["isaac", 9],
-    ["jacob", 10],
-    ["kevin", 11],
-    ["larry", 12],
-    ["mike", 13],
-    ["nathan", 14],
-    ["oscar", 15],
-    ["peter", 16],
-    ["qwerty", 17],
-    ["robert", 18],
-    ["samuel", 19],
-    ["tom", 20],
-    ["william", 21],
-    ["xavier", 22],
-    ["yanny", 23],
-    ["zachary", 24],
-  ];
-  for (const [name, reportTo] of names) {
-    db.prepare("insert into `users` (name, reportTo) values (?, ?);").run(name, reportTo);
-  }
-  const results = db
-    .prepare("select * from 'users' left join 'users' reportee on `users`.id = reportee.reportTo; ")
-    .values();
-  expect(results).toHaveLength(names.length);
-  expect(results[0]).toHaveLength((columnCount + 3) * 2);
-  let prevResult;
-  for (let result of results) {
-    expect(result).toHaveLength((columnCount + 3) * 2);
-    if (prevResult) {
-      expect(prevResult.slice(columnCount + 3, (columnCount + 3) * 2)).toEqual(result.slice(0, columnCount + 3));
+    db.prepare(
+      `create table \`users\` ( id integer primary key autoincrement, name text, reportTo integer, ${
+        Array.from(
+          {
+            length: columnCount,
+          },
+          (_, i) =>
+            `column${i} text DEFAULT "make GC happen!!" NOT NULL${
+              i === columnCount - 1 ? "" : ","
+            }`,
+        ).join("")
+      } );`,
+    ).run();
+    const names = [
+      ["dan", null],
+      ["alef", 1],
+      ["bob", 2],
+      ["carl", 3],
+      ["chloe", 4],
+      ["eve", 5],
+      ["fred", 6],
+      ["george", 7],
+      ["harry", 8],
+      ["isaac", 9],
+      ["jacob", 10],
+      ["kevin", 11],
+      ["larry", 12],
+      ["mike", 13],
+      ["nathan", 14],
+      ["oscar", 15],
+      ["peter", 16],
+      ["qwerty", 17],
+      ["robert", 18],
+      ["samuel", 19],
+      ["tom", 20],
+      ["william", 21],
+      ["xavier", 22],
+      ["yanny", 23],
+      ["zachary", 24],
+    ];
+    for (const [name, reportTo] of names) {
+      db.prepare("insert into `users` (name, reportTo) values (?, ?);").run(
+        name,
+        reportTo,
+      );
     }
-    prevResult = result;
-  }
-});
+    const results = db
+      .prepare(
+        "select * from 'users' left join 'users' reportee on `users`.id = reportee.reportTo; ",
+      )
+      .values();
+    expect(results).toHaveLength(names.length);
+    expect(results[0]).toHaveLength((columnCount + 3) * 2);
+    let prevResult;
+    for (let result of results) {
+      expect(result).toHaveLength((columnCount + 3) * 2);
+      if (prevResult) {
+        expect(prevResult.slice(columnCount + 3, (columnCount + 3) * 2))
+          .toEqual(result.slice(0, columnCount + 3));
+      }
+      prevResult = result;
+    }
+  },
+);
 
 it("Database.open", () => {
   // in a folder which doesn't exist
   try {
-    Database.open("/this/database/does/not/exist.sqlite", constants.SQLITE_OPEN_READWRITE);
+    Database.open(
+      "/this/database/does/not/exist.sqlite",
+      constants.SQLITE_OPEN_READWRITE,
+    );
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -244,7 +311,10 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(tmpbase + `database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
+    Database.open(
+      tmpbase + `database-${Math.random()}.sqlite`,
+      constants.SQLITE_OPEN_READWRITE,
+    );
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -252,7 +322,9 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readonly: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, {
+      readonly: true,
+    });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -260,7 +332,9 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readwrite: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, {
+      readwrite: true,
+    });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -281,7 +355,10 @@ it("Database.open", () => {
 
 it("upsert cross-process, see #1366", () => {
   const dir = realpathSync(tmpdir()) + "/";
-  const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {
+  const { exitCode } = spawnSync([
+    bunExe(),
+    import.meta.dir + "/sqlite-cross-process.js",
+  ], {
     env: {
       SQLITE_DIR: dir,
     },
@@ -291,7 +368,9 @@ it("upsert cross-process, see #1366", () => {
 
   const db2 = Database.open(dir + "get-persist.sqlite");
 
-  expect(db2.query(`SELECT id FROM examples`).all()).toEqual([{ id: "hello" }, { id: "world" }]);
+  expect(db2.query(`SELECT id FROM examples`).all()).toEqual([{ id: "hello" }, {
+    id: "world",
+  }]);
 });
 
 it("creates", () => {
@@ -299,11 +378,31 @@ it("creates", () => {
   db.exec(
     "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created TEXT, deci FLOAT, blobby BLOB)",
   );
-  const stmt = db.prepare("INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)");
+  const stmt = db.prepare(
+    "INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)",
+  );
 
-  stmt.run(["foo", 1, Math.fround(1.111), new Date(1995, 12, 19).toISOString(), encode("Hello World")]);
-  stmt.run(["bar", 2, Math.fround(2.222), new Date(1995, 12, 19).toISOString(), encode("Hello World")]);
-  stmt.run(["baz", 3, Math.fround(3.333), new Date(1995, 12, 19).toISOString(), encode("Hello World")]);
+  stmt.run([
+    "foo",
+    1,
+    Math.fround(1.111),
+    new Date(1995, 12, 19).toISOString(),
+    encode("Hello World"),
+  ]);
+  stmt.run([
+    "bar",
+    2,
+    Math.fround(2.222),
+    new Date(1995, 12, 19).toISOString(),
+    encode("Hello World"),
+  ]);
+  stmt.run([
+    "baz",
+    3,
+    Math.fround(3.333),
+    new Date(1995, 12, 19).toISOString(),
+    encode("Hello World"),
+  ]);
 
   stmt.finalize();
 
@@ -360,7 +459,9 @@ it("int52", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, int64 INTEGER)");
   db.run("INSERT INTO test (int64) VALUES (?)", Number.MAX_SAFE_INTEGER);
-  expect(db.query("SELECT * FROM test").get().int64).toBe(Number.MAX_SAFE_INTEGER);
+  expect(db.query("SELECT * FROM test").get().int64).toBe(
+    Number.MAX_SAFE_INTEGER,
+  );
 });
 
 it("typechecks", () => {
@@ -371,7 +472,7 @@ it("typechecks", () => {
 
   const q = db.prepare("SELECT * FROM test WHERE (name = ?)");
 
-  var expectfail = val => {
+  var expectfail = (val) => {
     try {
       q.run([val]);
       throw new Error("Expected error");
@@ -434,7 +535,13 @@ it("db.query supports TypedArray", () => {
     }),
   );
 
-  expect(JSON.stringify(db.query("SELECT * FROM test WHERE (blobby = ?)").get([encode("Hello World")]))).toBe(
+  expect(
+    JSON.stringify(
+      db.query("SELECT * FROM test WHERE (blobby = ?)").get([
+        encode("Hello World"),
+      ]),
+    ),
+  ).toBe(
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
@@ -610,10 +717,24 @@ it("db.query()", () => {
   }
 
   // check that it supports multiple arguments
-  expect(JSON.stringify(db.query("SELECT * FROM test where (name = ? OR name = ?)").all(["Hello", "Fooooo"]))).toBe(
+  expect(
+    JSON.stringify(
+      db.query("SELECT * FROM test where (name = ? OR name = ?)").all([
+        "Hello",
+        "Fooooo",
+      ]),
+    ),
+  ).toBe(
     JSON.stringify([{ id: 1, name: "Hello" }]),
   );
-  expect(JSON.stringify(db.query("SELECT * FROM test where (name = ? OR name = ?)").all("Hello", "Fooooo"))).toBe(
+  expect(
+    JSON.stringify(
+      db.query("SELECT * FROM test where (name = ? OR name = ?)").all(
+        "Hello",
+        "Fooooo",
+      ),
+    ),
+  ).toBe(
     JSON.stringify([{ id: 1, name: "Hello" }]),
   );
 
@@ -627,10 +748,11 @@ it("db.query()", () => {
   // named parameters
   expect(
     JSON.stringify(
-      db.query("SELECT * FROM test where (name = $hello OR name = $goodbye)").all({
-        $hello: "Hello",
-        $goodbye: "Fooooo",
-      }),
+      db.query("SELECT * FROM test where (name = $hello OR name = $goodbye)")
+        .all({
+          $hello: "Hello",
+          $goodbye: "Fooooo",
+        }),
     ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
 
@@ -645,8 +767,14 @@ it("db.query()", () => {
   let i;
   i = 0;
   for (const row of db.query("SELECT * FROM test")) {
-    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
-    i === 1 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+    i === 0 &&
+      expect(JSON.stringify(row)).toBe(
+        JSON.stringify({ id: 1, name: "Hello" }),
+      );
+    i === 1 &&
+      expect(JSON.stringify(row)).toBe(
+        JSON.stringify({ id: 2, name: "World" }),
+      );
     i++;
   }
   expect(i).toBe(2);
@@ -654,16 +782,29 @@ it("db.query()", () => {
   // iterate (no args)
   i = 0;
   for (const row of db.query("SELECT * FROM test").iterate()) {
-    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
-    i === 1 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+    i === 0 &&
+      expect(JSON.stringify(row)).toBe(
+        JSON.stringify({ id: 1, name: "Hello" }),
+      );
+    i === 1 &&
+      expect(JSON.stringify(row)).toBe(
+        JSON.stringify({ id: 2, name: "World" }),
+      );
     i++;
   }
   expect(i).toBe(2);
 
   // iterate (args)
   i = 0;
-  for (const row of db.query("SELECT * FROM test WHERE name = $name").iterate({ $name: "World" })) {
-    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+  for (
+    const row of db.query("SELECT * FROM test WHERE name = $name").iterate({
+      $name: "World",
+    })
+  ) {
+    i === 0 &&
+      expect(JSON.stringify(row)).toBe(
+        JSON.stringify({ id: 2, name: "World" }),
+      );
     i++;
   }
   expect(i).toBe(1);
@@ -672,7 +813,10 @@ it("db.query()", () => {
   const stmt = db.query("SELECT * FROM test");
   i = 0;
   for (const row of stmt) {
-    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
+    i === 0 &&
+      expect(JSON.stringify(row)).toBe(
+        JSON.stringify({ id: 1, name: "Hello" }),
+      );
     i++;
     break;
   }
@@ -706,9 +850,13 @@ it("db.query()", () => {
 it("db.run()", () => {
   const db = Database.open(":memory:");
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+  db.exec(
+    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
+  );
 
-  const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+  const insert = db.query(
+    "INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name",
+  ).all({
     "@name": "Joey",
     "@age": 2,
   });
@@ -718,9 +866,13 @@ for (let strict of [false, true]) {
   it(`strict: ${strict}`, () => {
     const db = Database.open(":memory:", { strict });
 
-    db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+    db.exec(
+      "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
+    );
 
-    const result = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+    const result = db.query(
+      "INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name",
+    ).all({
       [(!strict ? "@" : "") + "name"]: "Joey",
       [(!strict ? "@" : "") + "age"]: 2,
     });
@@ -730,9 +882,13 @@ for (let strict of [false, true]) {
 it("strict: true", () => {
   const db = Database.open(":memory:", { strict: true });
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+  db.exec(
+    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
+  );
 
-  const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+  const insert = db.query(
+    "INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name",
+  ).all({
     "name": "Joey",
     "age": 2,
   });
@@ -743,10 +899,14 @@ describe("does not throw missing parameter error in", () => {
     it(`${method}()`, () => {
       const db = Database.open(":memory:");
 
-      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+      db.exec(
+        "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)",
+      );
 
       expect(() => {
-        const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
+        const query = db.query(
+          "INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name",
+        );
         const result = query[method]({
           "@name": "Joey",
         });
@@ -773,12 +933,16 @@ describe("does not throw missing parameter error in", () => {
 it("db.transaction()", () => {
   const db = Database.open(":memory:");
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+  db.exec(
+    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
+  );
 
-  const insert = db.prepare("INSERT INTO cats (name, age) VALUES (@name, @age)");
+  const insert = db.prepare(
+    "INSERT INTO cats (name, age) VALUES (@name, @age)",
+  );
 
   expect(db.inTransaction).toBe(false);
-  const insertMany = db.transaction(cats => {
+  const insertMany = db.transaction((cats) => {
     expect(db.inTransaction).toBe(true);
     try {
       for (const cat of cats) insert.run(cat);
@@ -820,7 +984,10 @@ it("db.transaction()", () => {
 it("inlineCapacity #987", async () => {
   const path = tmpbase + "bun-987.db";
   if (!existsSync(path)) {
-    const arrayBuffer = await (await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")).arrayBuffer();
+    const arrayBuffer =
+      await (await fetch(
+        "https://github.com/oven-sh/bun/files/9265429/logs.log",
+      )).arrayBuffer();
     writeFileSync(path, arrayBuffer);
   }
 
@@ -874,7 +1041,9 @@ it("inlineCapacity #987", async () => {
 // https://github.com/oven-sh/bun/issues/1553
 it("latin1 supplement chars", () => {
   const db = new Database();
-  db.run("CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+  db.run(
+    "CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+  );
   db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
   db.run("INSERT INTO foo (greeting) VALUES (?)", "Español");
   db.run("INSERT INTO foo (greeting) VALUES (?)", "¿Qué sucedió?");
@@ -925,7 +1094,7 @@ it("supports FTS5", () => {
   const db = new Database();
   db.run("CREATE VIRTUAL TABLE movies USING fts5(title, tokenize='trigram')");
   const insert = db.prepare("INSERT INTO movies VALUES ($title)");
-  const insertMovies = db.transaction(movies => {
+  const insertMovies = db.transaction((movies) => {
     for (const movie of movies) insert.run(movie);
   });
   insertMovies([
@@ -936,7 +1105,9 @@ it("supports FTS5", () => {
     { $title: "City of God" },
     { $title: "Spirited Away" },
   ]);
-  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([{ title: "WarGames" }]);
+  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([{
+    title: "WarGames",
+  }]);
 });
 
 describe("Database.run", () => {
@@ -957,7 +1128,9 @@ describe("Database.run", () => {
       expect(true).toBeFalsy();
     } catch (e) {
       expect(e.message).not.toBe("not an error");
-      expect(e.message).toBe("Query contained no valid SQL statement; likely empty query.");
+      expect(e.message).toBe(
+        "Query contained no valid SQL statement; likely empty query.",
+      );
     }
   });
 });
@@ -1000,7 +1173,9 @@ it("#3991", () => {
 
 it("#5872", () => {
   const db = new Database(":memory:");
-  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+  db.run(
+    "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+  );
   const query = db.query("INSERT INTO foo (greeting) VALUES ($greeting);");
   const result = query.all({ $greeting: "sup" });
   expect(result).toEqual([]);
@@ -1009,9 +1184,14 @@ it("#5872", () => {
 it("latin1 sqlite3 column name", () => {
   const db = new Database(":memory:");
 
-  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, copyright© TEXT)");
+  db.run(
+    "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, copyright© TEXT)",
+  );
 
-  db.run("INSERT INTO foo (id, copyright©) VALUES (?, ?)", [1, "© 2021 The Authors. All rights reserved."]);
+  db.run("INSERT INTO foo (id, copyright©) VALUES (?, ?)", [
+    1,
+    "© 2021 The Authors. All rights reserved.",
+  ]);
 
   expect(db.query("SELECT * FROM foo").all()).toEqual([
     {
@@ -1103,11 +1283,24 @@ it("multiple statements", () => {
     "INSERT INTO foo (name) VALUES ('barabc')",
     "INSERT INTO foo (name) VALUES ('!bazaspdok')",
   ];
-  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t", "\t;", "\r\n;"]) {
+  for (
+    let separator of [
+      ";",
+      ";\n",
+      "\n;",
+      "\r\n;",
+      ";\r\n",
+      ";\t",
+      "\t;",
+      "\r\n;",
+    ]
+  ) {
     for (let spaceOffset of [1, 0, -1]) {
       for (let spacesCount = 0; spacesCount < 8; spacesCount++) {
         const db = new Database(":memory:");
-        db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+        db.run(
+          "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+        );
 
         const prefix = spaceOffset < 0 ? " ".repeat(spacesCount) : "";
         const suffix = spaceOffset > 0 ? " ".repeat(spacesCount) : "";
@@ -1139,44 +1332,89 @@ it.skipIf(
 )("math functions", () => {
   const db = new Database(":memory:");
 
-  expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([{ "ABS(-243.5)": 243.5 }]);
-  expect(db.prepare("SELECT ACOS(0.25)").all()).toEqual([{ "ACOS(0.25)": 1.318116071652818 }]);
-  expect(db.prepare("SELECT ASIN(0.25)").all()).toEqual([{ "ASIN(0.25)": 0.25268025514207865 }]);
-  expect(db.prepare("SELECT ATAN(0.25)").all()).toEqual([{ "ATAN(0.25)": 0.24497866312686414 }]);
+  expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([{
+    "ABS(-243.5)": 243.5,
+  }]);
+  expect(db.prepare("SELECT ACOS(0.25)").all()).toEqual([{
+    "ACOS(0.25)": 1.318116071652818,
+  }]);
+  expect(db.prepare("SELECT ASIN(0.25)").all()).toEqual([{
+    "ASIN(0.25)": 0.25268025514207865,
+  }]);
+  expect(db.prepare("SELECT ATAN(0.25)").all()).toEqual([{
+    "ATAN(0.25)": 0.24497866312686414,
+  }]);
   db.exec(
     `
     CREATE TABLE num_table (value TEXT NOT NULL);
     INSERT INTO num_table values (1), (2), (6);
     `,
   );
-  expect(db.prepare(`SELECT AVG(value) as value FROM num_table`).all()).toEqual([{ value: 3 }]);
-  expect(db.prepare("SELECT CEILING(0.25)").all()).toEqual([{ "CEILING(0.25)": 1 }]);
-  expect(db.prepare("SELECT COUNT(*) FROM num_table").all()).toEqual([{ "COUNT(*)": 3 }]);
-  expect(db.prepare("SELECT COS(0.25)").all()).toEqual([{ "COS(0.25)": 0.9689124217106447 }]);
-  expect(db.prepare("SELECT DEGREES(0.25)").all()).toEqual([{ "DEGREES(0.25)": 14.32394487827058 }]);
-  expect(db.prepare("SELECT EXP(0.25)").all()).toEqual([{ "EXP(0.25)": 1.2840254166877414 }]);
-  expect(db.prepare("SELECT FLOOR(0.25)").all()).toEqual([{ "FLOOR(0.25)": 0 }]);
-  expect(db.prepare("SELECT LOG10(0.25)").all()).toEqual([{ "LOG10(0.25)": -0.6020599913279624 }]);
-  expect(db.prepare("SELECT PI()").all()).toEqual([{ "PI()": 3.141592653589793 }]);
-  expect(db.prepare("SELECT POWER(0.25, 3)").all()).toEqual([{ "POWER(0.25, 3)": 0.015625 }]);
-  expect(db.prepare("SELECT RADIANS(0.25)").all()).toEqual([{ "RADIANS(0.25)": 0.004363323129985824 }]);
-  expect(db.prepare("SELECT ROUND(0.25)").all()).toEqual([{ "ROUND(0.25)": 0 }]);
+  expect(db.prepare(`SELECT AVG(value) as value FROM num_table`).all()).toEqual(
+    [{ value: 3 }],
+  );
+  expect(db.prepare("SELECT CEILING(0.25)").all()).toEqual([{
+    "CEILING(0.25)": 1,
+  }]);
+  expect(db.prepare("SELECT COUNT(*) FROM num_table").all()).toEqual([{
+    "COUNT(*)": 3,
+  }]);
+  expect(db.prepare("SELECT COS(0.25)").all()).toEqual([{
+    "COS(0.25)": 0.9689124217106447,
+  }]);
+  expect(db.prepare("SELECT DEGREES(0.25)").all()).toEqual([{
+    "DEGREES(0.25)": 14.32394487827058,
+  }]);
+  expect(db.prepare("SELECT EXP(0.25)").all()).toEqual([{
+    "EXP(0.25)": 1.2840254166877414,
+  }]);
+  expect(db.prepare("SELECT FLOOR(0.25)").all()).toEqual([{
+    "FLOOR(0.25)": 0,
+  }]);
+  expect(db.prepare("SELECT LOG10(0.25)").all()).toEqual([{
+    "LOG10(0.25)": -0.6020599913279624,
+  }]);
+  expect(db.prepare("SELECT PI()").all()).toEqual([{
+    "PI()": 3.141592653589793,
+  }]);
+  expect(db.prepare("SELECT POWER(0.25, 3)").all()).toEqual([{
+    "POWER(0.25, 3)": 0.015625,
+  }]);
+  expect(db.prepare("SELECT RADIANS(0.25)").all()).toEqual([{
+    "RADIANS(0.25)": 0.004363323129985824,
+  }]);
+  expect(db.prepare("SELECT ROUND(0.25)").all()).toEqual([{
+    "ROUND(0.25)": 0,
+  }]);
   expect(db.prepare("SELECT SIGN(0.25)").all()).toEqual([{ "SIGN(0.25)": 1 }]);
-  expect(db.prepare("SELECT SIN(0.25)").all()).toEqual([{ "SIN(0.25)": 0.24740395925452294 }]);
-  expect(db.prepare("SELECT SQRT(0.25)").all()).toEqual([{ "SQRT(0.25)": 0.5 }]);
-  expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([{ "TAN(0.25)": 0.25534192122103627 }]);
+  expect(db.prepare("SELECT SIN(0.25)").all()).toEqual([{
+    "SIN(0.25)": 0.24740395925452294,
+  }]);
+  expect(db.prepare("SELECT SQRT(0.25)").all()).toEqual([{
+    "SQRT(0.25)": 0.5,
+  }]);
+  expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([{
+    "TAN(0.25)": 0.25534192122103627,
+  }]);
 });
 
 it("issue#6597", () => {
   // better-sqlite3 returns the last value of duplicate fields
   const db = new Database(":memory:");
-  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255), CreatedAt TIMESTAMP)");
+  db.run(
+    "CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255), CreatedAt TIMESTAMP)",
+  );
   db.run(
     "CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, CreatedAt TIMESTAMP, FOREIGN KEY (Driver) REFERENCES Users(Id))",
   );
-  db.run('INSERT INTO Users (Id, Name, CreatedAt) VALUES (1, "Alice", "2022-01-01");');
-  db.run('INSERT INTO Cars (Id, Driver, CreatedAt) VALUES (2, 1, "2023-01-01");');
-  const result = db.prepare("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
+  db.run(
+    'INSERT INTO Users (Id, Name, CreatedAt) VALUES (1, "Alice", "2022-01-01");',
+  );
+  db.run(
+    'INSERT INTO Cars (Id, Driver, CreatedAt) VALUES (2, 1, "2023-01-01");',
+  );
+  const result = db.prepare("SELECT * FROM Cars JOIN Users ON Driver=Users.Id")
+    .get();
   expect(result).toStrictEqual({
     Id: 1,
     Driver: 1,
@@ -1196,9 +1434,14 @@ it("issue#6597 with many columns", () => {
   values_bar[0] = values_foo[0];
   db.run(`CREATE TABLE foo (${columns.join(",")})`);
   db.run(`CREATE TABLE bar (${columns.join(",")})`);
-  db.run(`INSERT INTO foo (${columns.join(",")}) VALUES (${values_foo.join(",")})`);
-  db.run(`INSERT INTO bar (${columns.join(",")}) VALUES (${values_bar.join(",")})`);
-  const result = db.prepare("SELECT * FROM foo JOIN bar ON foo.col0 = bar.col0").get();
+  db.run(
+    `INSERT INTO foo (${columns.join(",")}) VALUES (${values_foo.join(",")})`,
+  );
+  db.run(
+    `INSERT INTO bar (${columns.join(",")}) VALUES (${values_bar.join(",")})`,
+  );
+  const result = db.prepare("SELECT * FROM foo JOIN bar ON foo.col0 = bar.col0")
+    .get();
   expect(result.col0).toBe("foo0");
   for (let i = 1; i < count; i++) {
     expect(result[`col${i}`]).toBe(`bar${i}`);
@@ -1208,14 +1451,18 @@ it("issue#6597 with many columns", () => {
 
 it("issue#7147", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
+  db.exec(
+    "CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)",
+  );
   db.exec(
     "CREATE TABLE bars (bar_id INTEGER NOT NULL PRIMARY KEY, foo_id INTEGER NOT NULL, bar_a INTEGER, bar_b INTEGER, FOREIGN KEY (foo_id) REFERENCES foos (foo_id))",
   );
   db.exec("INSERT INTO foos VALUES (1, 'foo_1', 'foo_2')");
   db.exec("INSERT INTO bars VALUES (1, 1, 'bar_1', 'bar_2')");
   db.exec("INSERT INTO bars VALUES (2, 1, 'baz_3', 'baz_4')");
-  const query = db.query("SELECT f.*, b.* FROM foos f JOIN bars b ON b.foo_id = f.foo_id");
+  const query = db.query(
+    "SELECT f.*, b.* FROM foos f JOIN bars b ON b.foo_id = f.foo_id",
+  );
   const result = query.all();
   expect(result).toStrictEqual([
     {
@@ -1275,7 +1522,9 @@ it("should dispose AND throw an error if the database is in use", () => {
     let prepared;
     {
       using db = new Database(":memory:");
-      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec(
+        "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+      );
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
@@ -1286,7 +1535,9 @@ it("should dispose", () => {
   expect(() => {
     {
       using db = new Database(":memory:");
-      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec(
+        "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+      );
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
     }
   }).not.toThrow();
@@ -1301,7 +1552,9 @@ it("can continue to use existing statements after database has been GC'd", async
     function leakTheStatement() {
       const db = new Database(":memory:");
       console.log("---");
-      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec(
+        "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+      );
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       const prepared = db.prepare("SELECT * FROM foo");
       registry.register(db);

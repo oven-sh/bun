@@ -4465,7 +4465,7 @@ public:
                 // /path/to/file.js:
                 // /path/to/file.js:1
                 // node:child_process
-                // C:\Users\dave\bun\file.js
+                // C:\Users\chloe\bun\file.js
 
                 marker3 = lineInner.length();
 
@@ -4484,9 +4484,9 @@ public:
             // /path/to/file.js:1:
             // /path/to/file.js:1:2
             // node:child_process:1:2
-            // C:\Users\dave\bun\file.js:
-            // C:\Users\dave\bun\file.js:1
-            // C:\Users\dave\bun\file.js:1:2
+            // C:\Users\chloe\bun\file.js:
+            // C:\Users\chloe\bun\file.js:1
+            // C:\Users\chloe\bun\file.js:1:2
 
             while (true) {
                 auto newcolon = lineInner.find(':', marker3 + 1);

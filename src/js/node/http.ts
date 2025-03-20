@@ -41,6 +41,7 @@ const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
 const firstWriteSymbol = Symbol("firstWrite");
 const headersSymbol = Symbol("headers");
+const kUniqueHeaders = Symbol("kUniqueHeaders");
 const isTlsSymbol = Symbol("is_tls");
 const kClearTimeout = Symbol("kClearTimeout");
 const kfakeSocket = Symbol("kfakeSocket");
@@ -66,7 +67,7 @@ const kEmptyObject = Object.freeze(Object.create(null));
 
 const { kDeprecatedReplySymbol } = require("internal/http");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
+const { isTypedArray, isArrayBuffer, isUint8Array } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
@@ -74,6 +75,7 @@ const { urlToHttpOptions } = require("internal/url");
 const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject } = require("internal/validators");
 const { isIPv6 } = require("node:net");
 const ObjectKeys = Object.keys;
+const ArrayIsArray = Array.isArray;
 
 const {
   getHeader,
@@ -130,13 +132,17 @@ function checkInvalidHeaderChar(val: string) {
   return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
-const validateHeaderName = (name, label?) => {
+function validateHeaderName(name: unknown, label?: string): asserts name is string {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
     throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
   }
-};
+}
 
-const validateHeaderValue = (name, value) => {
+/**
+ * @param name header name. used in error messages
+ * @param value header value to validate
+ */
+const validateHeaderValue = (name: string, value: unknown) => {
   if (value === undefined) {
     throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
   }
@@ -1627,6 +1633,12 @@ const OutgoingMessagePrototype = {
       encoding = undefined;
     }
     hasServerResponseFinished(this, chunk, callback);
+    if (chunk === null) {
+      throw $ERR_STREAM_NULL_VALUES();
+    } else if (typeof chunk !== "string" && !isUint8Array(chunk)) {
+      throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+    }
+
     if (chunk) {
       const len = Buffer.byteLength(chunk, encoding || (typeof chunk === "string" ? "utf8" : "buffer"));
       if (len > 0) {
@@ -1634,6 +1646,7 @@ const OutgoingMessagePrototype = {
         this.outputData.push(chunk);
       }
     }
+
     return this.writableHighWaterMark >= this.outputSize;
   },
 
@@ -1664,8 +1677,12 @@ const OutgoingMessagePrototype = {
     headers.delete(name);
   },
 
-  setHeader(name, value) {
+  setHeader(name: string, value: unknown) {
+    if (this._header) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
     validateHeaderName(name);
+    validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
     return this;
@@ -1687,7 +1704,48 @@ const OutgoingMessagePrototype = {
   },
 
   addTrailers(headers) {
-    throw new Error("not implemented");
+    this._trailer = "";
+    const keys = ObjectKeys(headers);
+    const isArray = ArrayIsArray(headers);
+    for (let i = 0; i < keys.length; i++) {
+      let field, value;
+      const key = keys[i];
+      if (isArray) {
+        const header = headers[key];
+        field = header[0];
+        value = header[1];
+      } else {
+        field = key;
+        value = headers[key];
+      }
+      validateHeaderName(field, "Trailer name");
+
+      // Check if the field must be sent several times
+      const isArrayValue = ArrayIsArray(value);
+      if (
+        isArrayValue &&
+        value.length > 1 &&
+        (!this[kUniqueHeaders] || !this[kUniqueHeaders].has(field.toLowerCase()))
+      ) {
+        for (let j = 0, l = value.length; j < l; j++) {
+          if (checkInvalidHeaderChar(value[j])) {
+            $debug('Trailer "%s"[%d] contains invalid characters', field, j);
+            throw $ERR_INVALID_CHAR("trailer content", field);
+          }
+          this._trailer += field + ": " + value[j] + "\r\n";
+        }
+      } else {
+        if (isArrayValue) {
+          value = value.join("; ");
+        }
+
+        if (checkInvalidHeaderChar(value)) {
+          $debug('Trailer "%s" contains invalid characters', field);
+          throw $ERR_INVALID_CHAR("trailer content", field);
+        }
+        this._trailer += field + ": " + value + "\r\n";
+      }
+    }
   },
 
   setTimeout(msecs, callback) {
@@ -3120,6 +3178,7 @@ function ClientRequest(input, options, cb) {
   }
 
   // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
+  this[kUniqueHeaders] = new Set();
 
   const { signal: _signal, ...optsWithoutSignal } = options;
   this[kOptions] = optsWithoutSignal;

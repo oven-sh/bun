@@ -1159,7 +1159,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     BunString specifierStr = Bun::toString(specifier);
     if (auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res)) {
         if (res.success)
-        return JSC::JSValue::encode(result);
+            return JSC::JSValue::encode(result);
     }
     ASSERT_WITH_MESSAGE(false, "Failed to fetch builtin module %s", specifier.utf8().data());
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);

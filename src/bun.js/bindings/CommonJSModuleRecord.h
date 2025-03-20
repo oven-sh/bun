@@ -107,7 +107,8 @@ public:
         Vector<JSC::Identifier, 4>& exportNames,
         JSC::MarkedArgumentBuffer& exportValues);
 
-    JSValue exportsObject() {
+    JSValue exportsObject()
+    {
         return this->get(globalObject(), JSC::PropertyName(WebCore::clientData(vm())->builtinNames().exportsPublicName()));
     }
     void setExportsObject(JSC::JSValue exportsObject);

@@ -558,8 +558,8 @@ JSValue resolveAndFetchBuiltinModule(
                 auto result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask));
                 RETURN_IF_EXCEPTION(scope, {});
                 return result;
-            } 
-            
+            }
+
             return {};
         }
         }

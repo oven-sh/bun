@@ -61,6 +61,7 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+const kTrailers = Symbol("kTrailers");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -1250,6 +1251,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._dumped = false;
   this.complete = false;
   this._closed = false;
+  this[kTrailers] = null;
 
   // (url, method, headers, rawHeaders, handle, hasBody)
   if (req === kHandle) {
@@ -1513,10 +1515,34 @@ const IncomingMessagePrototype = {
     // noop
   },
   get trailers() {
-    return kEmptyObject;
+    if (!this[kTrailers]) {
+      this[kTrailers] = Object.create(null);
+    }
+    return this[kTrailers];
   },
   set trailers(value) {
-    // noop
+    this[kTrailers] = value;
+  },
+  _addHeaderLines(headers, n) {
+    if (headers?.length) {
+      let dest;
+      if (this.complete) {
+        dest = this.trailers;
+      } else {
+        dest = this.headers;
+      }
+
+      if (dest) {
+        for (let i = 0; i < n; i += 2) {
+          this._addHeaderLine(headers[i], headers[i + 1], dest);
+        }
+      }
+    }
+  },
+  _addHeaderLine(field, value, dest) {
+    if (dest[field] === undefined) {
+      dest[field] = value;
+    }
   },
   setTimeout(msecs, callback) {
     this.take;

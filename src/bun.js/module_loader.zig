@@ -2223,7 +2223,7 @@ pub const ModuleLoader = struct {
         };
         ret.* = .ok(
             getHardcodedModule(jsc_vm, specifier.*, hardcoded) orelse
-                return null,
+                return false,
         );
         return true;
     }

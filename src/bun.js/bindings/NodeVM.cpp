@@ -315,7 +315,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             goto try_from_global;
         }
 
-        if (contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot)) {
+        if (contextifiedObject->getPropertySlot(globalObject, propertyName, slot)) {
             return true;
         }
 
@@ -770,8 +770,9 @@ static bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<Excep
     return false;
 }
 
-static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMGlobalObject* ctxGlobalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
+static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
+
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -785,10 +786,10 @@ static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMGlob
     }
 
     // Set the contextified object before evaluating
-    ctxGlobalObject->setContextifiedObject(contextifiedObject);
+    globalObject->setContextifiedObject(contextifiedObject);
 
     NakedPtr<Exception> exception;
-    JSValue result = JSC::evaluate(ctxGlobalObject, script->source(), ctxGlobalObject, exception);
+    JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
 
     if (UNLIKELY(exception)) {
         if (handleException(globalObject, vm, exception, throwScope)) {
@@ -856,7 +857,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
         return INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
     }
 
-    return runInContext(globalObject, nodeVmGlobalObject, script, context, args.at(1));
+    return runInContext(nodeVmGlobalObject, script, context, args.at(1));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1141,7 +1142,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto* targetContext = NodeVMGlobalObject::create(
         vm, zigGlobal->NodeVMGlobalObjectStructure());
 
-    return runInContext(targetContext, targetContext, script, context, callFrame->argument(1));
+    return runInContext(targetContext, script, context, callFrame->argument(1));
 }
 
 Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
@@ -1208,7 +1209,15 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSObject* sandbox = asObject(contextArg);
 
-    auto _ = createContextImpl(vm, globalObject, sandbox);
+    auto* targetContext = NodeVMGlobalObject::create(vm,
+        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
+
+    // Set sandbox as contextified object
+    targetContext->setContextifiedObject(sandbox);
+
+    // Store context in WeakMap for isContext checks
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
 
     return JSValue::encode(sandbox);
 }

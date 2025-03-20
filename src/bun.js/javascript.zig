@@ -2653,6 +2653,7 @@ pub const VirtualMachine = struct {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 error.NameTooLong,
+                if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
             ) catch bun.outOfMemory();
             const msg = logger.Msg{
                 .data = logger.rangeData(
@@ -2721,12 +2722,20 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                const printed = JSC.ResolveMessage.fmt(
+                const import_kind: bun.ImportKind = if (is_esm)
+                    .stmt
+                else if (is_user_require_resolve)
+                    .require_resolve
+                else
+                    .require;
+
+                const printed = try JSC.ResolveMessage.fmt(
                     jsc_vm.allocator,
                     specifier_utf8.slice(),
                     source_utf8.slice(),
                     err,
-                ) catch unreachable;
+                    import_kind,
+                );
                 break :brk logger.Msg{
                     .data = logger.rangeData(
                         null,
@@ -2734,8 +2743,10 @@ pub const VirtualMachine = struct {
                         printed,
                     ),
                     .metadata = .{
-                        // import_kind is wrong probably
-                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_utf8.slice()), .import_kind = if (is_esm) .stmt else .require },
+                        .resolve = .{
+                            .specifier = logger.BabyString.in(printed, specifier_utf8.slice()),
+                            .import_kind = import_kind,
+                        },
                     },
                 };
             };

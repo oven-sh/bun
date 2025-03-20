@@ -35,6 +35,7 @@ pub const ResolveMessage = struct {
                             break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
                         else
                             break :brk "MODULE_NOT_FOUND",
+                        // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
                         .require_resolve => "MODULE_NOT_FOUND",
                         .stmt, .dynamic => if (bun.strings.hasPrefixComptime(specifier, "node:"))
                             break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
@@ -77,8 +78,8 @@ pub const ResolveMessage = struct {
         return JSC.JSValue.jsNumber(@as(i32, 0));
     }
 
-    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
-        if (bun.strings.hasPrefixComptime(specifier, "node:")) {
+    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror, import_kind: bun.ImportKind) !string {
+        if (import_kind != .require_resolve and bun.strings.hasPrefixComptime(specifier, "node:")) {
             // This matches Node.js exactly.
             return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
         }

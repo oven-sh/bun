@@ -501,8 +501,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSC::JSString* specifierString = callframe->argument(0).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-
     WTF::String specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (specifier.isEmpty()) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a module and function"_s));

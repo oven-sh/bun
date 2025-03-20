@@ -1032,6 +1032,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     JSC::JSString* moduleKeyString = keyAny.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto moduleKey = moduleKeyString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     RETURN_IF_EXCEPTION(scope, {});
 

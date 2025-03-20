@@ -411,9 +411,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     // dont need `module.parent` and creating commonjs module records is done a ton.
     auto idValue = thisObject->m_id.get();
     if (idValue) {
-        auto id = idValue->value(globalObject);
-        auto idStr = Bun::toString(id);
-        if (Bun__isBunMain(globalObject, &idStr)) {
+        auto id = idValue->view(globalObject);
+        if (id == "."_s) {
             thisObject->m_overriddenParent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
         }

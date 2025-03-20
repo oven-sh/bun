@@ -487,17 +487,20 @@ pub const JSGlobalObject = opaque {
 
     pub fn bunVM(this: *JSGlobalObject) *JSC.VirtualMachine {
         if (comptime bun.Environment.allow_assert) {
-            // if this fails
-            // you most likely need to run
-            //   make clean-jsc-bindings
-            //   make bindings -j10
-            if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
-                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            if (JSC.VirtualMachine.VMHolder.vm) |vm_holder_vm| {
+                bun.assertf(
+                    this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_holder_vm)),
+                    \\expected bunVMUnsafe() to be {x} but got {x}.
+                    \\VMHolder and JSC__JSGlobalObject__bunVM disagree on the Bun VM for global object {x}.
+                    \\either there is an inconsistency with the bindings, or bunVM() was called on the wrong thread.
+                ,
+                    .{ @intFromPtr(vm_holder_vm), @intFromPtr(this.bunVMUnsafe()), @intFromPtr(this) },
+                );
             } else {
                 @panic("This thread lacks a Bun VM");
             }
         }
-        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+        return @ptrCast(@alignCast(this.bunVMUnsafe()));
     }
 
     pub const ThreadKind = enum {

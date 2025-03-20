@@ -2655,165 +2655,190 @@ function ClientRequest(input, options, cb) {
       keepalive = agentKeepalive;
     }
 
-    let url: string;
-    let proxy: string | undefined;
     const protocol = this[kProtocol];
     const path = this[kPath];
     let host = this[kHost];
-    if (isIPv6(host)) {
-      host = `[${host}]`;
-    }
-    if (path.startsWith("http://") || path.startsWith("https://")) {
-      url = path;
-      proxy = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
-    } else {
-      url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
-      // support agent proxy url/string for http/https
-      try {
-        // getters can throw
-        const agentProxy = this[kAgent]?.proxy;
-        // this should work for URL like objects and strings
-        proxy = agentProxy?.href || agentProxy;
-      } catch {}
-    }
 
-    const tls = protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
+    const getURL = host => {
+      if (isIPv6(host)) {
+        host = `[${host}]`;
+      }
 
-    const fetchOptions: any = {
-      method,
-      headers: this.getHeaders(),
-      redirect: "manual",
-      signal: this[kAbortController]?.signal,
-      // Timeouts are handled via this.setTimeout.
-      timeout: false,
-      // Disable auto gzip/deflate
-      decompress: false,
-      keepalive,
-    };
-    let keepOpen = false;
-
-    if (customBody === undefined) {
-      fetchOptions.duplex = "half";
-      keepOpen = true;
-    }
-
-    if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-      const self = this;
-      if (customBody !== undefined) {
-        fetchOptions.body = customBody;
+      if (path.startsWith("http://") || path.startsWith("https://")) {
+        return [path`${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
-        fetchOptions.body = async function* () {
-          while (self[kBodyChunks]?.length > 0) {
-            yield self[kBodyChunks].shift();
-          }
+        let proxy: string | undefined;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        // support agent proxy url/string for http/https
+        try {
+          // getters can throw
+          const agentProxy = this[kAgent]?.proxy;
+          // this should work for URL like objects and strings
+          proxy = agentProxy?.href || agentProxy;
+        } catch {}
+        return [url, proxy];
+      }
+    };
 
-          if (self[kBodyChunks]?.length === 0) {
-            self.emit("drain");
-          }
+    let [url, proxy] = getURL(host);
 
-          while (!self.finished) {
-            yield await new Promise(resolve => {
-              resolveNextChunk = end => {
-                resolveNextChunk = undefined;
-                if (end) {
-                  resolve(undefined);
-                } else {
-                  resolve(self[kBodyChunks].shift());
-                }
-              };
-            });
+    const go = url => {
+      const tls =
+        protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
+
+      const fetchOptions: any = {
+        method,
+        headers: this.getHeaders(),
+        redirect: "manual",
+        signal: this[kAbortController]?.signal,
+        // Timeouts are handled via this.setTimeout.
+        timeout: false,
+        // Disable auto gzip/deflate
+        decompress: false,
+        keepalive,
+      };
+      let keepOpen = false;
+
+      if (customBody === undefined) {
+        fetchOptions.duplex = "half";
+        keepOpen = true;
+      }
+
+      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+        const self = this;
+        if (customBody !== undefined) {
+          fetchOptions.body = customBody;
+        } else {
+          fetchOptions.body = async function* () {
+            while (self[kBodyChunks]?.length > 0) {
+              yield self[kBodyChunks].shift();
+            }
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
-          }
 
-          handleResponse?.();
-        };
-      }
-    }
+            while (!self.finished) {
+              yield await new Promise(resolve => {
+                resolveNextChunk = end => {
+                  resolveNextChunk = undefined;
+                  if (end) {
+                    resolve(undefined);
+                  } else {
+                    resolve(self[kBodyChunks].shift());
+                  }
+                };
+              });
 
-    if (tls) {
-      fetchOptions.tls = tls;
-    }
-
-    if (!!$debug) {
-      fetchOptions.verbose = true;
-    }
-
-    if (proxy) {
-      fetchOptions.proxy = proxy;
-    }
-
-    const socketPath = this[kSocketPath];
-
-    if (socketPath) {
-      fetchOptions.unix = socketPath;
-    }
-
-    //@ts-ignore
-    this[kFetchRequest] = fetch(url, fetchOptions)
-      .then(response => {
-        if (this.aborted) {
-          maybeEmitClose();
-          return;
-        }
-
-        handleResponse = () => {
-          this[kFetchRequest] = null;
-          this[kClearTimeout]();
-          handleResponse = undefined;
-          const prevIsHTTPS = isNextIncomingMessageHTTPS;
-          isNextIncomingMessageHTTPS = response.url.startsWith("https:");
-          var res = (this.res = new IncomingMessage(response, {
-            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-            [reqSymbol]: this,
-          }));
-          isNextIncomingMessageHTTPS = prevIsHTTPS;
-          res.req = this;
-          process.nextTick(
-            (self, res) => {
-              // If the user did not listen for the 'response' event, then they
-              // can't possibly read the data, so we ._dump() it into the void
-              // so that the socket doesn't hang there in a paused state.
-              if (self.aborted || !self.emit("response", res)) {
-                res._dump();
+              if (self[kBodyChunks]?.length === 0) {
+                self.emit("drain");
               }
-            },
-            this,
-            res,
-          );
-          maybeEmitClose();
-          if (res.statusCode === 304) {
-            res.complete = true;
+            }
+
+            handleResponse?.();
+          };
+        }
+      }
+
+      if (tls) {
+        fetchOptions.tls = tls;
+      }
+
+      if (!!$debug) {
+        fetchOptions.verbose = true;
+      }
+
+      if (proxy) {
+        fetchOptions.proxy = proxy;
+      }
+
+      const socketPath = this[kSocketPath];
+
+      if (socketPath) {
+        fetchOptions.unix = socketPath;
+      }
+
+      //@ts-ignore
+      this[kFetchRequest] = fetch(url, fetchOptions)
+        .then(response => {
+          if (this.aborted) {
             maybeEmitClose();
             return;
           }
-        };
 
-        if (!keepOpen) {
-          handleResponse();
-        }
+          handleResponse = () => {
+            this[kFetchRequest] = null;
+            this[kClearTimeout]();
+            handleResponse = undefined;
+            const prevIsHTTPS = isNextIncomingMessageHTTPS;
+            isNextIncomingMessageHTTPS = response.url.startsWith("https:");
+            var res = (this.res = new IncomingMessage(response, {
+              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+              [reqSymbol]: this,
+            }));
+            isNextIncomingMessageHTTPS = prevIsHTTPS;
+            res.req = this;
+            process.nextTick(
+              (self, res) => {
+                // If the user did not listen for the 'response' event, then they
+                // can't possibly read the data, so we ._dump() it into the void
+                // so that the socket doesn't hang there in a paused state.
+                if (self.aborted || !self.emit("response", res)) {
+                  res._dump();
+                }
+              },
+              this,
+              res,
+            );
+            maybeEmitClose();
+            if (res.statusCode === 304) {
+              res.complete = true;
+              maybeEmitClose();
+              return;
+            }
+          };
 
-        onEnd();
-      })
-      .catch(err => {
-        // Node treats AbortError separately.
-        // The "abort" listener on the abort controller should have called this
-        if (isAbortError(err)) {
-          return;
-        }
+          if (!keepOpen) {
+            handleResponse();
+          }
 
-        if (!!$debug) globalReportError(err);
+          onEnd();
+        })
+        .catch(err => {
+          // Node treats AbortError separately.
+          // The "abort" listener on the abort controller should have called this
+          if (isAbortError(err)) {
+            return;
+          }
 
-        this.emit("error", err);
-      })
-      .finally(() => {
-        if (!keepOpen) {
-          this[kFetchRequest] = null;
-          this[kClearTimeout]();
+          if (!!$debug) globalReportError(err);
+
+          this.emit("error", err);
+        })
+        .finally(() => {
+          if (!keepOpen) {
+            this[kFetchRequest] = null;
+            this[kClearTimeout]();
+          }
+        });
+    };
+
+    if (options.lookup) {
+      options.lookup(options.hostname, (err, address, family) => {
+        if (err) {
+          if (!!$debug) globalReportError(err);
+          this.emit("error", err);
+        } else {
+          [url, proxy] = getURL(address);
+          if (!this.hasHeader("Host")) {
+            this.setHeader("Host", options.hostname);
+          }
+          go(url);
         }
       });
+    } else {
+      go(url);
+    }
 
     return true;
   };

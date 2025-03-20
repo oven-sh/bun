@@ -2214,7 +2214,7 @@ const ServerResponsePrototype = {
 
   assignSocket(socket) {
     if (socket._httpMessage) {
-      throw $ERR_HTTP_SOCKET_ASSIGNED();
+      throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
     }
     socket._httpMessage = this;
     socket.once("close", onServerResponseClose);
@@ -2493,7 +2493,9 @@ function ClientRequest(input, options, cb) {
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
-    startFetch();
+    if (writeCount > 1) {
+      startFetch();
+    }
     resolveNextChunk?.(false);
   };
 

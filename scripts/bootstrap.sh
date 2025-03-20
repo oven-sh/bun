@@ -915,11 +915,12 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
+		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			"lld$(llvm_version)"
+			"lld"
 		;;
 	esac
 }

@@ -30,7 +30,7 @@ export class PublishCommand extends BuildCommand {
         { exit: 1 },
       );
     }
-    const { layer, region, arch, output, public: isPublic } = flags;
+    const { layer, region, arch, output, profile, public: isPublic } = flags;
     if (region.includes("*")) {
       // prettier-ignore
       const result = this.#aws(["ec2", "describe-regions", "--query", "Regions[].RegionName", "--output", "json"]);
@@ -53,6 +53,8 @@ export class PublishCommand extends BuildCommand {
           layerName,
           "--region",
           regionName,
+          "--profile",
+          profile,
           "--description",
           "Bun is an incredibly fast JavaScript runtime, bundler, transpiler, and package manager.",
           "--license-info",
@@ -78,6 +80,8 @@ export class PublishCommand extends BuildCommand {
             layerName,
             "--region",
             regionName,
+            "--profile",
+            profile,
             "--version-number",
             LayerVersionArn.split(":").pop(),
             "--statement-id",

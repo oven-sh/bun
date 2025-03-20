@@ -639,7 +639,7 @@ throw new Error("hello");
   }
 
   expect(err!.stack!.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
-    ":2
+    "evalmachine.<anonymous>:2
     Error: hello
         at hellohello.js:2:16
         at runInNewContext (unknown)
@@ -668,7 +668,7 @@ hello();
     error: hello
           at hello (hellohello.js:4:24)
           at hellohello.js:7:6
-          at <anonymous> (<this-url>:645:15)
+          at <anonymous> (<this-url>:651:15)
     "
   `);
 });
@@ -692,7 +692,7 @@ hello();
     error: hello
           at hello (hellohello.js:4:24)
           at eval (hellohello.js:7:6)
-          at <anonymous> (<this-url>:663:15)
+          at <anonymous> (<this-url>:677:15)
     "
   `);
 });

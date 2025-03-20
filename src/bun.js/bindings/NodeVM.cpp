@@ -759,6 +759,10 @@ static bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<Excep
         }
         auto& stack_frame = e_stack[0];
         auto source_url = stack_frame.sourceURL(vm);
+        if (source_url.isEmpty()) {
+            // copy what Node does
+            source_url = "evalmachine.<anonymous>"_s;
+        }
         auto line_and_column = stack_frame.computeLineAndColumn();
 
         String prepend = makeString(source_url, ":"_s, line_and_column.line, "\n"_s, stack);

@@ -328,6 +328,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         JSString* string = result.toString(globalObject);
                         RETURN_IF_EXCEPTION(scope, {});
                         auto str = string->value(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
                         WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                         if (!prefixed.isNull()) {
                             return JSValue::encode(jsString(vm, prefixed));

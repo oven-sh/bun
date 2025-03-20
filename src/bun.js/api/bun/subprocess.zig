@@ -583,6 +583,9 @@ pub fn getStdout(
     globalThis: *JSGlobalObject,
 ) JSValue {
     this.observable_getters.insert(.stdout);
+    // NOTE: ownership of internal buffers is transferred to the JSValue, which
+    // gets cached on JSSubprocess (created via bindgen). This makes it
+    // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
     return this.stdout.toJS(globalThis, this.hasExited());
 }
 

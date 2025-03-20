@@ -16,9 +16,9 @@ const enum NodeHTTPIncomingRequestType {
   NodeHTTPResponse,
 }
 const enum NodeHTTPHeaderState {
-  none,
-  assigned,
-  sent,
+  none = 0,
+  assigned = 1 << 0,
+  sent = 1 << 1,
 }
 const enum NodeHTTPBodyReadState {
   none,
@@ -90,6 +90,7 @@ const {
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
+  processArrayHeaders,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -97,6 +98,7 @@ const {
   assignEventCallback: (req: Request, callback: (event: number) => void) => void;
   setRequestTimeout: (req: Request, timeout: number) => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
+  processArrayHeaders: (headersArray: any[], targetObj: Record<string, string>) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -191,6 +193,16 @@ function isValidTLSArray(obj) {
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
     throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+  }
+
+  // Ensure that msecs fits into signed int32
+  const TIMEOUT_MAX = 2 ** 31 - 1;
+  if (numberlike > TIMEOUT_MAX) {
+    process.emitWarning(
+      `${numberlike} does not fit into a 32-bit signed integer.` + `\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+      "TimeoutOverflowWarning",
+    );
+    return TIMEOUT_MAX;
   }
 
   return numberlike;
@@ -559,7 +571,7 @@ Agent.prototype.createConnection = function () {
 };
 
 Agent.prototype.getName = function (options = kEmptyObject) {
-  let name = `http:${options.host || "localhost"}:`;
+  let name = `${options.host || "localhost"}:`;
   if (options.port) name += options.port;
   name += ":";
   if (options.localAddress) name += options.localAddress;
@@ -755,6 +767,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    this.listening = false;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
     server.stop();
   },
@@ -1602,6 +1615,23 @@ const OutgoingMessagePrototype = {
   usesChunkedEncodingByDefault: true,
   _closed: false,
 
+  get _headerNames() {
+    process.emitWarning("OutgoingMessage.prototype._headerNames is deprecated", "DeprecationWarning", "DEP0066");
+
+    const headers = this[headersSymbol];
+    if (!headers) return null;
+
+    const out = Object.create(null);
+    for (const key of headers.keys()) {
+      out[key.toLowerCase()] = key;
+    }
+    return out;
+  },
+
+  set _headerNames(val) {
+    process.emitWarning("OutgoingMessage.prototype._headerNames is deprecated", "DeprecationWarning", "DEP0066");
+  },
+
   appendHeader(name, value) {
     var headers = (this[headersSymbol] ??= new Headers());
     headers.append(name, value);
@@ -1658,7 +1688,7 @@ const OutgoingMessagePrototype = {
   },
 
   removeHeader(name) {
-    if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
       throw $ERR_HTTP_HEADERS_SENT("Cannot remove header after headers have been sent.");
     }
     const headers = this[headersSymbol];
@@ -1670,6 +1700,41 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
+    return this;
+  },
+
+  setHeaders(headers) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    if (!headers || Array.isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const [key, value] of headers) {
+      if (key === "set-cookie") {
+        if (Array.isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
+    }
+
     return this;
   },
 
@@ -1701,6 +1766,10 @@ const OutgoingMessagePrototype = {
     //  even if it will be rescheduled we don't want to leak an existing timer.
     clearTimeout(this[timeoutTimerSymbol]);
 
+    if (callback) {
+      this.on("timeout", callback);
+    }
+
     if (msecs === 0) {
       if (callback != null) {
         if (!$isCallable(callback)) validateFunction(callback, "callback");
@@ -1711,9 +1780,13 @@ const OutgoingMessagePrototype = {
     } else {
       this[timeoutTimerSymbol] = setTimeout(onTimeout.bind(this), msecs).unref();
 
-      if (callback != null) {
-        if (!$isCallable(callback)) validateFunction(callback, "callback");
-        this.once("timeout", callback);
+      // Node.js compatibility: also delegate to socket if available
+      if (!this[fakeSocketSymbol]) {
+        this.once("socket", function socketSetTimeoutOnConnect(socket) {
+          socket.setTimeout(msecs);
+        });
+      } else {
+        this[fakeSocketSymbol].setTimeout(msecs);
       }
     }
 
@@ -1730,7 +1803,11 @@ const OutgoingMessagePrototype = {
   },
 
   set socket(value) {
+    const prev = this[fakeSocketSymbol];
     this[fakeSocketSymbol] = value;
+    if (!prev && value) {
+      this.emit("socket", value);
+    }
   },
 
   get chunkedEncoding() {
@@ -1797,7 +1874,7 @@ function onNodeHTTPServerSocketTimeout() {
   if (!reqTimeout && !resTimeout && !serverTimeout) this.destroy();
 }
 
-function onTimeout() {
+function handleRequestTimeout() {
   this[timeoutTimerSymbol] = undefined;
   this[kAbortController]?.abort();
   const handle = this[kHandle];
@@ -1920,9 +1997,7 @@ const ServerResponsePrototype = {
   _removedContLen: false,
   _hasBody: true,
   get headersSent() {
-    return (
-      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
-    );
+    return this[headerStateSymbol] >= NodeHTTPHeaderState.assigned;
   },
   set headersSent(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
@@ -1991,6 +2066,12 @@ const ServerResponsePrototype = {
       } else {
         throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
       }
+    }
+
+    // Update bytesWritten on the socket to ensure res.connection.bytesWritten works
+    if (chunk && this.socket) {
+      const byteLength = chunk instanceof Buffer ? chunk.length : Buffer.byteLength(chunk, encoding || "utf8");
+      this.socket.bytesWritten += byteLength;
     }
 
     if (handle) {
@@ -2097,6 +2178,12 @@ const ServerResponsePrototype = {
       result = handle.write(chunk, encoding);
     }
 
+    // Update bytesWritten on the socket to ensure res.connection.bytesWritten works
+    if (chunk && this.socket) {
+      const byteLength = chunk instanceof Buffer ? chunk.length : Buffer.byteLength(chunk, encoding || "utf8");
+      this.socket.bytesWritten += byteLength;
+    }
+
     if (result < 0) {
       if (callback) {
         // The write was buffered due to backpressure.
@@ -2186,6 +2273,13 @@ const ServerResponsePrototype = {
     } else {
       handle.write(data, encoding, callback);
     }
+
+    // Update bytesWritten on the socket to ensure res.connection.bytesWritten works
+    if (data && this.socket) {
+      const dataByteLength =
+        byteLength || (data instanceof Buffer ? data.length : Buffer.byteLength(data, encoding || "utf8"));
+      this.socket.bytesWritten += dataByteLength;
+    }
   },
 
   writeHead(statusCode, statusMessage, headers) {
@@ -2193,6 +2287,41 @@ const ServerResponsePrototype = {
       _writeHead(statusCode, statusMessage, headers, this);
       updateHasBody(this, statusCode);
       this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+    }
+
+    return this;
+  },
+
+  setHeaders(headers) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    if (!headers || Array.isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const [key, value] of headers) {
+      if (key === "set-cookie") {
+        if (Array.isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
     }
 
     return this;
@@ -2649,7 +2778,15 @@ function ClientRequest(input, options, cb) {
       url = path;
       proxy = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
     } else {
-      url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+      // Always include the port when globalAgent.defaultPort has been explicitly changed
+      // or when the port is not the standard default (80 for http, 443 for https)
+      const includePort =
+        !this[kUseDefaultPort] ||
+        (this[kAgent] &&
+          this[kPort] === this[kAgent].defaultPort &&
+          ((protocol === "http:" && this[kPort] !== 80) || (protocol === "https:" && this[kPort] !== 443)));
+
+      url = `${protocol}//${host}${includePort ? ":" + this[kPort] : ""}${path}`;
       // support agent proxy url/string for http/https
       try {
         // getters can throw
@@ -2922,9 +3059,13 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
-  this[kUseDefaultPort] = this[kPort] === defaultPort;
+  // Ensure we use the latest defaultPort value from the agent
+  const defaultPort = options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || 80;
+  const port = (this[kPort] = options.port || defaultPort);
+
+  // When port is explicitly specified, we need to include it in the URL
+  // When port is equal to the agent's default port, we can omit it
+  this[kUseDefaultPort] = (this[kPort] === 80 && defaultPort === 80) || (this[kPort] === 443 && defaultPort === 443);
   const host =
     (this[kHost] =
     options.host =
@@ -3071,55 +3212,73 @@ function ClientRequest(input, options, cb) {
 
   const { headers } = options;
   const headersArray = $isJSArray(headers);
-  if (!headersArray) {
-    if (headers) {
-      for (let key in headers) {
-        this.setHeader(key, headers[key]);
-      }
+  if (headersArray) {
+    // Use the native implementation to process array headers efficiently
+    // This will correctly handle array style headers:
+    // - Join multiple header values with commas (except cookies with semicolons)
+    // - Only use the first host header value
+    const processedHeaders = {};
+    processArrayHeaders(headers, processedHeaders);
+
+    // Now set all processed headers on this request
+    for (const key in processedHeaders) {
+      this.setHeader(key, processedHeaders[key]);
     }
-
-    // if (host && !this.getHeader("host") && setHost) {
-    //   let hostHeader = host;
-
-    //   // For the Host header, ensure that IPv6 addresses are enclosed
-    //   // in square brackets, as defined by URI formatting
-    //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-    //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-    //   if (
-    //     posColon !== -1 &&
-    //     StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
-    //     StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
-    //   ) {
-    //     hostHeader = `[${hostHeader}]`;
-    //   }
-
-    //   if (port && +port !== defaultPort) {
-    //     hostHeader += ":" + port;
-    //   }
-    //   this.setHeader("Host", hostHeader);
-    // }
-
-    var auth = options.auth;
-    if (auth && !this.getHeader("Authorization")) {
-      this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
+  } else if (headers) {
+    // Handle headers as an object
+    for (let key in headers) {
+      this.setHeader(key, headers[key]);
     }
-
-    //   if (this.getHeader("expect")) {
-    //     if (this._header) {
-    //       throw new ERR_HTTP_HEADERS_SENT("render");
-    //     }
-
-    //     this._storeHeader(
-    //       this.method + " " + this.path + " HTTP/1.1\r\n",
-    //       this[kOutHeaders],
-    //     );
-    //   }
-    // } else {
-    //   this._storeHeader(
-    //     this.method + " " + this.path + " HTTP/1.1\r\n",
-    //     options.headers,
-    //   );
   }
+
+  // Always set the Host header if not already set
+  if (host && !this.getHeader("host")) {
+    let hostHeader = host;
+
+    // For the Host header, ensure that IPv6 addresses are enclosed
+    // in square brackets, as defined by URI formatting
+    // https://tools.ietf.org/html/rfc3986#section-3.2.2
+    const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+    if (
+      posColon !== -1 &&
+      StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
+      StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
+    ) {
+      hostHeader = `[${hostHeader}]`;
+    }
+
+    // Only include the port in the Host header if it's not the default port for the protocol
+    // Also check the agent.defaultPort as some tests set it programmatically
+    const defaultPort =
+      options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || (protocol === "https:" ? 443 : 80);
+
+    if (port && +port !== defaultPort) {
+      hostHeader += ":" + port;
+    }
+
+    this.setHeader("Host", hostHeader);
+  }
+
+  var auth = options.auth;
+  if (auth && !this.getHeader("Authorization")) {
+    this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
+  }
+
+  //   if (this.getHeader("expect")) {
+  //     if (this._header) {
+  //       throw new ERR_HTTP_HEADERS_SENT("render");
+  //     }
+
+  //     this._storeHeader(
+  //       this.method + " " + this.path + " HTTP/1.1\r\n",
+  //       this[kOutHeaders],
+  //     );
+  //   }
+  // } else {
+  //   this._storeHeader(
+  //     this.method + " " + this.path + " HTTP/1.1\r\n",
+  //     options.headers,
+  //   );
 
   // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
@@ -3187,6 +3346,20 @@ function ClientRequest(input, options, cb) {
 const ClientRequestPrototype = {
   constructor: ClientRequest,
   __proto__: OutgoingMessage.prototype,
+
+  clearTimeout(callback) {
+    const timeoutTimer = this[kTimeoutTimer];
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      this[kTimeoutTimer] = undefined;
+      if (callback) {
+        this.removeListener("timeout", callback);
+      } else {
+        this.removeAllListeners("timeout");
+      }
+    }
+    return this;
+  },
 
   get path() {
     return this[kPath];

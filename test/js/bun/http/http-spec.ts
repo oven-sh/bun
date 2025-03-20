@@ -126,6 +126,16 @@ const testCases: TestCase[] = [
     expectedStatus: [[200, 299]],
   },
   {
+    request: "GET / HTTP/1.0\r\n\r\n",
+    description: "Valid GET request with HTTP/1.0 and no Host header",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "GET / HTTP/1.0\r\n\r\n",
+    description: "Valid GET request with HTTP/1.0 and no headers",
+    expectedStatus: [[200, 299]],
+  },
+  {
     request: "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
     description: "Valid GET request for a proxy URL",
     expectedStatus: [[200, 299]],
@@ -154,6 +164,11 @@ const testCases: TestCase[] = [
     request: "GET HTTP://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
     description: "Valid GET request for an HTTP proxy URL",
     expectedStatus: [[200, 299]],
+  },
+  {
+    request: "GET HTTP://example.com/ HTTP/1.1\r\n\r\n",
+    description: "Invalid GET request with HTTP/1.1 and no headers",
+    expectedStatus: [[400, 499]],
   },
   {
     request: "GET   HTTP/1.1\r\nHost: example.com\r\n\r\n",

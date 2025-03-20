@@ -485,6 +485,13 @@ namespace uWS
             }
             headers++;
 
+            /* Check for empty headers (only for HTTP 1.0 requests) */
+            if (isAncientHTTP && *postPaddedBuffer == '\r' && postPaddedBuffer[1] == '\n') {
+                /* End of headers immediately after request line */
+                headers->key = std::string_view(nullptr, 0);
+                return (unsigned int) ((postPaddedBuffer + 2) - start);
+            }
+
             for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
@@ -599,8 +606,8 @@ namespace uWS
                 req->bf.add(h->key);
             }
 
-            /* Break if no host header (but we can have empty string which is different from nullptr) */
-            if (!req->getHeader("host").data()) {
+            /* Host header is required for HTTP/1.1 but not for HTTP/1.0 */
+            if (!isAncientHTTP && !req->getHeader("host").data()) {
                 return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
             }
 
@@ -609,8 +616,16 @@ namespace uWS
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
             * to perform request smuggling (Section 11.2) or response splitting (Section 11.1) and
             * ought to be handled as an error. */
-            std::string_view transferEncodingString = req->getHeader("transfer-encoding");
-            std::string_view contentLengthString = req->getHeader("content-length");
+            /* Skip header checks for HTTP 1.0 requests with no headers */
+            std::string_view transferEncodingString;
+            std::string_view contentLengthString;
+
+            /* Only try to get headers if we have any */
+            HttpRequest::Header *firstHeader = req->headers + 1;  // Skip request line (first header)
+            if (firstHeader->key.length() > 0) {
+                transferEncodingString = req->getHeader("transfer-encoding");
+                contentLengthString = req->getHeader("content-length");
+            }
 
             auto transferEncodingStringLen = transferEncodingString.length();
             auto contentLengthStringLen = contentLengthString.length();

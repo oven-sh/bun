@@ -572,6 +572,20 @@ nativeTests.test_ref_deleted_in_async_finalize = () => {
   asyncFinalizeAddon.create_ref();
 };
 
+nativeTests.test_external_buffer_finalizer = async () => {
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    const arraybuffer = asyncFinalizeAddon.create_buffer();
+    const view = new Uint8Array(arraybuffer);
+    for (const byte of view) {
+      assert(byte == 5);
+    }
+    // give GC a chance to do some work on another thread
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  await gcUntil(() => asyncFinalizeAddon.get_buffer_finalize_count() == n);
+};
+
 nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };

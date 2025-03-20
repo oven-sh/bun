@@ -1394,6 +1394,22 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPProcessArrayHeaders, (JSGlobalObject * globalObje
         }
     }
 
+    // Set of header names that should only use the first value when multiple values are sent
+    // These are based on RFC2616 and the multipleForbidden list in Node.js HTTP tests
+    static const HashSet<String> singleValueHeaders = {
+        "host"_s,
+        "content-type"_s,
+        "user-agent"_s,
+        "referer"_s,
+        "authorization"_s,
+        "proxy-authorization"_s,
+        "if-modified-since"_s,
+        "if-unmodified-since"_s,
+        "from"_s,
+        "location"_s,
+        "max-forwards"_s
+    };
+
     for (auto& entry : headerMap) {
         const String& lowercaseName = entry.key;
         const HeaderEntry& headerEntry = entry.value;
@@ -1405,11 +1421,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPProcessArrayHeaders, (JSGlobalObject * globalObje
         String headerName = headerEntry.originalName;
         String headerValue;
 
-        if (lowercaseName == "host") {
+        // Headers that should only use the first value
+        if (singleValueHeaders.contains(lowercaseName)) {
             headerValue = values[0];
         } else if (lowercaseName == "cookie") {
+            // Cookie headers use semicolon+space as separator
             headerValue = joinHeaderValues(values, ASCIILiteral("; "));
         } else {
+            // All other headers use comma+space as separator
             headerValue = joinHeaderValues(values, ASCIILiteral(", "));
         }
 

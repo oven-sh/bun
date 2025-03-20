@@ -1970,7 +1970,7 @@ const ServerResponsePrototype = {
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
-    if (handle.aborted) {
+    if (handle?.aborted) {
       return this;
     }
 

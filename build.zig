@@ -196,7 +196,7 @@ pub fn build(b: *Build) !void {
 
     const codegen_path = b.pathFromRoot(
         b.option([]const u8, "codegen_path", "Set the generated code directory") orelse
-            "build/debug-local/codegen",
+            "build/debug/codegen",
     );
     const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse switch (b.release_mode) {
         .off => false,

@@ -1,4 +1,4 @@
-/// <reference types="../../build/debug-local/codegen/generated.d.ts" />
+/// <reference types="../../build/debug/codegen/generated.d.ts" />
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 

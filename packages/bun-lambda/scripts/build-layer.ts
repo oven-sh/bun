@@ -1,8 +1,3 @@
-// HACK: https://github.com/oven-sh/bun/issues/2081
-process.stdout.getWindowSize = () => [80, 80];
-process.stderr.getWindowSize = () => [80, 80];
-
-import { createReadStream, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command, Flags } from "@oclif/core";
 import JSZip from "jszip";
@@ -82,7 +77,7 @@ export class BuildCommand extends Command {
     archive = archive.folder(cwd) ?? archive;
     for (const filename of ["bootstrap", "runtime.ts"]) {
       const path = join(__dirname, "..", filename);
-      archive.file(filename, createReadStream(path));
+      archive.file(filename, Bun.file(path).stream());
     }
     this.log("Saving...", output);
     const archiveBuffer = await archive
@@ -94,7 +89,7 @@ export class BuildCommand extends Command {
         },
       })
       .then(blob => blob.arrayBuffer());
-    writeFileSync(output, archiveBuffer);
+    await Bun.write(output, archiveBuffer);
     this.log("Saved");
   }
 }

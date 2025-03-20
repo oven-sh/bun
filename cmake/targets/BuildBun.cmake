@@ -748,9 +748,14 @@ set_target_properties(${bun} PROPERTIES
 )
 
 # Enable precompiled headers
-target_precompile_headers(${bun} PRIVATE
-  "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
-)
+# Only enable in these scenarios:
+# 1. NOT in CI, OR
+# 2. In CI AND BUN_CPP_ONLY is enabled
+if(NOT CI OR (CI AND BUN_CPP_ONLY))
+  target_precompile_headers(${bun} PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+  )
+endif()
 
 # --- C/C++ Includes ---
 

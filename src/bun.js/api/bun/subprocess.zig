@@ -311,7 +311,7 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             switch (out.*) {
                 .pipe => |pipe| {
                     if (pipe.state == .done) {
-                        out.* = .{ .buffer = pipe.state.done };
+                        out.* = .{ .buffer = CowString.initOwned(pipe.state.done, bun.default_allocator) };
                         pipe.state = .{ .done = &.{} };
                     } else {
                         out.* = .{ .ignore = {} };
@@ -376,12 +376,18 @@ const Readable = union(enum) {
     inherit: void,
     ignore: void,
     closed: void,
-    buffer: []u8,
+    /// Eventually we will implement Readables created from blobs and array buffers.
+    /// When we do that, `buffer` will be borrowed from those objects.
+    /// 
+    /// When a buffered `pipe` finishes reading from its file descriptor, 
+    /// the owning `Readable` will be convered into this variant and the pipe's
+    /// buffer will be taken as an owned `CowString`.
+    buffer: CowString,
 
     pub fn memoryCost(this: *const Readable) usize {
         return switch (this.*) {
             .pipe => @sizeOf(PipeReader) + this.pipe.memoryCost(),
-            .buffer => this.buffer.len,
+            .buffer => this.buffer.length(),
             else => 0,
         };
     }
@@ -484,6 +490,9 @@ const Readable = union(enum) {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
             },
+            .buffer => |buf| {
+                buf.deinit(bun.default_allocator);
+            },
             else => {},
         }
     }
@@ -502,14 +511,18 @@ const Readable = union(enum) {
                 this.* = .{ .closed = {} };
                 return pipe.toJS(globalThis);
             },
-            .buffer => |buffer| {
+            .buffer => |*buffer| {
                 defer this.* = .{ .closed = {} };
 
-                if (buffer.len == 0) {
+                if (buffer.length() == 0) {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 }
 
-                const blob = JSC.WebCore.Blob.init(buffer, bun.default_allocator, globalThis);
+                const own = buffer.takeSlice(bun.default_allocator) catch {
+                   globalThis.throwOutOfMemory() catch return .zero;
+                   unreachable;
+                };
+                const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
                 return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
             },
             else => {
@@ -535,10 +548,13 @@ const Readable = union(enum) {
                 this.* = .{ .closed = {} };
                 return pipe.toBuffer(globalThis);
             },
-            .buffer => |buf| {
+            .buffer => |*buf| {
                 this.* = .{ .closed = {} };
+                const own = buf.takeSlice(bun.default_allocator) catch {
+                    return globalThis.throwOutOfMemory();
+                };
 
-                return JSC.MarkedArrayBuffer.fromBytes(buf, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSValue.jsUndefined();
@@ -2597,6 +2613,7 @@ const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
+const CowString = bun.ptr.CowString;
 const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;

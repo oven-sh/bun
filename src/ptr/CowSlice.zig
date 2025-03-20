@@ -114,6 +114,10 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             return str.ptr[0..str.flags.len];
         }
 
+        pub inline fn length(str: Self) usize {
+            return str.flags.len;
+        }
+
         /// Mutably borrow this `Cow`'s slice.
         ///
         /// Borrowed `Cow`s will be automatically converted to owned, incurring
@@ -129,6 +133,20 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// Calling this on a borrowed `Cow` invokes safety-checked Illegal Behavior.
         pub fn sliceMutUnsafe(str: *Self) SliceMut {
             bun.assert(str.isOwned(), "CowSlice.sliceMutUnsafe cannot be called on Cows that borrow their data.", .{});
+            return str.ptr[0..str.flags.len];
+        }
+
+        /// Take ownership over this string's allocation. `str` is left in a
+        /// valid, empty state. 
+        /// 
+        /// Caller owns the returned memory and must deinitialize it when done.
+        /// `str` may be re-used. An allocation will be incurred if and only if
+        /// `str` is not owned.
+        pub fn takeSlice(str: *Self, allocator: Allocator) Allocator.Error!SliceMut {
+            if (!str.isOwned()) {
+                try str.intoOwned(allocator);
+            }
+            defer str.* = Self.empty;
             return str.ptr[0..str.flags.len];
         }
 
@@ -169,7 +187,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             if (comptime cow_str_assertions) {
                 if (str.debug) |debug| {
                     debug.mutex.lock();
-                    defer debug.mutext.unlock();
+                    defer debug.mutex.unlock();
                     bun.assert(debug.borrows > 0);
                     debug.borrows -= 1;
                     str.debug = null;

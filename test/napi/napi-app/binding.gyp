@@ -11,7 +11,7 @@
                 },
             },
             # leak tests are unused as of #14501
-            "sources": ["main.cpp", "async_tests.cpp", "class_test.cpp", "conversion_tests.cpp", "js_test_helpers.cpp", "standalone_tests.cpp", "wrap_tests.cpp"],
+            "sources": ["main.cpp", "async_tests.cpp", "class_test.cpp", "conversion_tests.cpp", "js_test_helpers.cpp", "standalone_tests.cpp", "wrap_tests.cpp", "get_string_tests.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
             "libraries": [],
             "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],

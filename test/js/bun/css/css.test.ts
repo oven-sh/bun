@@ -84,14 +84,15 @@ describe("css tests", () => {
     );
   });
 
-  test("calc edge case", () => {
+  describe("calc edge case", () => {
+    // https://github.com/oven-sh/bun/issues/18064
     minify_test(
-      // Problem: the value is being printed as Infinity in our restrict_prec thing but the internal thing actually wants it as 3.40282e38px
       `.rounded-full {
   border-radius: calc(infinity * 1px);
   width: calc(infinity * -1px);
+  height: infinity;
 }`,
-      indoc`.rounded-full{border-radius:1e999px;width:-1e999px}`,
+      indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
   });
   describe("border_spacing", () => {

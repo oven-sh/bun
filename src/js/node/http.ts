@@ -66,9 +66,8 @@ const kEmptyObject = Object.freeze(Object.create(null));
 
 const { kDeprecatedReplySymbol } = require("internal/http");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { isTypedArray } = require("node:util/types");
+const { isTypedArray, isArrayBuffer } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
@@ -131,20 +130,18 @@ function checkInvalidHeaderChar(val: string) {
   return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
-const validateHeaderName = (name, label) => {
+const validateHeaderName = (name, label?) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
+    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
   }
 };
 
 const validateHeaderValue = (name, value) => {
   if (value === undefined) {
-    // throw new ERR_HTTP_INVALID_HEADER_VALUE(value, name);
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(`Invalid header value: ${value} for ${name}`);
+    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
   }
   if (checkInvalidHeaderChar(value)) {
-    // throw new ERR_INVALID_CHAR("header content", name);
-    throw $ERR_INVALID_CHAR(`Invalid header value: ${value} for ${name}`);
+    throw $ERR_INVALID_CHAR("header content", name);
   }
 };
 
@@ -178,7 +175,7 @@ function isValidTLSArray(obj) {
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false; // prettier-ignore
     }
     return true;
   }
@@ -1179,7 +1176,7 @@ function hasServerResponseFinished(self, chunk, callback) {
     if (finished || destroyed) {
       let err;
       if (finished) {
-        err = $ERR_STREAM_WRITE_AFTER_END("Stream is already finished");
+        err = $ERR_STREAM_WRITE_AFTER_END();
       } else if (destroyed) {
         err = $ERR_STREAM_DESTROYED("Stream is destroyed");
       }
@@ -1608,7 +1605,7 @@ const OutgoingMessagePrototype = {
   },
 
   _implicitHeader() {
-    throw $ERR_METHOD_NOT_IMPLEMENTED("The method _implicitHeader() is not implemented");
+    throw $ERR_METHOD_NOT_IMPLEMENTED("_implicitHeader()");
   },
   flushHeaders() {},
   getHeader(name) {
@@ -1658,7 +1655,7 @@ const OutgoingMessagePrototype = {
 
   removeHeader(name) {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
-      throw $ERR_HTTP_HEADERS_SENT("Cannot remove header after headers have been sent.");
+      throw $ERR_HTTP_HEADERS_SENT("remove");
     }
     const headers = this[headersSymbol];
     if (!headers) return;
@@ -1993,7 +1990,7 @@ const ServerResponsePrototype = {
       if (this.req?.method === "HEAD") {
         chunk = undefined;
       } else {
-        throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
+        throw $ERR_HTTP_BODY_NOT_ALLOWED();
       }
     }
 
@@ -2085,7 +2082,7 @@ const ServerResponsePrototype = {
       return false;
     }
     if (chunk && !this._hasBody) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
+      throw $ERR_HTTP_BODY_NOT_ALLOWED();
     }
     let result = 0;
 
@@ -2285,7 +2282,7 @@ const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback
   }
   if (this.destroyed || this.finished) {
     if (chunk) {
-      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
     }
     return false;
   }
@@ -2368,7 +2365,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
 
   if (this.destroyed || this.finished) {
     if (chunk) {
-      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
     }
     return false;
   }
@@ -2454,7 +2451,6 @@ const kMethod = Symbol("method");
 const kHost = Symbol("host");
 const kProtocol = Symbol("protocol");
 const kAgent = Symbol("agent");
-const kStream = Symbol("stream");
 const kFetchRequest = Symbol("fetchRequest");
 const kTls = Symbol("tls");
 const kUseDefaultPort = Symbol("useDefaultPort");
@@ -2466,12 +2462,10 @@ const kMaxHeadersCount = Symbol("maxHeadersCount");
 const kReusedSocket = Symbol("reusedSocket");
 const kTimeoutTimer = Symbol("timeoutTimer");
 const kOptions = Symbol("options");
-const kController = Symbol("controller");
 const kSocketPath = Symbol("socketPath");
 const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
 const kJoinDuplicateHeaders = Symbol("joinDuplicateHeaders");
-const kSocket = Symbol("socket");
 
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
@@ -2559,7 +2553,7 @@ function ClientRequest(input, options, cb) {
 
     if (chunk) {
       if (this.finished) {
-        emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
+        emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
         return this;
       }
 
@@ -2961,7 +2955,7 @@ function ClientRequest(input, options, cb) {
   if (options.path) {
     const path = String(options.path);
     if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
-      throw $ERR_UNESCAPED_CHARACTERS("Request path contains unescaped characters");
+      throw $ERR_UNESCAPED_CHARACTERS("Request path");
     }
   }
 
@@ -2997,7 +2991,7 @@ function ClientRequest(input, options, cb) {
 
   if (methodIsString && method) {
     if (!checkIsHttpToken(method)) {
-      throw $ERR_INVALID_HTTP_TOKEN("Method");
+      throw $ERR_INVALID_HTTP_TOKEN("Method", method);
     }
     method = this[kMethod] = StringPrototypeToUpperCase.$call(method);
   } else {
@@ -3328,6 +3322,7 @@ const METHODS = [
   "PROPPATCH",
   "PURGE",
   "PUT",
+  "QUERY",
   "REBIND",
   "REPORT",
   "SEARCH",
@@ -3442,7 +3437,7 @@ function _normalizeArgs(args) {
 function _writeHead(statusCode, reason, obj, response) {
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
-    throw $ERR_HTTP_INVALID_STATUS_CODE(`Invalid status code: ${statusCode}`);
+    throw $ERR_HTTP_INVALID_STATUS_CODE(statusCode);
   }
 
   if (typeof reason === "string") {

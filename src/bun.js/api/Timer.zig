@@ -366,8 +366,8 @@ pub const All = struct {
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         // TODO: this is wrong as it clears exceptions (e.g `setTimeout(()=>{}, { [Symbol.toPrimitive]() { throw 'oops'; } })`)
-        const countdown_double = countdown.coerceToDouble(globalThis);
 
+        const countdown_double = countdown.coerceToDouble(globalThis);
         const countdown_int: u31 = switch (overflow_behavior) {
             .clamp => std.math.lossyCast(u31, countdown_double),
             .one_ms => if (!(countdown_double >= 1 and countdown_double <= std.math.maxInt(u31))) one: {
@@ -376,7 +376,7 @@ pub const All = struct {
                 } else if (countdown_double < 0 and !this.warned_negative_number) {
                     this.warned_negative_number = true;
                     warnInvalidCountdown(globalThis, countdown_double, .TimeoutNegativeWarning);
-                } else if (std.math.isNan(countdown_double) and !this.warned_not_number) {
+                } else if (!countdown.isUndefined() and countdown.isNumber() and std.math.isNan(countdown_double) and !this.warned_not_number) {
                     this.warned_not_number = true;
                     warnInvalidCountdown(globalThis, countdown_double, .TimeoutNaNWarning);
                 }
@@ -516,27 +516,14 @@ pub const All = struct {
         return JSValue.jsUndefined();
     }
 
-    const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
-
-    pub const shim = Shimmer("Bun", "Timer", @This());
-    pub const name = "Bun__Timer";
-    pub const include = "";
-    pub const namespace = shim.namespace;
-
-    pub const Export = shim.exportFunctions(.{
-        .setImmediate = setImmediate,
-        .setTimeout = setTimeout,
-        .setInterval = setInterval,
-        .clearImmediate = clearImmediate,
-        .clearTimeout = clearTimeout,
-        .clearInterval = clearInterval,
-        .getNextID = getNextID,
-    });
-
     comptime {
-        for (Export) |e| {
-            @export(&@field(e.Parent, e.local_name), .{ .name = e.symbol_name });
-        }
+        @export(&setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        @export(&setTimeout, .{ .name = "Bun__Timer__setTimeout" });
+        @export(&setInterval, .{ .name = "Bun__Timer__setInterval" });
+        @export(&clearImmediate, .{ .name = "Bun__Timer__clearImmediate" });
+        @export(&clearTimeout, .{ .name = "Bun__Timer__clearTimeout" });
+        @export(&clearInterval, .{ .name = "Bun__Timer__clearInterval" });
+        @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
     }
 };
 

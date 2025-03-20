@@ -209,11 +209,11 @@ pub const Arena = struct {
     }
     pub const supports_posix_memalign = true;
 
-    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("Malloc: {d}\n", .{len});
 
-        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
-            mimalloc.mi_heap_malloc_aligned(heap, len, alignment)
+        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
+            mimalloc.mi_heap_malloc_aligned(heap, len, alignment.toByteUnits())
         else
             mimalloc.mi_heap_malloc(heap, len);
 
@@ -234,15 +234,10 @@ pub const Arena = struct {
         return mimalloc.mi_malloc_usable_size(ptr);
     }
 
-    fn alloc(arena: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
+    fn alloc(arena: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
         const this = bun.cast(*mimalloc.Heap, arena);
         // if (comptime Environment.isDebug)
         //     ArenaRegistry.assert(.{ .heap = this });
-        if (comptime FeatureFlags.alignment_tweak) {
-            return alignedAlloc(this, len, log2_align);
-        }
-
-        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
 
         return alignedAlloc(
             this,
@@ -251,7 +246,7 @@ pub const Arena = struct {
         );
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
+    fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -267,7 +262,7 @@ pub const Arena = struct {
     fn free(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u8,
+        alignment: mem.Alignment,
         _: usize,
     ) void {
         // mi_free_size internally just asserts the size
@@ -275,8 +270,8 @@ pub const Arena = struct {
         // but its good to have that assertion
         if (comptime Environment.isDebug) {
             assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-            if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
-                mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+            if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
+                mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
             else
                 mimalloc.mi_free_size(buf.ptr, buf.len);
         } else {
@@ -288,5 +283,6 @@ pub const Arena = struct {
 const c_allocator_vtable = Allocator.VTable{
     .alloc = &Arena.alloc,
     .resize = &Arena.resize,
+    .remap = &std.mem.Allocator.noRemap,
     .free = &Arena.free,
 };

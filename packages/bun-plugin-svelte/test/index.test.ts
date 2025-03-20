@@ -47,6 +47,15 @@ describe("when importing `.svelte.ts` files with ESM", () => {
   it("builds successfully", () => {
     expect(res.success).toBeTrue();
   });
+
+  it(`handles "svelte" export condition`, async () => {
+    const res = await Bun.build({
+      entrypoints: [fixturePath("svelte-export-condition.svelte")],
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+    expect(res.success).toBeTrue();
+  });
 });
 
 describe("when importing `.svelte.ts` files with CJS", () => {

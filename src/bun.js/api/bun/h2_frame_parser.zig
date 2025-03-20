@@ -550,7 +550,7 @@ const Handlers = struct {
     }
 
     pub fn callWriteCallback(this: *Handlers, callback: JSC.JSValue, data: []const JSValue) bool {
-        if (!callback.isCallable(this.globalObject.vm())) return false;
+        if (!callback.isCallable()) return false;
         this.vm.eventLoop().runCallback(callback, this.globalObject, .undefined, data);
         return true;
     }
@@ -595,7 +595,7 @@ const Handlers = struct {
 
         inline for (pairs) |pair| {
             if (try opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
-                if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
+                if (!callback_value.isCell() or !callback_value.isCallable()) {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
@@ -604,7 +604,7 @@ const Handlers = struct {
         }
 
         if (opts.fastGet(globalObject, .@"error")) |callback_value| {
-            if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
+            if (!callback_value.isCell() or !callback_value.isCallable()) {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
@@ -1020,7 +1020,7 @@ pub const H2FrameParser = struct {
                 .len = @intCast(bytes.len),
                 // we need to clone this data to send it later
                 .buffer = if (bytes.len == 0) "" else client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory(),
-                .callback = if (callback.isCallable(globalThis.vm())) JSC.Strong.create(callback, globalThis) else .empty,
+                .callback = if (callback.isCallable()) JSC.Strong.create(callback, globalThis) else .empty,
             };
             if (bytes.len > 0) {
                 @memcpy(frame.buffer[0..bytes.len], bytes);
@@ -3855,7 +3855,7 @@ pub const H2FrameParser = struct {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
                     has_priority = true;
                     weight = weight_js.toInt32();
-                    if (weight < 1 or weight > 256) {
+                    if (weight < 1 or weight > std.math.maxInt(u8)) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
@@ -3864,7 +3864,7 @@ pub const H2FrameParser = struct {
                     stream.weight = @intCast(weight);
                 }
 
-                if (weight < 1 or weight > 256) {
+                if (weight < 1 or weight > std.math.maxInt(u8)) {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                     this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));

@@ -22,7 +22,6 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
-
 #ifndef WIN32
 #include <fcntl.h>
 #endif
@@ -174,7 +173,11 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
     if(ssl) {
         return (struct us_socket_t *)us_internal_ssl_socket_close((struct us_internal_ssl_socket_t *) s, code, reason);
     }
+
     if (!us_socket_is_closed(0, s)) {
+        /* make sure the context is alive until the callback ends */
+        us_socket_context_ref(ssl, s->context);
+
         if (s->low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
@@ -186,7 +189,6 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->next = 0;
             s->low_prio_state = 0;
             us_socket_context_unref(ssl, s->context);
-
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
@@ -207,17 +209,27 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
-        /* Link this socket to the close-list and let it be deleted after this iteration */
-        s->next = s->context->loop->data.closed_head;
-        s->context->loop->data.closed_head = s;
 
         /* Any socket with prev = context is marked as closed */
         s->prev = (struct us_socket_t *) s->context;
 
+        /* mark it as closed and call the callback */
+        struct us_socket_t *res = s;
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
-            return s->context->on_close(s, code, reason);
+            res = s->context->on_close(s, code, reason);
         }
+
+        /* Link this socket to the close-list and let it be deleted after this iteration */
+        s->next = s->context->loop->data.closed_head;
+        s->context->loop->data.closed_head = s;
+
+        /* unref the context after the callback ends */
+        us_socket_context_unref(ssl, s->context);
+
+        /* preserve the return value from on_close if its called */
+        return res;
     }
+
     return s;
 }
 
@@ -502,9 +514,14 @@ void us_socket_nodelay(struct us_socket_t *s, int enabled) {
     }
 }
 
+/// Returns 0 on success. Returned error values depend on the platform.
+/// - on posix, returns `errno`
+/// - on windows, when libuv is used, returns a UV err code
+/// - on windows, LIBUS_USE_LIBUV is set, returns `WSAGetLastError()`
+/// - on windows, otherwise returns result of `WSAGetLastError`
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay){
     if (!us_socket_is_shut_down(0, s)) {
-        bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
+        return bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
     }
     return 0;
 }

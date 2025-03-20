@@ -13,7 +13,6 @@ const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
 // Re-export all the split-out types
 pub const Exception = @import("Exception.zig").Exception;
-pub const ZigGlobalObject = @import("ZigGlobalObject.zig").ZigGlobalObject;
 pub const ErrorCode = @import("ErrorCode.zig").ErrorCode;
 pub const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
 pub const NodePath = JSC.Node.Path;
@@ -31,6 +30,13 @@ pub const WebSocketHTTPSClient = @import("../../http/websocket_http_client.zig")
 pub const WebSocketClient = @import("../../http/websocket_http_client.zig").WebSocketClient;
 pub const WebSocketClientTLS = @import("../../http/websocket_http_client.zig").WebSocketClientTLS;
 
+comptime {
+    WebSocketClient.exportAll();
+    WebSocketClientTLS.exportAll();
+    WebSocketHTTPClient.exportAll();
+    WebSocketHTTPSClient.exportAll();
+}
+
 // Re-export the Errorable type and common instances
 pub const Errorable = @import("Errorable.zig").Errorable;
 pub const ResolvedSource = @import("ResolvedSource.zig").ResolvedSource;
@@ -44,6 +50,10 @@ pub const ZigStackFrameCode = @import("ZigStackFrameCode.zig").ZigStackFrameCode
 
 // Re-export Process
 pub const Process = @import("Process.zig").Process;
+comptime {
+    _ = Process.getTitle;
+    _ = Process.setTitle;
+}
 
 // Re-export stack trace related types
 pub const ZigStackTrace = @import("ZigStackTrace.zig").ZigStackTrace;
@@ -66,12 +76,3 @@ pub const HTTPDebugServerRequestContext = JSC.API.DebugHTTPServer.RequestContext
 pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestContext;
 pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
-
-// Reference all the shims
-comptime {
-    @import("ShimReferences.zig").addShimReferences();
-}
-
-// Re-export LoadLibrary and NodeModuleModule
-pub const Bun__LoadLibraryBunString = @import("LoadLibrary.zig").Bun__LoadLibraryBunString;
-pub const NodeModuleModule__findPath = @import("NodeModuleModule.zig").NodeModuleModule__findPath;

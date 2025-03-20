@@ -894,7 +894,9 @@ pub fn withoutTrailingSlashWindowsPath(input: string) []const u8 {
         path.len -= 1;
     }
 
-    bun.assert(!isWindowsAbsolutePathMissingDriveLetter(u8, path));
+    if (Environment.isDebug)
+        bun.debugAssert(!std.fs.path.isAbsolute(path) or
+            !isWindowsAbsolutePathMissingDriveLetter(u8, path));
 
     return path;
 }
@@ -4382,6 +4384,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
 
     if (remaining[0] >= 127 or
         remaining[0] < 0x20 or
+        remaining[0] == '%' or
         remaining[0] == '\\' or
         remaining[0] == '"' or
         remaining[0] == '#' or
@@ -4402,6 +4405,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
                 @as(AsciiVectorU1, @bitCast(vec > max_16_ascii)) |
                 @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('%')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('\\')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('"')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('#')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('?')))) |
@@ -4425,6 +4429,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
         const char = char_.*;
         if (char > 127 or char < 0x20 or
             char == '\\' or
+            char == '%' or
             char == '"' or
             char == '#' or
             char == '?' or
@@ -5770,7 +5775,7 @@ pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
 ) []u16 {
-    // TODO(@paperdave): implement error handling here.
+    // TODO(@paperclover): implement error handling here.
     // for now this will cause invalid utf-8 to be ignored and become empty.
     // this is lame because of https://github.com/oven-sh/bun/issues/8197
     // it will cause process.env.whatever to be len=0 instead of the data
@@ -5806,7 +5811,7 @@ pub fn convertUTF16toUTF8InBuffer(
     const result = bun.simdutf.convert.utf16.to.utf8.le(input, buf);
     // switch (result.status) {
     //     .success => return buf[0..result.count],
-    //     // TODO(@paperdave): handle surrogate
+    //     // TODO(@paperclover): handle surrogate
     //     .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
     //     else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     // }

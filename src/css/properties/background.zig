@@ -1014,9 +1014,9 @@ pub const BackgroundHandler = struct {
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if (this.has_prefix) {
-            var prop = this.decls.popOrNull();
-            if (prop != null) {
-                prop.?.deinit(allocator);
+            var maybe_prop = this.decls.pop();
+            if (maybe_prop) |*prop| {
+                prop.deinit(allocator);
             }
         }
 

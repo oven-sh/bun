@@ -24,10 +24,8 @@ pub const SystemError = extern struct {
         };
     }
 
-    pub const shim = JSC.Shimmer("", "SystemError", @This());
-
-    pub const name = "SystemError";
-    pub const namespace = "";
+    extern fn SystemError__toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue;
+    extern fn SystemError__toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSC.JSGlobalObject) JSValue;
 
     pub fn getErrno(this: *const SystemError) bun.C.E {
         // The inverse in bun.sys.Error.toSystemError()
@@ -55,7 +53,7 @@ pub const SystemError = extern struct {
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
 
-        return shim.cppFn("toErrorInstance", .{ this, global });
+        return SystemError__toErrorInstance(this, global);
     }
 
     /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
@@ -82,7 +80,6 @@ pub const SystemError = extern struct {
 
         return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
-    extern fn SystemError__toErrorInstanceWithInfoObject(*const SystemError, *JSC.JSGlobalObject) JSValue;
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (!self.path.isEmpty()) {
@@ -117,8 +114,4 @@ pub const SystemError = extern struct {
             ),
         }
     }
-
-    pub const Extern = [_][]const u8{
-        "toErrorInstance",
-    };
 };

@@ -6,27 +6,28 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const GetterSetter = @import("GetterSetter.zig").GetterSetter;
 const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
 
-pub const JSCell = extern struct {
-    pub const shim = JSC.Shimmer("JSC", "JSCell", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSCell.h";
-    pub const name = "JSC::JSCell";
-    pub const namespace = "JSC";
+pub const JSCell = opaque {
+    /// Statically cast a cell to a JSObject. Returns null for non-objects.
+    /// Use `toObject` to mutate non-objects into objects.
+    pub fn getObject(this: *JSCell) ?*JSC.JSObject {
+        return JSC__JSCell__getObject(this);
+    }
 
-    const CellType = enum(u8) { _ };
-
-    pub fn getObject(this: *JSCell) *JSC.JSObject {
-        return shim.cppFn("getObject", .{this});
+    /// Convert a cell to a JSObject.
+    ///
+    /// Statically casts cells that are already objects, otherwise mutates them
+    /// into objects.
+    pub fn toObject(this: *JSCell, global: *JSC.JSGlobalObject) *JSC.JSObject {
+        return JSC__JSCell__toObject(this, global);
     }
 
     pub fn getType(this: *JSCell) u8 {
-        return shim.cppFn("getType", .{
-            this,
-        });
+        return JSC__JSCell__getType(this);
     }
 
-    pub const Extern = [_][]const u8{ "getObject", "getType" };
+    pub fn toJS(this: *JSCell) JSC.JSValue {
+        return JSC.JSValue.fromCell(this);
+    }
 
     pub fn getGetterSetter(this: *JSCell) *GetterSetter {
         if (comptime bun.Environment.allow_assert) {
@@ -41,4 +42,8 @@ pub const JSCell = extern struct {
         }
         return @as(*CustomGetterSetter, @ptrCast(@alignCast(this)));
     }
+
+    extern fn JSC__JSCell__getObject(this: *JSCell) *JSC.JSObject;
+    extern fn JSC__JSCell__toObject(this: *JSCell, *JSGlobalObject) *JSC.JSObject;
+    extern fn JSC__JSCell__getType(this: *JSCell) u8;
 };

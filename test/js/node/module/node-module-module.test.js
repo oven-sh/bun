@@ -17,6 +17,8 @@ test("isBuiltin() works", () => {
   expect(isBuiltin("events")).toBe(true);
   expect(isBuiltin("node:events")).toBe(true);
   expect(isBuiltin("node:bacon")).toBe(false);
+  expect(isBuiltin("node:test")).toBe(true);
+  expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
 });
 
 test("module.globalPaths exists", () => {
@@ -138,4 +140,41 @@ test("Module._resolveLookupPaths", () => {
 
 test("Module.findSourceMap doesn't throw", () => {
   expect(Module.findSourceMap("foo")).toEqual(undefined);
+});
+
+test("require cache relative specifier", () => {
+  require.cache['./bar.cjs'] = { exports: { default: 'bar' } };
+  expect(() => require('./bar.cjs')).toThrow("Cannot find module");
+});
+test("builtin resolution", () => {
+  expect(require.resolve("fs")).toBe("fs");
+  expect(require.resolve("node:fs")).toBe("node:fs");
+});
+test("require cache node builtins specifier", () => {
+  // as js builtin
+  try {
+    const fake = { default: 'bar' };
+    const real = require('fs');
+    expect(require.cache['fs']).toBe(undefined);
+    require.cache['fs'] = { exports: fake };
+    expect(require('fs')).toBe(fake);
+    expect(require("node:fs")).toBe(real);
+  } finally {
+    delete require.cache['fs'];
+  }
+
+  // as native module
+  try {
+    const fake = { default: 'bar' };
+    const real = require('util/types');
+    expect(require.cache['util/types']).toBe(undefined);
+    require.cache['util/types'] = { exports: fake };
+    expect(require('util/types')).toBe(fake);
+    expect(require("node:util/types")).toBe(real);
+  } finally {
+    delete require.cache['util/types'];
+  }
+});
+test("require a cjs file uses the 'module.exports' export", () => {
+  expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
 });

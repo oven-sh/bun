@@ -187,7 +187,7 @@ pub const FilePoll = struct {
 
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
-        // TODO(@paperdave): This cast is extremely suspicious. At best, `fd` is
+        // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
         uv.uv_unref(@ptrFromInt(@intFromEnum(this.fd)));

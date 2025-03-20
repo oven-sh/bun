@@ -1374,16 +1374,14 @@ pub const Crypto = struct {
                 this.salt.deinit();
             }
 
-            pub fn fromJS(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue, is_async: bool) bun.JSError!PBKDF2 {
-                if (arguments.len < 5) {
-                    return globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
+            pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_async: bool) bun.JSError!PBKDF2 {
+                const arg0, const arg1, const arg2, const arg3, const arg4, const arg5 = callFrame.argumentsAsArray(6);
+
+                if (!arg3.isNumber()) {
+                    return globalThis.throwInvalidArgumentTypeValue("keylen", "number", arg3);
                 }
 
-                if (!arguments[3].isNumber()) {
-                    return globalThis.throwInvalidArgumentTypeValue("keylen", "number", arguments[3]);
-                }
-
-                const keylen_num = arguments[3].asNumber();
+                const keylen_num = arg3.asNumber();
 
                 if (std.math.isInf(keylen_num) or std.math.isNan(keylen_num)) {
                     return globalThis.throwRangeError(keylen_num, .{
@@ -1402,11 +1400,11 @@ pub const Crypto = struct {
                     return error.JSError;
                 }
 
-                if (!arguments[2].isAnyInt()) {
-                    return globalThis.throwInvalidArgumentTypeValue("iterations", "number", arguments[2]);
+                if (!arg2.isAnyInt()) {
+                    return globalThis.throwInvalidArgumentTypeValue("iterations", "number", arg2);
                 }
 
-                const iteration_count = arguments[2].coerce(i64, globalThis);
+                const iteration_count = arg2.coerce(i64, globalThis);
 
                 if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(i32))) {
                     return globalThis.throwRangeError(iteration_count, .{ .field_name = "iterations", .min = 1, .max = std.math.maxInt(i32) + 1 });
@@ -1417,19 +1415,19 @@ pub const Crypto = struct {
                 }
 
                 const algorithm = brk: {
-                    if (!arguments[4].isString()) {
-                        return globalThis.throwInvalidArgumentTypeValue("digest", "string", arguments[4]);
+                    if (!arg4.isString()) {
+                        return globalThis.throwInvalidArgumentTypeValue("digest", "string", arg4);
                     }
 
                     invalid: {
-                        switch (try EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse break :invalid) {
+                        switch (try EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arg4) orelse break :invalid) {
                             .shake128, .shake256, .@"sha3-224", .@"sha3-256", .@"sha3-384", .@"sha3-512" => break :invalid,
                             else => |alg| break :brk alg,
                         }
                     }
 
                     if (!globalThis.hasException()) {
-                        const slice = try arguments[4].toSlice(globalThis, bun.default_allocator);
+                        const slice = try arg4.toSlice(globalThis, bun.default_allocator);
                         defer slice.deinit();
                         const name = slice.slice();
                         return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
@@ -1452,16 +1450,16 @@ pub const Crypto = struct {
                 }
 
                 const allow_string_object = true;
-                out.salt = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async, allow_string_object) orelse {
-                    return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
+                out.salt = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arg1, is_async, allow_string_object) orelse {
+                    return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arg1);
                 };
 
                 if (out.salt.slice().len > std.math.maxInt(i32)) {
                     return globalThis.throwInvalidArguments("salt is too long", .{});
                 }
 
-                out.password = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async, allow_string_object) orelse {
-                    return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
+                out.password = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arg0, is_async, allow_string_object) orelse {
+                    return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arg0);
                 };
 
                 if (out.password.slice().len > std.math.maxInt(i32)) {
@@ -1469,8 +1467,8 @@ pub const Crypto = struct {
                 }
 
                 if (is_async) {
-                    if (!arguments[5].isFunction()) {
-                        return globalThis.throwInvalidArgumentTypeValue("callback", "function", arguments[5]);
+                    if (!arg5.isFunction()) {
+                        return globalThis.throwInvalidArgumentTypeValue("callback", "function", arg5);
                     }
                 }
 

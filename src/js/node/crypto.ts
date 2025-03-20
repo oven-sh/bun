@@ -59,6 +59,10 @@ const {
   randomBytes,
   randomFillSync,
   randomFill,
+  secureHeapUsed,
+  getFips,
+  setFips,
+  setEngine,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString } = require("internal/validators");
@@ -424,23 +428,6 @@ var require_algos = __commonJS({
     module.exports = require_algorithms();
   },
 });
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
 
 // node_modules/des.js/lib/des/utils.js
 var require_utils = __commonJS({
@@ -1979,8 +1966,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.getHashes = function () {
       return hashes;
     };
-    exports.pbkdf2Sync = pbkdf2Sync;
-    exports.pbkdf2 = pbkdf2;
     var aes = require_browser6();
     exports.Cipher = aes.Cipher;
     exports.createCipher = aes.createCipher;
@@ -2359,9 +2344,27 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-crypto_exports.getFips = function getFips() {
-  return 0;
-};
+// TODO: move this to zig
+function pbkdf2(password, salt, iterations, keylen, digest, callback) {
+  if (typeof digest === "function") {
+    callback = digest;
+    digest = undefined;
+  }
+
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
+  if (callback) {
+    promise.then(
+      result => callback(null, result),
+      err => callback(err),
+    );
+    return;
+  }
+
+  promise.then(() => {});
+}
+
+crypto_exports.pbkdf2 = pbkdf2;
+crypto_exports.pbkdf2Sync = pbkdf2Sync;
 
 crypto_exports.hkdf = hkdf;
 crypto_exports.hkdfSync = hkdfSync;
@@ -2527,6 +2530,16 @@ crypto_exports.checkPrime = checkPrime;
 crypto_exports.checkPrimeSync = checkPrimeSync;
 crypto_exports.generatePrime = generatePrime;
 crypto_exports.generatePrimeSync = generatePrimeSync;
+
+crypto_exports.secureHeapUsed = secureHeapUsed;
+crypto_exports.setEngine = setEngine;
+crypto_exports.getFips = getFips;
+crypto_exports.setFips = setFips;
+Object.defineProperty(crypto_exports, "fips", {
+  __proto__: null,
+  get: getFips,
+  set: setFips,
+});
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {

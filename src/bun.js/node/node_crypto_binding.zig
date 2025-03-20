@@ -361,19 +361,15 @@ const random = struct {
     }
 };
 
-fn pbkdf2(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(6);
-
-    const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
+fn pbkdf2(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const data = try PBKDF2.fromJS(globalThis, callFrame, true);
 
     const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
     return job.promise.value();
 }
 
-fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(5);
-
-    var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
+fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    var data = try PBKDF2.fromJS(globalThis, callFrame, false);
     defer data.deinit();
     var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
     if (out_arraybuffer == .zero or globalThis.hasException()) {
@@ -415,6 +411,22 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
     return JSC.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
 }
 
+pub fn secureHeapUsed(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return .undefined;
+}
+
+pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return JSValue.jsNumber(0);
+}
+
+pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return .undefined;
+}
+
+pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return global.ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by BoringSSL", .{}).throw();
+}
+
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 8);
 
@@ -426,6 +438,11 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     crypto.put(global, String.init("randomUUID"), JSC.JSFunction.create(global, "randomUUID", random.randomUUID, 1, .{}));
     crypto.put(global, String.init("randomBytes"), JSC.JSFunction.create(global, "randomBytes", random.randomBytes, 2, .{}));
     crypto.put(global, String.init("timingSafeEqual"), JSC.JSFunction.create(global, "timingSafeEqual", timingSafeEqual, 2, .{}));
+
+    crypto.put(global, String.init("secureHeapUsed"), JSC.JSFunction.create(global, "secureHeapUsed", secureHeapUsed, 0, .{}));
+    crypto.put(global, String.init("getFips"), JSC.JSFunction.create(global, "getFips", getFips, 0, .{}));
+    crypto.put(global, String.init("setFips"), JSC.JSFunction.create(global, "setFips", getFips, 1, .{}));
+    crypto.put(global, String.init("setEngine"), JSC.JSFunction.create(global, "setEngine", getFips, 2, .{}));
 
     return crypto;
 }

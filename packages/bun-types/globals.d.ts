@@ -1286,7 +1286,43 @@ interface Uint8Array {
    * @param base64 The base64 encoded string to decode into the array
    * @param offset Optional starting index to begin setting the decoded bytes (default: 0)
    */
-  setFromBase64(base64: string, offset?: number): void;
+  setFromBase64(
+    base64: string,
+    offset?: number,
+  ): {
+    /**
+     * The number of bytes read from the base64 string
+     */
+    read: number;
+    /**
+     * The number of bytes written to the Uint8Array
+     * Will never be greater than the `.byteLength` of this Uint8Array
+     */
+    written: number;
+  };
+
+  /**
+   * Convert the Uint8Array to a hex encoded string
+   * @returns The hex encoded string representation of the Uint8Array
+   */
+  toHex(): string;
+
+  /**
+   * Set the contents of the Uint8Array from a hex encoded string
+   * @param hex The hex encoded string to decode into the array. The string must have
+   * an even number of characters, be valid hexadecimal characters and contain no whitespace.
+   */
+  setFromHex(hex: string): {
+    /**
+     * The number of bytes read from the hex string
+     */
+    read: number;
+    /**
+     * The number of bytes written to the Uint8Array
+     * Will never be greater than the `.byteLength` of this Uint8Array
+     */
+    written: number;
+  };
 }
 
 interface Uint8ArrayConstructor {
@@ -1303,6 +1339,13 @@ interface Uint8ArrayConstructor {
       lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
     },
   ): Uint8Array;
+
+  /**
+   * Create a new Uint8Array from a hex encoded string
+   * @param hex The hex encoded string to convert to a Uint8Array
+   * @returns A new Uint8Array containing the decoded data
+   */
+  fromHex(hex: string): Uint8Array;
 }
 
 interface BroadcastChannel {}

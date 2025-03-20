@@ -829,6 +829,7 @@ pub const VirtualMachine = struct {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     is_in_preload: bool = false,
+    has_patched_run_main: bool = false,
 
     transpiler_store: JSC.RuntimeTranspilerStore,
 
@@ -3056,11 +3057,18 @@ pub const VirtualMachine = struct {
         }
 
         if (!this.transpiler.options.disable_transpilation) {
-            if (try this.loadPreloads()) |promise| {
-                JSValue.fromCell(promise).ensureStillAlive();
-                JSValue.fromCell(promise).protect();
-                this.pending_internal_promise = promise;
-                return promise;
+            if (this.preload.len > 0) {
+                if (try this.loadPreloads()) |promise| {
+                    JSValue.fromCell(promise).ensureStillAlive();
+                    JSValue.fromCell(promise).protect();
+                    this.pending_internal_promise = promise;
+                    return promise;
+                }
+
+                // Check if Module.runMain was patched
+                if (this.has_patched_run_main) {
+                    return NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                }
             }
 
             const promise = if (!this.main_is_html_entrypoint)
@@ -3077,6 +3085,13 @@ pub const VirtualMachine = struct {
             JSValue.fromCell(promise).ensureStillAlive();
 
             return promise;
+        }
+    }
+
+    extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) *JSInternalPromise;
+    export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_patched: bool) void {
+        if (vm.is_in_preload) {
+            vm.has_patched_run_main = is_patched;
         }
     }
 

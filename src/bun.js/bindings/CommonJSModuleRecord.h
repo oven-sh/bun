@@ -44,6 +44,17 @@ public:
     mutable JSC::WriteBarrier<JSString> m_dirname;
     // Initialized lazily; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_paths;
+    // Children must always be tracked in case the script decides to access
+    // `module.children`. In that case, all children of the children may also
+    // need their children fields to exist. To avoid allocating *JSArray for
+    // each module, the children array is constructed internally as a HashSet
+    // of pointers. If accessed, the HashSet will still be maintained to detect
+    // when new items are required. The WriteBarrier+HashSet adds 32 bytes to
+    // JSCommonJSModule. `m_childrenValue` can be set to any value via the
+    // user-exposed setter, but Bun does not test that behavior besides
+    // ensuring it does not crash.
+    mutable JSC::WriteBarrier<Unknown> m_childrenValue;
+    WTF::HashSet<JSCommonJSModule*> m_children;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.

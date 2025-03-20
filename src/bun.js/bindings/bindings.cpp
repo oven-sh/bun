@@ -3177,19 +3177,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, nullptr);
-
-    // if (promise->status(globalObject->vm()) ==
-    // JSC::JSPromise::Status::Fulfilled) {
-    //     return reinterpret_cast<JSC::JSInternalPromise*>(
-    //         JSC::JSInternalPromise::resolvedPromise(
-    //             globalObject,
-    //             doLink(globalObject, promise->result(globalObject->vm()))
-    //         )
-    //     );
-    // }
-
-    return result;
+    return promise->then(globalObject, resolverFunction, nullptr);
 }
 #pragma mark - JSC::JSPromise
 

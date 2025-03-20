@@ -257,6 +257,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
 
+    if (LIKELY(referrer)) {
+        auto entry = referrer->m_children.add(moduleObject);
+        if (UNLIKELY(referrer->m_childrenValue && entry.isNewEntry)) {
+            JSValue childrenValue = referrer->m_childrenValue.get();
+            if (JSArray* childrenArray = jsDynamicCast<JSArray*>(childrenValue)) {
+                childrenArray->push(globalObject, referrer);
+            }
+        }
+    }
+
     UNUSED_PARAM(referrer);
 
     moduleObject->load(vm, globalObject);
@@ -450,6 +460,46 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
     return JSValue::encode(thisObject->m_paths.get());
 }
 
+JSC_DEFINE_CUSTOM_SETTER(setterChildren,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (!thisObject->m_childrenValue) {
+        auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+        JSArray* children = constructEmptyArray(globalObject, nullptr, thisObject->m_children.size());
+        if (UNLIKELY(!children)) {
+            JSC::throwOutOfMemoryError(globalObject, throwScope);
+            RELEASE_AND_RETURN(throwScope, JSValue::encode({}));
+        }
+        unsigned index = 0;
+        for (JSCommonJSModule* child : thisObject->m_children) {
+            children->putDirectIndex(globalObject, index, child);
+            index++;
+        }
+        thisObject->m_childrenValue.set(globalObject->vm(), thisObject, children);
+        return JSValue::encode(children);
+    }
+
+    return JSValue::encode(thisObject->m_childrenValue.get());
+}
+
+
 JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
@@ -510,7 +560,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
         thisObject->m_overriddenParent.clear();
     } else {
         thisObject->m_parent = {};
-        thisObject->m_overriddenParent.set(globalObject->vm(), thisObject, JSValue::decode(value));
     }
 
     return true;
@@ -526,11 +575,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
     thisObject->hasEvaluated = JSValue::decode(value).toBoolean(globalObject);
 
     return true;
-}
-
-static JSValue createChildren(VM& vm, JSObject* object)
-{
-    return constructEmptyArray(object->globalObject(), nullptr, 0);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -596,7 +640,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
-    { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
+    { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
     { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
@@ -1016,6 +1060,11 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_dirname);
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
+    visitor.appendHidden(thisObject->m_childrenValue);
+
+    for (JSCommonJSModule* child : thisObject->m_children) {
+        visitor.appendUnbarriered(child);
+    }
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);

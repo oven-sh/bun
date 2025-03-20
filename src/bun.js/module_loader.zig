@@ -2221,7 +2221,10 @@ pub const ModuleLoader = struct {
             bun.debugAssert(false);
             return false;
         };
-        ret.* = .ok(getHardcodedModule(jsc_vm, specifier.*, hardcoded));
+        ret.* = .ok(
+            getHardcodedModule(jsc_vm, specifier.*, hardcoded) orelse
+                return null,
+        );
         return true;
     }
 
@@ -2386,7 +2389,7 @@ pub const ModuleLoader = struct {
             return JSValue.zero;
     }
 
-    fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ResolvedSource {
+    fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
         Analytics.Features.builtin_modules.insert(hardcoded);
         return switch (hardcoded) {
             .@"bun:main" => .{

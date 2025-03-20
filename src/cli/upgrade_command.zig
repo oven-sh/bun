@@ -607,24 +607,14 @@ pub const UpgradeCommand = struct {
                 }
 
                 if (comptime Environment.isPosix) {
-                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
+                    var unzip_command = (try getUnzipCommand(ctx.allocator, &unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, tmpname)) orelse {
                         save_dir.deleteFileZ(tmpname) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to locate any supported unzip program in PATH. bun upgrade needs one of: unzip, busybox, 7z, 7zz, 7za, or bsdtar to work.", .{});
                         Global.exit(1);
                     };
+                    defer unzip_command.deinit();
 
-                    // We could just embed libz2
-                    // however, we want to be sure that xattrs are preserved
-                    // xattrs are used for codesigning
-                    // it'd be easy to mess that up
-                    var unzip_argv = [_]string{
-                        bun.asByteSlice(unzip_exe),
-                        "-q",
-                        "-o",
-                        tmpname,
-                    };
-
-                    var unzip_process = std.process.Child.init(&unzip_argv, ctx.allocator);
+                    var unzip_process = std.process.Child.init(unzip_command.args, ctx.allocator);
                     unzip_process.cwd = tmpdir_path;
                     unzip_process.stdin_behavior = .Inherit;
                     unzip_process.stdout_behavior = .Inherit;
@@ -632,12 +622,12 @@ pub const UpgradeCommand = struct {
 
                     const unzip_result = unzip_process.spawnAndWait() catch |err| {
                         save_dir.deleteFileZ(tmpname) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn {s} due to {s}.", .{ unzip_command.exe, @errorName(err) });
                         Global.exit(1);
                     };
 
                     if (unzip_result.Exited != 0) {
-                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
+                        Output.prettyErrorln("<r><red>{s} failed<r> (exit code: {d})", .{ unzip_command.exe, unzip_result.Exited });
                         save_dir.deleteFileZ(tmpname) catch {};
                         Global.exit(1);
                     }
@@ -1058,3 +1048,61 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 };
+
+const UnzipCommand = struct {
+    exe: string,
+    args: []const string,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, exe: string, args: []const string) !UnzipCommand {
+        const arg_list = try allocator.alloc(string, args.len);
+        @memcpy(arg_list, args);
+        return UnzipCommand{
+            .exe = exe,
+            .args = arg_list,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *UnzipCommand) void {
+        self.allocator.free(self.args);
+    }
+};
+
+fn getUnzipCommand(
+    allocator: std.mem.Allocator,
+    path_buf: *bun.PathBuffer,
+    path: string,
+    top_level_dir: string,
+    tmpname: string,
+) !?UnzipCommand {
+    // We could just embed libz2
+    // however, we want to be sure that xattrs are preserved
+    // xattrs are used for codesigning
+    // it'd be easy to mess that up
+    if (which(path_buf, path, top_level_dir, "unzip")) |unzip_exe| {
+        const exe = bun.asByteSlice(unzip_exe);
+        return try UnzipCommand.init(allocator, exe, &[_]string{ exe, "-q", "-o", tmpname });
+    }
+
+    // preserves xattrs
+    if (which(path_buf, path, top_level_dir, "busybox")) |busybox_exe| {
+        const exe = bun.asByteSlice(busybox_exe);
+        return try UnzipCommand.init(allocator, exe, &[_]string{ exe, "unzip", "-q", "-o", tmpname });
+    }
+
+    if (which(path_buf, path, top_level_dir, "7z") orelse
+        which(path_buf, path, top_level_dir, "7zz") orelse
+        which(path_buf, path, top_level_dir, "7za")) |sevenzip_exe|
+    {
+        const exe = bun.asByteSlice(sevenzip_exe);
+        return try UnzipCommand.init(allocator, exe, &[_]string{ exe, "x", "-y", tmpname });
+    }
+
+    if (which(path_buf, path, top_level_dir, "bsdtar")) |bsdtar_exe| {
+        const exe = bun.asByteSlice(bsdtar_exe);
+        return try UnzipCommand.init(allocator, exe, &[_]string{ exe, "-xf", tmpname, "--xattrs", "-C", "." });
+    }
+
+    return null;
+}

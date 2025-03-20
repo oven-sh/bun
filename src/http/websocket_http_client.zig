@@ -223,9 +223,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         const State = enum { initializing, reading, failed };
 
-        pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
-
-        pub const shim = JSC.Shimmer("Bun", name, @This());
         pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
         const HTTPClient = @This();
@@ -705,26 +702,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
         }
 
-        pub const Export = shim.exportFunctions(.{
-            .connect = connect,
-            .cancel = cancel,
-            .register = register,
-            .memoryCost = memoryCost,
-        });
-
-        comptime {
-            @export(&connect, .{
-                .name = Export[0].symbol_name,
-            });
-            @export(&cancel, .{
-                .name = Export[1].symbol_name,
-            });
-            @export(&register, .{
-                .name = Export[2].symbol_name,
-            });
-            @export(&memoryCost, .{
-                .name = Export[3].symbol_name,
-            });
+        pub fn exportAll() void {
+            comptime {
+                const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
+                @export(&connect, .{
+                    .name = "Bun__" ++ name ++ "__connect",
+                });
+                @export(&cancel, .{
+                    .name = "Bun__" ++ name ++ "__cancel",
+                });
+                @export(&register, .{
+                    .name = "Bun__" ++ name ++ "__register",
+                });
+                @export(&memoryCost, .{
+                    .name = "Bun__" ++ name ++ "__memoryCost",
+                });
+            }
         }
     };
 }
@@ -1025,9 +1018,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         event_loop: *JSC.EventLoop = undefined,
         ref_count: u32 = 1,
 
-        pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
-
-        pub const shim = JSC.Shimmer("Bun", name, @This());
         const stack_frame_size = 1024;
 
         const WebSocket = @This();
@@ -1994,27 +1984,18 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // This is under-estimated a little, as we don't include usockets context.
             return cost;
         }
-
-        pub const Export = shim.exportFunctions(.{
-            .writeBinaryData = writeBinaryData,
-            .writeString = writeString,
-            .close = close,
-            .cancel = cancel,
-            .register = register,
-            .init = init,
-            .finalize = finalize,
-            .memoryCost = memoryCost,
-        });
-
-        comptime {
-            @export(&writeBinaryData, .{ .name = Export[0].symbol_name });
-            @export(&writeString, .{ .name = Export[1].symbol_name });
-            @export(&close, .{ .name = Export[2].symbol_name });
-            @export(&cancel, .{ .name = Export[3].symbol_name });
-            @export(&register, .{ .name = Export[4].symbol_name });
-            @export(&init, .{ .name = Export[5].symbol_name });
-            @export(&finalize, .{ .name = Export[6].symbol_name });
-            @export(&memoryCost, .{ .name = Export[7].symbol_name });
+        pub fn exportAll() void {
+            comptime {
+                const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
+                @export(&cancel, .{ .name = "Bun__" ++ name ++ "__cancel" });
+                @export(&close, .{ .name = "Bun__" ++ name ++ "__close" });
+                @export(&finalize, .{ .name = "Bun__" ++ name ++ "__finalize" });
+                @export(&init, .{ .name = "Bun__" ++ name ++ "__init" });
+                @export(&memoryCost, .{ .name = "Bun__" ++ name ++ "__memoryCost" });
+                @export(&register, .{ .name = "Bun__" ++ name ++ "__register" });
+                @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
+                @export(&writeString, .{ .name = "Bun__" ++ name ++ "__writeString" });
+            }
         }
     };
 }

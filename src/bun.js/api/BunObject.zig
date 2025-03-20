@@ -234,7 +234,6 @@ const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
-const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
@@ -412,7 +411,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var args_buf = callframe.argumentsUndef(5);
     var all_arguments = args_buf.mut();
-    if (all_arguments[0].isUndefined() or all_arguments[0].isNull())
+    if (all_arguments[0].isUndefinedOrNull() or !all_arguments[0].isObject())
         return bun.String.empty.toJS(globalThis);
 
     for (all_arguments) |arg| {
@@ -425,6 +424,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     }
 
     var arguments = all_arguments[0..];
+    const value = arguments[0];
 
     if (!arguments[1].isArray()) {
         arguments[2] = arguments[1];
@@ -443,7 +443,6 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     if (arguments[2].isObject()) {
         try formatOptions.fromJS(globalThis, arguments[2..]);
     }
-    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
@@ -587,7 +586,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
     }
 
-    if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
+    if (!arguments[1].isCell() or !arguments[1].isCallable()) {
         // TODO: add "toTypeOf" helper
         return globalObject.throw("Macro must be a function", .{});
     }
@@ -894,10 +893,11 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
         from_str,
         is_esm,
         false,
+        false,
     );
 }
 
-fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool) bun.JSError!JSC.JSValue {
+fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -907,25 +907,16 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
         specifier.dupeRef();
     defer specifier_decoded.deref();
 
-    if (comptime is_file_path) {
-        VirtualMachine.resolveFilePathForAPI(
-            &errorable,
-            ctx,
-            specifier_decoded,
-            from,
-            &query_string,
-            is_esm,
-        );
-    } else {
-        VirtualMachine.resolveForAPI(
-            &errorable,
-            ctx,
-            specifier_decoded,
-            from,
-            &query_string,
-            is_esm,
-        );
-    }
+    try VirtualMachine.resolveMaybeNeedsTrailingSlash(
+        &errorable,
+        ctx,
+        specifier_decoded,
+        from,
+        &query_string,
+        is_esm,
+        is_file_path,
+        is_user_require_resolve,
+    );
 
     if (!errorable.success) {
         return ctx.throwValue(bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?).?.value());
@@ -948,8 +939,7 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
 }
 
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(3);
-    return try doResolve(globalObject, arguments.slice());
+    return try doResolve(globalObject, callframe.arguments());
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -968,7 +958,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
-    const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
+    const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true, false) catch {
         const err = global.tryTakeException().?;
         return JSC.JSPromise.rejectedPromiseValue(global, err);
     };
@@ -976,25 +966,32 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
-export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
+export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool, is_user_require_resolve: bool) JSC.JSValue {
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
+
+    if (specifier_str.length() == 0) {
+        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+    }
 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true));
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true, false));
 }
 
-export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
+export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool, is_user_require_resolve: bool) JSC.JSValue {
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
+    if (specifier_str.length() == 0) {
+        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+    }
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }
 
 extern fn dump_zone_malloc_stats() void;

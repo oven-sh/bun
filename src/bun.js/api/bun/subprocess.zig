@@ -750,7 +750,6 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
         }
     };
 
-    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(global);
     const ipc_data = &(this.ipc_data orelse {
         if (this.hasExited()) {
             return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
@@ -770,17 +769,17 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     if (good) {
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(zigGlobal, callback, .null);
+            JSC.Bun__Process__queueNextTick1(global, callback, .null);
             // we need to wait until the send is actually completed to trigger the callback
         }
     } else {
         const ex = global.createTypeErrorInstance("process.send() failed", .{});
         ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+            JSC.Bun__Process__queueNextTick1(global, callback, ex);
         } else {
             const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            JSC.Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+            JSC.Bun__Process__queueNextTick1(global, fnvalue, ex);
         }
     }
 
@@ -1599,9 +1598,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         if (this.on_exit_callback.trySwap()) |callback| {
             const waitpid_value: JSValue =
                 if (status == .err)
-                status.err.toJSC(globalThis)
-            else
-                .undefined;
+                    status.err.toJSC(globalThis)
+                else
+                    .undefined;
 
             const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
             this_value.ensureStillAlive();
@@ -1955,7 +1954,7 @@ pub fn spawnMaybeSync(
             // This must run before the stdio parsing happens
             if (!is_sync) {
                 if (try args.getTruthy(globalThis, "ipc")) |val| {
-                    if (val.isCell() and val.isCallable(globalThis.vm())) {
+                    if (val.isCell() and val.isCallable()) {
                         maybe_ipc_mode = ipc_mode: {
                             if (try args.getTruthy(globalThis, "serialization")) |mode_val| {
                                 if (mode_val.isString()) {
@@ -1989,7 +1988,7 @@ pub fn spawnMaybeSync(
             }
 
             if (try args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
-                if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
+                if (!onDisconnect_.isCell() or !onDisconnect_.isCallable()) {
                     return globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
                 }
 
@@ -2000,7 +1999,7 @@ pub fn spawnMaybeSync(
             }
 
             if (try args.getTruthy(globalThis, "onExit")) |onExit_| {
-                if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
+                if (!onExit_.isCell() or !onExit_.isCallable()) {
                     return globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                 }
 

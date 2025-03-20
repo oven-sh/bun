@@ -6559,7 +6559,7 @@ pub const NodeHTTPResponse = struct {
             if (status_code_value != .undefined) {
                 break :brk globalObject.validateIntegerRange(status_code_value, i32, 200, .{
                     .min = 100,
-                    .max = 599,
+                    .max = 999,
                 }) catch return error.JSError;
             }
 

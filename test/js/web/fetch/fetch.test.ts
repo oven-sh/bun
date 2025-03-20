@@ -1331,12 +1331,12 @@ describe("Response", () => {
   it("should work with bigint", () => {
     var r = new Response("hello status", { status: 200n });
     expect(r.status).toBe(200);
-    r = new Response("hello status", { status: 599n });
-    expect(r.status).toBe(599);
+    r = new Response("hello status", { status: 999n });
+    expect(r.status).toBe(999);
     r = new Response("hello status", { status: BigInt(200) });
     expect(r.status).toBe(200);
-    r = new Response("hello status", { status: BigInt(599) });
-    expect(r.status).toBe(599);
+    r = new Response("hello status", { status: BigInt(999) });
+    expect(r.status).toBe(999);
   });
   testBlobInterface(data => new Response(data), true);
 });

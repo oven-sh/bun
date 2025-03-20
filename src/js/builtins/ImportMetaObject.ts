@@ -150,7 +150,7 @@ export function internalRequire(this: ImportMetaObject, id) {
 
   // TODO: remove this hardcoding
   if (last5 === ".json" && !id.endsWith?.("package.json")) {
-    var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
+    var fs = require("node:fs");
     var exports = JSON.parse(fs.readFileSync(id, "utf8"));
     $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));
     return exports;
@@ -160,7 +160,7 @@ export function internalRequire(this: ImportMetaObject, id) {
     $requireMap.$set(id, module);
     return module.exports;
   } else if (last5 === ".toml") {
-    var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
+    var fs = require("node:fs");
     var exports = Bun.TOML.parse(fs.readFileSync(id, "utf8"));
     $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));
     return exports;

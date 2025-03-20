@@ -633,7 +633,7 @@ export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specif
     const specifier = specifier_str.toUTF8(alloc);
     defer specifier.deinit();
 
-    if (JSC.HardcodedModule.Aliases.get(specifier.slice(), .bun)) |alias| {
+    if (JSC.HardcodedModule.Alias.get(specifier.slice(), .bun)) |alias| {
         return bun.String.static(alias.path);
     }
 

@@ -54,7 +54,7 @@ declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
 
 /** returns `arguments[index]` */
-declare function $argument<T = any>(index: number): any;
+declare function $argument<T = any>(index: number): any | undefined;
 /** returns number of arguments */
 declare function $argumentCount(): number;
 /** array.push(item) */
@@ -92,7 +92,6 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
 ): Fields[N];
 declare function $fulfillPromise(...args: any[]): TODO;
-declare function $evaluateCommonJSModule(...args: any[]): TODO;
 declare function $loadCJS2ESM(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
@@ -422,7 +421,7 @@ declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, CommonJSModuleRecord>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
+declare function $resolveSync(name: string, from: string, isESM?: boolean, isUserRequireResolve?: boolean): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
@@ -487,6 +486,10 @@ declare function $createCommonJSModule(
   hasEvaluated: boolean,
   parent: CommonJSModuleRecord,
 ): CommonJSModuleRecord;
+declare function $evaluateCommonJSModule(
+  moduleToEvaluate: CommonJSModuleRecord,
+  sourceModule: CommonJSModuleRecord
+): void;
 
 declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
 

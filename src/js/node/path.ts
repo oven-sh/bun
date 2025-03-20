@@ -45,11 +45,6 @@ posix.posix = posix;
 
 type Glob = import("bun").Glob;
 
-let LazyGlob: Glob | undefined;
-function loadGlob() {
-  LazyGlob = require("bun").Glob;
-}
-
 // the most-recently used glob is memoized in case `matchesGlob` is called in a
 // loop with the same pattern
 let prevGlob: Glob | undefined;
@@ -65,24 +60,21 @@ function matchesGlob(isWindows, path, pattern) {
     if (prevPattern === pattern) {
       glob = prevGlob;
     } else {
-      if (LazyGlob === undefined) loadGlob();
       validateString(pattern, "pattern");
       if (isWindows) pattern = pattern.replaceAll("\\", "/");
-      glob = prevGlob = new LazyGlob!(pattern);
+      glob = prevGlob = new Bun.Glob(pattern);
       prevPattern = pattern;
     }
   } else {
-    loadGlob(); // no prevGlob implies LazyGlob isn't loaded
     validateString(pattern, "pattern");
     if (isWindows) pattern = pattern.replaceAll("\\", "/");
-    glob = prevGlob = new LazyGlob!(pattern);
+    glob = prevGlob = new Bun.Glob(pattern);
     prevPattern = pattern;
   }
 
   return glob.match(path);
 }
 
-// posix.matchesGlob = win32.matchesGlob = matchesGlob;
 posix.matchesGlob = matchesGlob.bind(null, false);
 win32.matchesGlob = matchesGlob.bind(null, true);
 

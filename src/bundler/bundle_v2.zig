@@ -1644,10 +1644,9 @@ pub const BundleV2 = struct {
                     const path = record.path.text;
                     // External dependency
                     if (path.len > 0 and
-
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Aliases.has(path, .node) and
+                        !JSC.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -3006,7 +3005,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
@@ -16002,7 +16001,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,

@@ -505,7 +505,7 @@ public:
                 return false;
             }
 
-            int64_t timeoutValue;
+            ssize_t timeoutValue;
             V::validateInteger(scope, globalObject, timeoutOpt, "options.timeout"_s, jsNumber(1), jsNumber(std::numeric_limits<int64_t>().max()), &timeoutValue);
             RETURN_IF_EXCEPTION(scope, {});
 

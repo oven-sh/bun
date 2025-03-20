@@ -2066,6 +2066,7 @@ pub const Blob = struct {
             return store;
         }
 
+        /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) *Store {
             const store = Blob.Store.new(.{
                 .data = .{
@@ -3655,6 +3656,8 @@ pub const Blob = struct {
         /// Used by standalone module graph and the File constructor
         stored_name: bun.PathString = bun.PathString.empty,
 
+        /// Takes ownership of `bytes`, which must have been allocated with
+        /// `allocator`.
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
@@ -5000,6 +5003,7 @@ pub const Blob = struct {
         };
     }
 
+    /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = @as(SizeType, @truncate(bytes.len)),

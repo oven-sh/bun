@@ -600,14 +600,14 @@ declare function $makeAbortError(message?: string, options?: { cause: Error }): 
 /**
  * -- Error Codes with manual messages
  */
-declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
-declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
+declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: any): TypeError;
+declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: string[], actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
 declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
 declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
 declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
-declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
+declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
 /**
  * `The "foo" or "bar" or "baz" argument must be specified`
  *
@@ -617,13 +617,43 @@ declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
 declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(a: string, b: string): TypeError;
+declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
+declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
+declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
+declare function $ERR_BUFFER_TOO_LARGE(len: number): RangeError;
+declare function $ERR_BROTLI_INVALID_PARAM(p: number): RangeError;
+declare function $ERR_TLS_CERT_ALTNAME_INVALID(reason: string, host: string, cert): Error;
+declare function $ERR_USE_AFTER_CLOSE(name: string): Error;
+declare function $ERR_HTTP2_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
+declare function $ERR_INVALID_HTTP_TOKEN(name: string, value: string): TypeError;
+declare function $ERR_HTTP2_STATUS_INVALID(code: number): RangeError;
+declare function $ERR_HTTP2_INVALID_PSEUDOHEADER(name: string): TypeError;
+declare function $ERR_HTTP2_STREAM_ERROR(code): Error;
+declare function $ERR_HTTP2_SESSION_ERROR(code): Error;
+declare function $ERR_HTTP2_PAYLOAD_FORBIDDEN(status): Error;
+declare function $ERR_HTTP2_INVALID_INFO_STATUS(code): RangeError;
+declare function $ERR_INVALID_URL(input, base?): TypeError;
+declare function $ERR_INVALID_CHAR(name, field?): TypeError;
+declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
+declare function $ERR_HTTP_HEADERS_SENT(action: string): Error;
+declare function $ERR_INVALID_PROTOCOL(proto, expected): TypeError;
+declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
+declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
+declare function $ERR_UNHANDLED_ERROR(err?): Error;
+declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
+declare function $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(value, expected): TypeError;
+declare function $ERR_CRYPTO_INCOMPATIBLE_KEY(name, value): Error;
+declare function $ERR_CHILD_PROCESS_IPC_REQUIRED(where): Error;
+declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
+declare function $ERR_ASYNC_TYPE(name): TypeError;
+declare function $ERR_ASYNC_CALLBACK(name): TypeError;
+declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;
 declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
-declare function $ERR_BUFFER_OUT_OF_BOUNDS(): Error;
 declare function $ERR_IPC_ONE_PIPE(): Error;
 declare function $ERR_SOCKET_ALREADY_BOUND(): Error;
 declare function $ERR_SOCKET_BAD_BUFFER_SIZE(): Error;
@@ -644,6 +674,32 @@ declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
 declare function $ERR_SOCKET_CLOSED(): Error;
 declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
 declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
+declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
+declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
+declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
+declare function $ERR_INVALID_URI(): URIError;
+declare function $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED(): TypeError;
+declare function $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED(): RangeError;
+declare function $ERR_HTTP2_HEADERS_SENT(): Error;
+declare function $ERR_HTTP2_INVALID_STREAM(): Error;
+declare function $ERR_HTTP2_NO_SOCKET_MANIPULATION(): Error;
+declare function $ERR_HTTP2_SOCKET_UNBOUND(): Error;
+declare function $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK(): Error;
+declare function $ERR_HTTP2_INVALID_SESSION(): Error;
+declare function $ERR_HTTP2_TRAILERS_ALREADY_SENT(): Error;
+declare function $ERR_HTTP2_TRAILERS_NOT_READY(): Error;
+declare function $ERR_HTTP2_SEND_FILE(): Error;
+declare function $ERR_HTTP2_SEND_FILE_NOSEEK(): Error;
+declare function $ERR_HTTP2_PUSH_DISABLED(): Error;
+declare function $ERR_HTTP2_HEADERS_AFTER_RESPOND(): Error;
+declare function $ERR_HTTP2_STATUS_101(): Error;
+declare function $ERR_HTTP2_ALTSVC_INVALID_ORIGIN(): TypeError;
+declare function $ERR_HTTP2_INVALID_ORIGIN(): TypeError;
+declare function $ERR_HTTP2_ALTSVC_LENGTH(): TypeError;
+declare function $ERR_HTTP2_PING_LENGTH(): RangeError;
+declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
+declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
+declare function $ERR_DIR_CLOSED(): Error;
 
 /**
  * Convert a function to a class-like object.

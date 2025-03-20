@@ -62,64 +62,6 @@ pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.zig").ScriptE
 pub const DeferredError = @import("./DeferredError.zig").DeferredError;
 pub const Sizes = @import("./sizes.zig");
 
-// TODO(@paperclover): delete and inline these functions
-pub fn NewGlobalObject(comptime Type: type) type {
-    return struct {
-        const importNotImpl = "Import not implemented";
-        const resolveNotImpl = "resolve not implemented";
-        const moduleNotImpl = "Module fetch not implemented";
-        pub fn import(global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) ErrorableString {
-            if (comptime @hasDecl(Type, "import")) {
-                return @call(bun.callmod_inline, Type.import, .{ global, specifier.*, source.* });
-            }
-            return ErrorableString.err(error.ImportFailed, String.init(importNotImpl).toErrorInstance(global).asVoid());
-        }
-        pub fn resolve(
-            res: *ErrorableString,
-            global: *JSGlobalObject,
-            specifier: *String,
-            source: *String,
-            query_string: *ZigString,
-        ) callconv(.C) void {
-            if (comptime @hasDecl(Type, "resolve")) {
-                @call(bun.callmod_inline, Type.resolve, .{ res, global, specifier.*, source.*, query_string, true });
-                return;
-            }
-            res.* = ErrorableString.err(error.ResolveFailed, String.init(resolveNotImpl).toErrorInstance(global).asVoid());
-        }
-        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) void {
-            if (comptime @hasDecl(Type, "fetch")) {
-                @call(bun.callmod_inline, Type.fetch, .{ ret, global, specifier.*, source.* });
-                return;
-            }
-            ret.* = ErrorableResolvedSource.err(error.FetchFailed, String.init(moduleNotImpl).toErrorInstance(global).asVoid());
-        }
-        pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
-            if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
-                return @call(bun.callmod_inline, Type.promiseRejectionTracker, .{ global, promise, rejection });
-            }
-            return JSValue.jsUndefined();
-        }
-
-        pub fn reportUncaughtException(global: *JSGlobalObject, exception: *JSC.Exception) callconv(.C) JSValue {
-            if (comptime @hasDecl(Type, "reportUncaughtException")) {
-                return @call(bun.callmod_inline, Type.reportUncaughtException, .{ global, exception });
-            }
-            return JSValue.jsUndefined();
-        }
-
-        pub fn onCrash() callconv(.C) void {
-            if (comptime @hasDecl(Type, "onCrash")) {
-                return @call(bun.callmod_inline, Type.onCrash, .{});
-            }
-
-            Output.flush();
-
-            @panic("A C++ exception occurred");
-        }
-    };
-}
-
 pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type, *JSGlobalObject, []const JSValue) anyerror!JSValue) type {
     return struct {
         pub fn callback(

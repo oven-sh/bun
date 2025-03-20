@@ -5187,7 +5187,7 @@ pub const ServerWebSocket = struct {
         this.signal = null;
 
         if (ServerWebSocket.socketGetCached(this.getThisValue())) |socket| {
-            Bun__setNodeHTTPServerSocketUsSocketValue(socket, null);
+            Bun__callNodeHTTPServerSocketOnClose(socket);
         }
 
         defer {
@@ -9946,3 +9946,4 @@ extern "c" fn Bun__ServerRouteList__create(
 ) JSC.JSValue;
 
 extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, ?*anyopaque) void;
+extern "C" fn Bun__callNodeHTTPServerSocketOnClose(JSC.JSValue) void;

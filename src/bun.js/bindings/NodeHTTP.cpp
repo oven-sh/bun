@@ -426,6 +426,12 @@ extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(EncodedJSValue thisVal
     response->socket = socket;
 }
 
+extern "C" void Bun__callNodeHTTPServerSocketOnClose(EncodedJSValue thisValue)
+{
+    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
+    response->onClose();
+}
+
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer);
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);

@@ -535,7 +535,7 @@ pub const JSGlobalObject = opaque {
 
     /// We can't do the threadlocal check when queued from another thread
     pub fn bunVMConcurrently(this: *JSGlobalObject) *JSC.VirtualMachine {
-        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+        return @ptrCast(@alignCast(this.bunVMUnsafe()));
     }
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;

@@ -768,31 +768,33 @@ it("strict: true", () => {
 describe("does not throw missing parameter error in", () => {
   for (let method of ["all", "get", "values", "run"]) {
     it(`${method}()`, () => {
-      const db = Database.open(":memory:");
+      it(`${method}()`, () => {
+        const db = Database.open(":memory:");
 
-      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+        db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
 
-      expect(() => {
-        const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
-        const result = query[method]({
-          "@name": "Joey",
-        });
-        switch (method) {
-          case "all":
-            expect(result).toHaveLength(1);
-            expect(result[0]).toStrictEqual({ name: "Joey" });
-            break;
-          case "get":
-            expect(result).toStrictEqual({ name: "Joey" });
-            break;
-          case "values":
-            expect(result).toStrictEqual([["Joey"]]);
-            break;
-          case "run":
-            expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
-            break;
-        }
-      }).not.toThrow();
+        expect(() => {
+          const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
+          const result = query[method]({
+            "@name": "Joey",
+          });
+          switch (method) {
+            case "all":
+              expect(result).toHaveLength(1);
+              expect(result[0]).toStrictEqual({ name: "Joey" });
+              break;
+            case "get":
+              expect(result).toStrictEqual({ name: "Joey" });
+              break;
+            case "values":
+              expect(result).toStrictEqual([["Joey"]]);
+              break;
+            case "run":
+              expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
+              break;
+          }
+        }).not.toThrow();
+      });
     });
   }
 });

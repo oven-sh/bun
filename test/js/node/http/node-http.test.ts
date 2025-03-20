@@ -1083,6 +1083,20 @@ describe("node:http", () => {
       res.end();
     });
 
+    test("should not decompress gzip, issue#4397", async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      https
+        .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+          res.on("data", function cb(chunk) {
+            resolve(chunk);
+            res.off("data", cb);
+          });
+        })
+        .end();
+      const chunk = await promise;
+      expect(chunk.toString()).not.toContain("<html");
+    });
+
     server.listen(socketPath, () => {
       // TODO: unix socket is not implemented in fetch.
       const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
@@ -1095,20 +1109,6 @@ describe("node:http", () => {
         server.close();
       }
     });
-  });
-
-  test("should not decompress gzip, issue#4397", async () => {
-    const { promise, resolve } = Promise.withResolvers();
-    https
-      .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
-        res.on("data", function cb(chunk) {
-          resolve(chunk);
-          res.off("data", cb);
-        });
-      })
-      .end();
-    const chunk = await promise;
-    expect(chunk.toString()).not.toContain("<html");
   });
 
   test("should listen on port if string, issue#4582", done => {
@@ -2183,6 +2183,7 @@ it("client should use content-length if only one write is called", async () => {
   expect(chunks[0]?.toString()).toBe("Hello World BUN!");
   expect(Buffer.concat(chunks).toString()).toBe("Hello World BUN!");
 });
+
 
 it("should allow numbers headers to be set in node:http server and client", async () => {
   let server_headers;

@@ -13,11 +13,11 @@ describe("runInContext()", () => {
 
 describe("runInNewContext()", () => {
   testRunInContext({ fn: runInNewContext, isIsolated: true, isNew: true });
-  // this line intentionally left blank (for snapshots)
-  // this line intentionally left blank (for snapshots)
   test("options can be a string", () => {
-    const result = runInNewContext("new Error().stack;", {}, "test-filename.js");
-    expect(result).toContain("test-filename.js");
+    test("options can be a string", () => {
+      const result = runInNewContext("new Error().stack;", {}, "test-filename.js");
+      expect(result).toContain("test-filename.js");
+    });
   });
 });
 

@@ -151,7 +151,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file]",
-      "program": "${workspaceFolder}/build/debug-local/bun-debug",
+      "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["${file}"],
       "cwd": "${fileDirname}",
       "env": {

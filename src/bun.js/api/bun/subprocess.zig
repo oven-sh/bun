@@ -378,8 +378,8 @@ const Readable = union(enum) {
     closed: void,
     /// Eventually we will implement Readables created from blobs and array buffers.
     /// When we do that, `buffer` will be borrowed from those objects.
-    /// 
-    /// When a buffered `pipe` finishes reading from its file descriptor, 
+    ///
+    /// When a buffered `pipe` finishes reading from its file descriptor,
     /// the owning `Readable` will be convered into this variant and the pipe's
     /// buffer will be taken as an owned `CowString`.
     buffer: CowString,
@@ -519,8 +519,8 @@ const Readable = union(enum) {
                 }
 
                 const own = buffer.takeSlice(bun.default_allocator) catch {
-                   globalThis.throwOutOfMemory() catch return .zero;
-                   unreachable;
+                    globalThis.throwOutOfMemory() catch return .zero;
+                    unreachable;
                 };
                 const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
                 return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);

@@ -137,8 +137,8 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         }
 
         /// Take ownership over this string's allocation. `str` is left in a
-        /// valid, empty state. 
-        /// 
+        /// valid, empty state.
+        ///
         /// Caller owns the returned memory and must deinitialize it when done.
         /// `str` may be re-used. An allocation will be incurred if and only if
         /// `str` is not owned.

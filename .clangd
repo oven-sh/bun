@@ -2,7 +2,7 @@ Index:
   Background: Skip # Disable slow background indexing of these files.
 
 CompileFlags:
-  CompilationDatabase: build/debug
+  CompilationDatabase: build/debug-local
 
 Diagnostics:
   UnusedIncludes: None

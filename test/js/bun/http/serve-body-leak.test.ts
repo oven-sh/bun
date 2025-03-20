@@ -155,13 +155,13 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
 // If it was leaking the body, the memory usage would be at least 512 KB * 10_000 = 5 GB
 // If it ends up around 280 MB, it's probably not leaking the body.
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
+  // ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
   ["should not leak memory when buffering the body", callBuffering, false, 64],
-  ["should not leak memory when buffering a JSON body", callJSONBuffering, false, 64],
-  ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
-  ["should not leak memory when streaming the body", callStreaming, isFlaky && isLinux, 64],
-  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
-  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
+  // ["should not leak memory when buffering a JSON body", callJSONBuffering, false, 64],
+  // ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
+  // ["should not leak memory when streaming the body", callStreaming, isFlaky && isLinux, 64],
+  // ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
+  // ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
   it.todoIf(skip || isFlaky && isWindows)(

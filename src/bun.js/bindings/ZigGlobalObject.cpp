@@ -263,18 +263,17 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useWasm() = true;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-        JSC::Options::exposeInternalModuleLoader() = false;
+        JSC::Options::exposeInternalModuleLoader() = true;
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
         JSC::Options::useJITCage() = false;
-        JSC::Options::useShadowRealm() = false;
-        JSC::Options::useV8DateParser() = false;
+        JSC::Options::useShadowRealm() = true;
+        JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
         JSC::Options::useIteratorHelpers() = true;
-        JSC::Options::heapGrowthSteepnessFactor() = 2.0;
-        JSC::Options::heapGrowthMaxIncrease() = 3.0;
-        JSC::Options::maxHeapSizeAsRAMSizeMultiple() = 2;
+        JSC::Options::heapGrowthSteepnessFactor() = 1.0;
+        JSC::Options::heapGrowthMaxIncrease() = 2.0;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG

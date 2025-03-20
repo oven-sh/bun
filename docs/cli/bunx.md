@@ -32,6 +32,11 @@ These executables are commonly plain JavaScript files marked with a [shebang lin
 console.log("Hello world!");
 ```
 
+To run local executables, the package needs to be linked. This will put the executables into the global bun binaries path so that it can be executed from anywhere in the command line.
+```bash
+$ bun link
+```
+
 These executables can be run with `bunx`,
 
 ```bash

@@ -520,7 +520,6 @@ const Readable = union(enum) {
 
                 const own = buffer.takeSlice(bun.default_allocator) catch {
                     globalThis.throwOutOfMemory() catch return .zero;
-                    unreachable;
                 };
                 const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
                 return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
@@ -549,7 +548,7 @@ const Readable = union(enum) {
                 return pipe.toBuffer(globalThis);
             },
             .buffer => |*buf| {
-                this.* = .{ .closed = {} };
+                defer this.* = .{ .closed = {} };
                 const own = buf.takeSlice(bun.default_allocator) catch {
                     return globalThis.throwOutOfMemory();
                 };

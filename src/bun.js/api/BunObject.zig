@@ -412,7 +412,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var args_buf = callframe.argumentsUndef(5);
     var all_arguments = args_buf.mut();
-    if (all_arguments[0].isUndefined() or all_arguments[0].isNull())
+    if (all_arguments[0].isUndefinedOrNull() or !all_arguments[0].isObject())
         return bun.String.empty.toJS(globalThis);
 
     for (all_arguments) |arg| {
@@ -425,6 +425,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     }
 
     var arguments = all_arguments[0..];
+    const value = arguments[0];
 
     if (!arguments[1].isArray()) {
         arguments[2] = arguments[1];
@@ -443,7 +444,6 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     if (arguments[2].isObject()) {
         try formatOptions.fromJS(globalThis, arguments[2..]);
     }
-    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
@@ -587,7 +587,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
     }
 
-    if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
+    if (!arguments[1].isCell() or !arguments[1].isCallable()) {
         // TODO: add "toTypeOf" helper
         return globalObject.throw("Macro must be a function", .{});
     }
@@ -1804,7 +1804,10 @@ pub const Crypto = struct {
                     }
 
                     const hash_options = pwhash.bcrypt.HashOptions{
-                        .params = pwhash.bcrypt.Params{ .rounds_log = cost },
+                        .params = pwhash.bcrypt.Params{
+                            .rounds_log = cost,
+                            .silently_truncate_password = true,
+                        },
                         .allocator = allocator,
                         .encoding = .crypt,
                     };
@@ -1862,7 +1865,10 @@ pub const Crypto = struct {
                         sha_512.final(&outbuf);
                         password_to_use = &outbuf;
                     }
-                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
+                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{
+                        .allocator = allocator,
+                        .silently_truncate_password = true,
+                    }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
                             return false;
                         }
@@ -3434,7 +3440,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
         if (try opts.get(globalThis, "offset")) |value| {
             offset = @as(usize, @intCast(value.toInt64()));
-            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.mem.page_size);
+            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
     }
 
@@ -3448,7 +3454,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
     return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(globalThis, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = bun.sys.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
+            _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
     }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
 }
@@ -4530,10 +4536,10 @@ pub const JSZlib = struct {
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
-            arguments[1]
-        else if (arguments.len > 1 and !arguments[1].isUndefined()) {
-            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
-        } else null;
+                arguments[1]
+            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            } else null;
 
         if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };

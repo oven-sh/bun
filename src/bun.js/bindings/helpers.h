@@ -72,7 +72,7 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     if (ptr == nullptr)
         return;
 
-    ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
+    ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.

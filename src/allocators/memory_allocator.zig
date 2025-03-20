@@ -12,7 +12,7 @@ const Environment = @import("../env.zig");
 fn mimalloc_free(
     _: *anyopaque,
     buf: []u8,
-    buf_align: u8,
+    alignment: mem.Alignment,
     _: usize,
 ) void {
     if (comptime Environment.enable_logs)
@@ -23,8 +23,8 @@ fn mimalloc_free(
     // let's only enable it in debug mode
     if (comptime Environment.isDebug) {
         assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-        if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
-            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+        if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
+            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
         else
             mimalloc.mi_free_size(buf.ptr, buf.len);
     } else {
@@ -35,12 +35,12 @@ fn mimalloc_free(
 const CAllocator = struct {
     pub const supports_posix_memalign = true;
 
-    fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         if (comptime Environment.enable_logs)
-            log("mi_alloc({d}, {d})", .{ len, alignment });
+            log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
 
-        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
-            mimalloc.mi_malloc_aligned(len, alignment)
+        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
+            mimalloc.mi_malloc_aligned(len, alignment.toByteUnits())
         else
             mimalloc.mi_malloc(len);
 
@@ -60,16 +60,11 @@ const CAllocator = struct {
         return mimalloc.mi_malloc_size(ptr);
     }
 
-    fn alloc(_: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
-        if (comptime FeatureFlags.alignment_tweak) {
-            return alignedAlloc(len, log2_align);
-        }
-
-        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
+    fn alloc(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(len, alignment);
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
+    fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -93,17 +88,18 @@ pub const c_allocator = Allocator{
 const c_allocator_vtable = &Allocator.VTable{
     .alloc = &CAllocator.alloc,
     .resize = &CAllocator.resize,
+    .remap = &std.mem.Allocator.noRemap,
     .free = &CAllocator.free,
 };
 
 const ZAllocator = struct {
     pub const supports_posix_memalign = true;
 
-    fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("ZAllocator.alignedAlloc: {d}\n", .{len});
 
-        const ptr = if (mimalloc.canUseAlignedAlloc(len, alignment))
-            mimalloc.mi_zalloc_aligned(len, alignment)
+        const ptr = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
+            mimalloc.mi_zalloc_aligned(len, alignment.toByteUnits())
         else
             mimalloc.mi_zalloc(len);
 
@@ -123,11 +119,11 @@ const ZAllocator = struct {
         return mimalloc.mi_malloc_size(ptr);
     }
 
-    fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
-        return alignedAlloc(len, ptr_align);
+    fn alloc(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
+        return alignedAlloc(len, alignment);
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
+    fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -150,6 +146,7 @@ pub const z_allocator = Allocator{
 const z_allocator_vtable = Allocator.VTable{
     .alloc = &ZAllocator.alloc,
     .resize = &ZAllocator.resize,
+    .remap = &std.mem.Allocator.noRemap,
     .free = &ZAllocator.free,
 };
 const HugeAllocator = struct {

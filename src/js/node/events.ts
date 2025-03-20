@@ -852,4 +852,4 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-export default EventEmitter;
+export default EventEmitter as any as typeof import("node:events");

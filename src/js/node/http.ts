@@ -2435,7 +2435,6 @@ const kMethod = Symbol("method");
 const kHost = Symbol("host");
 const kProtocol = Symbol("protocol");
 const kAgent = Symbol("agent");
-const kStream = Symbol("stream");
 const kFetchRequest = Symbol("fetchRequest");
 const kTls = Symbol("tls");
 const kUseDefaultPort = Symbol("useDefaultPort");
@@ -2447,12 +2446,10 @@ const kMaxHeadersCount = Symbol("maxHeadersCount");
 const kReusedSocket = Symbol("reusedSocket");
 const kTimeoutTimer = Symbol("timeoutTimer");
 const kOptions = Symbol("options");
-const kController = Symbol("controller");
 const kSocketPath = Symbol("socketPath");
 const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
 const kJoinDuplicateHeaders = Symbol("joinDuplicateHeaders");
-const kSocket = Symbol("socket");
 
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
@@ -3286,6 +3283,7 @@ const METHODS = [
   "PROPPATCH",
   "PURGE",
   "PUT",
+  "QUERY",
   "REBIND",
   "REPORT",
   "SEARCH",

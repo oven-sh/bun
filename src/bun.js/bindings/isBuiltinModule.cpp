@@ -44,6 +44,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_tls_wrap"_s,
     "constants"_s,
     "inspector"_s,
+    "node:test"_s,
     "bun:sqlite"_s,
     "path/posix"_s,
     "path/win32"_s,
@@ -84,21 +85,24 @@ namespace Bun {
 
 bool isBuiltinModule(const String& namePossiblyWithNodePrefix)
 {
+    // First check the original name as-is
+    for (auto& builtinModule : builtinModuleNamesSortedLength) {
+        if (namePossiblyWithNodePrefix == builtinModule)
+            return true;
+    }
+
+    // If no match found and the name has a "node:" prefix, try without the prefix
     String name = namePossiblyWithNodePrefix;
     if (name.startsWith("node:"_s)) {
         name = name.substringSharingImpl(5);
 
-        // bun doesn't have `node:test` as of writing, but this makes sure that
-        // `node:module` is compatible (`test/parallel/test-module-isBuiltin.js`)
-        if (name == "test"_s) {
-            return true;
+        // Check again with the prefix removed
+        for (auto& builtinModule : builtinModuleNamesSortedLength) {
+            if (name == builtinModule)
+                return true;
         }
     }
 
-    for (auto& builtinModule : builtinModuleNamesSortedLength) {
-        if (name == builtinModule)
-            return true;
-    }
     return false;
 }
 

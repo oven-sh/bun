@@ -2681,6 +2681,11 @@ JSC__JSObject* JSC__JSCell__getObject(JSC__JSCell* arg0)
 }
 unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
+JSC__JSObject* JSC__JSCell__toObject(JSC__JSCell* cell, JSC__JSGlobalObject* globalObject)
+{
+    return cell->toObject(globalObject);
+}
+
 #pragma mark - JSC::JSString
 
 void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
@@ -3655,7 +3660,7 @@ void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, voi
         });
 }
 
-bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1)
+bool JSC__JSValue__isCallable(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isCallable();
 }

@@ -809,7 +809,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 {
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
-                      ->hasOverridenModuleResolveFilenameFunction));
+                ->hasOverridenModuleResolveFilenameFunction));
 }
 
 } // namespace Bun
@@ -836,7 +836,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
 
     for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
-         ++i) {
+        ++i) {
         const auto& entry = Bun::nodeModuleObjectTableValues[i];
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->getIfPropertyExists(globalObject, property);

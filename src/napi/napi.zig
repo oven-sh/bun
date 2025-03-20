@@ -2138,20 +2138,19 @@ pub const NapiFinalizerTask = struct {
 
     pub fn schedule(this: *NapiFinalizerTask) void {
         const globalThis = this.finalizer.env.?.toJS();
-
-        const vm, const thread_kind = globalThis.tryBunVM();
-
-        if (thread_kind != .main) {
-            // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
-            vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
-            return;
-        }
-
-        if (vm.isShuttingDown()) {
-            // Immediate tasks won't run, so we run this as a cleanup hook instead
-            vm.rareData().pushCleanupHook(vm.global, this, runAsCleanupHook);
-        } else {
-            globalThis.bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
+        switch (globalThis.tryBunVM()) {
+            .main_thread => |vm| {
+                if (vm.isShuttingDown()) {
+                    // Immediate tasks won't run, so we run this as a cleanup hook instead
+                    vm.rareData().pushCleanupHook(vm.global, this, runAsCleanupHook);
+                } else {
+                    vm.event_loop.enqueueImmediateTask(JSC.Task.init(this));
+                }
+            },
+            .other_thread => |vm| {
+                // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
+                vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+            },
         }
     }
 

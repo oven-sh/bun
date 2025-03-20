@@ -503,23 +503,34 @@ pub const JSGlobalObject = opaque {
         return @ptrCast(@alignCast(this.bunVMUnsafe()));
     }
 
-    pub const ThreadKind = enum {
-        main,
-        other,
+    pub const TryBunVMResult = union(enum) {
+        /// Running on the main thread executing JS code for this virtual machine.
+        main_thread: *JSC.VirtualMachine,
+        /// Running on a different thread which does not have a JS virtual machine. Only concurrent
+        /// APIs may be used.
+        other_thread: *JSC.VirtualMachine,
     };
 
-    pub fn tryBunVM(this: *JSGlobalObject) struct { *JSC.VirtualMachine, ThreadKind } {
-        const vmPtr = @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+    /// Get the Bun VM for this global object as well as information about what thread you are on
+    /// with respect to that VM. `.main` means you are on the main thread that runs JS code for that
+    /// VM, and `.other` means you are on any other thread.
+    ///
+    /// Must not be called from any other VM's main thread (i.e. a Worker), but this may be called
+    /// from any other thread that doesn't have a VM (e.g. a JSC heap thread or a Bun work pool
+    /// thread)
+    pub fn tryBunVM(this: *JSGlobalObject) TryBunVMResult {
+        const global_object_vm = this.bunVMConcurrently();
 
-        if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
-            if (comptime bun.Environment.allow_assert) {
-                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
-            }
+        if (JSC.VirtualMachine.VMHolder.vm) |this_thread_vm| {
+            bun.assertf(
+                global_object_vm == this_thread_vm,
+                "tryBunVM called from a different VM's main thread",
+                .{},
+            );
+            return .{ .main_thread = global_object_vm };
         } else {
-            return .{ vmPtr, .other };
+            return .{ .other_thread = global_object_vm };
         }
-
-        return .{ vmPtr, .main };
     }
 
     /// We can't do the threadlocal check when queued from another thread

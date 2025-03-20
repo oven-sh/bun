@@ -469,10 +469,10 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     //
     // we do this by reusing the memory in the first buffer
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
-    //                                              ^^        ^     ^
-    //                                              S|        |     image_path_b_len + nt_object_prefix.len
-    //                                               |        'ptr' initial value
-    //                                              the read ptr
+    //                                               ^^        ^     ^
+    //                                               S|        |     image_path_b_len + nt_object_prefix.len
+    //                                                |        'ptr' initial value
+    //                                               the read ptr
     var read_ptr: [*]u16 = brk: {
         var left = image_path_b_len / 2 - (if (is_standalone) ".exe".len else ".bunx".len) - 1;
         var ptr: [*]u16 = buf1_u16[nt_object_prefix.len + left ..];
@@ -532,9 +532,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     //
     //                                               v overwritten data
     // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-    //                                                                 ^^    ^   ^ flags u16
-    //                                                        a zero u16|    shebang meta
-    //                                                                  |shebang data
+    //                                                                  ^^    ^   ^ flags u16
+    //                                                         a zero u16|    shebang meta
+    //                                                                   |shebang data
     //
     // We are intentionally only reading one chunk. The metadata file is almost always going to be < 200 bytes
     // If this becomes a problem we will fix it.
@@ -589,8 +589,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //
             // Instead of the above, the buffer would actually look like:
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //                                                                 ^^ flags
-            //                                                        zero char|
+            //                                                                  ^^ flags
+            //                                                         zero char|
 
             // change the \ from '\??\' to '""
             // the ending quote is assumed to already exist as per the format
@@ -601,9 +601,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             // Copy user arguments in, overwriting old data. Remember that we ensured the arguments
             // this started with a space.
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //                                               ^                 ^^
-            //                                               read_ptr (old)    |read_ptr (right now)
-            //                                                                 argument_start_ptr
+            //                                                ^                 ^^
+            //                                                read_ptr (old)    |read_ptr (right now)
+            //                                                                  argument_start_ptr
             //
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag!!!!!'
             const argument_start_ptr: [*]u8 = @ptrFromInt(@intFromPtr(read_ptr) - 2 * "\x00".len);
@@ -612,7 +612,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             }
 
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag#!!!!'
-            //           ^ lpCommandLine                                              ^ null terminator
+            //           ^ lpCommandLine                                               ^ null terminator
             @as(*align(1) u16, @ptrCast(argument_start_ptr + user_arguments_u8.len)).* = 0;
 
             break :spawn_command_line @alignCast(@ptrCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
@@ -626,7 +626,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             };
 
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //                                                                       ^ new read_ptr
+            //                                                                        ^ new read_ptr
             read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - @sizeOf(ShebangMetadataPacked));
             const shebang_metadata: ShebangMetadataPacked = @as(*align(1) ShebangMetadataPacked, @ptrCast(read_ptr)).*;
 
@@ -664,7 +664,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 // as we do not have to launch a second process.
                 if (dbg) debug("direct_launch_with_bun_js", .{});
                 // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
+                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
                 const len = (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8) / 2 - nt_object_prefix.len - "\"\x00".len;
                 const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"']; // assert we slice at the "
                 bun_ctx.direct_launch_with_bun_js(
@@ -676,8 +676,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
             // Copy the shebang bin path
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //                                                                  ^~~~^
-            //                                                                  ^ read_ptr
+            //                                                                   ^~~~^
+            //                                                                   ^ read_ptr
             // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
             read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - shebang_arg_len_u8);
             @memcpy(buf2_u8, @as([*]u8, @ptrCast(read_ptr))[0..shebang_arg_len_u8]);
@@ -687,7 +687,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
+            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
             const length_of_filename_u8 = @intFromPtr(read_ptr) -
                 @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len + "\x00".len);
@@ -706,7 +706,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             // the pointer is now going to act as a write pointer for remaining data.
             // note that it points into buf2 now, not buf1. this will write arguments and the null terminator
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            //                                                                   ^ write_ptr
+            //                                                                    ^ write_ptr
             if (dbg) {
                 debug("advance = {} + {} + {}\n", .{ shebang_arg_len_u8, "\"".len, length_of_filename_u8 });
             }
@@ -717,8 +717,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             if (user_arguments_u8.len > 0) {
                 // Copy the user arguments in:
                 // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
-                //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-                //        |    |filename_len                                         write_ptr
+                //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+                //        |    |filename_len                                          write_ptr
                 //        |    the quote
                 //        shebang_arg_len
                 @memcpy(@as([*]u8, @ptrCast(write_ptr)), user_arguments_u8);
@@ -726,7 +726,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             }
 
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
-            //                                                                           ^ null terminator
+            //                                                                            ^ null terminator
             write_ptr[0] = 0;
 
             break :spawn_command_line @ptrCast(buf2_u16);

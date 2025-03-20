@@ -191,7 +191,8 @@ async function runTests() {
         break;
       }
 
-      const color = attempt >= maxAttempts ? "red" : "yellow";
+      const neverFail = title.startsWith("vendor/");
+      const color = attempt >= maxAttempts && !neverFail ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         process.stderr.write(stdoutPreview);
@@ -201,7 +202,7 @@ async function runTests() {
       flaky ||= true;
 
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
-        flaky = false;
+        if (!neverFail) flaky = false;
         failedResults.push(failure);
       }
     }

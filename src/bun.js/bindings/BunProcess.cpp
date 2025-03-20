@@ -449,10 +449,32 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #if OS(WINDOWS)
         DWORD errorId = GetLastError();
         LPWSTR messageBuffer = nullptr;
-        size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
-        WTF::String msg = makeString("LoadLibrary failed: "_s, WTF::StringView(messageBuffer, size, false));
-        LocalFree(messageBuffer);
+        DWORD charCount = FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, // Prevents automatic line breaks
+            NULL, // No source needed when using FORMAT_MESSAGE_FROM_SYSTEM
+            errorId,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
+            (LPWSTR)&messageBuffer, // Buffer will be allocated by the function
+            0, // Minimum size to allocate - 0 means "determine size automatically"
+            NULL // No arguments since we're using FORMAT_MESSAGE_IGNORE_INSERTS
+        );
+
+        WTF::StringBuilder errorBuilder;
+        errorBuilder.append("LoadLibrary failed: "_s);
+        if (messageBuffer && charCount > 0) {
+            // Trim trailing whitespace, carriage returns, and newlines that FormatMessageW often includes
+            while (charCount > 0 && (messageBuffer[charCount - 1] == L'\r' || messageBuffer[charCount - 1] == L'\n' || messageBuffer[charCount - 1] == L' '))
+                charCount--;
+
+            errorBuilder.append(WTF::StringView(messageBuffer, charCount, false));
+        } else {
+            errorBuilder.append("error code "_s);
+            errorBuilder.append(WTF::String::number(errorId));
+        }
+
+        WTF::String msg = errorBuilder.toString();
+        if (messageBuffer)
+            LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif

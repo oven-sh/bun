@@ -731,4 +731,4 @@ export default {
   TLSSocket,
   checkServerIdentity,
   rootCertificates,
-};
+} as any as typeof import("node:tls");

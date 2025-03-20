@@ -788,14 +788,12 @@ pub const TestScope = struct {
             .{ .pass = expect.active_test_expectation_counter.actual };
     }
 
-    pub const name = "TestScope";
-    pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
         @export(&jsOnResolve, .{
-            .name = shim.symbolName("onResolve"),
+            .name = "Bun__TestScope__onResolve",
         });
         @export(&jsOnReject, .{
-            .name = shim.symbolName("onReject"),
+            .name = "Bun__TestScope__onReject",
         });
     }
 };

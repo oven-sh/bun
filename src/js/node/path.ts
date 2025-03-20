@@ -78,4 +78,4 @@ function matchesGlob(isWindows, path, pattern) {
 posix.matchesGlob = matchesGlob.bind(null, false);
 win32.matchesGlob = matchesGlob.bind(null, true);
 
-export default process.platform === "win32" ? win32 : posix;
+export default (process.platform === "win32" ? win32 : posix) as any as typeof import("node:path");

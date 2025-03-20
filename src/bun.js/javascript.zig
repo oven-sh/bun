@@ -3285,13 +3285,13 @@ pub const VirtualMachine = struct {
                 current_exception_list: ?*ExceptionList = null,
                 formatter: *ConsoleObject.Formatter,
 
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, ctx.?, true);
+                pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, ctx.?, false);
+                pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
                 }

@@ -234,7 +234,7 @@ pub const SupportsCondition = union(enum) {
         }
 
         if (conditions.items.len == 1) {
-            const ret = conditions.pop();
+            const ret = conditions.pop().?;
             defer conditions.deinit(input.allocator());
             return .{ .result = ret };
         }

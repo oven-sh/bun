@@ -106,4 +106,6 @@ jobs:
 
             Updates SQLite to version ${{ steps.check-version.outputs.latest }}
 
+            Compare: https://sqlite.org/src/vdiff?from=${{ steps.check-version.outputs.current }}&to=${{ steps.check-version.outputs.latest }}
+
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-sqlite3.yml)

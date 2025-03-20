@@ -264,21 +264,13 @@ pub fn MultiArrayList(comptime T: type) type {
             return index;
         }
 
-        /// Remove and return the last element from the list.
-        /// Asserts the list has at least one item.
+        /// Remove and return the last element from the list, or return null if list is empty.
         /// Invalidates pointers to fields of the removed element.
-        pub fn pop(self: *Self) T {
+        pub fn pop(self: *Self) ?T {
+            if (self.len == 0) return null;
             const val = self.get(self.len - 1);
             self.len -= 1;
             return val;
-        }
-
-        /// Remove and return the last element from the list, or
-        /// return `null` if list is empty.
-        /// Invalidates pointers to fields of the removed element, if any.
-        pub fn popOrNull(self: *Self) ?T {
-            if (self.len == 0) return null;
-            return self.pop();
         }
 
         /// Inserts an item into an ordered list.  Shifts all elements

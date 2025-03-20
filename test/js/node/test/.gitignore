@@ -7,4 +7,5 @@ fixtures/snapshot
 fixtures/repl*
 .tmp.*
 *shadow-realm*
+!test-shadow-realm.js
 **/fails.txt

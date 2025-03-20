@@ -65,6 +65,8 @@ class EventTarget;
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
 
+extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
+
 #if OS(WINDOWS)
 #include <uv.h>
 extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
@@ -85,6 +87,11 @@ class GlobalObject : public Bun::GlobalScope {
 public:
     // Move this to the front for better cache locality.
     void* m_bunVM;
+
+    bool isShuttingDown() const
+    {
+        return Bun__VirtualMachine__isShuttingDown(m_bunVM);
+    }
 
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
@@ -395,6 +402,9 @@ public:
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
 
+    WTF::String m_moduleWrapperStart;
+    WTF::String m_moduleWrapperEnd;
+
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
@@ -537,8 +547,11 @@ public:
     LazyClassStructure m_JSX509CertificateClassStructure;
     LazyClassStructure m_JSSignClassStructure;
     LazyClassStructure m_JSVerifyClassStructure;
+    LazyClassStructure m_JSDiffieHellmanClassStructure;
+    LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
     LazyClassStructure m_JSHmacClassStructure;
     LazyClassStructure m_JSHashClassStructure;
+    LazyClassStructure m_JSECDHClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -614,7 +627,10 @@ public:
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
 
-    bool hasOverridenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module")._resolveFilename` is written to
+    bool hasOverriddenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
+    bool hasOverriddenModuleWrapper = false;
 
     WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);

@@ -103,6 +103,9 @@ pub const TestRunner = struct {
 
     unhandled_errors_between_tests: u32 = 0,
 
+    /// used to prevent adding new tests while test() is executing
+    allow_adding_new_tests: bool = true,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
@@ -292,7 +295,7 @@ pub const Jest = struct {
                 }
 
                 const function = arguments.ptr[0];
-                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
+                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable()) {
                     return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
@@ -785,14 +788,12 @@ pub const TestScope = struct {
             .{ .pass = expect.active_test_expectation_counter.actual };
     }
 
-    pub const name = "TestScope";
-    pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
         @export(&jsOnResolve, .{
-            .name = shim.symbolName("onResolve"),
+            .name = "Bun__TestScope__onResolve",
         });
         @export(&jsOnReject, .{
-            .name = shim.symbolName("onReject"),
+            .name = "Bun__TestScope__onReject",
         });
     }
 };
@@ -811,6 +812,7 @@ pub const DescribeScope = struct {
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
+    locked: bool = false,
     done: bool = false,
     skip_count: u32 = 0,
     ref_count: u32 = 1,
@@ -882,7 +884,7 @@ pub const DescribeScope = struct {
                 }
 
                 const cb = arguments.ptr[0];
-                if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
+                if (!cb.isObject() or !cb.isCallable()) {
                     return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
 
@@ -932,7 +934,7 @@ pub const DescribeScope = struct {
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
                 assert(cb.isObject());
-                assert(cb.isCallable(globalObject.vm()));
+                assert(cb.isCallable());
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -989,7 +991,7 @@ pub const DescribeScope = struct {
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
                 assert(cb.isObject());
-                assert(cb.isCallable(globalThis.vm()));
+                assert(cb.isCallable());
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1120,6 +1122,7 @@ pub const DescribeScope = struct {
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
+        this.locked = true;
 
         const file = this.file_id;
         const allocator = getAllocator(globalObject);
@@ -1394,7 +1397,9 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
         jsc_vm.auto_killer.enable();
+        if (Jest.runner) |r| r.allow_adding_new_tests = false;
         var result = TestScope.run(&test_, this);
+        if (Jest.runner) |r| r.allow_adding_new_tests = true;
 
         if (this.describe.tests.items.len > test_id) {
             this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
@@ -1801,6 +1806,10 @@ inline fn createScope(
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
+    if (Jest.runner) |r| if (!r.allow_adding_new_tests) {
+        return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
+    };
+
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
@@ -2018,7 +2027,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     var function = args[1];
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable()) {
         return globalThis.throwPretty("{s} expects a function", .{signature});
     }
 

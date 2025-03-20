@@ -3,6 +3,7 @@ export {};
 declare global {
   namespace Bun {
     type HMREventNames =
+      | "bun:ready"
       | "bun:beforeUpdate"
       | "bun:afterUpdate"
       | "bun:beforeFullReload"
@@ -49,8 +50,6 @@ declare global {
        *
        * In production, `data` is inlined to be `{}`. This is handy because Bun
        * knows it can minify `{}.prop ??= value` into `value` in production.
-       *
-       *
        */
       data: any;
 

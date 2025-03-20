@@ -22,7 +22,7 @@ namespace Bun {
 using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -36,9 +36,13 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
+    // `module.id` Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_id;
+    // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_filename;
+    // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_dirname;
+    // Initialized lazily; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_paths;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
@@ -47,7 +51,6 @@ public:
     //    module.parent = parent;
     //
     mutable JSC::WriteBarrier<Unknown> m_overriddenParent;
-
     // Not visited by the GC.
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
@@ -71,13 +74,11 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
-    inline bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
+    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
+    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);
     }
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const JSC::SourceCode& sourceCode);
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
@@ -106,11 +107,15 @@ public:
         Vector<JSC::Identifier, 4>& exportNames,
         JSC::MarkedArgumentBuffer& exportValues);
 
-    JSValue exportsObject();
+    JSValue exportsObject()
+    {
+        return this->get(globalObject(), JSC::PropertyName(WebCore::clientData(vm())->builtinNames().exportsPublicName()));
+    }
     void setExportsObject(JSC::JSValue exportsObject);
-    JSValue id();
+    JSValue idOrDot() { return m_id.get(); }
+    JSValue filename() { return m_filename.get(); }
 
-    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
+    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -143,13 +148,13 @@ JSC::Structure* createCommonJSModuleStructure(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierValue,
+    JSC::JSString* specifierValue,
     ResolvedSource& source,
     bool isBuiltIn);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierValue,
+    JSC::JSString* specifierValue,
     ResolvedSource& source)
 {
     return createCommonJSModule(globalObject, specifierValue, source, false);

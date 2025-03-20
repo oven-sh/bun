@@ -269,11 +269,11 @@ class AsyncResource {
         triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
       }
       if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
-        throw $ERR_INVALID_ASYNC_ID(`Invalid triggerAsyncId value: ${triggerAsyncId}`);
+        throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
       }
     }
     if (hasEnabledCreateHook && type.length === 0) {
-      throw $ERR_ASYNC_TYPE(`Invalid name for async "type": ${type}`);
+      throw $ERR_ASYNC_TYPE(type);
     }
 
     setAsyncHooksEnabled(true);
@@ -373,13 +373,12 @@ let hasEnabledCreateHook = false;
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
-  if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init must be a function");
-  if (before !== undefined && typeof before !== "function") throw $ERR_ASYNC_CALLBACK("hook.before must be a function");
-  if (after !== undefined && typeof after !== "function") throw $ERR_ASYNC_CALLBACK("hook.after must be a function");
-  if (destroy !== undefined && typeof destroy !== "function")
-    throw $ERR_ASYNC_CALLBACK("hook.destroy must be a function");
+  if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init");
+  if (before !== undefined && typeof before !== "function") throw $ERR_ASYNC_CALLBACK("hook.before");
+  if (after !== undefined && typeof after !== "function") throw $ERR_ASYNC_CALLBACK("hook.after");
+  if (destroy !== undefined && typeof destroy !== "function") throw $ERR_ASYNC_CALLBACK("hook.destroy");
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
-    throw $ERR_ASYNC_CALLBACK("hook.promiseResolve must be a function");
+    throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
   return {
     enable() {

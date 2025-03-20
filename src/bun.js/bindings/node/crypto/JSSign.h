@@ -4,7 +4,7 @@
 #include "JSBuffer.h"
 #include "helpers.h"
 #include "ncrypto.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 

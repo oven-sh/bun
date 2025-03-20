@@ -496,32 +496,6 @@ declare module "module" {
 }
 `;
 
-    for (let i = 0; i < ErrorCode.length; i++) {
-      const [code, constructor, name, ...other_constructors] = ErrorCode[i];
-      dts += `
-/**
- * Generate a ${name ?? constructor.name} error with the \`code\` property set to ${code}.
- *
- * @param msg The error message
- * @param args Additional arguments
- */
-declare function $${code}(msg: string, ...args: any[]): ${name};
-`;
-
-      for (const con of other_constructors) {
-        if (con == null) continue;
-        dts += `
-/**
- * Generate a ${con.name} error with the \`code\` property set to ${code}.
- *
- * @param msg The error message
- * @param args Additional arguments
- */
-declare function $${code}_${con.name}(msg: string, ...args: any[]): ${name};
-`;
-      }
-    }
-
     for (const [name] of jsclasses) {
       dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
     }

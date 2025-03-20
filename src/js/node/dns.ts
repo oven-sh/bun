@@ -357,7 +357,7 @@ function validateResolverOptions(options) {
   if ("timeout" in options) {
     const timeout = options.timeout;
     if ((timeout < 0 && timeout != -1) || Math.floor(timeout) != timeout || timeout >= 2 ** 31) {
-      throw $ERR_OUT_OF_RANGE("Invalid timeout", timeout);
+      throw $ERR_OUT_OF_RANGE("timeout", "Invalid timeout", timeout);
     }
   }
 }

@@ -906,6 +906,10 @@ if(NOT WIN32)
       -Werror
     )
   endif()
+else()
+  target_compile_options(${bun} PUBLIC
+    -Wno-nullability-completeness
+  )
 endif()
 
 # --- Linker options ---

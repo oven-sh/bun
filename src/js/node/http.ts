@@ -90,6 +90,7 @@ const {
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
+  processArrayHeaders,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -97,6 +98,7 @@ const {
   assignEventCallback: (req: Request, callback: (event: number) => void) => void;
   setRequestTimeout: (req: Request, timeout: number) => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
+  processArrayHeaders: (headersArray: any[], targetObj: Record<string, string>) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -1872,7 +1874,7 @@ function onNodeHTTPServerSocketTimeout() {
   if (!reqTimeout && !resTimeout && !serverTimeout) this.destroy();
 }
 
-function onTimeout() {
+function handleRequestTimeout() {
   this[timeoutTimerSymbol] = undefined;
   this[kAbortController]?.abort();
   const handle = this[kHandle];
@@ -3210,62 +3212,73 @@ function ClientRequest(input, options, cb) {
 
   const { headers } = options;
   const headersArray = $isJSArray(headers);
-  if (!headersArray) {
-    if (headers) {
-      for (let key in headers) {
-        this.setHeader(key, headers[key]);
-      }
+  if (headersArray) {
+    // Use the native implementation to process array headers efficiently
+    // This will correctly handle array style headers:
+    // - Join multiple header values with commas (except cookies with semicolons)
+    // - Only use the first host header value
+    const processedHeaders = {};
+    processArrayHeaders(headers, processedHeaders);
+
+    // Now set all processed headers on this request
+    for (const key in processedHeaders) {
+      this.setHeader(key, processedHeaders[key]);
     }
-
-    // Always set the Host header if not already set
-    if (host && !this.getHeader("host")) {
-      let hostHeader = host;
-
-      // For the Host header, ensure that IPv6 addresses are enclosed
-      // in square brackets, as defined by URI formatting
-      // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-      if (
-        posColon !== -1 &&
-        StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
-        StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
-      ) {
-        hostHeader = `[${hostHeader}]`;
-      }
-
-      // Only include the port in the Host header if it's not the default port for the protocol
-      // Also check the agent.defaultPort as some tests set it programmatically
-      const defaultPort =
-        options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || (protocol === "https:" ? 443 : 80);
-
-      if (port && +port !== defaultPort) {
-        hostHeader += ":" + port;
-      }
-
-      this.setHeader("Host", hostHeader);
+  } else if (headers) {
+    // Handle headers as an object
+    for (let key in headers) {
+      this.setHeader(key, headers[key]);
     }
-
-    var auth = options.auth;
-    if (auth && !this.getHeader("Authorization")) {
-      this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
-    }
-
-    //   if (this.getHeader("expect")) {
-    //     if (this._header) {
-    //       throw new ERR_HTTP_HEADERS_SENT("render");
-    //     }
-
-    //     this._storeHeader(
-    //       this.method + " " + this.path + " HTTP/1.1\r\n",
-    //       this[kOutHeaders],
-    //     );
-    //   }
-    // } else {
-    //   this._storeHeader(
-    //     this.method + " " + this.path + " HTTP/1.1\r\n",
-    //     options.headers,
-    //   );
   }
+
+  // Always set the Host header if not already set
+  if (host && !this.getHeader("host")) {
+    let hostHeader = host;
+
+    // For the Host header, ensure that IPv6 addresses are enclosed
+    // in square brackets, as defined by URI formatting
+    // https://tools.ietf.org/html/rfc3986#section-3.2.2
+    const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+    if (
+      posColon !== -1 &&
+      StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
+      StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
+    ) {
+      hostHeader = `[${hostHeader}]`;
+    }
+
+    // Only include the port in the Host header if it's not the default port for the protocol
+    // Also check the agent.defaultPort as some tests set it programmatically
+    const defaultPort =
+      options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || (protocol === "https:" ? 443 : 80);
+
+    if (port && +port !== defaultPort) {
+      hostHeader += ":" + port;
+    }
+
+    this.setHeader("Host", hostHeader);
+  }
+
+  var auth = options.auth;
+  if (auth && !this.getHeader("Authorization")) {
+    this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
+  }
+
+  //   if (this.getHeader("expect")) {
+  //     if (this._header) {
+  //       throw new ERR_HTTP_HEADERS_SENT("render");
+  //     }
+
+  //     this._storeHeader(
+  //       this.method + " " + this.path + " HTTP/1.1\r\n",
+  //       this[kOutHeaders],
+  //     );
+  //   }
+  // } else {
+  //   this._storeHeader(
+  //     this.method + " " + this.path + " HTTP/1.1\r\n",
+  //     options.headers,
+  //   );
 
   // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 

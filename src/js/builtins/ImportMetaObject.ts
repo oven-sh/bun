@@ -125,7 +125,8 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
 }
 
 $visibility = "Private";
-export function requireESM(this: ImportMetaObject, resolved) {
+export function requireESM(this: ImportMetaObject, resolved: string) {
+  console.error("requireESM", resolved);
   var entry = Loader.registry.$get(resolved);
 
   if (!entry || !entry.evaluated) {

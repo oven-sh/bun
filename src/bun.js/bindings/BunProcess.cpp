@@ -1,3 +1,4 @@
+#include "ModuleLoader.h"
 #include "napi.h"
 
 #include "BunProcess.h"
@@ -3274,7 +3275,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 #if !OS(WINDOWS)
     ZigString str;
     Bun__Process__getTitle(globalObject, &str);
-    return JSValue::encode(Zig::toJSStringValue(str, globalObject));
+    return JSValue::encode(Zig::toJSString(str, globalObject));
 #else
     auto& vm = JSC::getVM(globalObject);
     char title[1024];
@@ -3423,6 +3424,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
     return JSValue::encode(jsBoolean(true));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    VM& vm = zigGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue id = callFrame->argument(0);
+    if (!id.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "moduleName"_s, "string"_s, id);
+    }
+
+    String idWtfStr = id.toWTFString(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    BunString idStr = Bun::toString(idWtfStr);
+
+    JSValue fetchResult = Bun::resolveAndFetchBuiltinModule(zigGlobalObject, &idStr);
+    if (fetchResult) {
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(fetchResult));
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
 {
     auto* process = static_cast<Process*>(global->processObject());
@@ -3528,6 +3552,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   _kill                            Process_functionReallyKill                          Function 2
+  getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0

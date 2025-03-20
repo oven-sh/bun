@@ -473,6 +473,10 @@ describe("bundler", () => {
     files: {
       "/entry.ts": /* js */ `
         import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        console.log({
+          db,
+          meow: import.meta.require("/$bunfs/root/db-mfds3ksz.sqlite", { type: "sqlite" }),
+        });
         console.log(db.query("select message from messages LIMIT 1").get().message);
       `,
       "/db.sqlite": (() => {

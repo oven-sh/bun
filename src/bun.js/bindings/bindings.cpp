@@ -2792,7 +2792,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        JSC::JSValue codeValue = Zig::toJSString(code, globalObject);
         rangeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue,
             JSC::PropertyAttribute::ReadOnly | 0);
     }
@@ -2809,7 +2809,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        JSC::JSValue codeValue = Zig::toJSString(code, globalObject);
         typeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
     }
 
@@ -2834,12 +2834,12 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
             for (size_t i = 0; i < initialCapacity; ++i) {
                 object->putDirect(
                     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                    Zig::toJSStringValueGC(values[i], globalObject), 0);
+                    Zig::toJSStringGC(values[i], globalObject), 0);
             }
         } else {
             for (size_t i = 0; i < initialCapacity; ++i) {
                 object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                    Zig::toJSStringValueGC(values[i], globalObject), 0);
+                    Zig::toJSStringGC(values[i], globalObject), 0);
             }
         }
     }

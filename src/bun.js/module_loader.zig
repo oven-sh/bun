@@ -2206,6 +2206,25 @@ pub const ModuleLoader = struct {
         }
     }
 
+    pub export fn Bun__resolveAndFetchBuiltinModule(
+        jsc_vm: *VirtualMachine,
+        specifier: *bun.String,
+        ret: *JSC.ErrorableResolvedSource,
+    ) bool {
+        JSC.markBinding(@src());
+        var log = logger.Log.init(jsc_vm.transpiler.allocator);
+        defer log.deinit();
+
+        const alias = HardcodedModule.Alias.bun_aliases.getWithEql(specifier.*, bun.String.eqlComptime) orelse
+            return false;
+        const hardcoded = HardcodedModule.map.get(alias.path) orelse {
+            bun.debugAssert(false);
+            return false;
+        };
+        ret.* = .ok(getHardcodedModule(jsc_vm, specifier.*, hardcoded));
+        return true;
+    }
+
     pub export fn Bun__fetchBuiltinModule(
         jsc_vm: *VirtualMachine,
         globalObject: *JSGlobalObject,
@@ -2367,36 +2386,42 @@ pub const ModuleLoader = struct {
             return JSValue.zero;
     }
 
+    fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ResolvedSource {
+        Analytics.Features.builtin_modules.insert(hardcoded);
+        return switch (hardcoded) {
+            .@"bun:main" => .{
+                .allocator = null,
+                .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
+                .specifier = specifier,
+                .source_url = specifier,
+                .hash = 0,
+                .tag = .esm,
+                .source_code_needs_deref = true,
+            },
+            .@"bun:internal-for-testing" => {
+                if (!Environment.isDebug) {
+                    if (!is_allowed_to_use_internal_testing_apis)
+                        return null;
+                }
+                return jsSyntheticModule(.InternalForTesting, specifier);
+            },
+            .@"bun:wrap" => .{
+                .allocator = null,
+                .source_code = String.init(Runtime.Runtime.sourceCode()),
+                .specifier = specifier,
+                .source_url = specifier,
+                .hash = Runtime.Runtime.versionHash(),
+            },
+            inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier),
+        };
+    }
+
     pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
         if (HardcodedModule.map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
-            Analytics.Features.builtin_modules.insert(hardcoded);
-            return switch (hardcoded) {
-                .@"bun:main" => .{
-                    .allocator = null,
-                    .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
-                    .specifier = specifier,
-                    .source_url = specifier,
-                    .hash = 0,
-                    .tag = .esm,
-                    .source_code_needs_deref = true,
-                },
-                .@"bun:internal-for-testing" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-                    return jsSyntheticModule(.InternalForTesting, specifier);
-                },
-                .@"bun:wrap" => .{
-                    .allocator = null,
-                    .source_code = String.init(Runtime.Runtime.sourceCode()),
-                    .specifier = specifier,
-                    .source_url = specifier,
-                    .hash = Runtime.Runtime.versionHash(),
-                },
-                inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier),
-            };
-        } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
+            return getHardcodedModule(jsc_vm, specifier, hardcoded);
+        }
+
+        if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
             defer spec.deinit();
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {

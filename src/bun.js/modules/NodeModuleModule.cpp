@@ -334,7 +334,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         if (
             // fast path: it's a real CommonJS module object.
             auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
-            fromValue = cjs->id();
+            fromValue = cjs->filename();
         } else if
             // slow path: userland code did something weird. lets let them do that
             // weird thing.

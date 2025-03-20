@@ -175,3 +175,6 @@ test("require cache node builtins specifier", () => {
     delete require.cache['util/types'];
   }
 });
+test("require a cjs file uses the 'module.exports' export", () => {
+  expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
+});

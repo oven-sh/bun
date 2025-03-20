@@ -310,7 +310,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
                     JSValue parentID = jsUndefined();
                     if (auto* parent = jsDynamicCast<Bun::JSCommonJSModule*>(parentModuleObject)) {
-                        parentID = parent->id();
+                        parentID = parent->filename();
                     } else {
                         parentID = from;
                     }

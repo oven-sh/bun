@@ -13,14 +13,14 @@ export function require(this: CommonJSModuleRecord, id: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: CommonJSModuleRecord, originalId: string) {
-  const id = $resolveSync(originalId, this.id, false);
+  const id = $resolveSync(originalId, this.filename, false);
   if (id.startsWith('node:')) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
       const existing = $requireMap.$get(originalId);
       if (existing) {
-        $evaluateCommonJSModule(existing);
+        $evaluateCommonJSModule(existing, this);
         return existing.exports;
       }
     }
@@ -46,7 +46,7 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       // we evaluate it "early", we'll get an empty object instead of the module
       // exports.
       //
-      $evaluateCommonJSModule(existing);
+      $evaluateCommonJSModule(existing, this);
       return existing.exports;
     }
   }
@@ -80,7 +80,7 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
         $argumentCount(),
         // the object containing a "type" attribute, if they passed one
         // maybe this will be "paths" in the future too.
-        arguments[1],
+        $argument(1),
       );
     } catch (E) {
       $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
@@ -91,7 +91,7 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       id,
       mod,
       $argumentCount(),
-      arguments[1],
+      $argument(1),
     );
   }
 
@@ -129,23 +129,13 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
     }
   }
 
-  $evaluateCommonJSModule(mod);
+  $evaluateCommonJSModule(mod, this);
   return mod.exports;
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { id: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.id, false, true);
-}
-
-$visibility = "Private";
-export function requireNativeModule(id: string) {
-  let esm = Loader.registry.$get(id);
-  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    const exports = Loader.getModuleNamespaceObject(esm.module);
-    return exports.default;
-  }
-  return $requireESM(id).default;
+export function requireResolve(this: string | { filename?: string; id?: string }, id: string) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.filename ?? this?.id ?? "", false, true);
 }
 
 type WrapperMutate = (start: string, end: string) => void;

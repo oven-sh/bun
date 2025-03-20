@@ -292,7 +292,7 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
-JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
+JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);
 BunString toString(WTF::String& wtfString);
@@ -354,6 +354,10 @@ extern "C" bool Bun__fetchBuiltinModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
+    ErrorableResolvedSource* result);
+extern "C" bool Bun__resolveAndFetchBuiltinModule(
+    void* bunVM,
+    const BunString* specifier,
     ErrorableResolvedSource* result);
 
 // Used in process.version

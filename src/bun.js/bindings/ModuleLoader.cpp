@@ -471,7 +471,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     }
 }
 
-JSValue fetchBuiltinModule(
+JSValue fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     BunString* specifier,
     ErrorableResolvedSource* res)
@@ -501,6 +501,7 @@ JSValue fetchBuiltinModule(
         }
 
         case SyntheticModuleType::ESM: {
+            res->success = false;
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
 
@@ -511,8 +512,55 @@ JSValue fetchBuiltinModule(
                 RETURN_IF_EXCEPTION(scope, {});
                 return result;
             } else {
+                res->success = false;
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
             }
+        }
+        }
+    }
+    return {};
+}
+
+JSValue resolveAndFetchBuiltinModule(
+    Zig::GlobalObject* globalObject,
+    BunString* specifier)
+{
+    void* bunVM = globalObject->bunVM();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ErrorableResolvedSource res;
+    memset(&res, 0, sizeof(ErrorableResolvedSource));
+    if (Bun__resolveAndFetchBuiltinModule(bunVM, specifier, &res)) {
+        ASSERT(res.success);
+
+        auto tag = res.result.value.tag;
+        switch (tag) {
+        // require("bun")
+        case SyntheticModuleType::BunObject: {
+            return globalObject->bunObject();
+        }
+        // require("module"), require("node:module")
+        case SyntheticModuleType::NodeModule: {
+            return globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+        }
+        // require("process"), require("node:process")
+        case SyntheticModuleType::NodeProcess: {
+            return globalObject->processObject();
+        }
+
+        case SyntheticModuleType::ESM: {
+            return {};
+        }
+
+        default: {
+            if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
+                constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
+                auto result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask));
+                RETURN_IF_EXCEPTION(scope, {});
+                return result;
+            } 
+            
+            return {};
         }
         }
     }
@@ -577,7 +625,10 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    if (auto builtin = fetchBuiltinModule(globalObject, specifier, res)) {
+    if (auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, specifier, res)) {
+        if (!res->success) {
+            RELEASE_AND_RETURN(scope, builtin);
+        }
         target->setExportsObject(builtin);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
@@ -695,7 +746,7 @@ extern "C" bool isBunTest;
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
+    JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
@@ -909,7 +960,7 @@ static JSValue fetchESMSourceCode(
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
+    JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
@@ -920,7 +971,7 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
+    JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,

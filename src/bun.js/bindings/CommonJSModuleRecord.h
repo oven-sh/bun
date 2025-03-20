@@ -22,7 +22,7 @@ namespace Bun {
 using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -36,9 +36,13 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
+    // `module.id` Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_id;
+    // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_filename;
+    // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_dirname;
+    // Initialized lazily; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_paths;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
@@ -47,7 +51,6 @@ public:
     //    module.parent = parent;
     //
     mutable JSC::WriteBarrier<Unknown> m_overriddenParent;
-
     // Not visited by the GC.
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
@@ -104,9 +107,12 @@ public:
         Vector<JSC::Identifier, 4>& exportNames,
         JSC::MarkedArgumentBuffer& exportValues);
 
-    JSValue exportsObject();
+    JSValue exportsObject() {
+        return this->get(globalObject(), JSC::PropertyName(WebCore::clientData(vm())->builtinNames().exportsPublicName()));
+    }
     void setExportsObject(JSC::JSValue exportsObject);
-    JSValue id();
+    JSValue idOrDot() { return m_id.get(); }
+    JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 
@@ -141,13 +147,13 @@ JSC::Structure* createCommonJSModuleStructure(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierValue,
+    JSC::JSString* specifierValue,
     ResolvedSource& source,
     bool isBuiltIn);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierValue,
+    JSC::JSString* specifierValue,
     ResolvedSource& source)
 {
     return createCommonJSModule(globalObject, specifierValue, source, false);

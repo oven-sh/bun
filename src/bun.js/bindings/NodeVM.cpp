@@ -54,7 +54,9 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
 
 NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox);
 
-JSC::EncodedJSValue INVALID_ARG_VALUE_STUPID_NODE_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value)
+/// For some reason Node has this error message with a grammar error and we have to match it so the tests pass:
+/// `The "<name>" argument must be an vm.Context`
+JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value)
 {
     WTF::StringBuilder builder;
     builder.append("The \""_s);
@@ -846,12 +848,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
     if (scopeValue.isUndefined()) {
-        return INVALID_ARG_VALUE_STUPID_NODE_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
+        return INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
     }
 
     NodeVMGlobalObject* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
     if (!nodeVmGlobalObject) {
-        return INVALID_ARG_VALUE_STUPID_NODE_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
+        return INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
     }
 
     return runInContext(globalObject, nodeVmGlobalObject, script, context, args.at(1));

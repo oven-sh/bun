@@ -248,7 +248,7 @@ String isUnprefixedNodeBuiltin(const String& name)
         MAKE_STATIC_STRING_IMPL("node:_stream_passthrough"),
         MAKE_STATIC_STRING_IMPL("node:diagnostics_channel"),
     };
-    for(size_t i = 0; i < std::size(unprefixedNodeBuiltinNamesSortedLength); i++) {
+    for (size_t i = 0; i < std::size(unprefixedNodeBuiltinNamesSortedLength); i++) {
         if (name == unprefixedNodeBuiltinNamesSortedLength[i]) {
             return mapTo[i];
         }

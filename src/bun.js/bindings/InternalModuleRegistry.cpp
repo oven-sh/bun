@@ -93,8 +93,7 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
     // assigns the `default` export first.
     ASSERT_WITH_MESSAGE(
         propertyNames.at(0) == vm.propertyNames->defaultKeyword,
-        "The native module must export a default value first."
-    );
+        "The native module must export a default value first.");
     JSValue defaultValue = arguments.at(0);
     ASSERT(defaultValue);
     return defaultValue;

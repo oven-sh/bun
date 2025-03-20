@@ -480,7 +480,7 @@ declare module "module" {
         
 `;
 
-    for (let i = 0; i < moduleList.length; i++) {
+    for (let i = 0; i < nativeStartIndex; i++) {
       const id = moduleList[i];
       const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
       if (!out) {

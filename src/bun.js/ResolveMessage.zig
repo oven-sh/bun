@@ -27,14 +27,19 @@ pub const ResolveMessage = struct {
             .resolve => |resolve| {
                 const code: []const u8 = brk: {
                     const specifier = this.msg.metadata.resolve.specifier.slice(this.msg.data.text);
-                    if (bun.strings.hasPrefixComptime(specifier, "node:")) {
-                        break :brk "ERR_UNKNOWN_BUILTIN_MODULE";
-                    }
+
                     break :brk switch (resolve.import_kind) {
                         // Match Node.js error codes. CommonJS is historic
                         // before they started prefixing with 'ERR_'
-                        .require, .require_resolve => "MODULE_NOT_FOUND",
-                        .stmt, .dynamic => "ERR_MODULE_NOT_FOUND",
+                        .require => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                            break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
+                        else
+                            break :brk "MODULE_NOT_FOUND",
+                        .require_resolve => "MODULE_NOT_FOUND",
+                        .stmt, .dynamic => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                            break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
+                        else
+                            break :brk "ERR_MODULE_NOT_FOUND",
 
                         .entry_point_run,
                         .entry_point_build,

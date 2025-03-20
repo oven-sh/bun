@@ -272,7 +272,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
-    if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
+    if (jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -324,7 +324,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             }
 
-            if (auto* booleanObject = jsDynamicCast<BooleanObject*>(otherProp)) {
+            if (jsDynamicCast<BooleanObject*>(otherProp)) {
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -336,7 +336,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             }
 
-            if (auto* numberObject = jsDynamicCast<NumberObject*>(otherProp)) {
+            if (jsDynamicCast<NumberObject*>(otherProp)) {
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -2236,7 +2236,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     }
 
     case WebCore::JSDOMWrapperType: {
-        if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
+        if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
         if (auto* blob = jsDynamicCast<WebCore::JSBlob*>(cell)) {
@@ -2436,7 +2436,7 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
         handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
-    } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
+    } else if (JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
         RELEASE_ASSERT(false);
     }
 }

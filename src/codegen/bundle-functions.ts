@@ -595,7 +595,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         void exportNames();
 
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
 
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 

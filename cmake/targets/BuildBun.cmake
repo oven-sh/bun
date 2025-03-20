@@ -747,6 +747,11 @@ set_target_properties(${bun} PROPERTIES
   VISIBILITY_INLINES_HIDDEN YES
 )
 
+# Enable precompiled headers
+target_precompile_headers(${bun} PRIVATE
+  "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+)
+
 # --- C/C++ Includes ---
 
 if(WIN32)

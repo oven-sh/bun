@@ -630,6 +630,7 @@ namespace ERR {
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
     auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    RETURN_IF_EXCEPTION(throwScope, {});
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
@@ -641,6 +642,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto arg_name = jsString->view(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    RETURN_IF_EXCEPTION(throwScope, {});
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
@@ -649,10 +651,13 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASCIILiteral type = String(arg_name).contains('.') ? "property"_s : "argument"_s;
     WTF::StringBuilder builder;
     builder.append("The \""_s);
     builder.append(arg_name);
-    builder.append("\" argument must be an instance of "_s);
+    builder.append("\" "_s);
+    builder.append(type);
+    builder.append(" must be an instance of "_s);
     builder.append(expected_type);
     builder.append(". Received "_s);
     determineSpecificType(vm, globalObject, builder, val_actual_value);
@@ -2029,6 +2034,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_OUT_OF_STREAMS, "No stream ID is available because maximum stream ID has been reached"_s));
     case ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
+    case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
+    case ErrorCode::ERR_STREAM_RELEASE_LOCK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
 
     default: {
         break;

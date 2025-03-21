@@ -194,6 +194,13 @@ void JSURLSearchParamsPrototype::finishCreation(VM& vm)
     reifyStaticProperties(vm, JSURLSearchParams::info(), JSURLSearchParamsPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+    const auto& inspectCustomPublicName = builtinNames.inspectCustomPublicName();
+
+    auto* fn = JSC::JSFunction::create(vm, globalObject(), 0, "[nodejs.util.inspect.custom]"_s, jsURLSearchParamsPrototypeFunction_toString, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);
+
+    this->putDirect(vm, inspectCustomPublicName, fn, JSC::PropertyAttribute::DontEnum | 0);
 }
 
 const ClassInfo JSURLSearchParams::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParams) };

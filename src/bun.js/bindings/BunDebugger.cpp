@@ -52,7 +52,7 @@ public:
     void pauseWaitingForAutomaticInspection() override
     {
     }
-    void unpauseForInitializedInspector() override
+    void unpauseForInitializedInspector()
     {
         if (waitingForConnection) {
             waitingForConnection = false;

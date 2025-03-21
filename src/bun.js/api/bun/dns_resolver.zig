@@ -2682,7 +2682,16 @@ pub const DNSResolver = struct {
             options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
-                    else => globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)}),
+                    error.JSError => |exception| exception,
+                    error.OutOfMemory => |oom| oom,
+
+                    // more information with these errors
+                    error.InvalidOptions,
+                    error.InvalidFamily,
+                    error.InvalidSocketType,
+                    error.InvalidProtocol,
+                    error.InvalidBackend,
+                    => globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)}),
                 };
             };
         }

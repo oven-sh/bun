@@ -37,6 +37,7 @@
 #include <wtf/Function.h>
 #include <wtf/Gigacage.h>
 #include <wtf/text/WTFString.h>
+#include "JavaScriptCore/WasmModule.h"
 
 #if ENABLE(WEB_CODECS)
 #include "WebCodecsEncodedVideoChunk.h"

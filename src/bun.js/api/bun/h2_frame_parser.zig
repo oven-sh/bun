@@ -3423,9 +3423,8 @@ pub const H2FrameParser = struct {
                 return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             }
 
-            break :brk JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
-                if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
-                return error.JSError;
+            break :brk try JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
+                return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             };
         };
 
@@ -3435,8 +3434,7 @@ pub const H2FrameParser = struct {
             data_arg,
             encoding,
         ) orelse {
-            if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
-            return error.JSError;
+            return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
         };
         defer buffer.deinit();
 

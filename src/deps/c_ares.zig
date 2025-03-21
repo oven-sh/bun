@@ -2017,7 +2017,8 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
     const addr_arg = args.nextEat().?;
 
-    if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
+    const addr = try bun.String.fromJS(addr_arg, globalThis);
+    {
         defer addr.deref();
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
@@ -2046,10 +2047,6 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
-    } else {
-        if (!globalThis.hasException())
-            return globalThis.throwInvalidArguments("address must be a string", .{});
-        return error.JSError;
     }
 }
 

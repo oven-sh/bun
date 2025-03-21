@@ -67,7 +67,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "accessKeyId")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
+                            const str = try bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._accessKeyIdSlice = str.toUTF8(bun.default_allocator);
@@ -82,7 +82,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "secretAccessKey")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
+                            const str = try bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._secretAccessKeySlice = str.toUTF8(bun.default_allocator);
@@ -97,7 +97,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "region")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
+                            const str = try bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._regionSlice = str.toUTF8(bun.default_allocator);
@@ -112,7 +112,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "endpoint")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
+                            const str = try bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
@@ -140,7 +140,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "bucket")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
+                            const str = try bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._bucketSlice = str.toUTF8(bun.default_allocator);
@@ -161,7 +161,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "sessionToken")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
-                            const str = bun.String.fromJS(js_value, globalObject);
+                            const str = try bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._sessionTokenSlice = str.toUTF8(bun.default_allocator);

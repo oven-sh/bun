@@ -264,7 +264,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = JSValue::JSTrue;
         } else {
-            referrer->m_children.append(moduleObject);
+            referrer->m_children.append(WriteBarrier<Unknown>());
+            referrer->m_children.last().set(vm, referrer, moduleObject);
         }
     }
 
@@ -488,7 +489,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         // Deduplicate children while preserving insertion order.
         JSCommonJSModule* last = nullptr;
         int n = -1;
-        for (JSCommonJSModule* child : mod->m_children) {
+        for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
+            JSCommonJSModule* child = jsCast<JSCommonJSModule*>(childBarrier.get());
             // Check the last module since duplicate imports, if any, will
             // probably be adjacent. Then just do a linear scan.
             if (UNLIKELY(last == child)) continue;
@@ -1074,10 +1076,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_childrenValue);
-
-    for (JSCommonJSModule* child : thisObject->m_children) {
-        visitor.appendUnbarriered(child);
-    }
+    visitor.appendValues(thisObject->m_children.data(), thisObject->m_children.size());
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);

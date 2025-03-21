@@ -53,7 +53,8 @@ public:
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
-    WTF::Vector<JSCommonJSModule*> m_children;
+    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
+    WTF::Vector<WriteBarrier<Unknown>> m_children;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.

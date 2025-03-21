@@ -304,7 +304,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         if (LIKELY(globalObject)) {
             if (UNLIKELY(globalObject->hasOverriddenModuleResolveFilenameFunction)) {
                 auto overrideHandler = jsCast<JSObject*>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
-                if (UNLIKELY(overrideHandler)) {
+                if (LIKELY(overrideHandler)) {
                     ASSERT(overrideHandler->isCallable());
                     JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
 

@@ -20,7 +20,10 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       // read the require cache. Though they never write to it, which is so silly.
       const existing = $requireMap.$get(originalId);
       if (existing) {
-        $evaluateCommonJSModule(existing, this);
+        const c = $evaluateCommonJSModule(existing, this);
+        if (c && c.indexOf(existing) === -1) {
+          c.push(existing);
+        }
         return existing.exports;
       }
     }
@@ -46,7 +49,10 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       // we evaluate it "early", we'll get an empty object instead of the module
       // exports.
       //
-      $evaluateCommonJSModule(existing, this);
+      const c = $evaluateCommonJSModule(existing, this);
+      if (c && c.indexOf(existing) === -1) {
+        c.push(existing);
+      }
       return existing.exports;
     }
   }
@@ -129,7 +135,10 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
     }
   }
 
-  $evaluateCommonJSModule(mod, this);
+  const c = $evaluateCommonJSModule(mod, this);
+  if (c && c.indexOf(mod) === -1) {
+    c.push(mod);
+  }
   return mod.exports;
 }
 

@@ -2884,6 +2884,9 @@ pub const Formatter = struct {
                     writer.print(comptime Output.prettyFmt("<r><magenta>{s}<r>", enable_ansi_colors), .{out_buf});
                     return;
                 }
+                if (jsType == JSValue.JSType.AsyncGenerator) {
+                    writer.writeAll("Object [AsyncGenerator] ");
+                }
 
                 writer.print("{}", .{str});
             },

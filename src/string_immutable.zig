@@ -5775,7 +5775,7 @@ pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
 ) []u16 {
-    // TODO(@paperdave): implement error handling here.
+    // TODO(@paperclover): implement error handling here.
     // for now this will cause invalid utf-8 to be ignored and become empty.
     // this is lame because of https://github.com/oven-sh/bun/issues/8197
     // it will cause process.env.whatever to be len=0 instead of the data
@@ -5811,7 +5811,7 @@ pub fn convertUTF16toUTF8InBuffer(
     const result = bun.simdutf.convert.utf16.to.utf8.le(input, buf);
     // switch (result.status) {
     //     .success => return buf[0..result.count],
-    //     // TODO(@paperdave): handle surrogate
+    //     // TODO(@paperclover): handle surrogate
     //     .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
     //     else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     // }

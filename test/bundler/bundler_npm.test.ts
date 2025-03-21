@@ -4,7 +4,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("npm/ReactSSR", {
-    todo: isWindows, // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperclover)
     install: ["react@18.3.1", "react-dom@18.3.1"],
     files: {
       "/entry.tsx": /* tsx */ `

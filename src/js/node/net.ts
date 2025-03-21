@@ -1110,7 +1110,6 @@ Socket.prototype.destroySoon = function destroySoon() {
   else this.once("finish", this.destroy);
 };
 
-
 //TODO: migrate to native
 Socket.prototype._writev = function _writev(data, callback) {
   const allBuffers = data.allBuffers;
@@ -1723,4 +1722,4 @@ export default {
   SocketAddress,
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
-};
+} as any as typeof import("node:net");

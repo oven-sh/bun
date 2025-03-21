@@ -54,14 +54,22 @@ fn findPathInner(
     global: *JSGlobalObject,
 ) ?bun.String {
     var errorable: ErrorableString = undefined;
-    JSC.VirtualMachine.resolve(
+    JSC.VirtualMachine.resolveMaybeNeedsTrailingSlash(
         &errorable,
         global,
         request,
         cur_path,
         null,
         false,
-    );
+        true,
+        true,
+    ) catch |err| switch (err) {
+        error.JSError => {
+            global.clearException();
+            return null;
+        },
+        else => return null,
+    };
     return errorable.unwrap() catch null;
 }
 

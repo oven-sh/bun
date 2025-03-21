@@ -860,6 +860,9 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, void());
 
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(object);
+
     for (const auto& propertyName : propertyNames) {
         exportNames.append(propertyName);
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
@@ -873,9 +876,6 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         }
         exportValues.append(value);
     }
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
 }
 
 }

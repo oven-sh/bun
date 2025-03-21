@@ -426,7 +426,7 @@ fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_l
     const is_node = bun.strings.eqlComptime(path.namespace, "node");
     if (is_node and
         (bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path) or
-        !std.fs.path.isAbsolute(path.text)))
+            !std.fs.path.isAbsolute(path.text)))
     {
         return path;
     }
@@ -1386,7 +1386,7 @@ pub const BundleV2 = struct {
             scbs.items(.ssr_source_index),
         ) |use, source_id, ssr_index| {
             if (use == .client) {
-                // TODO(@paperdave/bake): this file is being generated far too
+                // TODO(@paperclover/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
                 // are live. Tree-shaking figures that out. However,
                 // tree-shaking happens after import binding, which would
@@ -1644,10 +1644,9 @@ pub const BundleV2 = struct {
                     const path = record.path.text;
                     // External dependency
                     if (path.len > 0 and
-
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Aliases.has(path, .node) and
+                        !JSC.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -2756,7 +2755,7 @@ pub const BundleV2 = struct {
             },
             .content = .{
                 .javascript = .{
-                    // TODO(@paperdave): remove this ptrCast when Source Index is fixed
+                    // TODO(@paperclover): remove this ptrCast when Source Index is fixed
                     .files_in_chunk_order = @ptrCast(js_reachable_files),
                     .parts_in_chunk_in_order = js_part_ranges,
                 },
@@ -3006,7 +3005,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
@@ -3060,42 +3059,41 @@ pub const BundleV2 = struct {
             }
 
             const transpiler, const bake_graph: bake.Graph, const target =
-                if (import_record.tag == .bake_resolve_to_ssr_graph)
-            brk: {
-                if (this.framework == null) {
-                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
+                if (import_record.tag == .bake_resolve_to_ssr_graph) brk: {
+                    if (this.framework == null) {
+                        this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
+                            source,
+                            import_record.range.loc,
+                            this.graph.allocator,
+                            "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
+                            .{},
+                        ) catch @panic("unexpected log error");
+                        continue;
+                    }
 
-                const is_supported = this.framework.?.server_components != null and
-                    this.framework.?.server_components.?.separate_ssr_graph;
-                if (!is_supported) {
-                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "Framework does not have a separate SSR graph to put this import into",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
+                    const is_supported = this.framework.?.server_components != null and
+                        this.framework.?.server_components.?.separate_ssr_graph;
+                    if (!is_supported) {
+                        this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
+                            source,
+                            import_record.range.loc,
+                            this.graph.allocator,
+                            "Framework does not have a separate SSR graph to put this import into",
+                            .{},
+                        ) catch @panic("unexpected log error");
+                        continue;
+                    }
 
-                break :brk .{
-                    this.ssr_transpiler,
-                    .ssr,
-                    .bake_server_components_ssr,
+                    break :brk .{
+                        this.ssr_transpiler,
+                        .ssr,
+                        .bake_server_components_ssr,
+                    };
+                } else .{
+                    this.transpilerForTarget(ast.target),
+                    ast.target.bakeGraph(),
+                    ast.target,
                 };
-            } else .{
-                this.transpilerForTarget(ast.target),
-                ast.target.bakeGraph(),
-                ast.target,
-            };
 
             var had_busted_dir_cache = false;
             var resolve_result = inner: while (true) break transpiler.resolver.resolveWithFramework(
@@ -3207,16 +3205,22 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
+                                const buf = bun.PathBufferPool.get();
+                                defer bun.PathBufferPool.put(buf);
+                                const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
+                                    const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
+                                    if (Environment.isWindows) {
+                                        break :brk bun.path.pathToPosixBuf(u8, specifier_to_use, buf);
+                                    }
+                                    break :brk specifier_to_use;
+                                } else import_record.path.text;
                                 addError(
                                     log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir))
-                                        import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..]
-                                    else
-                                        import_record.path.text},
+                                    .{specifier_to_use},
                                     import_record.kind,
                                 ) catch bun.outOfMemory();
                             }
@@ -5080,7 +5084,7 @@ pub const ParseTask = struct {
             this.ctx.framework.?.server_components.?.separate_ssr_graph) or
             // set the target to the client when bundling client-side files
             ((transpiler.options.server_components or transpiler.options.dev_server != null) and
-            task.known_target == .browser))
+                task.known_target == .browser))
         {
             transpiler = this.ctx.client_transpiler;
             resolver = &transpiler.resolver;
@@ -5096,9 +5100,9 @@ pub const ParseTask = struct {
 
         const target = (if (task.source_index.get() == 1) targetFromHashbang(entry.contents) else null) orelse
             if (task.known_target == .bake_server_components_ssr and transpiler.options.framework.?.server_components.?.separate_ssr_graph)
-            .bake_server_components_ssr
-        else
-            transpiler.options.target;
+                .bake_server_components_ssr
+            else
+                transpiler.options.target;
 
         const output_format = transpiler.options.output_format;
 
@@ -7309,7 +7313,7 @@ pub const LinkerContext = struct {
                 // }
 
                 defer {
-                    _ = visitor.visited.popOrNull();
+                    _ = visitor.visited.pop();
                 }
 
                 // Iterate over the top-level "@import" rules
@@ -9083,9 +9087,9 @@ pub const LinkerContext = struct {
                                     //
                                     if (kind != .require and
                                         (kind != .stmt or
-                                        record.contains_import_star or
-                                        record.contains_default_alias or
-                                        record.contains_es_module_alias))
+                                            record.contains_import_star or
+                                            record.contains_default_alias or
+                                            record.contains_es_module_alias))
                                     {
                                         record.wrap_with_to_esm = true;
                                         to_esm_uses += 1;
@@ -9597,7 +9601,7 @@ pub const LinkerContext = struct {
         const exports_ref = c.graph.ast.items(.exports_ref)[id];
         const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) +
             @as(usize, @intFromBool(properties.items.len > 0) +
-            @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
+                @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer bun.assert(remaining_stmts.len == 0); // all must be used
@@ -10728,7 +10732,7 @@ pub const LinkerContext = struct {
                 for (part.scopes) |scope| {
                     r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
                 }
-                r.number_scope_pool.hive.available = @TypeOf(r.number_scope_pool.hive.available).initFull();
+                r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
             }
         }
 
@@ -13790,33 +13794,18 @@ pub const LinkerContext = struct {
             }) catch unreachable; // is within bounds
 
             if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
+                clousure_args.appendSliceAssumeCapacity(&.{
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.module_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty),
-                            .name = "cjs",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
-            }
-
-            if (ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.exports_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
+                });
             }
 
             stmts.all_stmts.appendAssumeCapacity(Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
@@ -14561,7 +14550,7 @@ pub const LinkerContext = struct {
         bun.assert(chunks.len > 0);
 
         {
-            // TODO(@paperdave/bake): instead of running a renamer per chunk, run it per file
+            // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
             debug(" START {d} renamers", .{chunks.len});
             defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
@@ -15786,8 +15775,8 @@ pub const LinkerContext = struct {
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
-                !c.options.tree_shaking and
-                entry_point_kinds[source_index].isEntryPoint()))
+                    !c.options.tree_shaking and
+                    entry_point_kinds[source_index].isEntryPoint()))
             {
                 c.markPartLiveForTreeShaking(
                     @intCast(part_index),
@@ -16012,7 +16001,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -16303,9 +16292,9 @@ pub const LinkerContext = struct {
             // TODO: investigate if this is a bug
             // It implies there are imports being added without being resolved
             return .{
-            .value = .{},
-            .status = .external,
-        };
+                .value = .{},
+                .status = .external,
+            };
 
         // Is this an external file?
         const record: *const ImportRecord = import_records.at(named_import.import_record_index);
@@ -17764,7 +17753,6 @@ pub const AstBuilder = struct {
         try p.symbols.append(p.allocator, .{
             .kind = kind,
             .original_name = identifier,
-            .debug_mode_source_index = if (Environment.allow_assert) @intCast(p.source_index) else 0,
         });
         const ref: Ref = .{
             .inner_index = inner_index,
@@ -18062,7 +18050,8 @@ const ExternalFreeFunctionAllocator = struct {
     const vtable: std.mem.Allocator.VTable = .{
         .alloc = &alloc,
         .free = &free,
-        .resize = &resize,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
     };
 
     pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
@@ -18075,15 +18064,11 @@ const ExternalFreeFunctionAllocator = struct {
         };
     }
 
-    fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
+    fn alloc(_: *anyopaque, _: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
         return null;
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
-    fn free(ext_free_function: *anyopaque, _: []u8, _: u8, _: usize) void {
+    fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
         const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);

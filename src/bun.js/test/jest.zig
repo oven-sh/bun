@@ -292,7 +292,7 @@ pub const Jest = struct {
                 }
 
                 const function = arguments.ptr[0];
-                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
+                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable()) {
                     return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
@@ -785,14 +785,12 @@ pub const TestScope = struct {
             .{ .pass = expect.active_test_expectation_counter.actual };
     }
 
-    pub const name = "TestScope";
-    pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
         @export(&jsOnResolve, .{
-            .name = shim.symbolName("onResolve"),
+            .name = "Bun__TestScope__onResolve",
         });
         @export(&jsOnReject, .{
-            .name = shim.symbolName("onReject"),
+            .name = "Bun__TestScope__onReject",
         });
     }
 };
@@ -879,7 +877,7 @@ pub const DescribeScope = struct {
                 }
 
                 const cb = arguments.ptr[0];
-                if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
+                if (!cb.isObject() or !cb.isCallable()) {
                     return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
 
@@ -929,7 +927,7 @@ pub const DescribeScope = struct {
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
                 assert(cb.isObject());
-                assert(cb.isCallable(globalObject.vm()));
+                assert(cb.isCallable());
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -986,7 +984,7 @@ pub const DescribeScope = struct {
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
                 assert(cb.isObject());
-                assert(cb.isCallable(globalThis.vm()));
+                assert(cb.isCallable());
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -2012,7 +2010,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     var function = args[1];
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable()) {
         return globalThis.throwPretty("{s} expects a function", .{signature});
     }
 

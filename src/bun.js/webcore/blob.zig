@@ -20,6 +20,7 @@ const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const getAllocator = @import("../base.zig").getAllocator;
+const JSError = bun.JSError;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -1193,11 +1194,11 @@ pub const Blob = struct {
             if (path_or_blob == .path or
                 // If they try to set an offset, its a little more complicated so let's avoid that
                 (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
-                // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
-                !(path_or_blob.blob.store != null and
-                path_or_blob.blob.store.?.data == .file and
-                path_or_blob.blob.store.?.data.file.mode != 0 and
-                bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
+                    // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
+                    !(path_or_blob.blob.store != null and
+                        path_or_blob.blob.store.?.data == .file and
+                        path_or_blob.blob.store.?.data.file.mode != 0 and
+                        bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
             {
                 if (data.isString()) {
                     const len = data.getLength(globalThis);
@@ -1663,12 +1664,7 @@ pub const Blob = struct {
             return globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
         }
         {
-            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-                if (!globalThis.hasException()) {
-                    return globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-                }
-                return error.JSError;
-            };
+            const name_value_str = try bun.String.fromJS(args[1], globalThis);
             defer name_value_str.deref();
 
             blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
@@ -2066,6 +2062,7 @@ pub const Blob = struct {
             return store;
         }
 
+        /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) *Store {
             const store = Blob.Store.new(.{
                 .data = .{
@@ -3655,6 +3652,8 @@ pub const Blob = struct {
         /// Used by standalone module graph and the File constructor
         stored_name: bun.PathString = bun.PathString.empty,
 
+        /// Takes ownership of `bytes`, which must have been allocated with
+        /// `allocator`.
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
@@ -4100,7 +4099,6 @@ pub const Blob = struct {
         }
     };
 
-    pub const shim = JSC.Shimmer("Bun", "FileStreamWrapper", @This());
     pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
@@ -4132,16 +4130,13 @@ pub const Blob = struct {
         }
         return .undefined;
     }
-    pub const Export = shim.exportFunctions(.{
-        .onResolveRequestStream = onFileStreamResolveRequestStream,
-        .onRejectRequestStream = onFileStreamRejectRequestStream,
-    });
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFunction(onFileStreamResolveRequestStream);
-        @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        @export(&jsonResolveRequestStream, .{ .name = "Bun__FileStreamWrapper__onResolveRequestStream" });
         const jsonRejectRequestStream = JSC.toJSHostFunction(onFileStreamRejectRequestStream);
-        @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        @export(&jsonRejectRequestStream, .{ .name = "Bun__FileStreamWrapper__onRejectRequestStream" });
     }
+
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {
             return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
@@ -4705,6 +4700,8 @@ pub const Blob = struct {
         jsThis: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
         value: JSValue,
+
+        // TODO: support JSError for getters/setters
     ) bool {
         // by default we don't have a name so lets allow it to be set undefined
         if (value.isEmptyOrUndefinedOrNull()) {
@@ -4716,8 +4713,13 @@ pub const Blob = struct {
         if (value.isString()) {
             const old_name = this.name;
 
-            this.name = bun.String.tryFromJS(value, globalThis) orelse {
-                // Handle allocation failure.
+            this.name = bun.String.fromJS(value, globalThis) catch |err| {
+                switch (err) {
+                    error.JSError => {},
+                    error.OutOfMemory => {
+                        globalThis.throwOutOfMemory() catch {};
+                    },
+                }
                 this.name = bun.String.empty;
                 return false;
             };
@@ -5004,6 +5006,7 @@ pub const Blob = struct {
         };
     }
 
+    /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = @as(SizeType, @truncate(bytes.len)),
@@ -5780,7 +5783,7 @@ pub const Blob = struct {
                     joiner.push(sliced.slice(), sliced.allocator.get());
                 },
             }
-            current = stack.popOrNull() orelse break;
+            current = stack.pop() orelse break;
         }
 
         const joined = try joiner.done(bun.default_allocator);

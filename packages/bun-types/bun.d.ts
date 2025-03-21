@@ -3760,6 +3760,7 @@ declare module "bun" {
 
   interface BunRequest<T extends string = string> extends Request {
     params: RouterTypes.ExtractRouteParams<T>;
+    readonly cookies: CookieMap;
   }
 
   interface GenericServeOptions {
@@ -6699,7 +6700,8 @@ declare module "bun" {
        * This is useful for aborting a subprocess when some other part of the
        * program is aborted, such as a `fetch` response.
        *
-       * Internally, this works by calling `subprocess.kill(1)`.
+       * If the signal is aborted, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts
@@ -6718,6 +6720,41 @@ declare module "bun" {
        * ```
        */
       signal?: AbortSignal;
+
+      /**
+       * The maximum amount of time the process is allowed to run in milliseconds.
+       *
+       * If the timeout is reached, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
+       *
+       * @example
+       * ```ts
+       * // Kill the process after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       * });
+       * await subprocess.exited; // Will resolve after 5 seconds
+       * ```
+       */
+      timeout?: number;
+
+      /**
+       * The signal to use when killing the process after a timeout or when the AbortSignal is aborted.
+       *
+       * @default "SIGTERM" (signal 15)
+       *
+       * @example
+       * ```ts
+       * // Kill the process with SIGKILL after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       *   killSignal: "SIGKILL",
+       * });
+       * ```
+       */
+      killSignal?: string | number;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -7492,4 +7529,86 @@ declare module "bun" {
     | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
     /** root */
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
+
+  interface CookieInit {
+    name?: string;
+    value?: string;
+    domain?: string;
+    path?: string;
+    expires?: number | Date;
+    secure?: boolean;
+    sameSite?: CookieSameSite;
+    httpOnly?: boolean;
+    partitioned?: boolean;
+    maxAge?: number;
+  }
+
+  interface CookieStoreDeleteOptions {
+    name: string;
+    domain?: string | null;
+    path?: string;
+  }
+
+  interface CookieStoreGetOptions {
+    name?: string;
+    url?: string;
+  }
+
+  type CookieSameSite = "strict" | "lax" | "none";
+
+  class Cookie {
+    constructor(name: string, value: string, options?: CookieInit);
+    constructor(cookieString: string);
+    constructor(cookieObject?: CookieInit);
+
+    name: string;
+    value: string;
+    domain?: string;
+    path: string;
+    expires?: number;
+    secure: boolean;
+    sameSite: CookieSameSite;
+    partitioned: boolean;
+    maxAge?: number;
+    httpOnly: boolean;
+
+    isExpired(): boolean;
+
+    toString(): string;
+    toJSON(): CookieInit;
+
+    static parse(cookieString: string): Cookie;
+    static from(name: string, value: string, options?: CookieInit): Cookie;
+    static serialize(...cookies: Cookie[]): string;
+  }
+
+  class CookieMap implements Iterable<[string, Cookie]> {
+    constructor(init?: string[][] | Record<string, string> | string);
+
+    get(name: string): Cookie | null;
+    get(options?: CookieStoreGetOptions): Cookie | null;
+
+    getAll(name: string): Cookie[];
+    getAll(options?: CookieStoreGetOptions): Cookie[];
+
+    has(name: string, value?: string): boolean;
+
+    set(name: string, value: string): void;
+    set(options: CookieInit): void;
+
+    delete(name: string): void;
+    delete(options: CookieStoreDeleteOptions): void;
+
+    toString(): string;
+
+    toJSON(): Record<string, ReturnType<Cookie["toJSON"]>>;
+    readonly size: number;
+
+    entries(): IterableIterator<[string, Cookie]>;
+    keys(): IterableIterator<string>;
+    values(): IterableIterator<Cookie>;
+    forEach(callback: (value: Cookie, key: string, map: CookieMap) => void, thisArg?: any): void;
+
+    [Symbol.iterator](): IterableIterator<[string, Cookie]>;
+  }
 }

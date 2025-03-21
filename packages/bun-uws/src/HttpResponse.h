@@ -118,7 +118,7 @@ public:
         }
 
         /* if write was called and there was previously no Content-Length header set */
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -482,7 +482,7 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();

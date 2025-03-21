@@ -183,7 +183,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// Interpreting a FD as an integer is almost certainly a mistake.
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
-    /// TODO(@paperdave): remove this API.
+    /// TODO(@paperclover): remove this API.
     pub fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
@@ -2190,7 +2190,7 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         const decoded = (switch (T) {
-            FDImpl.System => @compileError("This cast (FDImpl.System -> FDImpl.UV) makes this file descriptor very hard to close. Use toLibUVOwnedFD() and FileDescriptor instead. If you truly need to do this conversion (dave will probably reject your PR), use bun.FDImpl.fromSystem(fd).uv()"),
+            FDImpl.System => @compileError("This cast (FDImpl.System -> FDImpl.UV) makes this file descriptor very hard to close. Use toLibUVOwnedFD() and FileDescriptor instead. If you truly need to do this conversion (Chloe will probably reject your PR), use bun.FDImpl.fromSystem(fd).uv()"),
             FDImpl => fd,
             FDImpl.UV => return fd,
             FileDescriptor => FDImpl.decode(fd),
@@ -2756,7 +2756,7 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
 pub const MakePath = struct {
     const w = std.os.windows;
 
-    // TODO(@paperdave): upstream making this public into zig std
+    // TODO(@paperclover): upstream making this public into zig std
     // there is zero reason this must be copied
     //
     /// Calls makeOpenDirAccessMaskW iteratively to make an entire path
@@ -2776,10 +2776,10 @@ pub const MakePath = struct {
         while (true) {
             const sub_path_w = if (comptime T == u16)
                 try w.wToPrefixedFileW(self.fd,
-                // TODO: report this bug
-                // they always copy it
-                // it doesn't need to be [:0]const u16
-                @ptrCast(component.path))
+                    // TODO: report this bug
+                    // they always copy it
+                    // it doesn't need to be [:0]const u16
+                    @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{

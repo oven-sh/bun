@@ -53,16 +53,15 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGenerateKeys, (JSC::JSGlobalObject * glo
     }
 
     // Get a copy of the key we can modify
-    auto keyImpl = ecdh->key().clone();
-    if (!keyImpl.generate()) {
+    if (!ecdh->m_key.generate()) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to generate ECDH key pair"_s);
         return {};
     }
 
-    // Update the instance with the new key
-    ecdh->setKey(WTFMove(keyImpl));
+    JSValue encodingValue = callFrame->argument(0);
+    JSValue formatValue = callFrame->argument(1);
 
-    return JSValue::encode(jsUndefined());
+    return ecdh->getPublicKey(globalObject, scope, encodingValue, formatValue);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -95,22 +94,13 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     }
 
     // Validate that we have a valid key pair
-    {
-        ncrypto::MarkPopErrorOnReturn markPopErrorOnReturn;
-        if (!ecdh->key().checkKey()) {
-            return Bun::ERR::CRYPTO_INVALID_KEYPAIR(scope, globalObject);
-        }
-    }
-
-    // Get the group from our key
-    const EC_GROUP* group = ecdh->key().getGroup();
-    if (!group) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get EC_GROUP from key"_s);
-        return {};
+    ncrypto::MarkPopErrorOnReturn markPopErrorOnReturn;
+    if (!ecdh->m_key.checkKey()) {
+        return Bun::ERR::CRYPTO_INVALID_KEYPAIR(scope, globalObject);
     }
 
     // Create an EC_POINT from the buffer
-    auto pubPoint = ncrypto::ECPointPointer::New(group);
+    auto pubPoint = ncrypto::ECPointPointer::New(ecdh->m_group);
     if (!pubPoint) {
         return Bun::ERR::CRYPTO_ECDH_INVALID_PUBLIC_KEY(scope, globalObject);
     }
@@ -122,23 +112,22 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
         .len = keySpan.size()
     };
 
-    if (!pubPoint.setFromBuffer(buffer, group)) {
+    if (!pubPoint.setFromBuffer(buffer, ecdh->m_group)) {
         return Bun::ERR::CRYPTO_ECDH_INVALID_PUBLIC_KEY(scope, globalObject);
     }
 
     // Compute the field size
-    int fieldSize = EC_GROUP_get_degree(group);
+    int fieldSize = EC_GROUP_get_degree(ecdh->m_group);
     size_t outLen = (fieldSize + 7) / 8;
 
-    // Allocate a buffer for the result
-    auto result = JSC::ArrayBuffer::tryCreate(outLen, 1);
-    if (!result) {
-        throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED, "Failed to allocate buffer for ECDH secret"_s);
+    WTF::Vector<uint8_t> secret;
+    if (!secret.tryGrow(outLen)) {
+        throwOutOfMemoryError(globalObject, scope);
         return {};
     }
 
     // Compute the shared secret
-    if (!ECDH_compute_key(result->data(), result->byteLength(), pubPoint, ecdh->key().get(), nullptr)) {
+    if (!ECDH_compute_key(secret.data(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr)) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to compute ECDH key"_s);
     }
 
@@ -146,11 +135,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     BufferEncodingType outputEncodingType = Bun::getEncodingDefaultBuffer(globalObject, scope, outputEncodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Create a span from the result data for encoding
-    std::span<const uint8_t> resultSpan(static_cast<const uint8_t*>(result->data()), outLen);
-
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, resultSpan, outputEncodingType);
+    return StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -165,74 +151,11 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPublicKey, (JSC::JSGlobalObject * glo
     }
 
     // Get encoding parameter - first argument could be encoding or format
-    JSC::JSValue encodingValue;
-    JSC::JSValue formatValue;
-
-    if (callFrame->argumentCount() >= 2) {
-        // If there are at least 2 arguments, first is encoding, second is format
-        encodingValue = callFrame->argument(0);
-        formatValue = callFrame->argument(1);
-    } else if (callFrame->argumentCount() == 1) {
-        // If only one argument, check if it's a number (format) or string (encoding)
-        JSC::JSValue arg = callFrame->argument(0);
-        if (arg.isNumber()) {
-            formatValue = arg;
-        } else {
-            encodingValue = arg;
-        }
-    }
+    JSC::JSValue encodingValue = callFrame->argument(0);
+    JSC::JSValue formatValue = callFrame->argument(1);
 
     // Get the format parameter (default to uncompressed format if not provided)
-    point_conversion_form_t form = POINT_CONVERSION_UNCOMPRESSED;
-    if (formatValue.isUInt32()) {
-        form = static_cast<point_conversion_form_t>(formatValue.asUInt32());
-        // Validate the form is a valid conversion form
-        if (form != POINT_CONVERSION_COMPRESSED && form != POINT_CONVERSION_UNCOMPRESSED && form != POINT_CONVERSION_HYBRID) {
-            throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid point conversion format specified"_s);
-            return {};
-        }
-    } else if (!formatValue.isUndefined() && !formatValue.isNull()) {
-        throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Format argument must be a valid point conversion format"_s);
-        return {};
-    }
-
-    // Get the group and public key
-    const auto group = ecdh->key().getGroup();
-    const auto pubKey = ecdh->key().getPublicKey();
-    if (!pubKey) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get ECDH public key"_s);
-        return {};
-    }
-
-    // Calculate the length needed for the result
-    size_t bufLen = EC_POINT_point2oct(group, pubKey, form, nullptr, 0, nullptr);
-    if (bufLen == 0) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to determine size for public key encoding"_s);
-        return {};
-    }
-
-    // Create a buffer to hold the result
-    auto result = JSC::ArrayBuffer::tryCreate(bufLen, 1);
-    if (!result) {
-        throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED, "Failed to allocate buffer for public key"_s);
-        return {};
-    }
-
-    // Encode the point to the buffer
-    if (EC_POINT_point2oct(group, pubKey, form, static_cast<unsigned char*>(result->data()), bufLen, nullptr) == 0) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to encode public key"_s);
-        return {};
-    }
-
-    // Handle output encoding if provided
-    BufferEncodingType encodingType = Bun::getEncodingDefaultBuffer(globalObject, scope, encodingValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Create a span from the result data for encoding
-    std::span<const uint8_t> resultSpan(static_cast<const uint8_t*>(result->data()), bufLen);
-
-    // Return the encoded result
-    return StringBytes::encode(globalObject, scope, resultSpan, encodingType);
+    return ecdh->getPublicKey(globalObject, scope, encodingValue, formatValue);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPrivateKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -247,7 +170,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPrivateKey, (JSC::JSGlobalObject * gl
     }
 
     // Get the private key as a BIGNUM
-    const BIGNUM* privKey = ecdh->key().getPrivateKey();
+    const BIGNUM* privKey = ecdh->m_key.getPrivateKey();
     if (!privKey) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get ECDH private key"_s);
         return {};
@@ -302,13 +225,6 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
     JSC::JSValue keyValue = callFrame->argument(0);
     JSC::JSValue encodingValue = callFrame->argument(1);
 
-    // Get the group from our key
-    const EC_GROUP* group = ecdh->key().getGroup();
-    if (!group) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get EC_GROUP from key"_s);
-        return {};
-    }
-
     // Convert the input to a buffer with encoding if provided
     auto* bufferValue = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
@@ -318,8 +234,10 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
         return {};
     }
 
+    ncrypto::MarkPopErrorOnReturn markPopErrorOnReturn;
+
     // Create an EC_POINT from the buffer
-    auto pubPoint = ncrypto::ECPointPointer::New(group);
+    auto pubPoint = ncrypto::ECPointPointer::New(ecdh->m_group);
     if (!pubPoint) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate EC_POINT for public key"_s);
         return {};
@@ -332,26 +250,16 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
         .len = keySpan.size()
     };
 
-    if (!pubPoint.setFromBuffer(buffer, group)) {
+    if (!pubPoint.setFromBuffer(buffer, ecdh->m_group)) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set EC_POINT from buffer"_s);
         return {};
     }
 
-    // Clone the existing key, set the public key, then update the instance
-    auto newKey = ecdh->key().clone();
-    if (!newKey) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to clone EC key"_s);
-        return {};
-    }
-
     // Set the public key
-    if (!newKey.setPublicKey(pubPoint)) {
+    if (!ecdh->m_key.setPublicKey(pubPoint)) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set EC_POINT as the public key"_s);
         return {};
     }
-
-    // Replace the old key with the new one
-    ecdh->setKey(WTFMove(newKey));
 
     // Return this for chaining
     return JSValue::encode(callFrame->thisValue());
@@ -394,13 +302,12 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     }
 
     // Validate the key is valid for the curve
-    if (!isKeyValidForCurve(ecdh->key().getGroup(), privateKey)) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Private key is not valid for the specified curve"_s);
-        return {};
+    if (!isKeyValidForCurve(ecdh->m_group, privateKey)) {
+        return Bun::ERR::CRYPTO_INVALID_KEYTYPE(scope, globalObject, "Private key is not valid for specified curve"_s);
     }
 
     // Clone the existing key
-    auto newKey = ecdh->key().clone();
+    auto newKey = ecdh->m_key.clone();
     if (!newKey) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to clone EC key"_s);
         return {};
@@ -420,14 +327,14 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     }
 
     // Create a new EC_POINT for the public key
-    auto pubPoint = ncrypto::ECPointPointer::New(ecdh->key().getGroup());
+    auto pubPoint = ncrypto::ECPointPointer::New(ecdh->m_group);
     if (!pubPoint) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate EC_POINT for public key"_s);
         return {};
     }
 
     // Compute the public key point from the private key
-    if (!pubPoint.mul(ecdh->key().getGroup(), privKey)) {
+    if (!pubPoint.mul(ecdh->m_group, privKey)) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to compute public key from private key"_s);
         return {};
     }
@@ -439,7 +346,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     }
 
     // Replace the old key with the new one
-    ecdh->setKey(WTFMove(newKey));
+    ecdh->m_key = WTFMove(newKey);
+    ecdh->m_group = ecdh->m_key.getGroup();
 
     // Return this for chaining
     return JSValue::encode(callFrame->thisValue());

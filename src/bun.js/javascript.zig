@@ -62,7 +62,6 @@ const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
-const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
@@ -418,7 +417,8 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
@@ -449,14 +449,13 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     };
 
     const vm = globalObject.bunVM();
-    const zigGlobal: *ZigGlobalObject = @ptrCast(globalObject);
     const ipc_instance = vm.getIPCInstance() orelse {
         const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+            Bun__Process__queueNextTick1(globalObject, callback, ex);
         } else {
             const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
-            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
         }
         return .false;
     };
@@ -472,16 +471,16 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     if (good) {
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(zigGlobal, callback, .null);
+            Bun__Process__queueNextTick1(globalObject, callback, .null);
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
         ex.put(globalObject, ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+            Bun__Process__queueNextTick1(globalObject, callback, ex);
         } else {
             const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
-            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
         }
     }
 
@@ -723,7 +722,7 @@ const AutoKiller = struct {
 
     fn killProcesses(this: *AutoKiller) u32 {
         var count: u32 = 0;
-        while (this.processes.popOrNull()) |process| {
+        while (this.processes.pop()) |process| {
             if (!process.key.hasExited()) {
                 log("process.kill {d}", .{process.key.pid});
                 count += @as(u32, @intFromBool(process.key.kill(@intFromEnum(bun.SignalCode.default)) == .result));
@@ -945,6 +944,10 @@ pub const VirtualMachine = struct {
         return this.debugger != null;
     }
 
+    pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
+        return this.isShuttingDown();
+    }
+
     pub fn isShuttingDown(this: *const VirtualMachine) bool {
         return this.is_shutting_down;
     }
@@ -1032,9 +1035,9 @@ pub const VirtualMachine = struct {
     pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
-            vm.active_tasks +
-            vm.event_loop.tasks.count +
-            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+                vm.active_tasks +
+                vm.event_loop.tasks.count +
+                @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
@@ -1967,10 +1970,10 @@ pub const VirtualMachine = struct {
         if (opts.is_main_thread) {
             VMHolder.main_thread_vm = vm;
         }
-        vm.global = ZigGlobalObject.create(
+        vm.global = JSGlobalObject.create(
             vm,
             vm.console,
-            if (opts.is_main_thread) -1 else std.math.maxInt(i32),
+            if (opts.is_main_thread) 1 else std.math.maxInt(i32),
             false,
             false,
             null,
@@ -2084,10 +2087,10 @@ pub const VirtualMachine = struct {
 
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
-        vm.global = ZigGlobalObject.create(
+        vm.global = JSGlobalObject.create(
             vm,
             vm.console,
-            if (opts.is_main_thread) -1 else std.math.maxInt(i32),
+            if (opts.is_main_thread) 1 else std.math.maxInt(i32),
             opts.smol,
             opts.eval,
             null,
@@ -2250,7 +2253,7 @@ pub const VirtualMachine = struct {
         vm.smol = opts.smol;
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
-        vm.global = ZigGlobalObject.create(
+        vm.global = JSGlobalObject.create(
             vm,
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
@@ -2514,13 +2517,13 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
+        } else if (JSC.HardcodedModule.Alias.get(specifier, .bun)) |result| {
             ret.result = null;
             ret.path = result.path;
             return;
         } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
-            strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
+                strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {
             ret.result = null;
             ret.path = specifier;
@@ -2611,30 +2614,6 @@ pub const VirtualMachine = struct {
         ret.path = result_path.text;
     }
 
-    pub fn resolveForAPI(
-        res: *ErrorableString,
-        global: *JSGlobalObject,
-        specifier: bun.String,
-        source: bun.String,
-        query_string: ?*ZigString,
-        is_esm: bool,
-    ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false) catch {};
-        // TODO: handle js exception
-    }
-
-    pub fn resolveFilePathForAPI(
-        res: *ErrorableString,
-        global: *JSGlobalObject,
-        specifier: bun.String,
-        source: bun.String,
-        query_string: ?*ZigString,
-        is_esm: bool,
-    ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
-        // TODO: handle js exception
-    }
-
     pub fn resolve(
         res: *ErrorableString,
         global: *JSGlobalObject,
@@ -2642,9 +2621,8 @@ pub const VirtualMachine = struct {
         source: bun.String,
         query_string: ?*ZigString,
         is_esm: bool,
-    ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
-        // TODO: handle js exception
+    ) !void {
+        try resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -2655,7 +2633,16 @@ pub const VirtualMachine = struct {
         return source;
     }
 
-    fn resolveMaybeNeedsTrailingSlash(res: *ErrorableString, global: *JSGlobalObject, specifier: bun.String, source: bun.String, query_string: ?*ZigString, is_esm: bool, comptime is_a_file_path: bool) bun.JSError!void {
+    pub fn resolveMaybeNeedsTrailingSlash(
+        res: *ErrorableString,
+        global: *JSGlobalObject,
+        specifier: bun.String,
+        source: bun.String,
+        query_string: ?*ZigString,
+        is_esm: bool,
+        comptime is_a_file_path: bool,
+        is_user_require_resolve: bool,
+    ) bun.JSError!void {
         if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2666,6 +2653,7 @@ pub const VirtualMachine = struct {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 error.NameTooLong,
+                if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
             ) catch bun.outOfMemory();
             const msg = logger.Msg{
                 .data = logger.rangeData(
@@ -2700,21 +2688,13 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime, jsc_vm.transpiler.options.target)) |hardcoded| {
-            // if (hardcoded.tag == .none) {
-            //     resolveMaybeNeedsTrailingSlash(
-            //         res,
-            //         global,
-            //         bun.String.init(hardcoded.path),
-            //         source,
-            //         query_string,
-            //         is_esm,
-            //         is_a_file_path,
-            //     );
-            //     return;
-            // }
-
-            res.* = ErrorableString.ok(bun.String.init(hardcoded.path));
+        if (JSC.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
+            res.* = ErrorableString.ok(
+                if (is_user_require_resolve and hardcoded.node_builtin)
+                    specifier
+                else
+                    bun.String.init(hardcoded.path),
+            );
             return;
         }
 
@@ -2742,12 +2722,20 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                const printed = JSC.ResolveMessage.fmt(
+                const import_kind: bun.ImportKind = if (is_esm)
+                    .stmt
+                else if (is_user_require_resolve)
+                    .require_resolve
+                else
+                    .require;
+
+                const printed = try JSC.ResolveMessage.fmt(
                     jsc_vm.allocator,
                     specifier_utf8.slice(),
                     source_utf8.slice(),
                     err,
-                ) catch unreachable;
+                    import_kind,
+                );
                 break :brk logger.Msg{
                     .data = logger.rangeData(
                         null,
@@ -2755,8 +2743,10 @@ pub const VirtualMachine = struct {
                         printed,
                     ),
                     .metadata = .{
-                        // import_kind is wrong probably
-                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_utf8.slice()), .import_kind = if (is_esm) .stmt else .require },
+                        .resolve = .{
+                            .specifier = logger.BabyString.in(printed, specifier_utf8.slice()),
+                            .import_kind = import_kind,
+                        },
                     },
                 };
             };
@@ -3306,13 +3296,13 @@ pub const VirtualMachine = struct {
                 current_exception_list: ?*ExceptionList = null,
                 formatter: *ConsoleObject.Formatter,
 
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, ctx.?, true);
+                pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, ctx.?, false);
+                pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
                 }
@@ -3552,7 +3542,7 @@ pub const VirtualMachine = struct {
         error_instance.toZigException(this.global, exception);
         const enable_source_code_preview = allow_source_code_preview and
             !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+                bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
 
         defer {
             if (Environment.isDebug) {
@@ -4185,13 +4175,13 @@ pub const VirtualMachine = struct {
                             // + 1 to ensure the message is a non-empty string.
                             break :has_prefix msg_chars.len > code.len + ": ".len + 1 and
                                 (if (is_utf16)
-                                // there is no existing function to perform this slice comparison
-                                // []const u16, []const u8
-                                for (code, msg_chars[0..code.len]) |a, b| {
-                                    if (a != b) break false;
-                                } else true
-                            else
-                                bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
+                                    // there is no existing function to perform this slice comparison
+                                    // []const u16, []const u8
+                                    for (code, msg_chars[0..code.len]) |a, b| {
+                                        if (a != b) break false;
+                                    } else true
+                                else
+                                    bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
                                 msg_chars[code.len] == ':' and
                                 msg_chars[code.len + 1] == ' ';
                         },

@@ -62,7 +62,6 @@ const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
-const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
@@ -142,8 +141,8 @@ fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob,
             content
         else if (blob.wasString())
             MimeType.text
-            // TODO: should we get the mime type off of the Blob.Store if it exists?
-            // A little wary of doing this right now due to causing some breaking change
+                // TODO: should we get the mime type off of the Blob.Store if it exists?
+                // A little wary of doing this right now due to causing some breaking change
         else
             MimeType.other;
     };
@@ -835,7 +834,7 @@ pub const ServerConfig = struct {
                 var sliced = try key_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.key_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access keyFile path", .{});
                     }
@@ -848,16 +847,16 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -891,7 +890,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("key", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.key = native_array;
                         result.key_count = 1;
@@ -902,12 +901,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.key = native_array;
@@ -927,7 +926,7 @@ pub const ServerConfig = struct {
                 var sliced = try cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.cert_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access certFile path", .{});
                     }
@@ -937,11 +936,11 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "ALPNProtocols")) |protocols| {
-                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
+                if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
                     defer sb.deinit();
                     const sliced = sb.slice();
                     if (sliced.len > 0) {
-                        result.protos = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                        result.protos = try bun.default_allocator.dupeZ(u8, sliced);
                         result.protos_len = sliced.len;
                     }
 
@@ -956,16 +955,16 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -999,7 +998,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("cert", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.cert = native_array;
                         result.cert_count = 1;
@@ -1010,12 +1009,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.cert = native_array;
@@ -1053,7 +1052,7 @@ pub const ServerConfig = struct {
                 var sliced = try ssl_ciphers.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ssl_ciphers = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -1063,7 +1062,7 @@ pub const ServerConfig = struct {
                 var sliced = try server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.server_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -1073,12 +1072,12 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
@@ -1116,7 +1115,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("ca", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.ca = native_array;
                         result.ca_count = 1;
@@ -1127,12 +1126,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.ca = native_array;
@@ -1152,7 +1151,7 @@ pub const ServerConfig = struct {
                 var sliced = try ca_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ca_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Invalid caFile path", .{});
                     }
@@ -1182,7 +1181,7 @@ pub const ServerConfig = struct {
                     var sliced = try dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.dh_params_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                         if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
                             return global.throwInvalidArguments("Invalid dhParamsFile path", .{});
                         }
@@ -1193,7 +1192,7 @@ pub const ServerConfig = struct {
                     var sliced = try passphrase.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.passphrase = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     }
                 }
 
@@ -1398,7 +1397,7 @@ pub const ServerConfig = struct {
                         continue;
                     }
 
-                    if (value.isCallable(global.vm())) {
+                    if (value.isCallable()) {
                         try validateRouteName(global, path);
                         args.user_routes_to_build.append(.{
                             .route = .{
@@ -1424,7 +1423,7 @@ pub const ServerConfig = struct {
                         var found = false;
                         inline for (methods) |method| {
                             if (value.getOwn(global, @tagName(method))) |function| {
-                                if (!function.isCallable(global.vm())) {
+                                if (!function.isCallable()) {
                                     return global.throwInvalidArguments("Expected {s} in {} route to be a function", .{ @tagName(method), bun.fmt.quote(path) });
                                 }
                                 if (!found) {
@@ -1654,7 +1653,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthyComptime(global, "error")) |onError| {
-                if (!onError.isCallable(global.vm())) {
+                if (!onError.isCallable()) {
                     return global.throwInvalidArguments("Expected error to be a function", .{});
                 }
                 const onErrorSnapshot = onError.withAsyncContextIfNeeded(global);
@@ -1664,7 +1663,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthy(global, "onNodeHTTPRequest")) |onRequest_| {
-                if (!onRequest_.isCallable(global.vm())) {
+                if (!onRequest_.isCallable()) {
                     return global.throwInvalidArguments("Expected onNodeHTTPRequest to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
@@ -1673,7 +1672,7 @@ pub const ServerConfig = struct {
             }
 
             if (try arg.getTruthy(global, "fetch")) |onRequest_| {
-                if (!onRequest_.isCallable(global.vm())) {
+                if (!onRequest_.isCallable()) {
                     return global.throwInvalidArguments("Expected fetch() to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
@@ -2173,9 +2172,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // This pre-allocates up to 2,048 RequestContext structs.
         // It costs about 655,632 bytes.
         pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback;
-
-        pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-        pub const shim = JSC.Shimmer("Bun", name, @This());
 
         server: ?*ThisServer,
         resp: ?*App.Response,
@@ -4541,22 +4537,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return false;
         }
 
-        pub const Export = shim.exportFunctions(.{
-            .onResolve = onResolve,
-            .onReject = onReject,
-            .onResolveStream = onResolveStream,
-            .onRejectStream = onRejectStream,
-        });
-
         comptime {
+            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
             const jsonResolve = JSC.toJSHostFunction(onResolve);
-            @export(&jsonResolve, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolve, .{ .name = export_prefix ++ "__onResolve" });
             const jsonReject = JSC.toJSHostFunction(onReject);
-            @export(&jsonReject, .{ .name = Export[1].symbol_name });
+            @export(&jsonReject, .{ .name = export_prefix ++ "__onReject" });
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(&jsonResolveStream, .{ .name = Export[2].symbol_name });
+            @export(&jsonResolveStream, .{ .name = export_prefix ++ "__onResolveStream" });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(&jsonRejectStream, .{ .name = Export[3].symbol_name });
+            @export(&jsonRejectStream, .{ .name = export_prefix ++ "__onRejectStream" });
         }
     };
 }
@@ -4608,13 +4598,12 @@ pub const WebSocketServer = struct {
         }
 
         pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!Handler {
-            const vm = globalObject.vm();
             var handler = Handler{ .globalObject = globalObject, .vm = VirtualMachine.get() };
 
             var valid = false;
 
             if (try object.getTruthyComptime(globalObject, "message")) |message_| {
-                if (!message_.isCallable(vm)) {
+                if (!message_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                 }
                 const message = message_.withAsyncContextIfNeeded(globalObject);
@@ -4624,7 +4613,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "open")) |open_| {
-                if (!open_.isCallable(vm)) {
+                if (!open_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
                 }
                 const open = open_.withAsyncContextIfNeeded(globalObject);
@@ -4634,7 +4623,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "close")) |close_| {
-                if (!close_.isCallable(vm)) {
+                if (!close_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
                 }
                 const close = close_.withAsyncContextIfNeeded(globalObject);
@@ -4644,7 +4633,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "drain")) |drain_| {
-                if (!drain_.isCallable(vm)) {
+                if (!drain_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
                 }
                 const drain = drain_.withAsyncContextIfNeeded(globalObject);
@@ -4654,7 +4643,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "onError")) |onError_| {
-                if (!onError_.isCallable(vm)) {
+                if (!onError_.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
                 }
                 const onError = onError_.withAsyncContextIfNeeded(globalObject);
@@ -4663,7 +4652,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "ping")) |cb| {
-                if (!cb.isCallable(vm)) {
+                if (!cb.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the ping option", .{});
                 }
                 handler.onPing = cb;
@@ -4672,7 +4661,7 @@ pub const WebSocketServer = struct {
             }
 
             if (try object.getTruthy(globalObject, "pong")) |cb| {
-                if (!cb.isCallable(vm)) {
+                if (!cb.isCallable()) {
                     return globalObject.throwInvalidArguments("websocket expects a function for the pong option", .{});
                 }
                 handler.onPong = cb;
@@ -5186,6 +5175,10 @@ pub const ServerWebSocket = struct {
         const signal = this.signal;
         this.signal = null;
 
+        if (ServerWebSocket.socketGetCached(this.getThisValue())) |socket| {
+            Bun__callNodeHTTPServerSocketOnClose(socket);
+        }
+
         defer {
             if (signal) |sig| {
                 sig.pendingActivityUnref();
@@ -5558,7 +5551,7 @@ pub const ServerWebSocket = struct {
         }
 
         const callback = args.ptr[0];
-        if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable(globalThis.vm())) {
+        if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable()) {
             return globalThis.throwInvalidArgumentTypeValue("cork", "callback", callback);
         }
 
@@ -6165,6 +6158,7 @@ pub const NodeHTTPResponse = struct {
     finished: bool = false,
     ended: bool = false,
     upgraded: bool = false,
+    hasCustomOnData: bool = false,
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
@@ -6234,17 +6228,15 @@ pub const NodeHTTPResponse = struct {
         done = 2,
     };
 
-    extern "C" fn Bun__getNodeHTTPResponseThisValue(c_int, *anyopaque) JSC.JSValue;
+    extern "C" fn Bun__getNodeHTTPResponseThisValue(bool, *anyopaque) JSC.JSValue;
     fn getThisValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+        return Bun__getNodeHTTPResponseThisValue(this.response == .SSL, this.response.socket());
     }
 
-    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(c_int, *anyopaque) JSC.JSValue;
+    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(bool, *anyopaque) JSC.JSValue;
     fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPServerSocketThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+        return Bun__getNodeHTTPServerSocketThisValue(this.response == .SSL, this.response.socket());
     }
-
-    extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, *anyopaque) void;
 
     pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
         const upgrade_ctx = this.upgrade_context.context orelse return false;
@@ -6266,6 +6258,7 @@ pub const NodeHTTPResponse = struct {
         defer if (new_socket) |socket| {
             this.upgraded = true;
             Bun__setNodeHTTPServerSocketUsSocketValue(socketValue, socket);
+            ServerWebSocket.socketSetCached(ws.getThisValue(), ws_handler.globalObject, socketValue);
             defer this.js_ref.unref(JSC.VirtualMachine.get());
             switch (this.response) {
                 .SSL => this.response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
@@ -6346,7 +6339,7 @@ pub const NodeHTTPResponse = struct {
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
         this.upgrade_context.deinit(); // we can discard the upgrade context now
 
-        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
+        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and (!this.hasCustomOnData or !this.onDataCallback.has())) {
             const had_ref = this.body_read_ref.has;
             this.response.clearOnData();
             this.body_read_ref.unref(vm);
@@ -6409,7 +6402,7 @@ pub const NodeHTTPResponse = struct {
     pub fn create(
         any_server_tag: u64,
         globalObject: *JSC.JSGlobalObject,
-        has_body: *i32,
+        has_body: *bool,
         request: *uws.Request,
         is_ssl: i32,
         response_ptr: *anyopaque,
@@ -6426,7 +6419,7 @@ pub const NodeHTTPResponse = struct {
                 break :brk 0;
             };
 
-            has_body.* = @intFromBool(req_len > 0 or request.header("transfer-encoding") != null);
+            has_body.* = req_len > 0 or request.header("transfer-encoding") != null;
         }
 
         const response = NodeHTTPResponse.new(.{
@@ -6439,14 +6432,14 @@ pub const NodeHTTPResponse = struct {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
                 false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
             },
-            .body_read_state = if (has_body.* != 0) .pending else .none,
+            .body_read_state = if (has_body.*) .pending else .none,
             // 1 - the HTTP response
             // 1 - the JS object
             // 1 - the Server handler.
-            // 1 - the onData callback (request bod)
-            .ref_count = if (has_body.* != 0) 4 else 3,
+            // 1 - the onData callback (request body)
+            .ref_count = if (has_body.*) 4 else 3,
         });
-        if (has_body.* != 0) {
+        if (has_body.*) {
             response.body_read_ref.ref(vm);
         }
         response.js_ref.ref(vm);
@@ -6609,7 +6602,7 @@ pub const NodeHTTPResponse = struct {
         }
     }
 
-    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(1).slice();
         _ = arguments; // autofix
         if (this.isDone()) {
@@ -6921,13 +6914,13 @@ pub const NodeHTTPResponse = struct {
         const input_value = if (arguments.len > 0) arguments[0] else .undefined;
         var encoding_value = if (arguments.len > 1) arguments[1] else .undefined;
         const callback_value = brk: {
-            if ((encoding_value != .null and encoding_value != .undefined) and encoding_value.isCallable(globalObject.vm())) {
+            if ((encoding_value != .null and encoding_value != .undefined) and encoding_value.isCallable()) {
                 encoding_value = .undefined;
                 break :brk arguments[1];
             }
 
             if (arguments.len > 2 and arguments[2] != .undefined) {
-                if (!arguments[2].isCallable(globalObject.vm())) {
+                if (!arguments[2].isCallable()) {
                     return globalObject.throwInvalidArgumentTypeValue("callback", "function", arguments[2]);
                 }
 
@@ -6948,12 +6941,12 @@ pub const NodeHTTPResponse = struct {
                     return globalObject.throwInvalidArgumentTypeValue("encoding", "string", encoding_value);
                 }
 
-                encoding = JSC.Node.Encoding.fromJS(encoding_value, globalObject) orelse {
+                encoding = try JSC.Node.Encoding.fromJS(encoding_value, globalObject) orelse {
                     return globalObject.throwInvalidArguments("Invalid encoding", .{});
                 };
             }
 
-            const result = JSC.Node.StringOrBuffer.fromJSWithEncoding(globalObject, bun.default_allocator, input_value, encoding) catch |err| return err;
+            const result = try JSC.Node.StringOrBuffer.fromJSWithEncoding(globalObject, bun.default_allocator, input_value, encoding);
             break :brk result orelse {
                 return globalObject.throwInvalidArgumentTypeValue("input", "string or buffer", input_value);
             };
@@ -6975,7 +6968,7 @@ pub const NodeHTTPResponse = struct {
         if (is_end) {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
             // This is the equivalent of req._dump().
-            if (this.body_read_ref.has and this.body_read_state == .pending and !this.onDataCallback.has()) {
+            if (this.body_read_ref.has and this.body_read_state == .pending and (!this.hasCustomOnData or !this.onDataCallback.has())) {
                 this.body_read_ref.unref(JSC.VirtualMachine.get());
                 this.deref();
                 this.body_read_state = .none;
@@ -7032,15 +7025,28 @@ pub const NodeHTTPResponse = struct {
     pub fn setOnAbort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
         if (this.isDone() or value == .undefined) {
             this.onAbortedCallback.clearWithoutDeallocation();
-            return true;
+        } else {
+            this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         }
 
-        this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         return true;
     }
 
     pub fn getOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
         return this.onDataCallback.get() orelse .undefined;
+    }
+
+    pub fn getHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.jsBoolean(this.hasCustomOnData);
+    }
+
+    pub fn getUpgraded(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.jsBoolean(this.upgraded);
+    }
+
+    pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
+        this.hasCustomOnData = value.toBoolean();
+        return true;
     }
 
     fn clearOnDataCallback(this: *NodeHTTPResponse) void {
@@ -7079,6 +7085,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         this.onDataCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
+        this.hasCustomOnData = true;
         this.response.onData(*NodeHTTPResponse, onData, this);
         this.is_data_buffered_during_pause = false;
 
@@ -7129,7 +7136,7 @@ pub const NodeHTTPResponse = struct {
             return globalObject.throwNotEnoughArguments("cork", 1, 0);
         }
 
-        if (!arguments[0].isCallable(globalObject.vm())) {
+        if (!arguments[0].isCallable()) {
             return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
         }
 
@@ -8238,10 +8245,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;
-                    var len: i32 = 1024;
-                    listener.socket().remoteAddress(&buf, &len);
-                    if (len > 0) {
-                        this.cached_hostname = bun.String.createUTF8(buf[0..@as(usize, @intCast(len))]);
+
+                    if (listener.socket().remoteAddress(buf[0..1024])) |addr| {
+                        if (addr.len > 0) {
+                            this.cached_hostname = bun.String.createUTF8(addr);
+                        }
                     }
                 }
 
@@ -8706,7 +8714,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             const result: JSValue = onNodeHTTPRequestFn(
-                @bitCast(AnyServer.from(this)),
+                @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
                 thisObject,
                 this.config.onNodeHTTPRequest,
@@ -8825,6 +8833,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             NodeHTTPServer__onRequest_https
         else
             NodeHTTPServer__onRequest_http;
+
+        pub fn setUsingCustomExpectHandler(this: *ThisServer, value: bool) void {
+            NodeHTTP_setUsingCustomExpectHandler(ssl_enabled, this.app.?, value);
+        }
 
         var did_send_idletimeout_warning_once = false;
         fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
@@ -9340,7 +9352,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
-                NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
+                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
             } else if (this.config.onRequest != .zero and !@"has /*") {
                 app.any("/*", *ThisServer, this, onRequest);
             }
@@ -9511,6 +9523,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 route_list_value = this.setRoutes();
             }
 
+            if (this.config.onNodeHTTPRequest != .zero) {
+                this.setUsingCustomExpectHandler(true);
+            }
+
             switch (this.config.address) {
                 .tcp => |tcp| {
                     var host: ?[*:0]const u8 = null;
@@ -9610,7 +9626,7 @@ pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
 pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);
 pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, true);
-pub const AnyServer = packed struct {
+pub const AnyServer = struct {
     ptr: Ptr,
 
     const Ptr = bun.TaggedPointerUnion(.{
@@ -9862,7 +9878,7 @@ comptime {
 }
 
 extern fn NodeHTTPServer__onRequest_http(
-    any_server: u64,
+    any_server: usize,
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
@@ -9873,7 +9889,7 @@ extern fn NodeHTTPServer__onRequest_http(
 ) JSC.JSValue;
 
 extern fn NodeHTTPServer__onRequest_https(
-    any_server: u64,
+    any_server: usize,
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
@@ -9883,7 +9899,9 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
-extern fn NodeHTTP_assignOnCloseFunction(c_int, *anyopaque) void;
+extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
+
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
     const err_code = BoringSSL.ERR_get_error();
@@ -9912,3 +9930,6 @@ extern "c" fn Bun__ServerRouteList__create(
     paths: [*]ZigString,
     pathsLength: usize,
 ) JSC.JSValue;
+
+extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, ?*anyopaque) void;
+extern "C" fn Bun__callNodeHTTPServerSocketOnClose(JSC.JSValue) void;

@@ -16,21 +16,110 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSError = bun.JSError;
 const String = bun.String;
 const UUID = bun.UUID;
+const Async = bun.Async;
+
+fn ExternCryptoJob(comptime name: []const u8) type {
+    return struct {
+        vm: *JSC.VirtualMachine,
+        task: JSC.WorkPoolTask,
+        any_task: JSC.AnyTask,
+        poll: Async.KeepAlive = .{},
+
+        ctx: *Ctx,
+        callback: JSValue,
+
+        const Ctx = opaque {
+            const ctx_name = name ++ "Ctx";
+            pub const runTask = @extern(*const fn (*Ctx, *JSGlobalObject) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runTask" }).*;
+            pub const runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+            pub const deinit = @extern(*const fn (*Ctx) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__deinit" }).*;
+        };
+
+        pub fn create(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) *@This() {
+            const vm = global.bunVM();
+            const job = bun.new(@This(), .{
+                .vm = vm,
+                .task = .{
+                    .callback = &runTask,
+                },
+                .any_task = undefined,
+                .ctx = ctx,
+                .callback = callback,
+            });
+            job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+            job.callback.protect();
+            return job;
+        }
+
+        pub fn createAndSchedule(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) void {
+            var job = create(global, ctx, callback);
+            job.schedule();
+        }
+
+        pub fn runTask(task: *JSC.WorkPoolTask) void {
+            const job: *@This() = @fieldParentPtr("task", task);
+            var vm = job.vm;
+            defer vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+
+            job.ctx.runTask(vm.global);
+        }
+
+        pub fn runFromJS(this: *@This()) void {
+            defer this.deinit();
+            const vm = this.vm;
+
+            if (vm.isShuttingDown()) {
+                return;
+            }
+
+            this.ctx.runFromJS(vm.global, this.callback);
+        }
+
+        fn deinit(this: *@This()) void {
+            this.ctx.deinit();
+            this.poll.unref(this.vm);
+            this.callback.unprotect();
+            bun.destroy(this);
+        }
+
+        pub fn schedule(this: *@This()) callconv(.c) void {
+            this.poll.ref(this.vm);
+            JSC.WorkPool.schedule(&this.task);
+        }
+
+        comptime {
+            @export(&create, .{ .name = "Bun__" ++ name ++ "__create" });
+            @export(&schedule, .{ .name = "Bun__" ++ name ++ "__schedule" });
+            @export(&createAndSchedule, .{ .name = "Bun__" ++ name ++ "__createAndSchedule" });
+        }
+    };
+}
+
+// Definitions for job structs created from c++
+pub const CheckPrimeJob = ExternCryptoJob("CheckPrimeJob");
+pub const GeneratePrimeJob = ExternCryptoJob("GeneratePrimeJob");
+pub const HkdfJob = ExternCryptoJob("HkdfJob");
+
+comptime {
+    _ = CheckPrimeJob;
+    _ = GeneratePrimeJob;
+    _ = HkdfJob;
+}
 
 const random = struct {
     const max_possible_length = @min(JSC.ArrayBuffer.max_size, std.math.maxInt(i32));
     const max_range = 0xffff_ffff_ffff;
 
     fn randomInt(global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callFrame.arguments();
+        var min_value, var max_value, var callback = callFrame.argumentsAsArray(3);
 
-        const min_value, const max_value, const callback, const min_specified = args: {
-            if (args.len == 2) {
-                break :args .{ JSC.jsNumber(0), args[0], args[1], false };
-            }
-
-            break :args .{ args[0], args[1], args[2], true };
-        };
+        var min_specified = true;
+        if (max_value.isUndefined() or max_value.isCallable()) {
+            callback = max_value;
+            max_value = min_value;
+            min_value = JSValue.jsNumber(0);
+            min_specified = false;
+        }
 
         if (!callback.isUndefined()) {
             _ = try validators.validateFunction(global, "callback", callback);
@@ -60,7 +149,14 @@ const random = struct {
             return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
         }
 
-        return JSC.jsNumber(std.crypto.random.intRangeLessThan(i64, min, max));
+        const res = std.crypto.random.intRangeLessThan(i64, min, max);
+
+        if (!callback.isUndefined()) {
+            callback.callNextTick(global, [2]JSValue{ .undefined, JSValue.jsNumber(res) });
+            return JSValue.jsUndefined();
+        }
+
+        return JSValue.jsNumber(res);
     }
 
     fn randomUUID(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
@@ -121,10 +217,8 @@ const random = struct {
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
 
-        promise: JSC.JSPromise.Strong,
-        poll: bun.Async.KeepAlive = .{},
-
-        value: JSC.Strong,
+        callback: JSValue,
+        value: JSValue,
         bytes: [*]u8,
         offset: u32,
         length: usize,
@@ -144,14 +238,12 @@ const random = struct {
                 return;
             }
 
-            const global = this.vm.global;
-            const promise = this.promise.swap();
-
-            promise.resolve(global, this.value.swap());
+            vm.eventLoop().runCallback(this.callback, vm.global, .undefined, &.{ .null, this.value });
         }
 
-        pub fn create(global: *JSGlobalObject, value: JSValue, bytes: [*]u8, offset: u32, length: usize) *Job {
+        pub fn create(global: *JSGlobalObject, value: JSValue, bytes: [*]u8, offset: u32, length: usize, callback: JSValue) *Job {
             const vm = global.bunVM();
+
             const job = bun.new(Job, .{
                 .vm = vm,
                 .task = .{
@@ -159,22 +251,25 @@ const random = struct {
                 },
                 .any_task = undefined,
 
-                .promise = JSC.JSPromise.Strong.init(global),
-
-                .value = JSC.Strong.create(value, global),
+                .callback = callback,
+                .value = value,
                 .bytes = bytes,
                 .offset = offset,
                 .length = length,
             });
-
+            job.callback.protect();
+            job.value.protect();
             job.any_task = JSC.AnyTask.New(Job, &Job.runFromJS).init(job);
-            job.poll.ref(vm);
-            JSC.WorkPool.schedule(&job.task);
             return job;
         }
 
+        fn schedule(this: *Job) void {
+            JSC.WorkPool.schedule(&this.task);
+        }
+
         fn deinit(this: *Job) void {
-            this.poll.unref(this.vm);
+            this.value.unprotect();
+            this.callback.unprotect();
             bun.destroy(this);
         }
     };
@@ -195,9 +290,9 @@ const random = struct {
             return result;
         }
 
-        const job = Job.create(global, result, bytes.ptr, 0, size);
-
-        return job.promise.value();
+        const job = Job.create(global, result, bytes.ptr, 0, size, callback);
+        job.schedule();
+        return .undefined;
     }
 
     fn randomFillSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
@@ -231,7 +326,7 @@ const random = struct {
     }
 
     fn randomFill(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
-        const buf_value, const offset_value, const size_value, const callback =
+        const buf_value, var offset_value, var size_value, var callback =
             callFrame.argumentsAsArray(4);
 
         const buf = buf_value.asArrayBuffer(global) orelse {
@@ -240,9 +335,19 @@ const random = struct {
 
         const element_size = buf.bytesPerElement() orelse 1;
 
-        _ = try validators.validateFunction(global, "callback", callback);
-
-        const offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
+        var offset: u32 = 0;
+        if (offset_value.isCallable()) {
+            callback = offset_value;
+            offset = try assertOffset(global, JSValue.jsNumber(0), element_size, buf.byte_len);
+            size_value = JSValue.jsNumber(buf.len);
+        } else if (size_value.isCallable()) {
+            callback = size_value;
+            offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
+            size_value = JSValue.jsNumber(buf.len - offset);
+        } else {
+            _ = try validators.validateFunction(global, "callback", callback);
+            offset = try assertOffset(global, offset_value, element_size, buf.byte_len);
+        }
 
         const size = if (size_value.isUndefined())
             buf.byte_len - offset
@@ -250,28 +355,25 @@ const random = struct {
             try assertSize(global, size_value, element_size, offset, buf.byte_len);
 
         if (size == 0) {
-            return JSC.JSPromise.resolvedPromiseValue(global, callback);
+            _ = try callback.call(global, .undefined, &.{ .null, JSValue.jsNumber(0) });
+            return .undefined;
         }
 
-        const job = Job.create(global, buf_value, buf.slice().ptr, offset, size);
-
-        return job.promise.value();
+        const job = Job.create(global, buf_value, buf.slice().ptr, offset, size, callback);
+        job.schedule();
+        return .undefined;
     }
 };
 
-fn pbkdf2(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(6);
-
-    const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
+fn pbkdf2(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const data = try PBKDF2.fromJS(globalThis, callFrame, true);
 
     const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
     return job.promise.value();
 }
 
-fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(5);
-
-    var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
+fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    var data = try PBKDF2.fromJS(globalThis, callFrame, false);
     defer data.deinit();
     var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
     if (out_arraybuffer == .zero or globalThis.hasException()) {
@@ -313,6 +415,45 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
     return JSC.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
 }
 
+pub fn secureHeapUsed(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return .undefined;
+}
+
+pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return JSValue.jsNumber(0);
+}
+
+pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return .undefined;
+}
+
+pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return global.ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by BoringSSL", .{}).throw();
+}
+
+fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
+    const from = maybe_from orelse return;
+    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
+    hashes.put(bun.span(from), {}) catch bun.outOfMemory();
+}
+
+fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    var hashes: bun.CaseInsensitiveASCIIStringArrayHashMap(void) = .init(bun.default_allocator);
+    defer hashes.deinit();
+
+    // TODO(dylan-conway): cache the names
+    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
+
+    const array = JSValue.createEmptyArray(global, hashes.count());
+
+    for (hashes.keys(), 0..) |hash, i| {
+        const str = String.createUTF8ForJS(global, hash);
+        array.putIndex(global, @intCast(i), str);
+    }
+
+    return array;
+}
+
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 8);
 
@@ -324,6 +465,13 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     crypto.put(global, String.init("randomUUID"), JSC.JSFunction.create(global, "randomUUID", random.randomUUID, 1, .{}));
     crypto.put(global, String.init("randomBytes"), JSC.JSFunction.create(global, "randomBytes", random.randomBytes, 2, .{}));
     crypto.put(global, String.init("timingSafeEqual"), JSC.JSFunction.create(global, "timingSafeEqual", timingSafeEqual, 2, .{}));
+
+    crypto.put(global, String.init("secureHeapUsed"), JSC.JSFunction.create(global, "secureHeapUsed", secureHeapUsed, 0, .{}));
+    crypto.put(global, String.init("getFips"), JSC.JSFunction.create(global, "getFips", getFips, 0, .{}));
+    crypto.put(global, String.init("setFips"), JSC.JSFunction.create(global, "setFips", setFips, 1, .{}));
+    crypto.put(global, String.init("setEngine"), JSC.JSFunction.create(global, "setEngine", setEngine, 2, .{}));
+
+    crypto.put(global, String.init("getHashes"), JSC.JSFunction.create(global, "getHashes", getHashes, 0, .{}));
 
     return crypto;
 }

@@ -67,29 +67,26 @@ const {
     };
   } else {
     wrongBlockLength = {
-      message: 'error:0606506D:digital envelope' +
-        ' routines:EVP_DecryptFinal_ex:wrong final block length',
-      code: 'ERR_OSSL_EVP_WRONG_FINAL_BLOCK_LENGTH',
-      library: 'digital envelope routines',
-      reason: 'wrong final block length'
+      message: /error:0606506D:digital envelope routines:EVP_DecryptFinal_ex:wrong final block length|error:1e00007b:Cipher functions:OPENSSL_internal:WRONG_FINAL_BLOCK_LENGTH/,
+      code: /ERR_OSSL_(EVP_)?WRONG_FINAL_BLOCK_LENGTH/,
+      library: /digital envelope routines|Cipher functions/,
+      reason: /wrong final block length|WRONG_FINAL_BLOCK_LENGTH/
     };
   }
 
   // Run this one twice to make sure that the dh3 clears its error properly
   {
-    // TODO(dylan-conway): !!!!!!!!!!!!!
-    // const c = crypto.createDecipheriv('aes-128-ecb', crypto.randomBytes(16), '');
-    // assert.throws(() => {
-    //   c.final('utf8');
-    // }, wrongBlockLength);
+    const c = crypto.createDecipheriv('aes-128-ecb', crypto.randomBytes(16), '');
+    assert.throws(() => {
+      c.final('utf8');
+    }, wrongBlockLength);
   }
 
   {
-    // TODO(dylan-conway): !!!!!!!!!!!!!
-    // const c = crypto.createDecipheriv('aes-128-ecb', crypto.randomBytes(16), '');
-    // assert.throws(() => {
-    //   c.final('utf8');
-    // }, wrongBlockLength);
+    const c = crypto.createDecipheriv('aes-128-ecb', crypto.randomBytes(16), '');
+    assert.throws(() => {
+      c.final('utf8');
+    }, wrongBlockLength);
   }
 
   {

@@ -1471,7 +1471,7 @@ pub extern fn OpenSSL_add_all_ciphers() void;
 pub extern fn OpenSSL_add_all_digests() void;
 pub extern fn EVP_cleanup() void;
 pub extern fn EVP_CIPHER_do_all_sorted(callback: ?*const fn (?*const EVP_CIPHER, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
-pub extern fn EVP_MD_do_all_sorted(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn EVP_MD_do_all_sorted(callback: *const fn (*const EVP_MD, ?[*:0]const u8, ?[*:0]const u8, *anyopaque) callconv(.C) void, arg: *anyopaque) void;
 pub extern fn EVP_MD_do_all(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
 pub extern fn i2d_PrivateKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
 pub extern fn i2d_PublicKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;

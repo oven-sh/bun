@@ -258,7 +258,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
             if (!algorithm_js.isString()) {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
-            algorithm = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+            algorithm = try JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
                 return globalObject.throwInvalidArguments("Algorithm not supported", .{});
             };
             switch (algorithm) {
@@ -353,7 +353,7 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
             if (!algorithm_js.isString()) {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
-            algorithm = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+            algorithm = try JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
                 return globalObject.throwInvalidArguments("Algorithm not supported", .{});
             };
             switch (algorithm) {

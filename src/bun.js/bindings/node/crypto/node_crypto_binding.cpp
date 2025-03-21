@@ -44,6 +44,9 @@
 #include "JSVerify.h"
 #include "JSHmac.h"
 #include "JSHash.h"
+#include "CryptoPrimes.h"
+#include "JSCipher.h"
+#include "CryptoHkdf.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -413,6 +416,23 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         globalObject->m_JSDiffieHellmanClassStructure.constructor(globalObject));
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "DiffieHellmanGroup"_s)),
         globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject));
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generatePrime"_s)),
+        JSFunction::create(vm, globalObject, 3, "generatePrime"_s, jsGeneratePrime, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generatePrimeSync"_s)),
+        JSFunction::create(vm, globalObject, 2, "generatePrimeSync"_s, jsGeneratePrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrime"_s)),
+        JSFunction::create(vm, globalObject, 3, "checkPrime"_s, jsCheckPrime, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
+        JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Cipher"_s)),
+        globalObject->m_JSCipherClassStructure.constructor(globalObject));
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdf"_s)),
+        JSFunction::create(vm, globalObject, 6, "hkdf"_s, jsHkdf, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdfSync"_s)),
+        JSFunction::create(vm, globalObject, 5, "hkdfSync"_s, jsHkdfSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

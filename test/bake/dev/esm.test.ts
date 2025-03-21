@@ -22,10 +22,12 @@ const liveBindingTest = devTest("live bindings with `var`", {
     await dev.fetch("/").equals("State: 1");
     await dev.fetch("/").equals("State: 2");
     await dev.fetch("/").equals("State: 3");
+    console.log("patching");
     await dev.patch("routes/index.ts", {
       find: "State",
       replace: "Value",
     });
+    console.log("patching");
     await dev.fetch("/").equals("Value: 4");
     await dev.fetch("/").equals("Value: 5");
     await dev.write(
@@ -300,5 +302,60 @@ devTest("cannot require a module with top level await", {
         `error: Cannot require "esm.ts" because "dir/async.ts" uses top-level await, but 'require' is a synchronous operation.`,
       ],
     });
+  },
+});
+devTest("function that is assigned to should become a live binding", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      // 1. basic test
+      import { live, change } from "./live.js";
+      {
+        if (live() !== 1) throw new Error("live() should be 1");
+        change();
+        if (live() !== 2) throw new Error("live() should be 2");
+      }
+
+      // 2. integration test with @babel/runtime
+      import inheritsLoose from "./inheritsLoose.js";
+      {
+        function A() {}
+        function B() {}
+        inheritsLoose(B, A);
+      }
+
+      console.log('PASS');
+    `,
+    "live.js": `
+      export function live() {
+        return 1;
+      }
+      export function change() {
+        live = function() {
+          return 2;
+        }
+      }
+    `,
+    "inheritsLoose.js": `
+      import setPrototypeOf from "./setPrototypeOf.js";
+      function _inheritsLoose(t, o) {
+        t.prototype = Object.create(o.prototype), t.prototype.constructor = t, setPrototypeOf(t, o);
+      }
+      export { _inheritsLoose as default };
+    `,
+    "setPrototypeOf.js": `
+      function _setPrototypeOf(t, e) {
+        return _setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) {
+          return t.__proto__ = e, t;
+        }, _setPrototypeOf(t, e);
+      }
+      export { _setPrototypeOf as default };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
   },
 });

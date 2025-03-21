@@ -5,7 +5,7 @@ const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
 const ObjectFreeze = Object.freeze;
 
-const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
+const { createContext, isContext, Script, runInNewContext, runInThisContext, compileFunction } = vm;
 
 function runInContext(code, context, options) {
   return new Script(code, options).runInContext(context);
@@ -15,9 +15,6 @@ function createScript(code, options) {
   return new Script(code, options);
 }
 
-function compileFunction() {
-  throwNotImplemented("node:vm compileFunction");
-}
 function measureMemory() {
   throwNotImplemented("node:vm measureMemory");
 }

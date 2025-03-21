@@ -3064,6 +3064,14 @@ bool SSLCtxPointer::setCipherSuites(WTF::StringView ciphers)
 
 const Cipher Cipher::FromName(WTF::StringView name)
 {
+
+    if (name.startsWithIgnoringASCIICase("aes"_s)) {
+        auto remain = name.substring(3);
+        if (remain == "128"_s) return Cipher::AES_128_CBC;
+        if (remain == "192"_s) return Cipher::AES_192_CBC;
+        if (remain == "256"_s) return Cipher::AES_256_CBC;
+    }
+
     auto nameUtf8 = name.utf8();
     return Cipher(EVP_get_cipherbyname(nameUtf8.data()));
 }

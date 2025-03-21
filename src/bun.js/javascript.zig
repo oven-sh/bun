@@ -866,7 +866,7 @@ pub const VirtualMachine = struct {
 
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
-    pending_internal_promise: *JSInternalPromise = undefined,
+    pending_internal_promise: ?*JSInternalPromise = null,
     entry_point_result: struct {
         value: JSC.Strong = .empty,
         cjs_set_value: bool = false,
@@ -1271,7 +1271,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
-        var promise = this.pending_internal_promise;
+        var promise = this.pending_internal_promise.?;
         if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
             _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
             promise.setHandled(this.global.vm());
@@ -2999,12 +2999,12 @@ pub const VirtualMachine = struct {
             // pending_internal_promise can change if hot module reloading is enabled
             if (this.isWatcherEnabled()) {
                 this.eventLoop().performGC();
-                switch (this.pending_internal_promise.status(this.global.vm())) {
+                switch (this.pending_internal_promise.?.status(this.global.vm())) {
                     .pending => {
-                        while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                        while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                             this.eventLoop().tick();
 
-                            if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                            if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                                 this.eventLoop().autoTick();
                             }
                         }
@@ -3066,8 +3066,16 @@ pub const VirtualMachine = struct {
                 }
 
                 // Check if Module.runMain was patched
+                const prev = this.pending_internal_promise;
                 if (this.has_patched_run_main) {
-                    return NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                    @branchHint(.cold);
+                    this.pending_internal_promise = null;
+                    const ret = NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                    if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
+                        this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
+                        return this.pending_internal_promise.?;
+                    }
+                    return (this.pending_internal_promise orelse prev).?;
                 }
             }
 
@@ -3088,10 +3096,15 @@ pub const VirtualMachine = struct {
         }
     }
 
-    extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) *JSInternalPromise;
+    extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) JSValue;
     export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_patched: bool) void {
         if (vm.is_in_preload) {
             vm.has_patched_run_main = is_patched;
+        }
+    }
+    export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachine, promise: *JSInternalPromise) void {
+        if (vm.pending_internal_promise == null) {
+            vm.pending_internal_promise = promise;
         }
     }
 
@@ -3133,7 +3146,7 @@ pub const VirtualMachine = struct {
                 return error.WorkerTerminated;
             }
         }
-        return this.pending_internal_promise;
+        return this.pending_internal_promise.?;
     }
 
     pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -3142,12 +3155,12 @@ pub const VirtualMachine = struct {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status(this.global.vm())) {
                 .pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -3165,7 +3178,7 @@ pub const VirtualMachine = struct {
 
         this.eventLoop().autoTick();
 
-        return this.pending_internal_promise;
+        return this.pending_internal_promise.?;
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -3174,12 +3187,12 @@ pub const VirtualMachine = struct {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status(this.global.vm())) {
                 .pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -3195,7 +3208,7 @@ pub const VirtualMachine = struct {
             this.waitForPromise(.{ .internal = promise });
         }
 
-        return this.pending_internal_promise;
+        return this.pending_internal_promise.?;
     }
 
     pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {

@@ -732,6 +732,7 @@ static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalO
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSInternalPromise* promise);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -745,7 +746,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
     auto result = promise->then(globalObject, resolverFunction, nullptr);
-    UNUSED_VARIABLE(result);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -764,14 +765,11 @@ JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
 
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
-extern "C" JSC::JSInternalPromise* NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1) {
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1) {
     auto overrideHandler = jsCast<JSObject*>(global->m_moduleRunMainFunction.get(global));
     MarkedArgumentBuffer args;
     args.append(argv1);
-    JSValue result = JSC::profiledCall(global, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args);
-    JSInternalPromise* promise = JSC::JSInternalPromise::create(global->vm(), global->internalPromiseStructure());
-    promise->resolve(global, result);
-    return promise;
+    return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain, 

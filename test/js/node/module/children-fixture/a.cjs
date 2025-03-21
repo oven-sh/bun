@@ -17,10 +17,8 @@ function iter(module, indent = 0) {
   let isSeen = seen.has(module);
   console.log(
     `${" ".repeat(indent)}${module.id === module.filename ? module.id : `${module.id} (${module.filename})`}${isSeen ? " (seen)" : ""}`
-    .replaceAll(
-      __dirname,
-      ".",
-    ).replaceAll('\\','/'),
+      .replaceAll(__dirname, ".")
+      .replaceAll("\\", "/"),
   );
   seen.add(module);
   if (isSeen) return;

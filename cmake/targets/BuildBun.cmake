@@ -747,6 +747,18 @@ set_target_properties(${bun} PROPERTIES
   VISIBILITY_INLINES_HIDDEN YES
 )
 
+if (NOT WIN32)
+  # Enable precompiled headers
+  # Only enable in these scenarios:
+  # 1. NOT in CI, OR
+  # 2. In CI AND BUN_CPP_ONLY is enabled
+  if(NOT CI OR (CI AND BUN_CPP_ONLY))
+    target_precompile_headers(${bun} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+    )
+  endif()
+endif()
+
 # --- C/C++ Includes ---
 
 if(WIN32)
@@ -901,6 +913,10 @@ if(NOT WIN32)
       -Werror
     )
   endif()
+else()
+  target_compile_options(${bun} PUBLIC
+    -Wno-nullability-completeness
+  )
 endif()
 
 # --- Linker options ---

@@ -2792,7 +2792,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        JSC::JSValue codeValue = Zig::toJSString(code, globalObject);
         rangeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue,
             JSC::PropertyAttribute::ReadOnly | 0);
     }
@@ -2809,7 +2809,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        JSC::JSValue codeValue = Zig::toJSString(code, globalObject);
         typeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
     }
 
@@ -2834,12 +2834,12 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
             for (size_t i = 0; i < initialCapacity; ++i) {
                 object->putDirect(
                     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                    Zig::toJSStringValueGC(values[i], globalObject), 0);
+                    Zig::toJSStringGC(values[i], globalObject), 0);
             }
         } else {
             for (size_t i = 0; i < initialCapacity; ++i) {
                 object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                    Zig::toJSStringValueGC(values[i], globalObject), 0);
+                    Zig::toJSStringGC(values[i], globalObject), 0);
             }
         }
     }
@@ -4465,7 +4465,7 @@ public:
                 // /path/to/file.js:
                 // /path/to/file.js:1
                 // node:child_process
-                // C:\Users\dave\bun\file.js
+                // C:\Users\chloe\bun\file.js
 
                 marker3 = lineInner.length();
 
@@ -4484,9 +4484,9 @@ public:
             // /path/to/file.js:1:
             // /path/to/file.js:1:2
             // node:child_process:1:2
-            // C:\Users\dave\bun\file.js:
-            // C:\Users\dave\bun\file.js:1
-            // C:\Users\dave\bun\file.js:1:2
+            // C:\Users\chloe\bun\file.js:
+            // C:\Users\chloe\bun\file.js:1
+            // C:\Users\chloe\bun\file.js:1:2
 
             while (true) {
                 auto newcolon = lineInner.find(':', marker3 + 1);
@@ -6421,32 +6421,6 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     }
 
     return JSValue::encode(slot.getPureResult());
-}
-
-using StackCodeType = JSC::StackVisitor::Frame::CodeType;
-CPP_DECL bool Bun__util__isInsideNodeModules(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
-    auto& vm = JSC::getVM(globalObject);
-    bool inNodeModules = false;
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor) || visitor->isNativeCalleeFrame()) {
-            return WTF::IterationStatus::Continue;
-        }
-
-        if (visitor->hasLineAndColumnInfo()) {
-            String sourceURL = Zig::sourceURL(visitor);
-            if (sourceURL.startsWith("node:"_s) || sourceURL.startsWith("bun:"_s))
-                return WTF::IterationStatus::Continue;
-            if (sourceURL.contains("node_modules"_s))
-                inNodeModules = true;
-
-            return WTF::IterationStatus::Done;
-        }
-
-        return WTF::IterationStatus::Continue;
-    });
-
-    return inNodeModules;
 }
 
 #if BUN_DEBUG

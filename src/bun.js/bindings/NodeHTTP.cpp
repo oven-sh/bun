@@ -125,7 +125,6 @@ public:
 
     void close()
     {
-        auto* socket = this->socket;
         if (socket) {
             us_socket_close(is_ssl, socket, 0, nullptr);
         }
@@ -405,7 +404,7 @@ static void* getNodeHTTPResponsePtr(us_socket_t* socket)
     return responseObject->wrapped();
 }
 
-extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(int is_ssl, us_socket_t* socket)
+extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
 {
     if (is_ssl) {
         return JSValue::encode(getNodeHTTPResponse<true>(socket));
@@ -413,7 +412,7 @@ extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(int is_ssl, us_socke
     return JSValue::encode(getNodeHTTPResponse<false>(socket));
 }
 
-extern "C" EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(int is_ssl, us_socket_t* socket)
+extern "C" EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl, us_socket_t* socket)
 {
     if (is_ssl) {
         return JSValue::encode(getNodeHTTPServerSocket<true>(socket));
@@ -425,6 +424,12 @@ extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(EncodedJSValue thisVal
 {
     auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
     response->socket = socket;
+}
+
+extern "C" void Bun__callNodeHTTPServerSocketOnClose(EncodedJSValue thisValue)
+{
+    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
+    response->onClose();
 }
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
@@ -838,7 +843,7 @@ static void assignOnCloseFunction(uWS::TemplatedApp<isSSL>* app)
     });
 }
 
-extern "C" void NodeHTTP_assignOnCloseFunction(int is_ssl, void* uws_app)
+extern "C" void NodeHTTP_assignOnCloseFunction(bool is_ssl, void* uws_app)
 {
     if (is_ssl) {
         assignOnCloseFunction<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
@@ -846,7 +851,17 @@ extern "C" void NodeHTTP_assignOnCloseFunction(int is_ssl, void* uws_app)
         assignOnCloseFunction<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
     }
 }
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
+
+extern "C" void NodeHTTP_setUsingCustomExpectHandler(bool is_ssl, void* uws_app, bool value)
+{
+    if (is_ssl) {
+        reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app)->setUsingCustomExpectHandler(value);
+    } else {
+        reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app)->setUsingCustomExpectHandler(value);
+    }
+}
+
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
@@ -874,7 +889,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         return JSValue::encode(exception);
     }
 
-    int hasBody = 0;
+    bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
 
     JSC::CallData callData = getCallData(callbackObject);

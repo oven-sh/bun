@@ -595,7 +595,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         void exportNames();
 
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
 
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
@@ -638,7 +638,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         template<typename Visitor> void visit(Visitor&);
 
     public:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
 
     #define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \\
         JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
@@ -682,7 +682,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   bundledHeader += `
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
     `;
 
   for (const { basename } of files) {
@@ -708,7 +708,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   bundledHeader += `
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
     `;
 
   for (const { basename, internal } of files) {

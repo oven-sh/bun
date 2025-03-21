@@ -257,13 +257,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
 
+    JSValue returnValue = JSValue::JSFalse;
     if (LIKELY(referrer)) {
-        auto entry = referrer->m_children.add(moduleObject);
-        if (UNLIKELY(referrer->m_childrenValue && entry.isNewEntry)) {
-            JSValue childrenValue = referrer->m_childrenValue.get();
-            if (JSArray* childrenArray = jsDynamicCast<JSArray*>(childrenValue)) {
-                childrenArray->push(globalObject, referrer);
-            }
+        if (UNLIKELY(referrer->m_childrenValue)) {
+            // It's too hard to append from native code:
+            // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
+            returnValue = JSValue::JSTrue; 
+        } else {
+            referrer->m_children.append(moduleObject);
         }
     }
 
@@ -272,7 +273,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     moduleObject->load(vm, globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -474,29 +475,41 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
 
 JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    JSCommonJSModule* mod = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!mod)) {
         return JSValue::encode(jsUndefined());
     }
 
-    if (!thisObject->m_childrenValue) {
+    if (!mod->m_childrenValue) {
         auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+        MarkedArgumentBuffer children;
+        children.ensureCapacity(mod->m_children.size());
 
-        JSArray* children = constructEmptyArray(globalObject, nullptr, thisObject->m_children.size());
-        if (UNLIKELY(!children)) {
-            JSC::throwOutOfMemoryError(globalObject, throwScope);
-            RELEASE_AND_RETURN(throwScope, JSValue::encode({}));
+        // Deduplicate children while preserving insertion order.
+        JSCommonJSModule* last = nullptr;
+        int n = -1;
+        for (JSCommonJSModule* child : mod->m_children) {
+            // Check the last module since duplicate imports, if any, will
+            // probably be adjacent. Then just do a linear scan.
+            if (UNLIKELY(last == child)) continue;
+            int i = 0;
+            while (i < n) {
+                if (UNLIKELY(children.at(i).asCell() == child)) goto next;
+                i += 1;
+            }
+            children.append(child);
+            last = child;
+            n += 1;
+            next: {}
         }
-        unsigned index = 0;
-        for (JSCommonJSModule* child : thisObject->m_children) {
-            children->putDirectIndex(globalObject, index, child);
-            index++;
-        }
-        thisObject->m_childrenValue.set(globalObject->vm(), thisObject, children);
-        return JSValue::encode(children);
+
+        // Construct the array
+        JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+        mod->m_childrenValue.set(globalObject->vm(), mod, array);
+        return JSValue::encode(array);
     }
 
-    return JSValue::encode(thisObject->m_childrenValue.get());
+    return JSValue::encode(mod->m_childrenValue.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

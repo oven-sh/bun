@@ -30,7 +30,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <variant>
-
+#include "HTTPParsers.h"
 namespace WebCore {
 
 using namespace JSC;
@@ -60,6 +60,40 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_values);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_forEach);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookieMapPrototypeGetter_size);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookieMapConstructor);
+
+JSC_DEFINE_HOST_FUNCTION(jsCookieMapConstructorFromCookieHeader, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue arg0 = callFrame->argument(0);
+    if (!arg0.isString()) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Expected a string"_s);
+        return {};
+    }
+
+    auto cookieHeaderString = arg0.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto view = cookieHeaderString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (view->isEmpty()) {
+        return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), CookieMap::create(String()).releaseReturnValue()));
+    }
+
+    if (!WebCore::isValidHTTPHeaderValue(view)) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Invalid cookie header"_s);
+        return {};
+    }
+
+    auto cookieMap = CookieMap::createFromCookieHeader(view);
+    if (cookieMap.hasException()) {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, cookieMap.releaseException());
+        return {};
+    }
+
+    return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), cookieMap.releaseReturnValue()));
+}
 
 class JSCookieMapPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -196,6 +230,7 @@ template<> void JSCookieMapDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSCookieMap::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirectNativeFunction(vm, &globalObject, Identifier::fromString(vm, "fromCookieHeader"_s), 1, jsCookieMapConstructorFromCookieHeader, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | 0);
 }
 
 static const HashTableValue JSCookieMapPrototypeTableValues[] = {
@@ -461,140 +496,8 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
 
     JSValue arg0 = callFrame->uncheckedArgument(0);
     JSValue arg2 = callFrame->argument(2);
-    String name;
-    String value;
 
-    // Extract optional fields
-    String domain;
-    String path = "/"_s;
-    double expires = 0;
-    bool secure = false;
-    CookieSameSite sameSite = CookieSameSite::Lax;
-    // Create and set the cookie
-    // Extract httpOnly and partitioned
-    bool httpOnly = false;
-    bool partitioned = false;
-    double maxAge = 0;
-
-    auto& names = builtinNames(vm);
-
-    const auto fromObject = [&](JSObject* obj, bool checkNameAndValue = false) -> void {
-        if (checkNameAndValue) {
-            auto nameValue = obj->get(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
-            RETURN_IF_EXCEPTION(throwScope, void());
-
-            if (nameValue.isUndefined() || nameValue.isNull()) {
-                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
-                return;
-            }
-
-            auto valueValue = obj->get(lexicalGlobalObject, vm.propertyNames->value);
-            RETURN_IF_EXCEPTION(throwScope, void());
-
-            if (valueValue.isUndefined() || valueValue.isNull()) {
-                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie value is required"_s));
-                return;
-            }
-
-            name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
-            RETURN_IF_EXCEPTION(throwScope, void());
-
-            value = convert<IDLUSVString>(*lexicalGlobalObject, valueValue);
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-
-        // domain
-        auto domainValue = obj->get(lexicalGlobalObject, names.domainPublicName());
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!domainValue.isUndefined() && !domainValue.isNull()) {
-            domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-
-        // path
-        auto pathValue = obj->get(lexicalGlobalObject, names.pathPublicName());
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!pathValue.isUndefined() && !pathValue.isNull()) {
-            path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-
-        // expires
-        auto expiresValue = obj->get(lexicalGlobalObject, names.expiresPublicName());
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!expiresValue.isUndefined() && !expiresValue.isNull()) {
-            // Handle Date object
-            if (expiresValue.inherits<JSC::DateInstance>()) {
-                auto* dateInstance = jsCast<JSC::DateInstance*>(expiresValue.asCell());
-                expires = dateInstance->internalNumber();
-                RETURN_IF_EXCEPTION(throwScope, void());
-            } else if (expiresValue.isNumber()) {
-                expires = expiresValue.asNumber();
-                RETURN_IF_EXCEPTION(throwScope, void());
-            } else if (expiresValue.isString()) {
-                auto expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
-                RETURN_IF_EXCEPTION(throwScope, void());
-                if (auto parsed = WTF::parseDate(expiresStr.span<LChar>())) {
-                    expires = parsed;
-                    RETURN_IF_EXCEPTION(throwScope, void());
-                } else {
-                    throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
-                    return;
-                }
-            } else {
-                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
-                return;
-            }
-        }
-
-        // secure
-        auto secureValue = obj->get(lexicalGlobalObject, names.securePublicName());
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!secureValue.isUndefined()) {
-            secure = secureValue.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-
-        // sameSite
-        auto sameSiteValue = obj->get(lexicalGlobalObject, names.sameSitePublicName());
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
-            String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
-            RETURN_IF_EXCEPTION(throwScope, void());
-
-            if (sameSiteStr == "strict"_s)
-                sameSite = CookieSameSite::Strict;
-            else if (sameSiteStr == "lax"_s)
-                sameSite = CookieSameSite::Lax;
-            else if (sameSiteStr == "none"_s)
-                sameSite = CookieSameSite::None;
-            else
-                throwVMTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
-            return;
-        }
-
-        auto httpOnlyValue
-            = obj->get(lexicalGlobalObject, PropertyName(names.httpOnlyPublicName()));
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!httpOnlyValue.isUndefined()) {
-            httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-
-        auto partitionedValue = obj->get(lexicalGlobalObject, PropertyName(names.partitionedPublicName()));
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!partitionedValue.isUndefined()) {
-            partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-
-        auto maxAgeValue = obj->get(lexicalGlobalObject, PropertyName(names.maxAgePublicName()));
-        RETURN_IF_EXCEPTION(throwScope, void());
-        if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
-            maxAge = maxAgeValue.asNumber();
-            RETURN_IF_EXCEPTION(throwScope, void());
-        }
-    };
+    CookieInit cookieInit = {};
 
     // Check if we're setting with a Cookie object directly
     if (arg0.isObject() && JSCookie::toWrapped(vm, arg0)) {
@@ -604,30 +507,32 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         return JSValue::encode(jsUndefined());
     } else if (arg0.isObject()) {
         auto* obj = arg0.getObject();
-        fromObject(obj, true);
+        if (auto updatedCookieInit = CookieInit::fromJS(vm, lexicalGlobalObject, obj)) {
+            cookieInit = *updatedCookieInit;
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         // Handle name/value pair
         if (callFrame->argumentCount() < 2)
             return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 
-        name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+        cookieInit.name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        value = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(1));
+        cookieInit.value = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(1));
         RETURN_IF_EXCEPTION(throwScope, {});
 
         // Check for optional third parameter (options)
         if (callFrame->argumentCount() >= 3) {
             JSValue optionsArg = arg2;
-            if (!optionsArg.isObject())
-                return JSValue::encode(jsUndefined());
-
-            auto* options = optionsArg.getObject();
-            fromObject(options, false);
+            if (auto updatedCookieInit = CookieInit::fromJS(vm, lexicalGlobalObject, optionsArg, cookieInit.name, cookieInit.value)) {
+                cookieInit = *updatedCookieInit;
+            }
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
-    auto cookie = Cookie::create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
+    auto cookie = Cookie::create(cookieInit);
     impl.set(WTFMove(cookie));
 
     return JSValue::encode(jsUndefined());
@@ -653,36 +558,43 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
     if (arg0.isObject()) {
         // Handle as options object (CookieStoreDeleteOptions)
         auto* options = arg0.getObject();
+        CookieStoreDeleteOptions deleteOptions;
 
         // Extract required name
-        auto nameValue = options->get(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
-        RETURN_IF_EXCEPTION(throwScope, {});
+        if (auto nameValue = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(vm.propertyNames->name))) {
+            RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (nameValue.isUndefined() || nameValue.isNull())
-            return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
+            if (!nameValue.isUndefined() && !nameValue.isNull()) {
+                deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+            }
 
-        auto name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-        CookieStoreDeleteOptions deleteOptions;
-        deleteOptions.name = name;
-
-        // Extract optional domain
-        auto domainValue = options->get(lexicalGlobalObject, names.domainPublicName());
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (!domainValue.isUndefined() && !domainValue.isNull()) {
-            deleteOptions.domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
-        // Extract optional path
-        auto pathValue = options->get(lexicalGlobalObject, names.pathPublicName());
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (!pathValue.isUndefined() && !pathValue.isNull()) {
-            deleteOptions.path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
+        if (deleteOptions.name.isEmpty()) {
+            return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
+        }
+
+        // Extract optional domain
+        if (auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName())) {
             RETURN_IF_EXCEPTION(throwScope, {});
-        } else {
-            deleteOptions.path = "/"_s;
+
+            if (!domainValue.isUndefined() && !domainValue.isNull()) {
+                deleteOptions.domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+        }
+
+        // Extract optional path
+        if (auto pathValue = options->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName())) {
+            RETURN_IF_EXCEPTION(throwScope, {});
+
+            if (!pathValue.isUndefined() && !pathValue.isNull()) {
+                deleteOptions.path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            } else {
+                deleteOptions.path = "/"_s;
+            }
         }
 
         impl.remove(deleteOptions);

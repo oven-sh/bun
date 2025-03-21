@@ -7535,7 +7535,7 @@ declare module "bun" {
     value?: string;
     domain?: string;
     path?: string;
-    expires?: number | Date;
+    expires?: number | Date | string;
     secure?: boolean;
     sameSite?: CookieSameSite;
     httpOnly?: boolean;
@@ -7565,7 +7565,7 @@ declare module "bun" {
     value: string;
     domain?: string;
     path: string;
-    expires?: number;
+    expires?: Date;
     secure: boolean;
     sameSite: CookieSameSite;
     partitioned: boolean;
@@ -7585,6 +7585,22 @@ declare module "bun" {
   class CookieMap implements Iterable<[string, Cookie]> {
     constructor(init?: string[][] | Record<string, string> | string);
 
+    /**
+     * The `Cookie` header is a string of cookies separated by `; `.
+     * This method parses a `Cookie` header and returns a `CookieMap`.
+     *
+     * @param value - a valid `Cookie` header string. Invalid `Cookie` headers throws.
+     *
+     * Unlike the `Set-Cookie` header, the `Cookie` header doesn't have per-cookie attributes.
+     *
+     * @example
+     * ```js
+     * const cookieMap = CookieMap.fromCookieHeader("name=value; name2=value2");
+     * ```
+     *
+     */
+    static fromCookieHeader(value: string): CookieMap;
+
     get(name: string): Cookie | null;
     get(options?: CookieStoreGetOptions): Cookie | null;
 
@@ -7593,7 +7609,7 @@ declare module "bun" {
 
     has(name: string, value?: string): boolean;
 
-    set(name: string, value: string): void;
+    set(name: string, value: string, options?: CookieInit): void;
     set(options: CookieInit): void;
 
     delete(name: string): void;

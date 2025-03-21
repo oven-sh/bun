@@ -618,7 +618,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
       domain: "example.org",
       secure: true,
       sameSite: "lax",
-      expires: Date.now() + 3600000, // 1 hour in the future
+      expires: new Date("2025-03-21T12:00:00Z"),
     });
 
     const cookieJSON = cookie.toJSON();
@@ -628,6 +628,19 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieJSON.path).toBe("/test");
     expect(cookieJSON.domain).toBe("example.org");
     expect(cookieJSON.secure).toBe(true);
+    expect(cookieJSON).toMatchInlineSnapshot(`
+      {
+        "domain": "example.org",
+        "expires": 2025-03-21T12:00:00.000Z,
+        "httpOnly": false,
+        "name": "name",
+        "partitioned": false,
+        "path": "/test",
+        "sameSite": "lax",
+        "secure": true,
+        "value": "value",
+      }
+    `);
 
     // Create a CookieMap and test toJSON
     const cookieMap = new Bun.CookieMap("a=1; b=2; c=3");

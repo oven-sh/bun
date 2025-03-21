@@ -12,21 +12,22 @@
 namespace WebCore {
 
 struct CookieStoreGetOptions {
-    String name;
-    String url;
+    String name {};
+    String url {};
 };
 
 struct CookieStoreDeleteOptions {
-    String name;
-    String domain;
-    String path;
+    String name {};
+    String domain {};
+    String path {};
 };
 
 class CookieMap : public RefCounted<CookieMap> {
 public:
     ~CookieMap();
 
-    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init);
+    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
+    static ExceptionOr<Ref<CookieMap>> createFromCookieHeader(const StringView& forCookieHeader);
 
     RefPtr<Cookie> get(const String& name) const;
     RefPtr<Cookie> get(const CookieStoreGetOptions& options) const;
@@ -76,9 +77,7 @@ public:
 
 private:
     CookieMap();
-    CookieMap(const String& cookieString);
-    CookieMap(const HashMap<String, String>& pairs);
-    CookieMap(const Vector<Vector<String>>& pairs);
+    CookieMap(WTF::Vector<Ref<Cookie>>&& cookies);
 
     Vector<Ref<Cookie>> getCookiesMatchingDomain(const String& domain) const;
     Vector<Ref<Cookie>> getCookiesMatchingPath(const String& path) const;

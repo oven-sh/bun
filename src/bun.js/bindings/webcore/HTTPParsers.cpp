@@ -117,7 +117,7 @@ bool isValidReasonPhrase(const String& value)
 }
 
 // See https://fetch.spec.whatwg.org/#concept-header
-bool isValidHTTPHeaderValue(const String& value)
+bool isValidHTTPHeaderValue(const StringView& value)
 {
     UChar c = value[0];
     if (isTabOrSpace(c))
@@ -147,7 +147,7 @@ bool isValidHTTPHeaderValue(const String& value)
 }
 
 // See RFC 7231, Section 5.3.2.
-bool isValidAcceptHeaderValue(const String& value)
+bool isValidAcceptHeaderValue(const StringView& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
         UChar c = value[i];
@@ -181,7 +181,7 @@ static bool containsCORSUnsafeRequestHeaderBytes(const String& value)
 
 // See RFC 7231, Section 5.3.5 and 3.1.3.2.
 // https://fetch.spec.whatwg.org/#cors-safelisted-request-header
-bool isValidLanguageHeaderValue(const String& value)
+bool isValidLanguageHeaderValue(const StringView& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
         UChar c = value[i];
@@ -193,7 +193,7 @@ bool isValidLanguageHeaderValue(const String& value)
 }
 
 // See RFC 7230, Section 3.2.6.
-bool isValidHTTPToken(const StringView value)
+bool isValidHTTPToken(const StringView& value)
 {
     if (value.isEmpty())
         return false;

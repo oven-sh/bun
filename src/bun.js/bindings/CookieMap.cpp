@@ -3,7 +3,9 @@
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-
+#include "HTTPParsers.h"
+#include "decodeURIComponentSIMD.h"
+#include "BunString.h"
 namespace WebCore {
 
 extern "C" JSC::EncodedJSValue CookieMap__create(JSDOMGlobalObject* globalObject, const ZigString* initStr)
@@ -24,59 +26,114 @@ CookieMap::CookieMap()
 {
 }
 
-CookieMap::CookieMap(const String& cookieString)
+CookieMap::CookieMap(WTF::Vector<Ref<Cookie>>&& cookies)
+    : m_cookies(WTFMove(cookies))
 {
-    if (cookieString.isEmpty())
-        return;
-
-    Vector<String> pairs = cookieString.split(';');
-    for (auto& pair : pairs) {
-        pair = pair.trim(isASCIIWhitespace<UChar>);
-        if (pair.isEmpty())
-            continue;
-
-        size_t equalsPos = pair.find('=');
-        if (equalsPos == notFound)
-            continue;
-
-        String name = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
-        String value = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
-
-        auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
-        m_cookies.append(WTFMove(cookie));
-    }
 }
 
-CookieMap::CookieMap(const HashMap<String, String>& pairs)
+ExceptionOr<Ref<CookieMap>> CookieMap::createFromCookieHeader(const StringView& forCookieHeader)
 {
-    for (auto& entry : pairs) {
-        auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Lax,
-            false, 0, false);
-        m_cookies.append(WTFMove(cookie));
+    if (forCookieHeader.isEmpty()) {
+        return adoptRef(*new CookieMap());
     }
-}
 
-CookieMap::CookieMap(const Vector<Vector<String>>& pairs)
-{
-    for (const auto& pair : pairs) {
-        if (pair.size() == 2) {
-            auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
-            m_cookies.append(WTFMove(cookie));
+    auto pairs = forCookieHeader.split(';');
+    Vector<Ref<Cookie>> cookies;
+
+    bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
+    for (auto pair : pairs) {
+        CookieInit init {};
+
+        auto equalsPos = pair.find('=');
+        if (equalsPos == notFound) {
+            continue;
         }
+
+        auto nameView = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
+        auto valueView = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
+
+        if (nameView.isEmpty()) {
+            continue;
+        }
+
+        if (hasAnyPercentEncoded) {
+            Bun::UTF8View utf8View(nameView);
+            init.name = Bun::decodeURIComponentSIMD(utf8View.bytes());
+        } else {
+            init.name = nameView.toString();
+        }
+
+        if (hasAnyPercentEncoded) {
+            Bun::UTF8View utf8View(valueView);
+            init.value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+        } else {
+            init.value = valueView.toString();
+        }
+
+        cookies.append(Cookie::create(init));
     }
+
+    return adoptRef(*new CookieMap(WTFMove(cookies)));
 }
 
-ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant)
+ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
 {
     auto visitor = WTF::makeVisitor(
         [&](const Vector<Vector<String>>& pairs) -> ExceptionOr<Ref<CookieMap>> {
-            return adoptRef(*new CookieMap(pairs));
+            Vector<Ref<Cookie>> cookies;
+            for (const auto& pair : pairs) {
+                if (pair.size() == 2) {
+                    if (!pair[1].isEmpty() && !isValidHTTPHeaderValue(pair[1])) {
+                        if (throwOnInvalidCookieString) {
+                            return Exception { TypeError, "Invalid cookie string: cookie value is not valid"_s };
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Lax, false, 0, false);
+                    cookies.append(WTFMove(cookie));
+                } else if (throwOnInvalidCookieString) {
+                    return Exception { TypeError, "Invalid cookie string: expected name=value pair"_s };
+                }
+            }
+            return adoptRef(*new CookieMap(WTFMove(cookies)));
         },
         [&](const HashMap<String, String>& pairs) -> ExceptionOr<Ref<CookieMap>> {
-            return adoptRef(*new CookieMap(pairs));
+            Vector<Ref<Cookie>> cookies;
+            for (const auto& entry : pairs) {
+                if (!entry.value.isEmpty() && !isValidHTTPHeaderValue(entry.value)) {
+                    if (throwOnInvalidCookieString) {
+                        return Exception { TypeError, "Invalid cookie string: cookie value is not valid"_s };
+                    } else {
+                        continue;
+                    }
+                }
+                auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Lax, false, 0, false);
+                cookies.append(WTFMove(cookie));
+            }
+
+            return adoptRef(*new CookieMap(WTFMove(cookies)));
         },
         [&](const String& cookieString) -> ExceptionOr<Ref<CookieMap>> {
-            return adoptRef(*new CookieMap(cookieString));
+            if (cookieString.isEmpty())
+                return adoptRef(*new CookieMap());
+
+            Vector<Ref<Cookie>> cookies;
+            auto iter = cookieString.split(';');
+            for (auto pair : iter) {
+                auto cookie = Cookie::parse(pair);
+                if (cookie.hasException()) {
+                    if (throwOnInvalidCookieString) {
+                        return cookie.releaseException();
+                    } else {
+                        continue;
+                    }
+                }
+                cookies.append(cookie.releaseReturnValue());
+            }
+
+            return adoptRef(*new CookieMap(WTFMove(cookies)));
         });
 
     return std::visit(visitor, variant);
@@ -150,7 +207,7 @@ void CookieMap::set(const String& name, const String& value, bool httpOnly, bool
     remove(name);
 
     // Add the new cookie with proper settings
-    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict,
+    auto cookie = Cookie::create(name, value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Strict,
         httpOnly, maxAge, partitioned);
     m_cookies.append(WTFMove(cookie));
 }
@@ -162,7 +219,7 @@ void CookieMap::set(const String& name, const String& value)
     remove(name);
 
     // Add the new cookie
-    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict, false, 0, false);
+    auto cookie = Cookie::create(name, value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Strict, false, 0, false);
     m_cookies.append(WTFMove(cookie));
 }
 

@@ -2854,6 +2854,9 @@ pub const Formatter = struct {
                         this.globalThis.clearException();
                         break :brk;
                     };
+                    const prev_quote_keys = this.quote_keys;
+                    this.quote_keys = true;
+                    defer this.quote_keys = prev_quote_keys;
                     const tag = ConsoleObject.Formatter.Tag.get(result, this.globalThis);
                     try this.format(tag, Writer, writer_, result, this.globalThis, enable_ansi_colors);
                     return;

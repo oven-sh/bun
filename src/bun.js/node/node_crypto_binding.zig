@@ -464,8 +464,8 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
 
     crypto.put(global, String.init("secureHeapUsed"), JSC.JSFunction.create(global, "secureHeapUsed", secureHeapUsed, 0, .{}));
     crypto.put(global, String.init("getFips"), JSC.JSFunction.create(global, "getFips", getFips, 0, .{}));
-    crypto.put(global, String.init("setFips"), JSC.JSFunction.create(global, "setFips", getFips, 1, .{}));
-    crypto.put(global, String.init("setEngine"), JSC.JSFunction.create(global, "setEngine", getFips, 2, .{}));
+    crypto.put(global, String.init("setFips"), JSC.JSFunction.create(global, "setFips", setFips, 1, .{}));
+    crypto.put(global, String.init("setEngine"), JSC.JSFunction.create(global, "setEngine", setEngine, 2, .{}));
 
     crypto.put(global, String.init("getHashes"), JSC.JSFunction.create(global, "getHashes", getHashes, 0, .{}));
 

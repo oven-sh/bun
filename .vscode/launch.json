@@ -7,19 +7,6 @@
   // - "cppvsdbg" is used instead of "lldb" on Windows, because "lldb" is too slow
   "version": "0.2.0",
   "configurations": [
-    {
-      "type": "bun",
-      "request": "launch",
-      "name": "[js] bun test [file]",
-      "runtime": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
-      },
-    },
     // bun test [file]
     {
       "type": "lldb",
@@ -35,7 +22,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -51,7 +37,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -73,7 +58,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -89,7 +73,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -105,7 +88,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -121,7 +103,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -138,7 +119,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -160,7 +140,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -182,7 +161,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -201,7 +179,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -216,7 +193,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -234,7 +210,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -249,7 +224,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -266,7 +240,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -288,7 +261,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -310,7 +282,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -326,7 +297,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -342,7 +312,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -358,7 +327,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -374,7 +342,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -391,7 +358,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -413,7 +379,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -434,7 +399,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     // bun test [*]
     {
@@ -450,7 +414,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -465,7 +428,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -481,7 +443,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -501,7 +462,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
@@ -516,7 +476,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     // Windows: bun test [file]
     {
@@ -1142,7 +1101,24 @@
       ],
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
+    },
+    {
+      "type": "bun",
+      "name": "[JS] bun test [file]",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "runtimeArgs": ["test", "${file}"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+    },
+    {
+      "type": "midas-rr",
+      "request": "attach",
+      "name": "rr",
+      "trace": "Off",
+      "setupCommands": ["handle SIGPWR nostop noprint pass"],
     },
   ],
   "inputs": [

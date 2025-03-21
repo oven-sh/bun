@@ -52,7 +52,7 @@ public:
     void pauseWaitingForAutomaticInspection() override
     {
     }
-    void unpauseForInitializedInspector() override
+    void unpauseForInitializedInspector()
     {
         if (waitingForConnection) {
             waitingForConnection = false;
@@ -392,7 +392,7 @@ class JSBunInspectorConnection final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     static JSBunInspectorConnection* create(JSC::VM& vm, JSC::Structure* structure, BunInspectorConnection* connection)
     {

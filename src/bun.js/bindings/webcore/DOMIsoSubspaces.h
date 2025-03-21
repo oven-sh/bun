@@ -57,6 +57,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
     std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
@@ -918,11 +919,24 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
+    
+    std::unique_ptr<IsoSubspace> m_subspaceForCookie;
+    std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
+    std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;
 
     std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSign;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSVerify;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHmac;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHash;
+    std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
+    std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
 };
 } // namespace WebCore
 

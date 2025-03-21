@@ -72,7 +72,7 @@ const CHAR_STR_BACKWARD_SLASH = "\\";
 const CHAR_STR_FORWARD_SLASH = "/";
 const CHAR_STR_DOT = ".";
 
-const StringBuilder = @import("../../string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 
 const toJSString = JSC.JSValue.toJSString;
 
@@ -106,11 +106,6 @@ pub fn PATH_SIZE(comptime T: type) usize {
     return if (T == u16) PATH_MIN_WIDE else bun.MAX_PATH_BYTES;
 }
 
-const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
-pub const shim = Shimmer("Bun", "Path", @This());
-pub const name = "Bun__Path";
-pub const include = "Path.h";
-pub const namespace = shim.namespace;
 pub const sep_posix = CHAR_FORWARD_SLASH;
 pub const sep_windows = CHAR_BACKWARD_SLASH;
 pub const sep_str_posix = CHAR_STR_FORWARD_SLASH;
@@ -457,7 +452,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -468,17 +463,13 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
 
     var suffixZSlice: ?JSC.ZigString.Slice = null;
     if (suffix_ptr) |_suffix_ptr| {
-        const suffixZStr = _suffix_ptr.getZigString(globalObject);
+        const suffixZStr = _suffix_ptr.getZigString(globalObject) catch return .zero;
         if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
             suffixZSlice = suffixZStr.toSlice(allocator);
         }
     }
     defer if (suffixZSlice) |_s| _s.deinit();
     return basenameJS_T(u8, globalObject, isWindows, pathZSlice.slice(), if (suffixZSlice) |_s| _s.slice() else null);
-}
-
-pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(JSC.conv) JSC.JSValue {
-    return shim.cppFn("create", .{ globalObject, isWindows });
 }
 
 /// Based on Node v21.6.1 path.posix.dirname:
@@ -653,7 +644,7 @@ pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return toJSString(globalObject, CHAR_STR_DOT);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -731,8 +722,8 @@ pub fn extnamePosixT(comptime T: type, path: []const T) []const T {
         (preDotState != null and _preDotState == 0) or
         // The (right-most) trimmed path component is exactly '..'
         (_preDotState == 1 and
-        _startDot == _end - 1 and
-        _startDot == startPart + 1))
+            _startDot == _end - 1 and
+            _startDot == startPart + 1))
     {
         return &.{};
     }
@@ -820,8 +811,8 @@ pub fn extnameWindowsT(comptime T: type, path: []const T) []const T {
         (preDotState != null and _preDotState == 0) or
         // The (right-most) trimmed path component is exactly '..'
         (_preDotState == 1 and
-        _startDot == _end - 1 and
-        _startDot == startPart + 1))
+            _startDot == _end - 1 and
+            _startDot == startPart + 1))
     {
         return &.{};
     }
@@ -852,7 +843,7 @@ pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -1031,9 +1022,9 @@ pub fn isAbsoluteWindowsT(comptime T: type, path: []const T) bool {
     return isSepWindowsT(T, byte0) or
         // Possible device root
         (len > 2 and
-        isWindowsDeviceRootT(T, byte0) and
-        path[1] == CHAR_COLON and
-        isSepWindowsT(T, path[2]));
+            isWindowsDeviceRootT(T, byte0) and
+            path[1] == CHAR_COLON and
+            isSepWindowsT(T, path[2]));
 }
 
 pub fn isAbsolutePosixZigString(pathZStr: JSC.ZigString) bool {
@@ -1059,7 +1050,7 @@ pub fn isAbsolute(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: 
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return JSC.JSValue.jsBoolean(false);
     if (isWindows) return JSC.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
     return JSC.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
@@ -1283,7 +1274,7 @@ pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC
             // Returning .zero translates to a nullprt JSC.JSValue.
             return .zero;
         };
-        const pathZStr = path_ptr.getZigString(globalObject);
+        const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
         paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
     }
     return joinJS_T(u8, globalObject, allocator, isWindows, paths);
@@ -1297,9 +1288,9 @@ fn normalizeStringT(comptime T: type, path: []const T, allowAboveRoot: bool, sep
     const len = path.len;
     const isSepT =
         if (platform == .posix)
-        isSepPosixT
-    else
-        isSepWindowsT;
+            isSepPosixT
+        else
+            isSepWindowsT;
 
     var bufOffset: usize = 0;
     var bufSize: usize = 0;
@@ -1682,7 +1673,7 @@ pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [
         // Returning .zero translates to a nullprt JSC.JSValue.
         return .zero;
     };
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     const len = pathZStr.len;
     if (len == 0) return toJSString(globalObject, CHAR_STR_DOT);
 
@@ -1777,8 +1768,8 @@ pub fn parsePosixT(comptime T: type, path: []const T) PathParsed(T) {
             (preDotState != null and _preDotState == 0) or
             // The (right-most) trimmed path component is exactly '..'
             (_preDotState == 1 and
-            _startDot == _end - 1 and
-            _startDot == startPart + 1))
+                _startDot == _end - 1 and
+                _startDot == startPart + 1))
         {
             _name = path[start.._end];
             base = _name;
@@ -1961,8 +1952,8 @@ pub fn parseWindowsT(comptime T: type, path: []const T) PathParsed(T) {
             (preDotState != null and _preDotState == 0) or
             // The (right-most) trimmed path component is exactly '..'
             (_preDotState == 1 and
-            _startDot == _end - 1 and
-            _startDot == startPart + 1))
+                _startDot == _end - 1 and
+                _startDot == startPart + 1))
         {
             // Prefix with _ to avoid shadowing the identifier in the outer scope.
             _name = path[startPart.._end];
@@ -2006,7 +1997,7 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JS
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -2372,8 +2363,8 @@ pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
         return .zero;
     };
 
-    const fromZigStr = from_ptr.getZigString(globalObject);
-    const toZigStr = to_ptr.getZigString(globalObject);
+    const fromZigStr = from_ptr.getZigString(globalObject) catch return .zero;
+    const toZigStr = to_ptr.getZigString(globalObject) catch return .zero;
     if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -2584,7 +2575,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
             if (envPath == null or
                 (path[2] == CHAR_BACKWARD_SLASH and
-                !eqlIgnoreCaseT(T, path[0..2], resolvedDevice)))
+                    !eqlIgnoreCaseT(T, path[0..2], resolvedDevice)))
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
@@ -2833,7 +2824,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
             // Returning .zero translates to a nullprt JSC.JSValue.
             return .zero;
         };
-        const pathZStr = path_ptr.getZigString(globalObject);
+        const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
         if (pathZStr.len > 0) {
             paths[path_count] = pathZStr.toSlice(allocator).slice();
             path_count += 1;
@@ -2961,7 +2952,7 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     //
     // Act as an identity function for non-string values and non-Windows platforms.
     if (!isWindows or !path_ptr.isString()) return path_ptr;
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     const len = pathZStr.len;
     if (len == 0) return path_ptr;
 
@@ -2972,8 +2963,6 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     defer pathZSlice.deinit();
     return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
 }
-
-pub const Extern = [_][]const u8{"create"};
 
 comptime {
     @export(&Path.basename, .{ .name = "Bun__Path__basename" });

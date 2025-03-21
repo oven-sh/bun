@@ -22,14 +22,14 @@ const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
-const StringBuilder = @import("./string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
@@ -45,7 +45,7 @@ var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
-const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("./ptr.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
@@ -410,7 +410,7 @@ const ProxyTunnel = struct {
             };
             const pending = encoded_data[@intCast(written)..];
             if (pending.len > 0) {
-                // lets flush when we are trully writable
+                // lets flush when we are truly writable
                 proxy.write_buffer.write(pending) catch bun.outOfMemory();
             }
         }
@@ -583,7 +583,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
+        pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
+
+        pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();
@@ -742,7 +744,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             ) void {
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    return client.onOpen(comptime ssl, socket);
+                    if (client.onOpen(comptime ssl, socket)) |_| {
+                        return;
+                    } else |_| {
+                        log("Unable to open socket", .{});
+                        terminateSocket(socket);
+                        return;
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -944,7 +952,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
-            var iter = this.pending_sockets.available.iterator(.{ .kind = .unset });
+            var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
 
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
@@ -1005,7 +1013,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
-                    client.onOpen(comptime ssl, sock);
+                    try client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
                         client.firstCall(comptime ssl, sock);
                     }
@@ -1196,9 +1204,11 @@ pub const HTTPThread = struct {
             .loop = undefined,
             .http_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
             },
             .https_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
             },
             .timer = std.time.Timer.start() catch unreachable,
         };
@@ -1388,7 +1398,7 @@ pub const HTTPThread = struct {
             this.queued_writes.clearRetainingCapacity();
         }
 
-        while (this.queued_proxy_deref.popOrNull()) |http| {
+        while (this.queued_proxy_deref.pop()) |http| {
             http.deref();
         }
 
@@ -1568,7 +1578,7 @@ pub fn checkServerIdentity(
                         }
                     }
 
-                    if (BoringSSL.checkX509ServerIdentity(x509, hostname)) {
+                    if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
                     }
                 }
@@ -1604,7 +1614,7 @@ pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
-) void {
+) !void {
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -1617,11 +1627,11 @@ pub fn onOpen(
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
-        return;
+        return error.ClientAborted;
     }
 
     if (comptime is_ssl) {
-        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
@@ -1767,7 +1777,7 @@ pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }
 
-pub const Headers = @import("./http/headers.zig");
+pub const Headers = JSC.WebCore.Headers;
 
 pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
     SOCK.CLOEXEC | posix.MSG.NOSIGNAL
@@ -2226,7 +2236,7 @@ pub const Flags = packed struct {
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 method: Method,
-header_entries: Headers.Entries,
+header_entries: Headers.Entry.List,
 header_buf: string,
 url: URL,
 connected_url: URL = URL{},
@@ -2400,8 +2410,8 @@ pub const HTTPChannelContext = struct {
 pub const AsyncHTTP = struct {
     request: ?picohttp.Request = null,
     response: ?picohttp.Response = null,
-    request_headers: Headers.Entries = Headers.Entries{},
-    response_headers: Headers.Entries = Headers.Entries{},
+    request_headers: Headers.Entry.List = .empty,
+    response_headers: Headers.Entry.List = .empty,
     response_buffer: *MutableString,
     request_body: HTTPRequestBody = .{ .bytes = "" },
     allocator: std.mem.Allocator,
@@ -2551,7 +2561,7 @@ pub const AsyncHTTP = struct {
         allocator: std.mem.Allocator,
         method: Method,
         url: URL,
-        headers: Headers.Entries,
+        headers: Headers.Entry.List,
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
@@ -2671,7 +2681,7 @@ pub const AsyncHTTP = struct {
         allocator: std.mem.Allocator,
         method: Method,
         url: URL,
-        headers: Headers.Entries,
+        headers: Headers.Entry.List,
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
@@ -2833,7 +2843,7 @@ pub const AsyncHTTP = struct {
                 this.client.deinit();
                 var threadlocal_http: *ThreadlocalAsyncHTTP = @fieldParentPtr("async_http", async_http);
                 defer threadlocal_http.destroy();
-                log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+                log("onAsyncHTTPCallback: {any}", .{std.fmt.fmtDuration(this.elapsed)});
                 callback.function(callback.ctx, async_http, result);
             }
 
@@ -3072,6 +3082,9 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     if (comptime Environment.allow_assert) {
+        // Comparing `ptr` is safe here because it is only done if the vtable pointers are equal,
+        // which means they are both mimalloc arenas and therefore have non-undefined context
+        // pointers.
         if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
             @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
         }
@@ -3317,7 +3330,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
-                // we sent everything, but there's some body leftover
+                // we sent everything, but there's some body left over
                 if (try_sending_more_data) {
                     this.onWritable(false, is_ssl, socket);
                 }

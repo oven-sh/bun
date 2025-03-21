@@ -51,19 +51,23 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
 
   const state = $getByIdDirectPrivate(stream, "state");
   stream.$disturbed = true;
-  if (state === $streamClosed) return { value: [], size: 0, done: true };
-  else if (state === $streamErrored) {
+  if (state === $streamErrored) {
     throw $getByIdDirectPrivate(stream, "storedError");
   }
 
   var controller = $getByIdDirectPrivate(stream, "readableStreamController");
-  var queue = $getByIdDirectPrivate(controller, "queue");
-  if (!queue) {
+  if (controller) {
+    var queue = $getByIdDirectPrivate(controller, "queue");
+  }
+
+  if (!queue && state !== $streamClosed) {
     // This is a ReadableStream direct controller implemented in JS
     // It hasn't been started yet.
     return controller.$pull(controller).$then(function ({ done, value }) {
-      return done ? { done: true, value: [], size: 0 } : { value: [value], size: 1, done: false };
+      return done ? { done: true, value: value ? [value] : [], size: 0 } : { value: [value], size: 1, done: false };
     });
+  } else if (!queue) {
+    return { done: true, value: [], size: 0 };
   }
 
   const content = queue.content;
@@ -98,27 +102,31 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
         $putByValDirect(outValues, i, values[i].value);
       }
     }
-    $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
-    if ($getByIdDirectPrivate(controller, "closeRequested")) {
-      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
-    } else if ($isReadableStreamDefaultController(controller)) {
-      $readableStreamDefaultControllerCallPullIfNeeded(controller);
-    } else if ($isReadableByteStreamController(controller)) {
-      $readableByteStreamControllerCallPullIfNeeded(controller);
+    if (state !== $streamClosed) {
+      if ($getByIdDirectPrivate(controller, "closeRequested")) {
+        $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
+      } else if ($isReadableStreamDefaultController(controller)) {
+        $readableStreamDefaultControllerCallPullIfNeeded(controller);
+      } else if ($isReadableByteStreamController(controller)) {
+        $readableByteStreamControllerCallPullIfNeeded(controller);
+      }
     }
+    $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
     return { value: outValues, size, done: false };
   }
 
   var onPullMany = result => {
+    const resultValue = result.value;
+
     if (result.done) {
-      return { value: [], size: 0, done: true };
+      return { value: resultValue ? [resultValue] : [], size: 0, done: true };
     }
     var controller = $getByIdDirectPrivate(stream, "readableStreamController");
 
     var queue = $getByIdDirectPrivate(controller, "queue");
-    var value = [result.value].concat(queue.content.toArray(false));
+    var value = [resultValue].concat(queue.content.toArray(false));
     var length = value.length;
 
     if ($isReadableByteStreamController(controller)) {
@@ -136,8 +144,6 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     }
 
     var size = queue.size;
-    $resetQueue(queue);
-
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
       $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else if ($isReadableStreamDefaultController(controller)) {
@@ -146,12 +152,18 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
       $readableByteStreamControllerCallPullIfNeeded(controller);
     }
 
+    $resetQueue($getByIdDirectPrivate(controller, "queue"));
+
     return { value: value, size: size, done: false };
   };
 
+  if (state === $streamClosed) {
+    return { value: [], size: 0, done: true };
+  }
+
   var pullResult = controller.$pull(controller);
   if (pullResult && $isPromise(pullResult)) {
-    return pullResult.$then(onPullMany) as any;
+    return pullResult.then(onPullMany) as any;
   }
 
   return onPullMany(pullResult);

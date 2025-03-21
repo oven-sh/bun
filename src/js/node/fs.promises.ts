@@ -106,7 +106,7 @@ function cp(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("../internal/fs/cp")(src, dest, options);
+    return require("internal/fs/cp")(src, dest, options);
   }
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
@@ -626,7 +626,7 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
         $debug("Re-encoding chunk to", encoding);
         chunk = Buffer.from(chunk, encoding);
       } else if ($isUndefinedOrNull(chunk)) {
-        throw $ERR_INVALID_ARG_TYPE("write() expects a string, ArrayBufferView, or ArrayBuffer");
+        throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "ArrayBufferView", "ArrayBuffer"], chunk);
       }
 
       const prom = writer.write(chunk);

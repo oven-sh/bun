@@ -141,13 +141,13 @@ namespace uWS
 
         std::string_view getFullUrl()
         {
-            return std::string_view(headers->value.data(), headers->value.length());
+            return headers->value;
         }
 
         /* Hack: this should be getMethod */
         std::string_view getCaseSensitiveMethod()
         {
-            return std::string_view(headers->key.data(), headers->key.length());
+            return headers->key;
         }
 
         std::string_view getMethod()
@@ -158,7 +158,7 @@ namespace uWS
                 ((char *)headers->key.data())[i] |= 32;
             }
 
-            return std::string_view(headers->key.data(), headers->key.length());
+            return headers->key;
         }
 
         /* Returns the raw querystring as a whole, still encoded */
@@ -167,7 +167,7 @@ namespace uWS
             if (querySeparator < headers->value.length())
             {
                 /* Strip the initial ? */
-                return std::string_view(headers->value.data() + querySeparator + 1, headers->value.length() - querySeparator - 1);
+                return headers->value.substr(querySeparator + 1);
             }
             else
             {
@@ -179,9 +179,7 @@ namespace uWS
         std::string_view getQuery(std::string_view key)
         {
             /* Raw querystring including initial '?' sign */
-            std::string_view queryString = std::string_view(headers->value.data() + querySeparator, headers->value.length() - querySeparator);
-
-            return getDecodedQueryValue(key, queryString);
+            return getDecodedQueryValue(key, headers->value.substr(querySeparator));
         }
 
         void setParameters(std::pair<int, std::string_view *> parameters)
@@ -241,7 +239,7 @@ namespace uWS
             }
             return unsignedIntegerValue;
         }
-        
+
         static inline uint64_t hasLess(uint64_t x, uint64_t n) {
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);
         }
@@ -285,7 +283,7 @@ namespace uWS
             }
             return false;
         }
-        
+
         static inline void *consumeFieldName(char *p) {
             /* Best case fast path (particularly useful with clang) */
             while (true) {
@@ -325,14 +323,14 @@ namespace uWS
 
             uint64_t http;
             __builtin_memcpy(&http, data, sizeof(uint64_t));
-            
+
             uint32_t first_four_bytes = http & static_cast<uint32_t>(0xFFFFFFFF);
             // check if any of the first four bytes are > non-ascii
             if ((first_four_bytes & 0x80808080) != 0) [[unlikely]] {
                 return 0;
             }
             first_four_bytes |= 0x20202020; // Lowercase the first four bytes
-            
+
             static constexpr char http_lowercase_bytes[4] = {'h', 't', 't', 'p'};
             static constexpr uint32_t http_lowercase_bytes_int = __builtin_bit_cast(uint32_t, http_lowercase_bytes);
             if (first_four_bytes == http_lowercase_bytes_int) [[likely]] {
@@ -345,7 +343,7 @@ namespace uWS
 
                 static constexpr char S_colon_slash_slash[4] = {'S', ':', '/', '/'};
                 static constexpr uint32_t S_colon_slash_slash_int = __builtin_bit_cast(uint32_t, S_colon_slash_slash);
-              
+
                 // Extract the last four bytes from the uint64_t
                 const uint32_t last_four_bytes = (http >> 32) & static_cast<uint32_t>(0xFFFFFFFF);
                 return (last_four_bytes == s_colon_slash_slash_int) || (last_four_bytes == S_colon_slash_slash_int);
@@ -363,7 +361,7 @@ namespace uWS
             if (&data[1] == end) [[unlikely]] {
                 return nullptr;
             }
-            
+
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
@@ -538,7 +536,7 @@ namespace uWS
                     while (headers->value.length() && headers->value.front() < 33) {
                         headers->value.remove_prefix(1);
                     }
-                    
+
                     headers++;
 
                     /* We definitely have at least one header (or request line), so check if we are done */
@@ -569,7 +567,7 @@ namespace uWS
      * From here we return either [consumed, user] for "keep going",
      * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
      * or [whatever, fullptr] for "break and close me, I am a parser error!" */
-    template <int CONSUME_MINIMALLY>
+    template <bool ConsumeMinimally>
     std::pair<unsigned int, void *> fenceAndConsumePostPadded(char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
@@ -600,7 +598,7 @@ namespace uWS
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            
+
             /* Break if no host header (but we can have empty string which is different from nullptr) */
             if (!req->getHeader("host").data()) {
                 return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
@@ -613,11 +611,12 @@ namespace uWS
             * ought to be handled as an error. */
             std::string_view transferEncodingString = req->getHeader("transfer-encoding");
             std::string_view contentLengthString = req->getHeader("content-length");
+
             auto transferEncodingStringLen = transferEncodingString.length();
             auto contentLengthStringLen = contentLengthString.length();
             if (transferEncodingStringLen && contentLengthStringLen) {
                 /* Returning fullptr is the same as calling the errorHandler */
-                /* We could be smart and set an error in the context along with this, to indicate what 
+                /* We could be smart and set an error in the context along with this, to indicate what
                  * http error response we might want to return */
                 return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
             }
@@ -625,7 +624,7 @@ namespace uWS
             /* Parse query */
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
-            
+
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
@@ -635,6 +634,14 @@ namespace uWS
                 }
             }
 
+            // lets check if content len is valid before calling requestHandler
+            if(contentLengthStringLen) {
+                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
+                if (remainingStreamingBytes == UINT64_MAX) {
+                    /* Parser error */
+                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                }
+            }
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
@@ -656,7 +663,7 @@ namespace uWS
             if (transferEncodingStringLen) {
 
                 /* If a proxy sent us the transfer-encoding header that 100% means it must be chunked or else the proxy is
-                 * not RFC 9112 compliant. Therefore it is always better to assume this is the case, since that entirely eliminates 
+                 * not RFC 9112 compliant. Therefore it is always better to assume this is the case, since that entirely eliminates
                  * all forms of transfer-encoding obfuscation tricks. We just rely on the header. */
 
                 /* RFC 9112 6.3
@@ -669,7 +676,7 @@ namespace uWS
 
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
-                if (!CONSUME_MINIMALLY) {
+                if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
@@ -685,8 +692,7 @@ namespace uWS
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-              
-                if (!CONSUME_MINIMALLY) {
+                if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                     remainingStreamingBytes -= emittable;
@@ -701,7 +707,7 @@ namespace uWS
             }
 
             /* Consume minimally should break as easrly as possible */
-            if (CONSUME_MINIMALLY) {
+            if constexpr (ConsumeMinimally) {
                 break;
             }
         }

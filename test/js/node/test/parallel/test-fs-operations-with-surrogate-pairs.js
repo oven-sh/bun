@@ -4,7 +4,7 @@ require('../common');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert');
-const { describe, it } = require('bun:test');
+const { describe, it } = require('node:test');
 const tmpdir = require('../common/tmpdir');
 
 tmpdir.refresh();

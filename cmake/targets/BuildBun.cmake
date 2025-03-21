@@ -1,8 +1,8 @@
 if(DEBUG)
   set(bun bun-debug)
-elseif(ENABLE_SMOL)
-  set(bun bun-smol-profile)
-  set(bunStrip bun-smol)
+# elseif(ENABLE_SMOL)
+#   set(bun bun-smol-profile)
+#   set(bunStrip bun-smol)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -177,6 +177,32 @@ register_command(
     ${BUN_NODE_FALLBACKS_NODE_MODULES}
   OUTPUTS
     ${BUN_NODE_FALLBACKS_OUTPUTS}
+)
+
+# An embedded copy of react-refresh is used when the user forgets to install it.
+# The library is not versioned alongside React.
+set(BUN_REACT_REFRESH_OUTPUT ${BUN_NODE_FALLBACKS_OUTPUT}/react-refresh.js)
+register_command(
+  TARGET
+    bun-node-fallbacks-react-refresh
+  COMMENT
+    "Building node-fallbacks/react-refresh.js"
+  CWD
+    ${BUN_NODE_FALLBACKS_SOURCE}
+  COMMAND
+    ${BUN_EXECUTABLE} build
+      ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
+      --outfile=${BUN_REACT_REFRESH_OUTPUT}
+      --target=browser
+      --format=cjs
+      --minify
+      --define:process.env.NODE_ENV=\"'development'\"
+  SOURCES
+    ${BUN_NODE_FALLBACKS_SOURCE}/package.json
+    ${BUN_NODE_FALLBACKS_SOURCE}/bun.lock
+    ${BUN_NODE_FALLBACKS_NODE_MODULES}
+  OUTPUTS
+    ${BUN_REACT_REFRESH_OUTPUT}
 )
 
 set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
@@ -406,6 +432,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
@@ -418,6 +445,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/BunProcess.lut.h
   ${CODEGEN_PATH}/ProcessBindingBuffer.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
+  ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
@@ -500,8 +528,7 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/root.zig
-  ${CWD}/root_wasm.zig
+  ${CWD}/src/main.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
@@ -510,6 +537,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_FALLBACK_DECODER_OUTPUT}
   ${BUN_RUNTIME_JS_OUTPUT}
   ${BUN_NODE_FALLBACKS_OUTPUTS}
+  ${BUN_REACT_REFRESH_OUTPUT}
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
@@ -572,7 +600,6 @@ register_command(
       -Dcanary=${CANARY_REVISION}
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
-      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
       --prominent-compile-errors
       ${ZIG_FLAGS_BUN}
   ARTIFACTS
@@ -600,6 +627,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/sqlite/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
+  ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
   ${CWD}/src/bake/*.cpp
@@ -715,7 +743,7 @@ endif()
 # --- C/C++ Properties ---
 
 set_target_properties(${bun} PROPERTIES
-  CXX_STANDARD 20
+  CXX_STANDARD 23
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
@@ -723,6 +751,18 @@ set_target_properties(${bun} PROPERTIES
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
+
+if (NOT WIN32)
+  # Enable precompiled headers
+  # Only enable in these scenarios:
+  # 1. NOT in CI, OR
+  # 2. In CI AND BUN_CPP_ONLY is enabled
+  if(NOT CI OR (CI AND BUN_CPP_ONLY))
+    target_precompile_headers(${bun} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+    )
+  endif()
+endif()
 
 # --- C/C++ Includes ---
 
@@ -737,6 +777,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
+  ${CWD}/src/bun.js/bindings/node/crypto
   ${CWD}/src/bun.js/bindings/sqlite
   ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules
@@ -877,6 +918,10 @@ if(NOT WIN32)
       -Werror
     )
   endif()
+else()
+  target_compile_options(${bun} PUBLIC
+    -Wno-nullability-completeness
+  )
 endif()
 
 # --- Linker options ---
@@ -919,28 +964,17 @@ endif()
 
 if(LINUX)
   if(NOT ABI STREQUAL "musl")
-  # on arm64
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
-    target_link_options(${bun} PUBLIC
-      -Wl,--wrap=exp
-      -Wl,--wrap=expf
-      -Wl,--wrap=fcntl64
-      -Wl,--wrap=log
-      -Wl,--wrap=log2
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=pow
-      -Wl,--wrap=powf
-    )
-  else()
-    target_link_options(${bun} PUBLIC
-      -Wl,--wrap=exp
-      -Wl,--wrap=expf
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=powf
-    )
-  endif()
+  target_link_options(${bun} PUBLIC
+    -Wl,--wrap=exp
+    -Wl,--wrap=expf
+    -Wl,--wrap=fcntl64
+    -Wl,--wrap=log
+    -Wl,--wrap=log2
+    -Wl,--wrap=log2f
+    -Wl,--wrap=logf
+    -Wl,--wrap=pow
+    -Wl,--wrap=powf
+  )
   endif()
 
   if(NOT ABI STREQUAL "musl")
@@ -1069,6 +1103,7 @@ add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
+  target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 
 if(USE_STATIC_SQLITE)

@@ -75,9 +75,9 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <wtf/IsoMalloc.h>
-#include <wtf/IsoMallocInlines.h>
 #include <JavaScriptCore/HandleSet.h>
+#include <wtf/Ref.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1

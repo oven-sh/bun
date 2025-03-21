@@ -301,6 +301,6 @@ This is a small wrapper around Bun's support for HTML imports in JavaScript.
 
 ### Adding a backend to your frontend
 
-To add a backend to your frontend, you can use the `"static"` option in `Bun.serve`.
+To add a backend to your frontend, you can use the `"routes"` option in `Bun.serve`.
 
 Learn more in [the full-stack docs](/docs/bundler/fullstack).

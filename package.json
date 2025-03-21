@@ -1,16 +1,19 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.3",
+  "version": "1.2.6",
   "workspaces": [
     "./packages/bun-types"
   ],
   "devDependencies": {
+    "@mdn/browser-compat-data": "~5.5.28",
     "@types/bun": "*",
     "@types/react": "^18.3.3",
     "@typescript-eslint/eslint-plugin": "^7.11.0",
     "@typescript-eslint/parser": "^7.11.0",
     "@vscode/debugadapter": "^1.65.0",
+    "autoprefixer": "^10.4.19",
+    "caniuse-lite": "^1.0.30001620",
     "esbuild": "^0.21.4",
     "eslint": "^9.4.0",
     "eslint-config-prettier": "^9.1.0",
@@ -21,10 +24,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.0",
-    "typescript": "^5.7.2",
-    "caniuse-lite": "^1.0.30001660",
-    "autoprefixer": "^10.4.20",
-    "@mdn/browser-compat-data": "~5.5.28"
+    "typescript": "^5.7.2"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types"
@@ -53,7 +53,7 @@
     "lint:fix": "oxlint --config oxlint.json --fix",
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
-    "banned": "bun packages/bun-internal-test/src/linter.ts",
+    "banned": "bun test test/internal/ban-words.test.ts",
     "zig": "vendor/zig/zig.exe",
     "zig:fmt": "bun run zig-format",
     "zig:check": "bun run zig build check --summary new",

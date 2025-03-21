@@ -54,38 +54,38 @@ pub fn LinearFifo(
         // returned a slice into a copy on the stack
         const SliceSelfArg = if (buffer_type == .Static) *Self else Self;
 
-        pub usingnamespace switch (buffer_type) {
-            .Static => struct {
-                pub fn init() Self {
-                    return .{
-                        .allocator = {},
-                        .buf = undefined,
-                        .head = 0,
-                        .count = 0,
-                    };
-                }
-            },
-            .Slice => struct {
-                pub fn init(buf: []T) Self {
-                    return .{
-                        .allocator = {},
-                        .buf = buf,
-                        .head = 0,
-                        .count = 0,
-                    };
-                }
-            },
-            .Dynamic => struct {
-                pub fn init(allocator: Allocator) Self {
-                    return .{
-                        .allocator = allocator,
-                        .buf = &[_]T{},
-                        .head = 0,
-                        .count = 0,
-                    };
-                }
-            },
+        pub const init = switch (buffer_type) {
+            .Static => initStatic,
+            .Slice => initSlice,
+            .Dynamic => initDynamic,
         };
+
+        fn initStatic() Self {
+            return .{
+                .allocator = {},
+                .buf = undefined,
+                .head = 0,
+                .count = 0,
+            };
+        }
+
+        fn initSlice(buf: []T) Self {
+            return .{
+                .allocator = {},
+                .buf = buf,
+                .head = 0,
+                .count = 0,
+            };
+        }
+
+        fn initDynamic(allocator: Allocator) Self {
+            return .{
+                .allocator = allocator,
+                .buf = &[_]T{},
+                .head = 0,
+                .count = 0,
+            };
+        }
 
         pub fn deinit(self: Self) void {
             if (buffer_type == .Dynamic) self.allocator.free(self.buf);
@@ -97,7 +97,7 @@ pub fn LinearFifo(
                 bun.copy(T, self.buf[0..self.count], self.buf[self.head..][0..self.count]);
                 self.head = 0;
             } else {
-                var tmp: [mem.page_size / 2 / @sizeOf(T)]T = undefined;
+                var tmp: [std.heap.page_size_min / 2 / @sizeOf(T)]T = undefined;
 
                 while (self.head != 0) {
                     const n = @min(self.head, tmp.len);

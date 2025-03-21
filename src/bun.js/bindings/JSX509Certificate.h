@@ -26,7 +26,7 @@ class JSX509Certificate final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     // The underlying X509 certificate
     ncrypto::X509Pointer m_x509;
@@ -66,7 +66,7 @@ public:
     // Certificate validation methods
     bool checkHost(JSGlobalObject*, std::span<const char>, uint32_t flags);
     bool checkEmail(JSGlobalObject*, std::span<const char>, uint32_t flags);
-    bool checkIP(JSGlobalObject*, std::span<const char>);
+    bool checkIP(JSGlobalObject*, const char*);
     bool checkIssued(JSGlobalObject*, JSX509Certificate* issuer);
     bool checkPrivateKey(JSGlobalObject*, EVP_PKEY* pkey);
     bool verify(JSGlobalObject*, EVP_PKEY* pkey);

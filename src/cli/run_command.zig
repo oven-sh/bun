@@ -295,7 +295,7 @@ pub const RunCommand = struct {
         log("Script: \"{s}\"", .{copy_script.items});
 
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{copy_script.items});
+            Output.command(copy_script.items);
             Output.flush();
         }
 
@@ -1441,6 +1441,11 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
+            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            passthrough_list.appendAssumeCapacity("-");
+            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+            ctx.passthrough = passthrough_list.items;
+
             Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
                 ctx.log.print(Output.errorWriter()) catch {};
 
@@ -1639,13 +1644,13 @@ pub const RunCommand = struct {
             Global.exit(1);
         }
 
-        // TODO(@paperdave): merge windows branch
+        // TODO(@paperclover): merge windows branch
         // var win_resolver = resolve_path.PosixToWinNormalizer{};
 
         const filename = ctx.positionals[0];
 
         const normalized_filename = if (std.fs.path.isAbsolute(filename))
-            // TODO(@paperdave): merge windows branch
+            // TODO(@paperclover): merge windows branch
             // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
             filename
         else brk: {

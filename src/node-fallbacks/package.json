@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build-gen": "bash -c 'esbuild --bundle *.js --outdir=bun --format=esm --platform=browser --external:buffer --external:stream --external:util --external:util/ --external:assert'",
-    "build": "bash -c 'esbuild --bundle *.js --outdir=out --format=esm --minify --platform=browser'"
+    "build": "bash -c 'esbuild --bundle *.js --outdir=out --format=esm --minify --platform=browser'",
+    "build-react-refresh": "NODE_ENV=development bun build --target=browser --external=* --format=cjs --outfile=out/react-refresh.js ./node_modules/react-refresh/cjs/react-refresh-runtime.development.js --define=process.env.NODE_ENV=development --minify"
   },
   "author": "",
   "license": "ISC",
@@ -26,6 +27,7 @@
     "process": "^0.11.10",
     "punycode": "^2.1.1",
     "querystring-es3": "^1.0.0-0",
+    "react-refresh": "^0.16.0",
     "readable-stream": "^4.1.0",
     "stream-http": "^3.2.0",
     "string_decoder": "^1.3.0",

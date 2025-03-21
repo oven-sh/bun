@@ -3477,6 +3477,9 @@ pub extern "kernel32" fn GetThreadDescription(
     *PWSTR, // [out]
 ) std.os.windows.HRESULT;
 
+pub const ENABLE_ECHO_INPUT = 0x004;
+pub const ENABLE_LINE_INPUT = 0x002;
+pub const ENABLE_PROCESSED_INPUT = 0x001;
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;

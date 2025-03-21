@@ -70,8 +70,6 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
-pub const ArrayList = std.ArrayListUnmanaged;
-
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -104,7 +102,20 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
-pub const C = @import("root").C;
+/// Adding to this namespace is considered deprecated.
+///
+/// If the declaration truly came from C, it should be perfectly possible to
+/// translate the definition and put it in `c-headers-for-zig.h`, and available
+/// via the lowercase `c` namespace. Wrappers around functions should go in a
+/// more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
+///
+/// By avoiding manual transcription of C headers into Zig, we avoid bugs due to
+/// different definitions between platforms, as well as very common mistakes
+/// that can be made when porting definitions. It also keeps code much cleaner.
+pub const C = @import("c.zig");
+/// Translated from `c-headers-for-zig.h` for the current platform.
+pub const c = @import("translated-c-headers");
+
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -138,13 +149,10 @@ pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
 pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
+pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
-pub const shell = struct {
-    pub usingnamespace @import("./shell/shell.zig");
-    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
-    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
-};
+pub const shell = @import("./shell/shell.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
@@ -175,7 +183,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// Interpreting a FD as an integer is almost certainly a mistake.
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
-    /// TODO(@paperdave): remove this API.
+    /// TODO(@paperclover): remove this API.
     pub fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
@@ -321,11 +329,6 @@ pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
-pub const PathString = StringTypes.PathString;
-pub const HashedString = StringTypes.HashedString;
-pub const strings = @import("string_immutable.zig");
-pub const MutableString = @import("string_mutable.zig").MutableString;
-pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
@@ -406,22 +409,22 @@ fn Span(comptime T: type) type {
     }
 }
 
-pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
-    if (@typeInfo(@TypeOf(ptr)) == .optional) {
-        if (ptr) |non_null| {
+pub fn span(pointer: anytype) Span(@TypeOf(pointer)) {
+    if (@typeInfo(@TypeOf(pointer)) == .optional) {
+        if (pointer) |non_null| {
             return span(non_null);
         } else {
             return null;
         }
     }
-    const Result = Span(@TypeOf(ptr));
-    const l = len(ptr);
+    const Result = Span(@TypeOf(pointer));
+    const l = len(pointer);
     const ptr_info = @typeInfo(Result).pointer;
     if (ptr_info.sentinel_ptr) |s_ptr| {
         const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
-        return ptr[0..l :s];
+        return pointer[0..l :s];
     } else {
-        return ptr[0..l];
+        return pointer[0..l];
     }
 }
 
@@ -554,7 +557,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     return try allocator.dupe(Child, item);
 }
 
-pub const StringBuilder = @import("./string_builder.zig");
+pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -583,7 +586,7 @@ pub fn fastRandom() u64 {
                             return value;
                         }
                     }
-                    rand(std.mem.asBytes(&value));
+                    csprng(std.mem.asBytes(&value));
                     seed_value.store(value, .monotonic);
                 }
 
@@ -616,8 +619,8 @@ pub fn hash32(content: []const u8) u32 {
 
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
-pub fn rand(bytes: []u8) void {
-    _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
+pub fn csprng(bytes: []u8) void {
+    _ = BoringSSL.c.RAND_bytes(bytes.ptr, bytes.len);
 }
 
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -730,7 +733,8 @@ pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
-pub usingnamespace @import("./tagged_pointer.zig");
+pub const TaggedPointer = ptr.TaggedPointer;
+pub const TaggedPointerUnion = ptr.TaggedPointerUnion;
 
 pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
@@ -759,7 +763,8 @@ pub fn isHeapMemory(memory: anytype) bool {
     return false;
 }
 
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
+pub const Mimalloc = @import("allocators/mimalloc.zig");
+pub const AllocationScope = @import("allocators/AllocationScope.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -791,8 +796,7 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("root").JavaScriptCore;
-pub const AsyncIO = @import("async_io");
+pub const JSC = @import("jsc.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -934,8 +938,8 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         return getenvZAnyCase(key);
     }
 
-    const ptr = std.c.getenv(key.ptr) orelse return null;
-    return sliceTo(ptr, 0);
+    const pointer = std.c.getenv(key.ptr) orelse return null;
+    return sliceTo(pointer, 0);
 }
 
 pub fn getenvTruthy(key: [:0]const u8) bool {
@@ -1218,7 +1222,7 @@ pub const SignalCode = enum(u8) {
 
     // The `subprocess.kill()` method sends a signal to the child process. If no
     // argument is given, the process will be sent the 'SIGTERM' signal.
-    pub const default = @intFromEnum(SignalCode.SIGTERM);
+    pub const default = SignalCode.SIGTERM;
     pub const Map = ComptimeEnumMap(SignalCode);
     pub fn name(value: SignalCode) ?[]const u8 {
         if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {
@@ -1466,18 +1470,18 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     @panic("TODO unsupported platform for getFdPathW");
 }
 
-fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
-    switch (@typeInfo(@TypeOf(ptr))) {
+fn lenSliceTo(pointer: anytype, comptime end: std.meta.Elem(@TypeOf(pointer))) usize {
+    switch (@typeInfo(@TypeOf(pointer))) {
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
                 .array => |array_info| {
                     if (array_info.sentinel_ptr) |sentinel_ptr| {
                         const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
-                            return std.mem.indexOfSentinel(array_info.child, end, ptr);
+                            return std.mem.indexOfSentinel(array_info.child, end, pointer);
                         }
                     }
-                    return std.mem.indexOfScalar(array_info.child, ptr, end) orelse array_info.len;
+                    return std.mem.indexOfScalar(array_info.child, pointer, end) orelse array_info.len;
                 },
                 else => {},
             },
@@ -1487,30 +1491,30 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 // but iterating past the sentinel would be a bug so we need
                 // to check for both.
                 var i: usize = 0;
-                while (ptr[i] != end and ptr[i] != sentinel) i += 1;
+                while (pointer[i] != end and pointer[i] != sentinel) i += 1;
                 return i;
             },
             .c => {
-                assert(ptr != null);
-                return std.mem.indexOfSentinel(ptr_info.child, end, ptr);
+                assert(pointer != null);
+                return std.mem.indexOfSentinel(ptr_info.child, end, pointer);
             },
             .slice => {
                 if (ptr_info.sentinel_ptr) |sentinel_ptr| {
                     const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                     if (sentinel == end) {
-                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, ptr);
+                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, pointer);
                     }
                 }
-                return std.mem.indexOfScalar(ptr_info.child, ptr, end) orelse ptr.len;
+                return std.mem.indexOfScalar(ptr_info.child, pointer, end) orelse pointer.len;
             },
         },
         else => {},
     }
-    @compileError("invalid type given to std.mem.sliceTo: " ++ @typeName(@TypeOf(ptr)));
+    @compileError("invalid type given to std.mem.sliceTo: " ++ @typeName(@TypeOf(pointer)));
 }
 
 /// Helper for the return type of sliceTo()
-fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
+fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
     switch (@typeInfo(T)) {
         .optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
@@ -1570,32 +1574,20 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// resulting slice is also sentinel terminated.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
-pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
-    if (@typeInfo(@TypeOf(ptr)) == .optional) {
-        const non_null = ptr orelse return null;
+pub fn sliceTo(pointer: anytype, comptime end: std.meta.Elem(@TypeOf(pointer))) SliceTo(@TypeOf(pointer), end) {
+    if (@typeInfo(@TypeOf(pointer)) == .optional) {
+        const non_null = pointer orelse return null;
         return sliceTo(non_null, end);
     }
-    const Result = SliceTo(@TypeOf(ptr), end);
-    const length = lenSliceTo(ptr, end);
+    const Result = SliceTo(@TypeOf(pointer), end);
+    const length = lenSliceTo(pointer, end);
     const ptr_info = @typeInfo(Result).pointer;
     if (ptr_info.sentinel_ptr) |s_ptr| {
         const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
-        return ptr[0..length :s];
+        return pointer[0..length :s];
     } else {
-        return ptr[0..length];
+        return pointer[0..length];
     }
-}
-
-pub fn cstring(input: []const u8) [:0]const u8 {
-    if (input.len == 0)
-        return "";
-
-    if (comptime Environment.allow_assert) {
-        assert(
-            input.ptr[input.len] == 0,
-        );
-    }
-    return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
 }
 
 pub const Semver = @import("./semver.zig");
@@ -1604,13 +1596,19 @@ pub const ImportKind = @import("./import_record.zig").ImportKind;
 
 pub const Watcher = @import("./Watcher.zig");
 
-pub usingnamespace @import("./util.zig");
+pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
+    var remain = dest;
+    for (src) |group| {
+        bun.copy(T, remain[0..group.len], group);
+        remain = remain[group.len..];
+    }
+}
+
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
-pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
@@ -1620,7 +1618,6 @@ pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
-        []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
         [*:0]u8, [*:0]const u8 => buffer[0..len(buffer)],
         [*c]const u8, [*c]u8 => span(buffer),
 
@@ -1719,6 +1716,8 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
+extern "c" fn on_before_reload_process_linux() void;
+
 /// Reload Bun's process. This clones envp, argv, and gets the current
 /// executable path.
 ///
@@ -1806,13 +1805,13 @@ pub fn reloadProcess(
         attrs.resetSignals() catch {};
 
         attrs.set(
-            C.POSIX_SPAWN_CLOEXEC_DEFAULT |
+            C.translated.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
                 // than returning to the caller, posix_spawn(2)
                 // and posix_spawnp(2) will behave as a more
                 // featureful execve(2).
-                C.POSIX_SPAWN_SETEXEC |
-                C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
+                C.translated.POSIX_SPAWN_SETEXEC |
+                C.translated.POSIX_SPAWN_SETSIGDEF | C.translated.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
@@ -1831,10 +1830,6 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        const on_before_reload_process_linux = struct {
-            pub extern "c" fn on_before_reload_process_linux() void;
-        }.on_before_reload_process_linux;
-
         on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
@@ -1985,7 +1980,6 @@ pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Lock = @compileError("Use bun.Mutex instead");
 pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
@@ -2104,22 +2098,23 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-pub const String = @import("./string.zig").String;
-pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
+const _string = @import("./string.zig");
+pub const strings = @import("string_immutable.zig");
+pub const String = _string.String;
+pub const StringJoiner = _string.StringJoiner;
+pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
+pub const PathString = _string.PathString;
+pub const HashedString = _string.HashedString;
+pub const MutableString = _string.MutableString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
-    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+    pub const StringImpl = _string.WTFStringImpl;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
-
-pub inline fn assertComptime() void {
-    var x = 0; // if you hit an error on this line, you are not in a comptime context
-    _ = &x;
-}
 
 const TODO_LOG = Output.scoped(.TODO, false);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
@@ -2195,7 +2190,7 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         const decoded = (switch (T) {
-            FDImpl.System => @compileError("This cast (FDImpl.System -> FDImpl.UV) makes this file descriptor very hard to close. Use toLibUVOwnedFD() and FileDescriptor instead. If you truly need to do this conversion (dave will probably reject your PR), use bun.FDImpl.fromSystem(fd).uv()"),
+            FDImpl.System => @compileError("This cast (FDImpl.System -> FDImpl.UV) makes this file descriptor very hard to close. Use toLibUVOwnedFD() and FileDescriptor instead. If you truly need to do this conversion (Chloe will probably reject your PR), use bun.FDImpl.fromSystem(fd).uv()"),
             FDImpl => fd,
             FDImpl.UV => return fd,
             FileDescriptor => FDImpl.decode(fd),
@@ -2369,25 +2364,12 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
-    /// Returns the original mode
-    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
-        const fd = stdio(i);
-        var original_mode: w.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
-                return windows.getLastError();
-            }
-        } else return windows.getLastError();
-
-        return original_mode;
-    }
-
-    /// Returns the original mode
-    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+    /// Returns the original mode, or null on failure
+    pub fn updateStdioModeFlags(i: anytype, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
         if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+            if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();
@@ -2511,20 +2493,20 @@ pub const win32 = struct {
         }
 
         var size: usize = 0;
-        if (kernelenv) |ptr| {
+        if (kernelenv) |pointer| {
             // check that env is non-empty
-            if (ptr[0] != 0 or ptr[1] != 0) {
+            if (pointer[0] != 0 or pointer[1] != 0) {
                 // array is terminated by two nulls
-                while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
+                while (pointer[size] != 0 or pointer[size + 1] != 0) size += 1;
                 size += 1;
             }
         }
-        // now ptr[size] is the first null
+        // now pointer[size] is the first null
 
         const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
         defer allocator.free(envbuf);
-        if (kernelenv) |ptr| {
-            @memcpy(envbuf[0..size], ptr);
+        if (kernelenv) |pointer| {
+            @memcpy(envbuf[0..size], pointer);
         }
         @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
         envbuf[size + watcherChildEnv.len] = '=';
@@ -2746,8 +2728,8 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
     if (!Environment.isWindows) return @ptrCast(literal);
     return comptime {
         var buf: [literal.len:0]u8 = undefined;
-        for (literal, 0..) |c, i| {
-            buf[i] = if (c == '/') '\\' else c;
+        for (literal, 0..) |char, i| {
+            buf[i] = if (char == '/') '\\' else char;
             assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
@@ -2761,8 +2743,8 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
     if (!Environment.isWindows) return @ptrCast(literal);
     return comptime {
         var buf: [literal.len:0]OSPathChar = undefined;
-        for (literal, 0..) |c, i| {
-            buf[i] = if (c == '/') '\\' else c;
+        for (literal, 0..) |char, i| {
+            buf[i] = if (char == '/') '\\' else char;
             assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
@@ -2774,7 +2756,7 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
 pub const MakePath = struct {
     const w = std.os.windows;
 
-    // TODO(@paperdave): upstream making this public into zig std
+    // TODO(@paperclover): upstream making this public into zig std
     // there is zero reason this must be copied
     //
     /// Calls makeOpenDirAccessMaskW iteratively to make an entire path
@@ -2794,10 +2776,10 @@ pub const MakePath = struct {
         while (true) {
             const sub_path_w = if (comptime T == u16)
                 try w.wToPrefixedFileW(self.fd,
-                // TODO: report this bug
-                // they always copy it
-                // it doesn't need to be [:0]const u16
-                @ptrCast(component.path))
+                    // TODO: report this bug
+                    // they always copy it
+                    // it doesn't need to be [:0]const u16
+                    @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
@@ -3057,9 +3039,9 @@ pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args:
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
+    const pointer = allocator.create(T) catch outOfMemory();
+    pointer.* = t;
+    return pointer;
 }
 
 pub const heap_breakdown = @import("./heap_breakdown.zig");
@@ -3077,12 +3059,12 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
-    const ptr = if (heap_breakdown.enabled)
+    const pointer = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
-    else ptr: {
-        const ptr = default_allocator.create(T) catch outOfMemory();
-        ptr.* = init;
-        break :ptr ptr;
+    else pointer: {
+        const pointer = default_allocator.create(T) catch outOfMemory();
+        pointer.* = init;
+        break :pointer pointer;
     };
 
     // TODO::
@@ -3091,23 +3073,23 @@ pub inline fn new(comptime T: type, init: T) *T {
     //     logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
     // }
 
-    return ptr;
+    return pointer;
 }
 
 /// Free a globally-allocated a value from `bun.new()`. Using this with
 /// pointers allocated from other means may cause crashes.
-pub inline fn destroy(ptr: anytype) void {
-    const T = std.meta.Child(@TypeOf(ptr));
+pub inline fn destroy(pointer: anytype) void {
+    const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
         const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
+        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
     }
 
     if (comptime heap_breakdown.enabled) {
-        heap_breakdown.getZoneT(T).destroy(T, ptr);
+        heap_breakdown.getZoneT(T).destroy(T, pointer);
     } else {
-        default_allocator.destroy(ptr);
+        default_allocator.destroy(pointer);
     }
 }
 
@@ -3129,132 +3111,8 @@ pub fn New(comptime T: type) type {
     };
 }
 
-/// Reference-counted heap-allocated instance value.
-///
-/// `ref_count` is expected to be defined on `T` with a default value set to `1`
-pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
-
-            self.ref_count += 1;
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count;
-            if (Environment.isDebug) {
-                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
-                    @panic("Use after-free detected on " ++ output_name);
-                }
-            }
-
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-
-            self.ref_count = ref_count - 1;
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count == 0) {
-                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
-
-pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count.load(.seq_cst) == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-            bun.debugAssert(ref_count > 0);
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count.load(.seq_cst) != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
+pub const NewRefCounted = ptr.NewRefCounted;
+pub const NewThreadSafeRefCounted = ptr.NewThreadSafeRefCounted;
 
 pub fn exitThread() noreturn {
     const exiter = struct {
@@ -3534,28 +3392,43 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
+const assertion_failure_msg = "Internal assertion failure";
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     } else {
         @branchHint(.cold);
-        Output.panic("Internal assertion failure", .{});
+        Output.panic(assertion_failure_msg, .{});
     }
 }
 
-noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn {
     if (@inComptime()) {
-        @compileError("assertion failure");
+        @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic("Internal assertion failure {s}:{d}:{d}", .{
-            src.file,
-            src.line,
-            src.column,
-        });
+        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
+noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) noreturn {
+    if (@inComptime()) {
+        @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
+    } else {
+        @branchHint(.cold);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
+    }
+}
+
+/// Like `assert`, but checks only run in debug builds.
+///
+/// Please wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.isDebug) {
+///   const expensive = doExpensiveCheck();
+///   bun.debugAssert(expensive);
+/// }
+/// ```
 pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
@@ -3566,14 +3439,70 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     }
 }
 
-pub fn assert(value: bool) callconv(callconv_inline) void {
+/// Asserts that some condition holds. Assertions are stripped in release builds.
+///
+/// Please use `assertf` in new code.
+///
+/// Be careful what expressions you pass to this function; if the compiler cannot
+/// determine that `ok` has no side effects, the argument expression may not be removed
+/// from the binary. This includes calls to extern functions.
+///
+/// Wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.allow_assert) {
+///   const expensive = doExpensiveCheck();
+///   bun.assert(expensive);
+/// }
+/// ```
+///
+/// Use `releaseAssert` for assertions that should not be stripped in release builds.
+pub fn assert(ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
 
-    if (!value) {
+    if (!ok) {
         if (comptime Environment.isDebug) unreachable;
         assertionFailure();
+    }
+}
+
+/// Asserts that some condition holds. Assertions are stripped in release builds.
+///
+/// Please note that messages will be shown to users in crash reports.
+///
+/// Be careful what expressions you pass to this function; if the compiler cannot
+/// determine that `ok` has no side effects, the argument expression may not be removed
+/// from the binary. This includes calls to extern functions.
+///
+/// Wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.allow_assert) {
+///   const expensive = doExpensiveCheck();
+///   bun.assert(expensive, "Something happened: {}", .{ expensive });
+/// }
+/// ```
+///
+/// Use `releaseAssert` for assertions that should not be stripped in release builds.
+pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!ok) {
+        // crash handler has runtime-only code.
+        if (@inComptime()) @compileError(std.fmt.comptimePrint(format, args));
+        assertionFailureWithMsg(format, args);
+    }
+}
+
+/// Asserts that some condition holds. These assertions are not stripped
+/// in any build mode. Use `assert` to have assertions stripped in release
+/// builds.
+pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
+    if (!ok) {
+        @branchHint(.cold);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
     }
 }
 
@@ -3584,11 +3513,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 
     if (!value) {
         if (comptime Environment.isDebug) unreachable;
-        assertionFailureWithLocation(src);
+        assertionFailureAtLocation(src);
     }
 }
 
-/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+/// This has no effect on the real code but capturing 'a' and 'b' into
+/// parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
@@ -3599,11 +3529,12 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
     }
     if (!Environment.allow_assert) return;
     if (a != b) {
-        Output.panic("Assertion failure: {} != {}", .{ a, b });
+        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
     }
 }
 
-/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+/// This has no effect on the real code but capturing 'a' and 'b' into
+/// parameters makes assertion failures much easier inspect in a debugger.
 pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
@@ -3719,12 +3650,13 @@ pub const timespec = extern struct {
 
     // TODO: this is wrong!
     pub fn duration(this: *const timespec, other: *const timespec) timespec {
-        var sec_diff = this.sec - other.sec;
-        var nsec_diff = this.nsec - other.nsec;
+        // Mimick C wrapping behavior.
+        var sec_diff = this.sec -% other.sec;
+        var nsec_diff = this.nsec -% other.nsec;
 
         if (nsec_diff < 0) {
-            sec_diff -= 1;
-            nsec_diff += std.time.ns_per_s;
+            sec_diff -%= 1;
+            nsec_diff +%= std.time.ns_per_s;
         }
 
         return timespec{
@@ -3752,11 +3684,11 @@ pub const timespec = extern struct {
         assert(this.nsec >= 0);
         const s_ns = std.math.mul(
             u64,
-            @as(u64, @intCast(this.sec)),
+            @as(u64, @intCast(@max(this.sec, 0))),
             std.time.ns_per_s,
         ) catch return std.math.maxInt(u64);
 
-        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+        return std.math.add(u64, s_ns, @as(u64, @intCast(@max(this.nsec, 0)))) catch
             return std.math.maxInt(i64);
     }
 
@@ -3794,12 +3726,12 @@ pub const timespec = extern struct {
 
         var new_timespec = this.*;
 
-        new_timespec.sec += sec_inc;
-        new_timespec.nsec += nsec_inc;
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= nsec_inc;
 
         if (new_timespec.nsec >= std.time.ns_per_s) {
-            new_timespec.sec += 1;
-            new_timespec.nsec -= std.time.ns_per_s;
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
         }
 
         return new_timespec;
@@ -3857,19 +3789,15 @@ pub fn OrdinalT(comptime Int: type) type {
 pub const Ordinal = OrdinalT(c_int);
 
 pub fn memmove(output: []u8, input: []const u8) void {
-    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
-    if (comptime Environment.allow_assert) {
-        assert(output.len >= input.len and output.len > 0);
+    if (output.len == 0) {
+        return;
     }
 
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len);
+    }
 
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
+    if (Environment.isNative and !@inComptime()) {
         C.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {
@@ -4025,7 +3953,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return @enumFromInt(int);
         }
 
-        /// Prefer this over @intFromEnum because of type confusion with `.optional`
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
         pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);
@@ -4044,7 +3972,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime bun.assert(strings.eql(f, "d"));
+            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
+                @compileError("Invalid format specifier: " ++ f);
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 
@@ -4052,8 +3981,15 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) Optional {
-                return if (maybe) |i| i.toOptional() else .none;
+            /// Signatures:
+            /// - `init(maybe: ?Index) Optional`
+            /// - `init(maybe: ?backing_int) Optional`
+            pub inline fn init(maybe: anytype) Optional {
+                comptime var t = @typeInfo(@TypeOf(maybe));
+                if (t == .optional) t = @typeInfo(t.optional.child);
+                if (t == .int or t == .comptime_int)
+                    return if (@as(?backing_int, maybe)) |i| Index.init(i).toOptional() else .none;
+                return if (@as(?Index, maybe)) |i| i.toOptional() else .none;
             }
 
             pub inline fn unwrap(oi: Optional) ?Index {
@@ -4211,80 +4147,6 @@ pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
 
 pub const Maybe = bun.JSC.Node.Maybe;
 
-/// Type which could be borrowed or owned
-/// The name is from the Rust std's `Cow` type
-/// Can't think of a better name
-pub fn Cow(comptime T: type, comptime VTable: type) type {
-    const Handler = struct {
-        fn copy(this: *const T, allocator: std.mem.Allocator) T {
-            if (!@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
-            return VTable.copy(this, allocator);
-        }
-
-        fn deinit(this: *T, allocator: std.mem.Allocator) void {
-            if (!@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
-            return VTable.deinit(this, allocator);
-        }
-    };
-
-    return union(enum) {
-        borrowed: *const T,
-        owned: T,
-
-        pub fn borrow(val: *const T) @This() {
-            return .{
-                .borrowed = val,
-            };
-        }
-
-        pub fn own(val: T) @This() {
-            return .{
-                .owned = val,
-            };
-        }
-
-        pub fn replace(this: *@This(), allocator: std.mem.Allocator, newval: T) void {
-            if (this.* == .owned) {
-                this.deinit(allocator);
-            }
-            this.* = .{ .owned = newval };
-        }
-
-        /// Get the underlying value.
-        pub inline fn inner(this: *const @This()) *const T {
-            return switch (this.*) {
-                .borrowed => this.borrowed,
-                .owned => &this.owned,
-            };
-        }
-
-        pub inline fn innerMut(this: *@This()) ?*T {
-            return switch (this.*) {
-                .borrowed => null,
-                .owned => &this.owned,
-            };
-        }
-
-        pub fn toOwned(this: *@This(), allocator: std.mem.Allocator) *T {
-            switch (this.*) {
-                .borrowed => {
-                    this.* = .{
-                        .owned = Handler.copy(this.borrowed, allocator),
-                    };
-                },
-                .owned => {},
-            }
-            return &this.owned;
-        }
-
-        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
-            if (this.* == .owned) {
-                Handler.deinit(&this.owned, allocator);
-            }
-        }
-    };
-}
-
 /// To handle stack overflows:
 /// 1. StackCheck.init()
 /// 2. .isSafeToRecurse()
@@ -4364,113 +4226,18 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
 
 pub const S3 = @import("./s3/client.zig");
-
-const CowString = CowSlice(u8);
-
-/// "Copy on write" slice. There are many instances when it is desired to re-use
-/// a slice, but doing so would make it unknown if that slice should be freed.
-/// This structure, in release builds, is the same size as `[]const T`, but
-/// stores one bit for if deinitialziation should free the underlying memory.
-///
-///     const str = CowSlice(u8).initOwned(try alloc.dupe(u8, "hello!"), alloc);
-///     const borrow = str.borrow();
-///     assert(borrow.slice().ptr == str.slice().ptr)
-///     borrow.deinit(alloc); // knows it is borrowed, no free
-///     str.deinit(alloc); // calls free
-///
-/// In a debug build, there are aggressive assertions to ensure unintentional
-/// frees do not happen. But in a release build, the developer is expected to
-/// keep slice owners alive beyond the lifetimes of the borrowed instances.
-///
-/// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
-pub fn CowSlice(T: type) type {
-    const DebugData = if (Environment.allow_assert) struct {
-        mutex: std.Thread.Mutex,
-        allocator: Allocator,
-        borrows: usize,
-    };
-    return struct {
-        ptr: [*]const T,
-        flags: packed struct(usize) {
-            len: @Type(.{ .Int = .{
-                .bits = @bitSizeOf(usize) - 1,
-                .signedness = .unsigned,
-            } }),
-            is_owned: bool,
-        },
-        debug: if (Environment.allow_assert) ?*DebugData else void,
-
-        const cow_str_assertions = Environment.isDebug;
-
-        /// `data` is transferred into the returned string, and must be freed with
-        /// `.deinit()` when the string and its borrows are done being used.
-        pub fn initOwned(data: []const T, allocator: Allocator) @This() {
-            return .{
-                .ptr = data.ptr,
-                .flags = .{
-                    .is_owned = true,
-                    .len = @intCast(data.len),
-                },
-                .debug = if (cow_str_assertions)
-                    bun.new(DebugData(.{
-                        .mutex = .{},
-                        .allocator = allocator,
-                        .borrows = 0,
-                    })),
-            };
-        }
-
-        /// `.deinit` will not free memory from this slice.
-        pub fn initNeverFree(data: []const T) @This() {
-            return .{
-                .ptr = data.ptr,
-                .flags = .{
-                    .is_owned = false,
-                    .len = @intCast(data.len),
-                },
-                .debug = null,
-            };
-        }
-
-        pub fn slice(str: @This()) []const T {
-            return str.ptr[0..str.flags.len];
-        }
-
-        /// Returns a new string. The borrowed string should be deinitialized
-        /// so that debug assertions that perform.
-        pub fn borrow(str: @This()) @This() {
-            if (cow_str_assertions) if (str.debug) |debug| {
-                debug.mutex.lock();
-                defer debug.mutex.unlock();
-                debug.borrows += 1;
-            };
-            return .{
-                .ptr = str.ptr,
-                .flags = .{
-                    .is_owned = false,
-                    .len = str.flags.len,
-                },
-                .debug = str.debug,
-            };
-        }
-
-        pub fn deinit(str: @This(), allocator: Allocator) void {
-            if (cow_str_assertions) if (str.debug) |debug| {
-                debug.mutex.lock();
-                defer debug.mutex.unlock();
-                bun.assert(debug.allocator == allocator);
-                if (str.flags.is_owned) {
-                    bun.assert(debug.borrows == 0); // active borrows become invalid data
-                } else {
-                    debug.borrows -= 1; // double deinit of a borrowed string
-                }
-                bun.destroy(debug);
-            };
-            if (str.flags.is_owned) {
-                allocator.free(str.slice());
-            }
-        }
-    };
-}
+pub const ptr = @import("./ptr.zig");
 
 const Allocator = std.mem.Allocator;
+
+/// Memory is typically not decommitted immediately when freed.
+/// Sensitive information that's kept in memory can be read in various ways until the OS
+/// decommits it or the memory allocator reuses it for a new allocation.
+/// So if we're about to free something sensitive, we should zero it out first.
+pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
+    @memset(@constCast(slice), 0);
+    allocator.free(slice);
+}
+
+pub const server = @import("./bun.js/api/server.zig");
+pub const macho = @import("./macho.zig");

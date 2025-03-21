@@ -40,7 +40,7 @@
 namespace WebCore {
 
 class ErrorEvent final : public Event {
-    WTF_MAKE_ISO_ALLOCATED(ErrorEvent);
+    WTF_MAKE_TZONE_ALLOCATED(ErrorEvent);
 
 public:
     static Ref<ErrorEvent> create(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)

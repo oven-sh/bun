@@ -38,7 +38,7 @@ assert.throws(() => {
 }, {
   code: 'ERR_INVALID_ARG_TYPE',
   name: 'TypeError',
-  message: 'The "time" argument must be an instance of Array. Received type ' +
+  message: 'The "time" argument must be of type Array. Received type ' +
            'number (1)'
 });
 assert.throws(() => {

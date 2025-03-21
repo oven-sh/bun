@@ -54,6 +54,7 @@ class GlobalInternals;
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
+#include <node_api.h>
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -63,6 +64,8 @@ class EventTarget;
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
+
+extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
 #if OS(WINDOWS)
 #include <uv.h>
@@ -84,6 +87,11 @@ class GlobalObject : public Bun::GlobalScope {
 public:
     // Move this to the front for better cache locality.
     void* m_bunVM;
+
+    bool isShuttingDown() const
+    {
+        return Bun__VirtualMachine__isShuttingDown(m_bunVM);
+    }
 
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
@@ -193,6 +201,7 @@ public:
     JSC::JSObject* JSBufferConstructor() const { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::Structure* JSBufferSubclassStructure() const { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* JSResizableOrGrowableSharedBufferSubclassStructure() const { return m_JSResizableOrGrowableSharedBufferSubclassStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSCryptoKeyStructure() const { return m_JSCryptoKey.getInitializedOnMainThread(this); }
 
@@ -250,6 +259,7 @@ public:
 
     JSObject* processBindingBuffer() const { return m_processBindingBuffer.getInitializedOnMainThread(this); }
     JSObject* processBindingConstants() const { return m_processBindingConstants.getInitializedOnMainThread(this); }
+    JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -258,16 +268,14 @@ public:
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
+    Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
-
-    Structure* JSSocketAddressStructure() const { return m_JSSocketAddressStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
-    Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
 
@@ -307,7 +315,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Bun::WorkerGlobalScope& globalEventScope;
+    Ref<Bun::WorkerGlobalScope> globalEventScope;
 
     void resetOnEachMicrotaskTick();
 
@@ -338,6 +346,8 @@ public:
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__NodeHTTPRequest__onResolve,
+        Bun__NodeHTTPRequest__onReject,
         Bun__FetchTasklet__onRejectRequestStream,
         Bun__FetchTasklet__onResolveRequestStream,
         Bun__S3UploadStream__onRejectRequestStream,
@@ -345,7 +355,7 @@ public:
         Bun__FileStreamWrapper__onRejectRequestStream,
         Bun__FileStreamWrapper__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 32;
+    static constexpr size_t promiseFunctionsSize = 34;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -391,6 +401,9 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
+
+    WTF::String m_moduleWrapperStart;
+    WTF::String m_moduleWrapperEnd;
 
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
@@ -465,13 +478,6 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
-    // NAPI instance data
-    // This is not a correct implementation
-    // Addon modules can override each other's data
-    void* napiInstanceData = nullptr;
-    void* napiInstanceDataFinalizer = nullptr;
-    void* napiInstanceDataFinalizerHint = nullptr;
-
     // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
     // Should only use JSCell* keys and NapiTypeTag values.
     LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
@@ -484,6 +490,7 @@ public:
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
+
     JSC::LazyClassStructure m_JSStatsClassStructure;
     JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
     JSC::LazyClassStructure m_JSDirentClassStructure;
@@ -538,6 +545,13 @@ public:
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
     LazyClassStructure m_JSX509CertificateClassStructure;
+    LazyClassStructure m_JSSignClassStructure;
+    LazyClassStructure m_JSVerifyClassStructure;
+    LazyClassStructure m_JSDiffieHellmanClassStructure;
+    LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
+    LazyClassStructure m_JSHmacClassStructure;
+    LazyClassStructure m_JSHashClassStructure;
+    LazyClassStructure m_JSECDHClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -567,6 +581,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSResizableOrGrowableSharedBufferSubclassStructure;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
@@ -575,13 +590,14 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_cachedNodeVMGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressDTOStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingBuffer;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
+    LazyProperty<JSGlobalObject, JSObject> m_processBindingFs;
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
@@ -589,7 +605,6 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiTypeTagStructure;
 
@@ -602,19 +617,25 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
+    LazyProperty<JSGlobalObject, Structure> m_ServerRouteListStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
 
-    bool hasOverridenModuleResolveFilenameFunction = false;
+    LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
+    LazyProperty<JSGlobalObject, JSFloat64Array> m_statValues;
+    LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatValues;
+    LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
+    LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
 
-    // Almost all NAPI functions should set error_code to the status they're returning right before
-    // they return it
-    napi_extended_error_info m_lastNapiErrorInfo = {
-        .error_message = "",
-        // Not currently used by Bun -- always nullptr
-        .engine_reserved = nullptr,
-        // Not currently used by Bun -- always zero
-        .engine_error_code = 0,
-        .error_code = napi_ok,
-    };
+    // De-optimization once `require("module")._resolveFilename` is written to
+    bool hasOverriddenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
+    bool hasOverriddenModuleWrapper = false;
+
+    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
+    napi_env makeNapiEnv(const napi_module&);
+    napi_env makeNapiEnvForFFI();
+    bool hasNapiFinalizers() const;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
@@ -701,5 +722,8 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
 {
     return globalObject->bunVM();
 }
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
 
 #endif

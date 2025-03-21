@@ -90,7 +90,7 @@ pub const Shebang = struct {
     pub fn init(launcher: []const u8, is_node_or_bun: bool) !Shebang {
         return .{
             .launcher = launcher,
-            // TODO(@paperdave): what if this is invalid utf8?
+            // TODO(@paperclover): what if this is invalid utf8?
             .utf16_len = @intCast(bun.simdutf.length.utf16.from.utf8(launcher)),
             .is_node_or_bun = is_node_or_bun,
         };

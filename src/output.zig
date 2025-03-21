@@ -468,16 +468,6 @@ pub fn isVerbose() bool {
     return false;
 }
 
-// var _source_for_test: if (Environment.isTest) Source else void = undefined;
-// var _source_for_test_set = false;
-// pub fn initTest() void {
-//     if (_source_for_test_set) return;
-//     _source_for_test_set = true;
-//     const in = std.io.getStdErr();
-//     const out = std.io.getStdOut();
-//     _source_for_test = Source.init(File.from(out), File.from(in));
-//     Source.set(&_source_for_test);
-// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -788,6 +778,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
                 return;
             }
 
+            if (bun.crash_handler.isPanicking()) return;
+
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
                 if (Environment.enable_logs)
@@ -835,6 +827,13 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
         tag,
         disabled,
     ).log;
+}
+
+pub fn up(n: usize) void {
+    print("\x1B[{d}A", .{n});
+}
+pub fn clearToEnd() void {
+    print("\x1B[0J", .{});
 }
 
 // Valid "colors":
@@ -997,6 +996,41 @@ pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printErrorln, .stderr);
 }
 
+/// Pretty-print a command that will be run.
+/// $ bun run foo
+fn printCommand(argv: anytype, comptime destination: Destination) void {
+    const prettyFn = if (destination == .stdout) pretty else prettyError;
+    const printFn = if (destination == .stdout) print else printError;
+    switch (@TypeOf(argv)) {
+        [][:0]const u8, []const []const u8, []const []u8, [][]const u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>", .{});
+            printFn("{s}", .{argv[0]});
+            if (argv.len > 1) {
+                for (argv[1..]) |arg| {
+                    printFn(" {s}", .{arg});
+                }
+            }
+            prettyFn("<r>\n", .{});
+        },
+        []const u8, []u8, [:0]const u8, [:0]u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{argv});
+        },
+        else => {
+            @compileLog(argv);
+            @compileError("command() was given unsupported type: " ++ @typeName(@TypeOf(argv)));
+        },
+    }
+    flush();
+}
+
+pub fn commandOut(argv: anytype) void {
+    printCommand(argv, .stdout);
+}
+
+pub fn command(argv: anytype) void {
+    printCommand(argv, .stderr);
+}
+
 pub const Destination = enum(u8) {
     stderr,
     stdout,
@@ -1139,10 +1173,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;

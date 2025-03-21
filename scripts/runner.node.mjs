@@ -48,6 +48,7 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const napiTimeout = 10 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
@@ -255,13 +256,15 @@ async function runTests() {
     for (const testPath of tests) {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-      if (isNodeParallelTest(testPath)) {
-        const runWithBunTest = title.includes("needs-test") || readFileSync(absoluteTestPath, "utf-8").includes('bun:test');
+      if (isNodeTest(testPath)) {
+        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        const runWithBunTest =
+          title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
         const subcommand = runWithBunTest ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [subcommand, "--config=./bunfig.node-test.toml", absoluteTestPath],
+            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
@@ -680,6 +683,9 @@ function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
   }
+  if (/napi/i.test(testPath)) {
+    return napiTimeout;
+  }
   return testTimeout;
 }
 
@@ -866,11 +872,26 @@ function isJavaScriptTest(path) {
 }
 
 /**
- * @param {string} testPath
+ * @param {string} path
  * @returns {boolean}
  */
-function isNodeParallelTest(testPath) {
-  return testPath.replaceAll(sep, "/").includes("js/node/test/parallel/");
+function isNodeTest(path) {
+  // Do not run node tests on macOS x64 in CI
+  // TODO: Unclear why we decided to do this?
+  if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  const unixPath = path.replaceAll(sep, "/");
+  return unixPath.includes("js/node/test/parallel/") || unixPath.includes("js/node/test/sequential/");
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isClusterTest(path) {
+  const unixPath = path.replaceAll(sep, "/");
+  return unixPath.includes("js/node/cluster/test-") && unixPath.endsWith(".ts");
 }
 
 /**
@@ -878,18 +899,15 @@ function isNodeParallelTest(testPath) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (isNodeParallelTest(path) && targetDoesRunNodeTests()) return true;
-  if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
-  return isTestStrict(path);
+  return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
 }
 
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
-}
-
-function targetDoesRunNodeTests() {
-  if (isMacOS && isX64) return false;
-  return true;
 }
 
 /**

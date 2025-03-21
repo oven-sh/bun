@@ -491,10 +491,32 @@ pub const JSGlobalObject = opaque {
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
-            bun.assert(assertion);
+            if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            } else {
+                @panic("This thread lacks a Bun VM");
+            }
         }
         return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+    }
+
+    pub const ThreadKind = enum {
+        main,
+        other,
+    };
+
+    pub fn tryBunVM(this: *JSGlobalObject) struct { *JSC.VirtualMachine, ThreadKind } {
+        const vmPtr = @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+
+        if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+            if (comptime bun.Environment.allow_assert) {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            }
+        } else {
+            return .{ vmPtr, .other };
+        }
+
+        return .{ vmPtr, .main };
     }
 
     /// We can't do the threadlocal check when queued from another thread

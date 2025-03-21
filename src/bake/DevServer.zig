@@ -1350,8 +1350,6 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            html.html_bundle.bundle.data.ref_count.dumpActiveRefs();
-
             try entry_points.append(alloc, html.html_bundle.bundle.data.path, .{ .client = true });
         },
     }

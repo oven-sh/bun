@@ -16,12 +16,14 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSError = bun.JSError;
 const String = bun.String;
 const UUID = bun.UUID;
+const Async = bun.Async;
 
 fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {
         vm: *JSC.VirtualMachine,
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
+        poll: Async.KeepAlive = .{},
 
         ctx: *Ctx,
         callback: JSValue,
@@ -75,11 +77,13 @@ fn ExternCryptoJob(comptime name: []const u8) type {
 
         fn deinit(this: *@This()) void {
             this.ctx.deinit();
+            this.poll.unref(this.vm);
             this.callback.unprotect();
             bun.destroy(this);
         }
 
         pub fn schedule(this: *@This()) callconv(.c) void {
+            this.poll.ref(this.vm);
             JSC.WorkPool.schedule(&this.task);
         }
 

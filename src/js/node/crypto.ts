@@ -128,7 +128,7 @@ const crypto = globalThis.crypto;
 
 var crypto_exports: any = {};
 
-crypto_exports.getRandomValues = crypto.getRandomValues;
+crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
 crypto_exports.constants = $processBindingConstants.crypto;
 
 var scryptSync =

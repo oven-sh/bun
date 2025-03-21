@@ -257,7 +257,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
 
-    JSValue returnValue = JSValue::JSNull;
+    JSValue returnValue = jsNull();
     if (LIKELY(referrer)) {
         if (UNLIKELY(referrer->m_childrenValue)) {
             // It's too hard to append from native code:
@@ -268,8 +268,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             referrer->m_children.last().set(vm, referrer, moduleObject);
         }
     }
-
-    UNUSED_PARAM(referrer);
 
     moduleObject->load(vm, globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

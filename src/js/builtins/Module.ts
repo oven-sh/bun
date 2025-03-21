@@ -21,8 +21,8 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       const existing = $requireMap.$get(originalId);
       if (existing) {
         const c = $evaluateCommonJSModule(existing, this);
-        if (c !== null && c.indexOf(existing) === -1) {
-          this.children.push(existing);
+        if (c && c.indexOf(existing) === -1) {
+          c.push(existing);
         }
         return existing.exports;
       }
@@ -50,8 +50,8 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
       // exports.
       //
       const c = $evaluateCommonJSModule(existing, this);
-      if (c !== null && c.indexOf(existing) === -1) {
-        this.children.push(existing);
+      if (c && c.indexOf(existing) === -1) {
+        c.push(existing);
       }
       return existing.exports;
     }
@@ -136,8 +136,8 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
   }
 
   const c = $evaluateCommonJSModule(mod, this);
-  if (c !== null && c.indexOf(mod) === -1) {
-    this.children.push(mod);
+  if (c && c.indexOf(mod) === -1) {
+    c.push(mod);
   }
   return mod.exports;
 }

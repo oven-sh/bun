@@ -757,22 +757,22 @@ JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
         PropertyName propertyName))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    
+
     return JSValue::encode(
         globalObject->m_moduleRunMainFunction.getInitializedOnMainThread(
             globalObject));
 }
 
-
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
-extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1) {
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
+{
     auto overrideHandler = jsCast<JSObject*>(global->m_moduleRunMainFunction.get(global));
     MarkedArgumentBuffer args;
     args.append(argv1);
     return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain, 
+JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
     (JSGlobalObject * lexicalGlobalObject,
         EncodedJSValue thisValue, EncodedJSValue encodedValue,
         PropertyName propertyName))

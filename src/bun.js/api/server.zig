@@ -7040,6 +7040,10 @@ pub const NodeHTTPResponse = struct {
         return JSC.jsBoolean(this.hasCustomOnData);
     }
 
+    pub fn getUpgraded(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.jsBoolean(this.upgraded);
+    }
+
     pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
         this.hasCustomOnData = value.toBoolean();
         return true;

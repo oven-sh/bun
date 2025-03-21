@@ -348,8 +348,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = null;
     const message = this._httpMessage;
     const req = message?.req;
-    if (req && !req.complete) {
-      // at this point the socket is already destroyed, lets avoid UAF
+    if (req && !req.complete && !req[kHandle]?.upgraded) {
+      // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
       req.destroy(new ConnResetException("aborted"));
     }

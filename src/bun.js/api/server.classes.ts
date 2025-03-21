@@ -168,6 +168,9 @@ export default [
         getter: "getHasCustomOnData",
         setter: "setHasCustomOnData",
       },
+      upgraded: {
+        getter: "getUpgraded",
+      },
       // ontimeout: {
       //   getter: "getOnTimeout",
       //   setter: "setOnTimeout",

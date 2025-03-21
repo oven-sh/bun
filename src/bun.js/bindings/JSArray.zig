@@ -6,7 +6,7 @@ const JSValue = JSC.JSValue;
 const JSArrayIterator = @import("./JSArrayIterator.zig").JSArrayIterator;
 
 pub const JSArray = opaque {
-    // TODO(@paperdave): this can throw
+    // TODO(@paperclover): this can throw
     extern fn JSArray__constructArray(*JSGlobalObject, [*]const JSValue, usize) JSValue;
 
     pub fn create(global: *JSGlobalObject, items: []const JSValue) JSValue {

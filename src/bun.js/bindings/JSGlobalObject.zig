@@ -496,10 +496,32 @@ pub const JSGlobalObject = opaque {
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
-            bun.assert(assertion);
+            if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            } else {
+                @panic("This thread lacks a Bun VM");
+            }
         }
         return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+    }
+
+    pub const ThreadKind = enum {
+        main,
+        other,
+    };
+
+    pub fn tryBunVM(this: *JSGlobalObject) struct { *JSC.VirtualMachine, ThreadKind } {
+        const vmPtr = @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+
+        if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+            if (comptime bun.Environment.allow_assert) {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            }
+        } else {
+            return .{ vmPtr, .other };
+        }
+
+        return .{ vmPtr, .main };
     }
 
     /// We can't do the threadlocal check when queued from another thread
@@ -668,6 +690,10 @@ pub const JSGlobalObject = opaque {
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 
+    pub fn ERR(global: *JSGlobalObject, comptime code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) @import("ErrorCode").ErrorBuilder(code, fmt, @TypeOf(args)) {
+        return .{ .global = global, .args = args };
+    }
+
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
@@ -677,6 +703,60 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+
+    extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
+    pub fn create(
+        v: *JSC.VirtualMachine,
+        console: *anyopaque,
+        context_id: i32,
+        mini_mode: bool,
+        eval_mode: bool,
+        worker_ptr: ?*anyopaque,
+    ) *JSGlobalObject {
+        v.eventLoop().ensureWaker();
+        const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
+
+        // JSC might mess with the stack size.
+        bun.StackCheck.configureThread();
+
+        return global;
+    }
+
+    extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
+    pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
+        return Zig__GlobalObject__getModuleRegistryMap(global);
+    }
+
+    extern fn Zig__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
+    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
+        return Zig__GlobalObject__resetModuleRegistryMap(global, map);
+    }
+
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
+        JSC.markBinding(@src());
+        return JSC.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
+            bun.debugAssert(res.success == false);
+        };
+    }
+
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *JSC.Exception) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        return JSC.VirtualMachine.reportUncaughtException(global, exception);
+    }
+
+    pub fn onCrash() callconv(.C) void {
+        JSC.markBinding(@src());
+        bun.Output.flush();
+        @panic("A C++ exception occurred");
+    }
+
+    pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
+
+    comptime {
+        @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
+        @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
+        @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
+    }
 };
 
 const CommonStrings = JSC.CommonStrings;

@@ -402,6 +402,9 @@ public:
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
 
+    WTF::String m_moduleWrapperStart;
+    WTF::String m_moduleWrapperEnd;
+
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
@@ -549,6 +552,7 @@ public:
     LazyClassStructure m_JSHmacClassStructure;
     LazyClassStructure m_JSHashClassStructure;
     LazyClassStructure m_JSECDHClassStructure;
+    LazyClassStructure m_JSCipherClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -624,7 +628,10 @@ public:
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
 
-    bool hasOverridenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module")._resolveFilename` is written to
+    bool hasOverriddenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
+    bool hasOverriddenModuleWrapper = false;
 
     WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);

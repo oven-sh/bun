@@ -5,16 +5,20 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSInternalPromise = @import("JSInternalPromise.zig").JSInternalPromise;
-const Shimmer = JSC.Shimmer;
 const String = bun.String;
 
-pub const JSModuleLoader = extern struct {
-    pub const shim = Shimmer("JSC", "JSModuleLoader", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSModuleLoader.h";
-    pub const name = "JSC::JSModuleLoader";
-    pub const namespace = "JSC";
+pub const JSModuleLoader = opaque {
+    extern fn JSC__JSModuleLoader__evaluate(
+        globalObject: *JSGlobalObject,
+        sourceCodePtr: [*]const u8,
+        sourceCodeLen: usize,
+        originUrlPtr: [*]const u8,
+        originUrlLen: usize,
+        referrerUrlPtr: [*]const u8,
+        referrerUrlLen: usize,
+        thisValue: JSValue,
+        exception: [*]JSValue,
+    ) JSValue;
 
     pub fn evaluate(
         globalObject: *JSGlobalObject,
@@ -27,7 +31,7 @@ pub const JSModuleLoader = extern struct {
         thisValue: JSValue,
         exception: [*]JSValue,
     ) JSValue {
-        return shim.cppFn("evaluate", .{
+        return JSC__JSModuleLoader__evaluate(
             globalObject,
             sourceCodePtr,
             sourceCodeLen,
@@ -37,7 +41,7 @@ pub const JSModuleLoader = extern struct {
             referrerUrlLen,
             thisValue,
             exception,
-        });
+        );
     }
     extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: *JSGlobalObject, arg1: ?*const String) *JSInternalPromise;
     pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: ?*const bun.String) ?*JSInternalPromise {
@@ -48,15 +52,4 @@ pub const JSModuleLoader = extern struct {
     pub fn import(globalObject: *JSGlobalObject, module_name: *const bun.String) *JSInternalPromise {
         return JSModuleLoader__import(globalObject, module_name);
     }
-
-    // pub fn dependencyKeysIfEvaluated(this: *JSModuleLoader, globalObject: *JSGlobalObject, moduleRecord: *JSModuleRecord) *JSValue {
-    //     return shim.cppFn("dependencyKeysIfEvaluated", .{ this, globalObject, moduleRecord });
-    // }
-
-    pub const Extern = [_][]const u8{
-        "evaluate",
-        "loadAndEvaluateModule",
-        "importModule",
-        "checkSyntax",
-    };
 };

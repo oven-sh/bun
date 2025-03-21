@@ -8,7 +8,6 @@ pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
-pub const Shimmer = @import("./bun.js/bindings/shimmer.zig").Shimmer;
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;

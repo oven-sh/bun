@@ -106,11 +106,6 @@ pub fn PATH_SIZE(comptime T: type) usize {
     return if (T == u16) PATH_MIN_WIDE else bun.MAX_PATH_BYTES;
 }
 
-const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
-pub const shim = Shimmer("Bun", "Path", @This());
-pub const name = "Bun__Path";
-pub const include = "Path.h";
-pub const namespace = shim.namespace;
 pub const sep_posix = CHAR_FORWARD_SLASH;
 pub const sep_windows = CHAR_BACKWARD_SLASH;
 pub const sep_str_posix = CHAR_STR_FORWARD_SLASH;
@@ -477,10 +472,6 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     return basenameJS_T(u8, globalObject, isWindows, pathZSlice.slice(), if (suffixZSlice) |_s| _s.slice() else null);
 }
 
-pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(JSC.conv) JSC.JSValue {
-    return shim.cppFn("create", .{ globalObject, isWindows });
-}
-
 /// Based on Node v21.6.1 path.posix.dirname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1278
 pub fn dirnamePosixT(comptime T: type, path: []const T) []const T {
@@ -731,8 +722,8 @@ pub fn extnamePosixT(comptime T: type, path: []const T) []const T {
         (preDotState != null and _preDotState == 0) or
         // The (right-most) trimmed path component is exactly '..'
         (_preDotState == 1 and
-        _startDot == _end - 1 and
-        _startDot == startPart + 1))
+            _startDot == _end - 1 and
+            _startDot == startPart + 1))
     {
         return &.{};
     }
@@ -820,8 +811,8 @@ pub fn extnameWindowsT(comptime T: type, path: []const T) []const T {
         (preDotState != null and _preDotState == 0) or
         // The (right-most) trimmed path component is exactly '..'
         (_preDotState == 1 and
-        _startDot == _end - 1 and
-        _startDot == startPart + 1))
+            _startDot == _end - 1 and
+            _startDot == startPart + 1))
     {
         return &.{};
     }
@@ -1031,9 +1022,9 @@ pub fn isAbsoluteWindowsT(comptime T: type, path: []const T) bool {
     return isSepWindowsT(T, byte0) or
         // Possible device root
         (len > 2 and
-        isWindowsDeviceRootT(T, byte0) and
-        path[1] == CHAR_COLON and
-        isSepWindowsT(T, path[2]));
+            isWindowsDeviceRootT(T, byte0) and
+            path[1] == CHAR_COLON and
+            isSepWindowsT(T, path[2]));
 }
 
 pub fn isAbsolutePosixZigString(pathZStr: JSC.ZigString) bool {
@@ -1297,9 +1288,9 @@ fn normalizeStringT(comptime T: type, path: []const T, allowAboveRoot: bool, sep
     const len = path.len;
     const isSepT =
         if (platform == .posix)
-        isSepPosixT
-    else
-        isSepWindowsT;
+            isSepPosixT
+        else
+            isSepWindowsT;
 
     var bufOffset: usize = 0;
     var bufSize: usize = 0;
@@ -1777,8 +1768,8 @@ pub fn parsePosixT(comptime T: type, path: []const T) PathParsed(T) {
             (preDotState != null and _preDotState == 0) or
             // The (right-most) trimmed path component is exactly '..'
             (_preDotState == 1 and
-            _startDot == _end - 1 and
-            _startDot == startPart + 1))
+                _startDot == _end - 1 and
+                _startDot == startPart + 1))
         {
             _name = path[start.._end];
             base = _name;
@@ -1961,8 +1952,8 @@ pub fn parseWindowsT(comptime T: type, path: []const T) PathParsed(T) {
             (preDotState != null and _preDotState == 0) or
             // The (right-most) trimmed path component is exactly '..'
             (_preDotState == 1 and
-            _startDot == _end - 1 and
-            _startDot == startPart + 1))
+                _startDot == _end - 1 and
+                _startDot == startPart + 1))
         {
             // Prefix with _ to avoid shadowing the identifier in the outer scope.
             _name = path[startPart.._end];
@@ -2584,7 +2575,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
             if (envPath == null or
                 (path[2] == CHAR_BACKWARD_SLASH and
-                !eqlIgnoreCaseT(T, path[0..2], resolvedDevice)))
+                    !eqlIgnoreCaseT(T, path[0..2], resolvedDevice)))
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
@@ -2972,8 +2963,6 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     defer pathZSlice.deinit();
     return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
 }
-
-pub const Extern = [_][]const u8{"create"};
 
 comptime {
     @export(&Path.basename, .{ .name = "Bun__Path__basename" });

@@ -141,7 +141,7 @@ pub const PatchTask = struct {
     pub fn runFromMainThread(
         this: *PatchTask,
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         defer {
@@ -165,7 +165,7 @@ pub const PatchTask = struct {
     fn runFromMainThreadCalcHash(
         this: *PatchTask,
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !void {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
@@ -173,7 +173,7 @@ pub const PatchTask = struct {
         const hash = calc_hash.result orelse {
             const fmt = "\n\nErrors occured while calculating hash for <b>{s}<r>:\n\n";
             const args = .{this.callback.calc_hash.patchfile_path};
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
             } else {
                 Output.prettyErrorln(

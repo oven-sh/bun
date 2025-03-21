@@ -654,7 +654,7 @@ pub const ParsedShellScript = struct {
         const str_js = arguments.nextEat() orelse {
             return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
-        const str = bun.String.fromJS(str_js, globalThis);
+        const str = try bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }
@@ -1698,7 +1698,7 @@ pub const Interpreter = struct {
 
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value = callframe.argument(0);
-        const str = bun.String.fromJS(value, globalThis);
+        const str = try bun.String.fromJS(value, globalThis);
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();
@@ -4930,8 +4930,8 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
-                // FIXME: There's a race condition where this could change variants before spawnAsync returns.
+            var did_exit_immediately = false;
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child, &did_exit_immediately)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.exec = .none;
@@ -4942,6 +4942,17 @@ pub const Interpreter = struct {
             subproc.ref();
             this.spawn_arena_freed = true;
             arena.deinit();
+
+            if (did_exit_immediately) {
+                if (subproc.process.hasExited()) {
+                    // process has already exited, we called wait4(), but we did not call onProcessExit()
+                    subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage));
+                } else {
+                    // process has already exited, but we haven't called wait4() yet
+                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                    subproc.process.wait(false);
+                }
+            }
         }
 
         fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {

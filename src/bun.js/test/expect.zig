@@ -4587,10 +4587,8 @@ pub const Expect = struct {
             if (total_count >= return_count and times_value.isCell()) {
                 if (try times_value.get(globalThis, "type")) |type_string| {
                     if (type_string.isString()) {
-                        break :brk ReturnStatus.Map.fromJS(globalThis, type_string) orelse {
-                            if (!globalThis.hasException())
-                                return globalThis.throw("Expected value must be a mock function with returns: {}", .{value});
-                            return .zero;
+                        break :brk try ReturnStatus.Map.fromJS(globalThis, type_string) orelse {
+                            return globalThis.throw("Expected value must be a mock function with returns: {}", .{value});
                         };
                     }
                 }
@@ -4862,7 +4860,7 @@ pub const Expect = struct {
                 assert(message.isCallable()); // checked above
 
             const message_result = try message.callWithGlobalThis(globalThis, &.{});
-            message_text = try bun.String.fromJS2(message_result, globalThis);
+            message_text = try bun.String.fromJS(message_result, globalThis);
         }
 
         const matcher_params = CustomMatcherParamsFormatter{

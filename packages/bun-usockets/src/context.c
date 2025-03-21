@@ -72,7 +72,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     while (ls) {
         struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
         us_listen_socket_close(ssl, ls);
-        
+
         ls = nextLS;
     }
 
@@ -310,7 +310,7 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
         }
     #endif
 
-    return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };    
+    return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
 }
 
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
@@ -337,7 +337,7 @@ void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
 }
 void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
     uint32_t ref_count = context->ref_count;
-    context->ref_count--;    
+    context->ref_count--;
     if (ref_count == 1) {
         us_internal_socket_context_free(ssl, context);
     }
@@ -520,7 +520,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     }
 
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
-    c->socket_ext_size = socket_ext_size;  
+    c->socket_ext_size = socket_ext_size;
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
@@ -641,9 +641,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
 
         /* Emit error, close without emitting on_close */
 
-        /* There are two possible states here: 
-            1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
-            2. It's a us_socket_t* 
+        /* There are two possible states here:
+            1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed.
+            2. It's a us_socket_t*
 
             We differentiate between these two cases by checking if the connect_state is null.
         */
@@ -887,7 +887,7 @@ void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *con
         return;
     }
 #endif
-    
+
     context->on_connect_error = on_connect_error;
 }
 
@@ -898,7 +898,7 @@ void us_socket_context_on_socket_connect_error(int ssl, struct us_socket_context
         return;
     }
 #endif
-    
+
     context->on_socket_connect_error = on_connect_error;
 }
 

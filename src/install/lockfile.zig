@@ -1148,7 +1148,7 @@ pub fn maybeCloneFilteringRootPackages(
     manager: *PackageManager,
     features: Features,
     exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
+    log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     const old_packages = old.packages.slice();
     const old_dependencies_lists = old_packages.items(.dependencies);
@@ -1273,7 +1273,7 @@ pub fn clean(
     manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
     exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
+    log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
     var log = logger.Log.init(bun.default_allocator);
@@ -1344,9 +1344,12 @@ pub fn cleanWithLogger(
     updates: []PackageManager.UpdateRequest,
     log: *logger.Log,
     exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
+    log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start();
+    var timer: std.time.Timer = undefined;
+    if (log_level.isVerbose()) {
+        timer = try std.time.Timer.start();
+    }
 
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
@@ -1519,7 +1522,7 @@ pub fn cleanWithLogger(
         }
     }
 
-    if (comptime log_level.isVerbose()) {
+    if (log_level.isVerbose()) {
         Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
             old.packages.len,
             new.packages.len,
@@ -2061,7 +2064,7 @@ pub const Printer = struct {
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
-            comptime log_level: PackageManager.Options.LogLevel,
+            log_level: PackageManager.Options.LogLevel,
         ) !void {
             try writer.writeAll("\n");
             const allocator = this.lockfile.allocator;
@@ -2083,7 +2086,7 @@ pub const Printer = struct {
 
             var had_printed_new_install = false;
             if (this.successfully_installed) |*installed| {
-                if (comptime log_level.isVerbose()) {
+                if (log_level.isVerbose()) {
                     var workspaces_to_print: std.ArrayListUnmanaged(DependencyID) = .{};
                     defer workspaces_to_print.deinit(allocator);
 

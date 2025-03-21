@@ -676,7 +676,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
                     const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
@@ -712,7 +712,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
                     this.formatter.writeIndent(Writer, this.writer) catch return;
@@ -1431,7 +1431,7 @@ pub const JestPrettyFormat = struct {
                         break :brk JSValue.undefined;
                     };
 
-                    const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                    const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                         .MessageEvent, .ErrorEvent => |evt| evt,
                         else => {
                             return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);

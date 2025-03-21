@@ -1017,7 +1017,6 @@ pub const PipeReader = struct {
         }
     };
 
-
     pub const CapturedWriter = struct {
         dead: bool = true,
         writer: *sh.IOWriter = undefined,

@@ -44,7 +44,7 @@ void initAuthenticated(JSGlobalObject* globalObject, ThrowScope& scope, CipherCt
 
     if (ctx.isGcmMode()) {
         if (authTagLen.has_value()) {
-            if (Cipher::IsValidGCMTagLength(*authTagLen)) {
+            if (!Cipher::IsValidGCMTagLength(*authTagLen)) {
                 WTF::StringBuilder builder;
                 builder.append("Invalid authentication tag length: "_s);
                 builder.append(*authTagLen);
@@ -113,7 +113,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         encodingValue = optionsValue.get(globalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        if (encodingValue.isNull()) {
+        if (encodingValue.isUndefinedOrNull()) {
             encodingValue = jsUndefined();
         } else {
             V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);

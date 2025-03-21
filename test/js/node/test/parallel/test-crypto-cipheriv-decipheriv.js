@@ -62,6 +62,10 @@ function testCipher2(key, iv) {
 
 
 function testCipher3(key, iv) {
+  if (!crypto.getCiphers().includes('id-aes128-wrap')) {
+    common.printSkipMessage('unsupported id-aes128-wrap test');
+    return;
+  }
   // Test encryption and decryption with explicit key and iv.
   // AES Key Wrap test vector comes from RFC3394
   const plaintext = Buffer.from('00112233445566778899AABBCCDDEEFF', 'hex');
@@ -209,7 +213,7 @@ for (let n = minIvLength; n < maxIvLength; n += 1) {
     {
       name: 'Error',
       code: 'ERR_CRYPTO_UNKNOWN_CIPHER',
-      message: 'Unknown cipher'
+      message: /Unknown cipher(: aes-127)?/
     });
 
   // Passing a key with an invalid length should throw.

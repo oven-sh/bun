@@ -841,7 +841,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     ArgList args(callFrame);
     JSValue contextArg = args.at(0);
     if (contextArg.isUndefinedOrNull()) {
-        // contextArg = JSC::constructEmptyObject(globalObject);
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
     }
 
@@ -1566,13 +1565,10 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         // Just the function body
         auto body = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        // program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
-        // *outOffset = "(function () {\n"_s.length();
 
         program = tryMakeString("(function () {"_s, body, "})"_s);
         *outOffset = "(function () {"_s.length();
 
-        // program = tryMakeString("(function () {"_s, body, "\n})"_s);
         if (UNLIKELY(!program)) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
@@ -1595,11 +1591,6 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         auto body = args.at(parameterCount).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
-        // *outOffset = "(function () {\n"_s.length() + paramString.length();
-
-        // program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "})"_s);
-        // program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "\n})"_s);
         program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "})"_s);
         *outOffset = "(function ("_s.length() + paramString.length() + ") {"_s.length();
 

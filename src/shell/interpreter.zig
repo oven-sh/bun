@@ -5339,7 +5339,7 @@ pub const Interpreter = struct {
             };
 
             const Blob = struct {
-                const RefCount = bun.ptr.RefCount(Blob, "ref_count", Blob.deinit);
+                const RefCount = bun.ptr.RefCount(@This(), "ref_count", Blob.deinit);
                 pub const ref = Blob.RefCount.ref;
                 pub const deref = Blob.RefCount.deref;
 
@@ -11126,7 +11126,7 @@ pub const Interpreter = struct {
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
     pub const IOReader = struct {
-        const RefCount = bun.ptr.RefCount(IOReader, "ref_count", asyncDeinit);
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit);
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
 
@@ -11320,7 +11320,7 @@ pub const Interpreter = struct {
             }
             this.buf.deinit(bun.default_allocator);
             this.reader.disableKeepingProcessAlive({});
-            this.reader.derefOrDeinit();
+            this.reader.deinit();
             bun.destroy(this);
         }
 
@@ -11390,7 +11390,7 @@ pub const Interpreter = struct {
     };
 
     pub const IOWriter = struct {
-        const RefCount = bun.ptr.RefCount(IOWriter, "ref_count", asyncDeinit);
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit);
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
         const This = @This();

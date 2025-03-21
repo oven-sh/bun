@@ -399,10 +399,10 @@ pub const Arguments = struct {
         if (config_path_.len == 0 and (user_config_path_ != null or
             Command.Tag.always_loads_config.get(cmd) or
             (cmd == .AutoCommand and
-            // "bun"
-            (ctx.positionals.len == 0 or
-            // "bun file.js"
-            ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
+                // "bun"
+                (ctx.positionals.len == 0 or
+                    // "bun file.js"
+                    ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
         {
             config_path_ = "bunfig.toml";
             auto_loaded = true;
@@ -2134,7 +2134,7 @@ pub const Command = struct {
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@')) and
+                        strings.startsWithChar(template_name, '@')) and
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {

@@ -13,8 +13,7 @@ const LOLHTML = bun.LOLHTML;
 
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -391,8 +390,7 @@ pub const HTMLRewriter = struct {
     };
 
     pub const BufferOutputSink = struct {
-        const Self = @This();
-        const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
 
@@ -1071,8 +1069,7 @@ fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSV
 }
 
 pub const TextChunk = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1176,8 +1173,7 @@ pub const TextChunk = struct {
 };
 
 pub const DocType = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1263,8 +1259,7 @@ pub const DocType = struct {
 };
 
 pub const DocEnd = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1319,8 +1314,7 @@ pub const DocEnd = struct {
 };
 
 pub const Comment = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1442,8 +1436,7 @@ pub const Comment = struct {
 };
 
 pub const EndTag = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1574,8 +1567,7 @@ pub const EndTag = struct {
 };
 
 pub const AttributeIterator = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1639,8 +1631,7 @@ pub const AttributeIterator = struct {
     }
 };
 pub const Element = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 

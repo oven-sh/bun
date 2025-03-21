@@ -7,7 +7,7 @@ const enable_debug = bun.Environment.isDebug;
 /// Avoid reference counting when an object only has one owner.
 ///
 ///     const Thing = struct {
-///         const RefCount = bun.ptr.RefCount(T, "ref_count", deinit);
+///         const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
 ///         // expose `ref` and `deref` as public methods
 ///         pub const ref = RefCount.ref;
 ///         pub const deref = RefCount.deref;
@@ -117,6 +117,13 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void) type 
             }
         }
 
+        /// The active_counts value is 0 after the destructor is called.
+        pub fn assertNoRefs(count: *@This()) void {
+            if (enable_debug) {
+                bun.assert(count.active_counts == 0);
+            }
+        }
+
         fn assertNonThreadSafeCountIsSingleThreaded(count: *@This()) void {
             const thread = if (count.thread) |*ptr| ptr else {
                 count.thread = .initLocked();
@@ -193,6 +200,13 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
             if (enable_debug) {
                 const ptr: *T = @fieldParentPtr(field_name, count);
                 count.debug.dump(@typeName(T), ptr, count.active_counts.load(.seq_cst));
+            }
+        }
+
+        /// The active_counts value is 0 after the destructor is called.
+        pub fn assertNoRefs(count: *@This()) void {
+            if (enable_debug) {
+                bun.assert(count.active_counts.load(.seq_cst) == 0);
             }
         }
 

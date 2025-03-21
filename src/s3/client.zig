@@ -194,19 +194,19 @@ pub fn writableStream(
 }
 
 const S3UploadStreamWrapper = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
     sink: *JSC.WebCore.NetworkSink,
     task: *MultiPartUpload,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
-    ref_count: RefCount,
     path: []const u8, // this is owned by the task not by the wrapper
     global: *JSC.JSGlobalObject,
 
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();

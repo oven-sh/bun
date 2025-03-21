@@ -530,8 +530,7 @@ pub const All = struct {
 const uws = bun.uws;
 
 pub const TimeoutObject = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -620,8 +619,7 @@ pub const TimeoutObject = struct {
 };
 
 pub const ImmediateObject = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -1095,8 +1093,8 @@ const TimerObjectInternals = struct {
 
         this.setEnableKeepingEventLoopAlive(vm, false);
         switch (kind) {
-            .setImmediate => bun.destroy(@as(*ImmediateObject, @fieldParentPtr("internals", this))),
-            .setTimeout, .setInterval => bun.destroy(@as(*TimeoutObject, @fieldParentPtr("internals", this))),
+            .setImmediate => (@as(*ImmediateObject, @fieldParentPtr("internals", this))).ref_count.assertNoRefs(),
+            .setTimeout, .setInterval => (@as(*TimeoutObject, @fieldParentPtr("internals", this))).ref_count.assertNoRefs(),
         }
     }
 };

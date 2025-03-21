@@ -952,6 +952,10 @@ pub const ShellSubprocess = struct {
 const WaiterThread = bun.spawn.WaiterThread;
 
 pub const PipeReader = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     reader: IOReader = undefined,
     process: ?*ShellSubprocess = null,
     event_loop: JSC.EventLoopHandle = undefined,
@@ -1013,10 +1017,6 @@ pub const PipeReader = struct {
         }
     };
 
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
 
     pub const CapturedWriter = struct {
         dead: bool = true,
@@ -1368,7 +1368,7 @@ pub const PipeReader = struct {
 
         this.buffered_output.deinit();
 
-        this.reader.derefOrDeinit();
+        this.reader.deinit();
         bun.destroy(this);
     }
 };

@@ -655,7 +655,7 @@ pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     const Self = @This();
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
     const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION

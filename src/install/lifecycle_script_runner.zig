@@ -445,8 +445,8 @@ pub const LifecycleScriptSubprocess = struct {
             process.deref();
         }
 
-        this.stdout.derefOrDeinit();
-        this.stderr.derefOrDeinit();
+        this.stdout.deinit();
+        this.stderr.deinit();
         this.stdout = OutputReader.init(@This());
         this.stderr = OutputReader.init(@This());
     }
@@ -456,8 +456,8 @@ pub const LifecycleScriptSubprocess = struct {
         this.ensureNotInHeap();
 
         if (!this.manager.options.log_level.isVerbose()) {
-            this.stdout.derefOrDeinit();
-            this.stderr.derefOrDeinit();
+            this.stdout.deinit();
+            this.stderr.deinit();
         }
 
         bun.destroy(this);

@@ -865,9 +865,6 @@ const PosixBufferedReader = struct {
         this.closeWithoutReporting();
     }
 
-    /// Windows is ref-counted; POSIX is not.
-    pub const derefOrDeinit = deinit;
-
     pub fn onError(this: *PosixBufferedReader, err: bun.sys.Error) void {
         this.vtable.onReaderError(err);
     }
@@ -964,12 +961,6 @@ const WindowsOutputReaderVTable = struct {
 };
 
 pub const WindowsBufferedReader = struct {
-    const RefCount = bun.ptr.RefCount(WindowsBufferedReader, "ref_count", deinit);
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-    /// Windows is ref-counted; POSIX is not.
-    pub const derefOrDeinit = deref;
-
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
     source: ?Source = null,
@@ -980,7 +971,6 @@ pub const WindowsBufferedReader = struct {
 
     parent: *anyopaque = undefined,
     vtable: WindowsOutputReaderVTable = undefined,
-    ref_count: RefCount,
 
     pub fn memoryCost(this: *const WindowsBufferedReader) usize {
         return @sizeOf(@This()) + this._buffer.capacity;
@@ -1001,7 +991,6 @@ pub const WindowsBufferedReader = struct {
 
     pub fn init(comptime Type: type) WindowsBufferedReader {
         return .{
-            .ref_count = .init(),
             .vtable = .{
                 .onReadChunk = if (@hasDecl(Type, "onReadChunk")) @ptrCast(&Type.onReadChunk) else null,
                 .onReaderDone = @ptrCast(&Type.onReaderDone),
@@ -1017,7 +1006,6 @@ pub const WindowsBufferedReader = struct {
     pub fn from(to: *WindowsBufferedReader, other: anytype, parent: anytype) void {
         bun.assert(other.source != null and to.source == null);
         to.* = .{
-            .ref_count = .init(),
             .vtable = to.vtable,
             .flags = other.flags,
             ._buffer = other.buffer().*,
@@ -1163,7 +1151,7 @@ pub const WindowsBufferedReader = struct {
         return this.start(fd, poll);
     }
 
-    fn deinit(this: *WindowsBufferedReader) void {
+    pub fn deinit(this: *WindowsBufferedReader) void {
         this.buffer().deinit();
         const source = this.source orelse return;
         if (!source.isClosed()) {
@@ -1171,7 +1159,6 @@ pub const WindowsBufferedReader = struct {
             this.closeImpl(false);
         }
         this.source = null;
-        bun.destroy(this);
     }
 
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {

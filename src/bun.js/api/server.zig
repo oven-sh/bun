@@ -6178,7 +6178,7 @@ pub const NodeHTTPResponse = struct {
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
-    const RefCount = bun.ptr.RefCount(NodeHTTPResponse, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -6429,7 +6429,7 @@ pub const NodeHTTPResponse = struct {
             // 1 - the JS object
             // 1 - the Server handler.
             // 1 - the onData callback (request body)
-            .ref_count = .initExactCount(if (has_body.*) 4 else 3),
+            .ref_count = .initExactRefs(if (has_body.*) 4 else 3),
             .upgrade_context = .{
                 .context = @ptrCast(upgrade_ctx),
                 .request = request,
@@ -7199,7 +7199,7 @@ const ServePlugins = struct {
     ref_count: RefCount,
 
     /// Reference count is incremented while there are other objects that are waiting on plugin loads.
-    const RefCount = bun.ptr.RefCount(ServePlugins, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 

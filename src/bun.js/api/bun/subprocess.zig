@@ -2,7 +2,7 @@
 //! code for `Bun.spawnSync`
 const Subprocess = @This();
 pub usingnamespace JSC.Codegen.JSSubprocess;
-const RefCount = bun.ptr.RefCount(Subprocess, "ref_count", deinit);
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
@@ -1036,7 +1036,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
 }
 
 pub const PipeReader = struct {
-    const RefCount = bun.ptr.RefCount(PipeReader, "ref_count", PipeReader.deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", PipeReader.deinit);
     pub const ref = PipeReader.RefCount.ref;
     pub const deref = PipeReader.RefCount.deref;
 
@@ -1233,7 +1233,7 @@ pub const PipeReader = struct {
             bun.default_allocator.free(this.state.done);
         }
 
-        this.reader.derefOrDeinit();
+        this.reader.deinit();
         bun.destroy(this);
     }
 };

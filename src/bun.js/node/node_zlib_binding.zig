@@ -311,8 +311,7 @@ const CountedKeepAlive = struct {
 };
 
 pub const SNativeZlib = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -682,8 +681,7 @@ const ZlibContext = struct {
 pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
 
 pub const SNativeBrotli = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 

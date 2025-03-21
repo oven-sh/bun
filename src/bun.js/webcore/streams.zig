@@ -4353,7 +4353,7 @@ pub const FileReader = struct {
     pub fn deinit(this: *FileReader) void {
         this.buffered.deinit(bun.default_allocator);
         this.reader.updateRef(false);
-        this.reader.derefOrDeinit();
+        this.reader.deinit();
         this.pending_value.deinit();
 
         if (this.lazy != .none) {

@@ -2051,10 +2051,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     }
     }
 
-#if BUN_DEBUG
-    ASSERT(false, "Improper use of @makeError! Add error function to ErrorCode.cpp and builtins.d.ts");
-#endif
-
     auto&& message = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 

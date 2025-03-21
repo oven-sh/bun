@@ -87,7 +87,7 @@ beforeAll(async () => {
         // on linux CI, node-gyp will default to g++ and the version installed there is very old,
         // so we make it use clang instead
         ...(process.platform == "linux" && isCI
-          ? { "CC": "/usr/lib/llvm-18/bin/clang", CXX: "/usr/lib/llvm-18/bin/clang++" }
+          ? { "CC": "/usr/lib/llvm-19/bin/clang", CXX: "/usr/lib/llvm-19/bin/clang++" }
           : {}),
       },
     });

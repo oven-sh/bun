@@ -204,7 +204,7 @@ export const write = (async (dest: BunFileBlob | PathLike, input: string | Blob 
 
 export const sha = SHA512_256.hash satisfies typeof Bun.sha;
 
-export const nanoseconds = (() => Math.trunc(performance.now() * 1000000)) satisfies typeof Bun.nanoseconds;
+export const nanoseconds = (() => Number(process.hrtime.bigint())) satisfies typeof Bun.nanoseconds;
 
 //? This just prints out some debug stuff in console, and as the name implies no one should be using it.
 //? But, just in case someone does, we'll make it a no-op function so at least the program doesn't crash trying to run the function.

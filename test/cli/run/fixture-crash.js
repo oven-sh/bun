@@ -8,7 +8,6 @@ try {
 }
 
 const approach = process.argv[2];
-crash_handler.segfault();
 if (approach in crash_handler) {
   crash_handler[approach]();
 } else {

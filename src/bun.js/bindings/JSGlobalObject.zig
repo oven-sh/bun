@@ -486,20 +486,58 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn bunVM(this: *JSGlobalObject) *JSC.VirtualMachine {
-        if (comptime bun.Environment.allow_assert) {
-            // if this fails
-            // you most likely need to run
-            //   make clean-jsc-bindings
-            //   make bindings -j10
-            const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
-            bun.assert(assertion);
+        const vm_holder_vm = JSC.VirtualMachine.VMHolder.vm orelse
+            @panic("internal assertion failure: bunVM() called on thread with no VM");
+        const global_object_vm = this.bunVMConcurrently();
+        if (bun.Environment.allow_assert) {
+            bun.assertf(global_object_vm == vm_holder_vm,
+                \\Bun VM for global object {x} mismatched:
+                \\{x} in VMHolder
+                \\{x} from JSC__JSGlobalObject__bunVM
+                \\either there is an inconsistency with the bindings, or bunVM() was called on the wrong thread.
+            , .{
+                @intFromPtr(this),
+                @intFromPtr(vm_holder_vm),
+                @intFromPtr(global_object_vm),
+            });
         }
-        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+
+        return global_object_vm;
+    }
+
+    pub const TryBunVMResult = union(enum) {
+        /// Running on the main thread executing JS code for this virtual machine.
+        main_thread: *JSC.VirtualMachine,
+        /// Running on a different thread which does not have a JS virtual machine. Only concurrent
+        /// APIs may be used.
+        other_thread: *JSC.VirtualMachine,
+    };
+
+    /// Get the Bun VM for this global object as well as information about what thread you are on
+    /// with respect to that VM. `.main` means you are on the main thread that runs JS code for that
+    /// VM, and `.other` means you are on any other thread.
+    ///
+    /// Must not be called from any other VM's main thread (i.e. a Worker), but this may be called
+    /// from any other thread that doesn't have a VM (e.g. a JSC heap thread or a Bun work pool
+    /// thread)
+    pub fn tryBunVM(this: *JSGlobalObject) TryBunVMResult {
+        const global_object_vm = this.bunVMConcurrently();
+
+        if (JSC.VirtualMachine.VMHolder.vm) |this_thread_vm| {
+            bun.assertf(
+                global_object_vm == this_thread_vm,
+                "tryBunVM called from a different VM's main thread",
+                .{},
+            );
+            return .{ .main_thread = global_object_vm };
+        } else {
+            return .{ .other_thread = global_object_vm };
+        }
     }
 
     /// We can't do the threadlocal check when queued from another thread
     pub fn bunVMConcurrently(this: *JSGlobalObject) *JSC.VirtualMachine {
-        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+        return @ptrCast(@alignCast(this.bunVMUnsafe()));
     }
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;

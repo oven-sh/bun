@@ -963,6 +963,23 @@ pub const EventLoop = struct {
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
+    fn externRunCallback1(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue) callconv(.c) void {
+        const vm = global.bunVM();
+        var loop = vm.eventLoop();
+        loop.runCallback(callback, global, thisValue, &.{arg0});
+    }
+
+    fn externRunCallback2(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue, arg1: JSC.JSValue) callconv(.c) void {
+        const vm = global.bunVM();
+        var loop = vm.eventLoop();
+        loop.runCallback(callback, global, thisValue, &.{ arg0, arg1 });
+    }
+
+    comptime {
+        @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
+        @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
+    }
+
     pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
         this.enter();
         defer this.exit();

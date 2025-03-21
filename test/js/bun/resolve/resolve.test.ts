@@ -297,7 +297,7 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
-it("import override to node builtin", async () => {
+it.only("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
 });

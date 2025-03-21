@@ -2697,8 +2697,8 @@ pub const PackageManager = struct {
     pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
-    preallocated_network_tasks: PreallocatedNetworkTasks = .init(bun.default_allocator),
-    preallocated_resolve_tasks: PreallocatedTaskStore = .init(bun.default_allocator),
+    preallocated_network_tasks: PreallocatedNetworkTasks,
+    preallocated_resolve_tasks: PreallocatedTaskStore,
 
     /// items are only inserted into this if they took more than 500ms
     lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
@@ -2820,7 +2820,8 @@ pub const PackageManager = struct {
         }
     };
 
-    pub fn reportSlowLifecycleScripts(this: *PackageManager, log_level: Options.LogLevel) void {
+    pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
+        const log_level = this.options.log_level;
         if (log_level == .silent) return;
         if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
             return;
@@ -3213,7 +3214,7 @@ pub const PackageManager = struct {
     }
 
     fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
-        this.reportSlowLifecycleScripts(this.options.log_level);
+        this.reportSlowLifecycleScripts();
         return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
     }
 
@@ -3227,7 +3228,7 @@ pub const PackageManager = struct {
     }
 
     pub fn sleep(this: *PackageManager) void {
-        this.reportSlowLifecycleScripts(this.options.log_level);
+        this.reportSlowLifecycleScripts();
         Output.flush();
         this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
     }
@@ -3291,60 +3292,56 @@ pub const PackageManager = struct {
             invalid_package_id => brk: {
                 this.drainDependencyList();
 
-                switch (this.options.log_level) {
-                    inline else => |log_levela| {
-                        const Closure = struct {
-                            // https://github.com/ziglang/zig/issues/19586
-                            pub fn issue_19586_workaround(comptime log_level: Options.LogLevel) type {
-                                return struct {
-                                    err: ?anyerror = null,
-                                    manager: *PackageManager,
-                                    pub fn isDone(closure: *@This()) bool {
-                                        const manager = closure.manager;
-                                        if (manager.pendingTaskCount() > 0) {
-                                            manager.runTasks(
-                                                void,
-                                                {},
-                                                .{
-                                                    .onExtract = {},
-                                                    .onResolve = {},
-                                                    .onPackageManifestError = {},
-                                                    .onPackageDownloadError = {},
-                                                },
-                                                false,
-                                                log_level,
-                                            ) catch |err| {
-                                                closure.err = err;
-                                                return true;
-                                            };
+                const Closure = struct {
+                    // https://github.com/ziglang/zig/issues/19586
+                    pub fn issue_19586_workaround() type {
+                        return struct {
+                            err: ?anyerror = null,
+                            manager: *PackageManager,
+                            pub fn isDone(closure: *@This()) bool {
+                                const manager = closure.manager;
+                                if (manager.pendingTaskCount() > 0) {
+                                    manager.runTasks(
+                                        void,
+                                        {},
+                                        .{
+                                            .onExtract = {},
+                                            .onResolve = {},
+                                            .onPackageManifestError = {},
+                                            .onPackageDownloadError = {},
+                                        },
+                                        false,
+                                        manager.options.log_level,
+                                    ) catch |err| {
+                                        closure.err = err;
+                                        return true;
+                                    };
 
-                                            if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
-                                            }
-                                        }
-
-                                        return manager.pendingTaskCount() == 0;
+                                    if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
+                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
                                     }
-                                };
+                                }
+
+                                return manager.pendingTaskCount() == 0;
                             }
-                        }.issue_19586_workaround(log_levela);
+                        };
+                    }
+                }.issue_19586_workaround();
 
-                        if (comptime log_levela.showProgress()) {
-                            this.startProgressBarIfNone();
-                        }
+                if (this.options.log_level.showProgress()) {
+                    this.startProgressBarIfNone();
+                }
 
-                        var closure = Closure{ .manager = this };
-                        this.sleepUntil(&closure, &Closure.isDone);
+                var closure = Closure{ .manager = this };
+                this.sleepUntil(&closure, &Closure.isDone);
 
-                        if (comptime log_levela.showProgress()) {
-                            this.endProgressBar();
-                            Output.flush();
-                        }
+                if (this.options.log_level.showProgress()) {
+                    this.endProgressBar();
+                    Output.flush();
+                }
 
-                        if (closure.err) |err| {
-                            return .{ .failure = err };
-                        }
-                    },
+                if (closure.err) |err| {
+                    return .{ .failure = err };
                 }
 
                 break :brk this.lockfile.buffers.resolutions.items[dep_id];
@@ -6104,7 +6101,7 @@ pub const PackageManager = struct {
         dep_id: DependencyID,
         resolution: *const Resolution,
         data: *const ExtractData,
-        comptime log_level: Options.LogLevel,
+        log_level: Options.LogLevel,
     ) ?Lockfile.Package {
         switch (resolution.tag) {
             .git, .github => {
@@ -6132,7 +6129,7 @@ pub const PackageManager = struct {
                             &resolver,
                             Features.npm,
                         ) catch |err| {
-                            if (comptime log_level != .silent) {
+                            if (log_level != .silent) {
                                 const string_buf = manager.lockfile.buffers.string_bytes.items;
                                 Output.err(err, "failed to parse package.json for <b>{}<r>", .{
                                     resolution.fmtURL(string_buf),
@@ -6216,7 +6213,7 @@ pub const PackageManager = struct {
                     &resolver,
                     Features.npm,
                 ) catch |err| {
-                    if (comptime log_level != .silent) {
+                    if (log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
                             resolution.fmtURL(string_buf),
@@ -6260,7 +6257,7 @@ pub const PackageManager = struct {
                     manager.log,
                     manager.allocator,
                 ) catch |err| {
-                    if (comptime log_level != .silent) {
+                    if (log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
                             resolution.fmtURL(string_buf),
@@ -6319,7 +6316,7 @@ pub const PackageManager = struct {
         extract_ctx: ExtractCompletionContext,
         comptime callbacks: anytype,
         install_peer: bool,
-        comptime log_level: Options.LogLevel,
+        log_level: Options.LogLevel,
     ) anyerror!void {
         var has_updated_this_run = false;
         var has_network_error = false;
@@ -6329,7 +6326,7 @@ pub const PackageManager = struct {
         defer {
             manager.drainDependencyList();
 
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 manager.startProgressBarIfNone();
 
                 if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
@@ -6394,7 +6391,7 @@ pub const PackageManager = struct {
             switch (task.callback) {
                 .package_manifest => |*manifest_req| {
                     const name = manifest_req.name;
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, name.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
@@ -6532,7 +6529,7 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (comptime log_level.isVerbose()) {
+                    if (log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms);
                         Output.prettyError("\n<d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
@@ -6737,14 +6734,14 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (comptime log_level.isVerbose()) {
+                    if (log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms)));
                         Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
 
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, extract.name.slice(), ProgressStrings.extract_emoji, true);
                             has_updated_this_run = true;
@@ -6811,7 +6808,7 @@ pub const PackageManager = struct {
 
                     try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
 
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, manifest.name(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
@@ -6937,10 +6934,10 @@ pub const PackageManager = struct {
 
                     if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext != *PackageInstaller) {
                         // handled *PackageInstaller above
-                        callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, comptime log_level);
+                        callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, log_level);
                     }
 
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, alias, ProgressStrings.extract_emoji, true);
                             has_updated_this_run = true;
@@ -6965,7 +6962,7 @@ pub const PackageManager = struct {
                                 err,
                                 url,
                             );
-                        } else if (comptime log_level != .silent) {
+                        } else if (log_level != .silent) {
                             manager.log.addErrorFmt(
                                 null,
                                 logger.Loc.Empty,
@@ -7024,7 +7021,7 @@ pub const PackageManager = struct {
                         try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
                     }
 
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
@@ -7109,12 +7106,12 @@ pub const PackageManager = struct {
                                 extract_ctx,
                                 git_checkout.dependency_id,
                                 &task.data.git_checkout,
-                                comptime log_level,
+                                log_level,
                             );
                         }
                     }
 
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, alias.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
@@ -8960,6 +8957,8 @@ pub const PackageManager = struct {
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
+            .preallocated_network_tasks = .init(bun.default_allocator),
+            .preallocated_resolve_tasks = .init(bun.default_allocator),
             .options = options,
             .active_lifecycle_scripts = .{
                 .context = manager,
@@ -9127,6 +9126,8 @@ pub const PackageManager = struct {
         @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
 
         manager.* = PackageManager{
+            .preallocated_network_tasks = .init(bun.default_allocator),
+            .preallocated_resolve_tasks = .init(bun.default_allocator),
             .options = .{
                 .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
             },
@@ -9454,9 +9455,7 @@ pub const PackageManager = struct {
             Global.exit(0);
         } else {
             // bun link lodash
-            switch (manager.options.log_level) {
-                inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
-            }
+            try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
         }
     }
 
@@ -10637,9 +10636,7 @@ pub const PackageManager = struct {
             }
         }
 
-        switch (manager.options.log_level) {
-            inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
-        }
+        try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
 
         if (manager.options.patch_features == .patch) {
             try manager.preparePatch();
@@ -10770,7 +10767,6 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         ctx: Command.Context,
         original_cwd: string,
-        comptime log_level: Options.LogLevel,
     ) !void {
         var update_requests = UpdateRequest.Array.initCapacity(manager.allocator, 64) catch bun.outOfMemory();
         defer update_requests.deinit(manager.allocator);
@@ -10801,7 +10797,6 @@ pub const PackageManager = struct {
             original_cwd,
             manager.options.positionals[1..],
             &update_requests,
-            log_level,
         );
     }
 
@@ -10811,7 +10806,6 @@ pub const PackageManager = struct {
         original_cwd: string,
         positionals: []const string,
         update_requests: *UpdateRequest.Array,
-        comptime log_level: Options.LogLevel,
     ) !void {
         var updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
             &[_]UpdateRequest{}
@@ -10822,7 +10816,6 @@ pub const PackageManager = struct {
             &updates,
             manager.subcommand,
             original_cwd,
-            log_level,
         );
     }
     fn updatePackageJSONAndInstallWithManagerWithUpdates(
@@ -10831,10 +10824,10 @@ pub const PackageManager = struct {
         updates: *[]UpdateRequest,
         subcommand: Subcommand,
         original_cwd: string,
-        comptime log_level: Options.LogLevel,
     ) !void {
+        const log_level = manager.options.log_level;
         if (manager.log.errors > 0) {
-            if (comptime log_level != .silent) {
+            if (log_level != .silent) {
                 manager.log.print(Output.errorWriter()) catch {};
             }
             Global.crash();
@@ -11105,7 +11098,7 @@ pub const PackageManager = struct {
             break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
         };
 
-        try manager.installWithManager(ctx, root_package_json_source, original_cwd, log_level);
+        try manager.installWithManager(ctx, root_package_json_source, original_cwd);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
             for (updates.*) |request| {
@@ -11806,7 +11799,7 @@ pub const PackageManager = struct {
     fn doPatchCommit(
         manager: *PackageManager,
         pathbuf: *bun.PathBuffer,
-        comptime log_level: Options.LogLevel,
+        log_level: Options.LogLevel,
     ) !?PatchCommitResult {
         var folder_path_buf: bun.PathBuffer = undefined;
         var lockfile: *Lockfile = try manager.allocator.create(Lockfile);
@@ -12391,9 +12384,7 @@ pub const PackageManager = struct {
                 Output.prettyln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
                 Output.flush();
             }
-            return switch (manager.options.log_level) {
-                inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
-            };
+            return manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
         }
 
         if (manager.options.shouldPrintCommandName()) {
@@ -12409,9 +12400,7 @@ pub const PackageManager = struct {
             return;
         };
 
-        try switch (manager.options.log_level) {
-            inline else => |log_level| manager.installWithManager(ctx, package_json_contents, original_cwd, log_level),
-        };
+        try manager.installWithManager(ctx, package_json_contents, original_cwd);
 
         if (manager.any_failed_to_install) {
             Global.exit(1);
@@ -12632,7 +12621,7 @@ pub const PackageManager = struct {
             tree_id: Lockfile.Tree.Id,
             maybe_destination_dir: ?*LazyPackageDestinationDir,
             comptime should_install_packages: bool,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
         ) void {
             if (comptime Environment.allow_assert) {
                 bun.assertWithLocation(tree_id != Lockfile.Tree.invalid_id, @src());
@@ -12749,7 +12738,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn linkRemainingBins(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+        pub fn linkRemainingBins(this: *PackageInstaller, log_level: Options.LogLevel) void {
             var depth_buf: Lockfile.Tree.DepthBuf = undefined;
             var node_modules_rel_path_buf: bun.PathBuffer = undefined;
             @memcpy(node_modules_rel_path_buf[0.."node_modules".len], "node_modules");
@@ -12789,7 +12778,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+        pub fn runAvailableScripts(this: *PackageInstaller, log_level: Options.LogLevel) void {
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
                 i -= 1;
@@ -12804,14 +12793,13 @@ pub const PackageManager = struct {
                         this.command_ctx,
                         entry.list,
                         optional,
-                        log_level,
                         output_in_foreground,
                     ) catch |err| {
-                        if (comptime log_level != .silent) {
+                        if (log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
 
-                            if (comptime log_level.showProgress()) {
+                            if (log_level.showProgress()) {
                                 switch (Output.enable_ansi_colors) {
                                     inline else => |enable_ansi_colors| {
                                         this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
@@ -12833,7 +12821,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn installAvailablePackages(this: *PackageInstaller, comptime log_level: Options.LogLevel, comptime force: bool) void {
+        pub fn installAvailablePackages(this: *PackageInstaller, log_level: Options.LogLevel, comptime force: bool) void {
             const prev_node_modules = this.node_modules;
             defer this.node_modules = prev_node_modules;
             const prev_tree_id = this.current_tree_id;
@@ -12878,7 +12866,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+        pub fn completeRemainingScripts(this: *PackageInstaller, log_level: Options.LogLevel) void {
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.package_name;
                 while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
@@ -12887,12 +12875,12 @@ pub const PackageManager = struct {
 
                 const optional = entry.optional;
                 const output_in_foreground = false;
-                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, log_level, output_in_foreground) catch |err| {
-                    if (comptime log_level != .silent) {
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, output_in_foreground) catch |err| {
+                    if (log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                         const args = .{ package_name, @errorName(err) };
 
-                        if (comptime log_level.showProgress()) {
+                        if (log_level.showProgress()) {
                             switch (Output.enable_ansi_colors) {
                                 inline else => |enable_ansi_colors| {
                                     this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
@@ -12913,9 +12901,9 @@ pub const PackageManager = struct {
             }
 
             while (this.manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                this.manager.reportSlowLifecycleScripts(log_level);
+                this.manager.reportSlowLifecycleScripts();
 
-                if (comptime log_level.showProgress()) {
+                if (log_level.showProgress()) {
                     if (this.manager.scripts_node) |scripts_node| {
                         scripts_node.activate();
                         this.manager.progress.refresh();
@@ -12985,7 +12973,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             dependency_id: DependencyID,
             data: *const ExtractData,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
             const name = this.names[package_id];
@@ -13014,7 +13002,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             name: String,
             task_id: Task.Id.Type,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
         ) bool {
             if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
                 var callbacks = removed.value;
@@ -13064,7 +13052,7 @@ pub const PackageManager = struct {
             package_id: PackageID,
             resolution_tag: Resolution.Tag,
             node_modules_folder: *LazyPackageDestinationDir,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
         ) usize {
             if (comptime Environment.allow_assert) {
                 bun.assertWithLocation(resolution_tag != .root, @src());
@@ -13088,7 +13076,7 @@ pub const PackageManager = struct {
                     node_modules_folder,
                     alias,
                 ) catch |err| {
-                    if (comptime log_level != .silent) {
+                    if (log_level != .silent) {
                         Output.errGeneric("failed to fill lifecycle scripts for <b>{s}<r>: {s}", .{
                             alias,
                             @errorName(err),
@@ -13149,7 +13137,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             dependency_id: DependencyID,
             package_id: PackageID,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
             pkg_name: String,
             resolution: *const Resolution,
 
@@ -13307,11 +13295,11 @@ pub const PackageManager = struct {
                 },
                 .symlink => {
                     const directory = this.manager.globalLinkDir() catch |err| {
-                        if (comptime log_level != .silent) {
+                        if (log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
                             const args = .{ pkg_name.slice(this.lockfile.buffers.string_bytes.items), @errorName(err) };
 
-                            if (comptime log_level.showProgress()) {
+                            if (log_level.showProgress()) {
                                 switch (Output.enable_ansi_colors) {
                                     inline else => |enable_ansi_colors| {
                                         this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
@@ -13557,7 +13545,7 @@ pub const PackageManager = struct {
                         this.summary.success += @as(u32, @intFromBool(!is_duplicate));
                         this.successfully_installed.set(package_id);
 
-                        if (comptime log_level.showProgress()) {
+                        if (log_level.showProgress()) {
                             this.node.completeOne();
                         }
 
@@ -13609,7 +13597,7 @@ pub const PackageManager = struct {
                                     log_level,
                                 );
                                 if (count > 0) {
-                                    if (comptime log_level.isVerbose()) {
+                                    if (log_level.isVerbose()) {
                                         Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
                                             count,
                                             alias.slice(this.lockfile.buffers.string_bytes.items),
@@ -13766,7 +13754,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             pkg_has_patch: bool,
             comptime is_pending_package_install: bool,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
         ) void {
             this.summary.fail += 1;
             if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
@@ -13776,7 +13764,7 @@ pub const PackageManager = struct {
         fn enqueueLifecycleScripts(
             this: *PackageInstaller,
             folder_name: string,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
             node_modules_folder: *LazyPackageDestinationDir,
             package_id: PackageID,
             optional: bool,
@@ -13791,11 +13779,11 @@ pub const PackageManager = struct {
                 folder_name,
                 resolution,
             ) catch |err| {
-                if (comptime log_level != .silent) {
+                if (log_level != .silent) {
                     const fmt = "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n";
                     const args = .{ folder_name, @errorName(err) };
 
-                    if (comptime log_level.showProgress()) {
+                    if (log_level.showProgress()) {
                         switch (Output.enable_ansi_colors) {
                             inline else => |enable_ansi_colors| {
                                 this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
@@ -13843,7 +13831,7 @@ pub const PackageManager = struct {
         pub fn installPackage(
             this: *PackageInstaller,
             dep_id: DependencyID,
-            comptime log_level: Options.LogLevel,
+            log_level: Options.LogLevel,
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dep_id];
 
@@ -14054,7 +14042,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         workspace_filters: []const WorkspaceFilter,
         install_root_dependencies: bool,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
         const original_trees = this.lockfile.buffers.trees;
         const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
@@ -14073,7 +14061,7 @@ pub const PackageManager = struct {
         const options = &this.options;
         var progress = &this.progress;
 
-        if (comptime log_level.showProgress()) {
+        if (log_level.showProgress()) {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             root_node = progress.start("", 0);
             download_node = root_node.start(ProgressStrings.download(), 0);
@@ -14085,7 +14073,7 @@ pub const PackageManager = struct {
         }
 
         defer {
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 progress.root.end();
                 progress.* = .{};
             }
@@ -14293,7 +14281,7 @@ pub const PackageManager = struct {
                 while (remaining.len > unroll_count) {
                     comptime var i: usize = 0;
                     inline while (i < unroll_count) : (i += 1) {
-                        installer.installPackage(remaining[i], comptime log_level);
+                        installer.installPackage(remaining[i], log_level);
                     }
                     remaining = remaining[unroll_count..];
 
@@ -14316,7 +14304,7 @@ pub const PackageManager = struct {
                         if (!installer.options.do.install_packages) return error.InstallFailed;
                     }
                     this.tickLifecycleScripts();
-                    this.reportSlowLifecycleScripts(log_level);
+                    this.reportSlowLifecycleScripts();
                 }
 
                 for (remaining) |dependency_id| {
@@ -14339,7 +14327,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
 
                 this.tickLifecycleScripts();
-                this.reportSlowLifecycleScripts(log_level);
+                this.reportSlowLifecycleScripts();
             }
 
             while (this.pendingTaskCount() > 0 and installer.options.do.install_packages) {
@@ -14349,6 +14337,7 @@ pub const PackageManager = struct {
                     manager: *PackageManager,
 
                     pub fn isDone(closure: *@This()) bool {
+                        const pm = closure.manager;
                         closure.manager.runTasks(
                             *PackageInstaller,
                             closure.installer,
@@ -14360,7 +14349,7 @@ pub const PackageManager = struct {
                                 .onPackageDownloadError = {},
                             },
                             true,
-                            log_level,
+                            pm.options.log_level,
                         ) catch |err| {
                             closure.err = err;
                         };
@@ -14369,7 +14358,7 @@ pub const PackageManager = struct {
                             return true;
                         }
 
-                        closure.manager.reportSlowLifecycleScripts(log_level);
+                        closure.manager.reportSlowLifecycleScripts();
 
                         if (PackageManager.verbose_install and closure.manager.pendingTaskCount() > 0) {
                             const pending_task_count = closure.manager.pendingTaskCount();
@@ -14397,7 +14386,7 @@ pub const PackageManager = struct {
                 }
             } else {
                 this.tickLifecycleScripts();
-                this.reportSlowLifecycleScripts(log_level);
+                this.reportSlowLifecycleScripts();
             }
 
             for (installer.trees) |tree| {
@@ -14409,7 +14398,7 @@ pub const PackageManager = struct {
             }
 
             this.finished_installing.store(true, .monotonic);
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 scripts_node.activate();
             }
 
@@ -14423,12 +14412,12 @@ pub const PackageManager = struct {
             installer.completeRemainingScripts(log_level);
 
             while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                this.reportSlowLifecycleScripts(log_level);
+                this.reportSlowLifecycleScripts();
 
                 this.sleep();
             }
 
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 scripts_node.end();
             }
         }
@@ -14525,8 +14514,8 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         root_package_json_contents: string,
         original_cwd: string,
-        comptime log_level: Options.LogLevel,
     ) !void {
+        const log_level = manager.options.log_level;
 
         // Start resolving DNS for the default registry immediately.
         if (manager.options.scope.url.hostname.len > 0) {
@@ -14898,7 +14887,7 @@ pub const PackageManager = struct {
             manager.lockfile.initEmpty(manager.allocator);
 
             if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
-                if (comptime log_level != .silent) {
+                if (log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
                 Global.crash();
@@ -14942,9 +14931,9 @@ pub const PackageManager = struct {
                 _ = manager.getTemporaryDirectory();
             }
 
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 manager.startProgressBar();
-            } else if (comptime log_level != .silent) {
+            } else if (log_level != .silent) {
                 Output.prettyErrorln("Resolving dependencies", .{});
                 Output.flush();
             }
@@ -14976,7 +14965,7 @@ pub const PackageManager = struct {
                                     .progress_bar = true,
                                 },
                                 check_peers,
-                                log_level,
+                                this.options.log_level,
                             ) catch |err| {
                                 closure.err = err;
                                 return true;
@@ -15031,9 +15020,9 @@ pub const PackageManager = struct {
 
             try waitForPeers(manager);
 
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 manager.endProgressBar();
-            } else if (comptime log_level != .silent) {
+            } else if (log_level != .silent) {
                 Output.prettyErrorln("Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
                 Output.flush();
             }
@@ -15149,7 +15138,7 @@ pub const PackageManager = struct {
                 }
             }
 
-            if (comptime log_level != .silent) {
+            if (log_level != .silent) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
                 Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
             }
@@ -15246,7 +15235,7 @@ pub const PackageManager = struct {
             );
         }
 
-        if (comptime log_level != .silent) {
+        if (log_level != .silent) {
             try manager.log.print(Output.errorWriter());
         }
         if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
@@ -15289,17 +15278,17 @@ pub const PackageManager = struct {
 
         if (manager.options.do.save_yarn_lock) {
             var node: *Progress.Node = undefined;
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 node = manager.progress.start("Saving yarn.lock", 0);
                 manager.progress.refresh();
-            } else if (comptime log_level != .silent) {
+            } else if (log_level != .silent) {
                 Output.prettyErrorln("Saved yarn.lock", .{});
                 Output.flush();
             }
 
             try manager.writeYarnLock();
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 node.completeOne();
                 manager.progress.refresh();
                 manager.progress.root.end();
@@ -15313,7 +15302,7 @@ pub const PackageManager = struct {
                     bun.assert(scripts.total > 0);
                 }
 
-                if (comptime log_level != .silent) {
+                if (log_level != .silent) {
                     Output.printError("\n", .{});
                     Output.flush();
                 }
@@ -15321,17 +15310,17 @@ pub const PackageManager = struct {
                 // have finished, and lockfiles have been saved
                 const optional = false;
                 const output_in_foreground = true;
-                try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, log_level, output_in_foreground);
+                try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground);
 
                 while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                    manager.reportSlowLifecycleScripts(log_level);
+                    manager.reportSlowLifecycleScripts();
 
                     manager.sleep();
                 }
             }
         }
 
-        if (comptime log_level != .silent) {
+        if (log_level != .silent) {
             try manager.printInstallSummary(ctx, &install_summary, did_meta_hash_change, log_level);
         }
 
@@ -15347,7 +15336,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         install_summary: *const PackageInstall.Summary,
         did_meta_hash_change: bool,
-        comptime log_level: Options.LogLevel,
+        log_level: Options.LogLevel,
     ) !void {
         var printed_timestamp = false;
         if (this.options.do.summary) {
@@ -15550,7 +15539,7 @@ pub const PackageManager = struct {
         }
     }
 
-    pub fn verifyResolutions(this: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) void {
+    pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Options.LogLevel) void {
         const lockfile = this.lockfile;
         const resolutions_lists: []const Lockfile.DependencyIDSlice = lockfile.packages.items(.resolutions);
         const dependency_lists: []const Lockfile.DependencySlice = lockfile.packages.items(.dependencies);
@@ -15602,9 +15591,9 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         list: Lockfile.Package.Scripts.List,
         optional: bool,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime foreground: bool,
+        foreground: bool,
     ) !void {
+        const log_level = this.options.log_level;
         var any_scripts = false;
         for (list.items) |maybe_item| {
             if (maybe_item != null) {

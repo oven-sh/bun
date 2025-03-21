@@ -80,7 +80,7 @@ $ sudo zypper install clang18 lld18 llvm18
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-19.1.7).
 
 Make sure Clang/LLVM 18 is in your path:
 

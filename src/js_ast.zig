@@ -7975,7 +7975,7 @@ pub const Macro = struct {
             bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
-                if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
                     break :brk replacement.path;
                 }
 

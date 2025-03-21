@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 9
+# Version: 10
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -897,7 +897,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	print "18.1.8"
+	print "19.1.7"
 }
 
 llvm_version() {
@@ -915,14 +915,12 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
+		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/main"
-		install_packages \
-			"lld$(llvm_version)" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
+			"lld"
 		;;
 	esac
 }
@@ -966,7 +964,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="18"
+	llvm_v="19"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"
@@ -1128,6 +1126,35 @@ install_tailscale() {
 		install_packages go
 		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
 		append_to_path "$home/go/bin"
+		;;
+	esac
+}
+
+install_fuse_python() {
+	# only linux needs this
+	case "$pm" in
+	apk)
+		# Build and install from source (https://github.com/libfuse/python-fuse/blob/master/INSTALL)
+		install_packages \
+			python3-dev \
+			fuse-dev \
+			pkgconf \
+			py3-setuptools
+		python_fuse_version="1.0.9"
+		python_fuse_tarball=$(download_file "https://github.com/libfuse/python-fuse/archive/refs/tags/v$python_fuse_version.tar.gz")
+		python_fuse_tmpdir="$(dirname "$python_fuse_tarball")"
+		execute tar -xzf "$python_fuse_tarball" -C "$python_fuse_tmpdir"
+		execute sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py build"
+		execute_sudo sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py install"
+
+		# For Alpine we also need to make sure the kernel module is automatically loaded
+		execute_sudo sh -c "echo fuse >> /etc/modules-load.d/fuse.conf"
+
+		# Check that it was actually installed
+		execute python -c 'import fuse'
+		;;
+	apt | dnf | yum)
+		install_packages python3-fuse
 		;;
 	esac
 }
@@ -1323,6 +1350,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chromium
+	install_fuse_python
 	clean_system
 }
 

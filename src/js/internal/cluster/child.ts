@@ -147,7 +147,7 @@ function rr(message, { indexesKey, index }, cb) {
 
   let key = message.key;
 
-  let fakeHandle: number | null = null;
+  let fakeHandle: Timer | null = null;
 
   function ref() {
     if (!fakeHandle) {

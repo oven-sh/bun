@@ -4,13 +4,15 @@
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include "BunClientData.h"
 #include "InternalModuleRegistry+numberOfModules.h"
+#include "_NativeModule.h"
 
 namespace Bun {
 using namespace JSC;
 
-// Internal module registry is an array of lazily initialized "modules". Module IDs are generated
-// pre-build by `make js` and inlined into JS code and the C++ enum (InternalModuleRegistry::Field)
-// This allows modules depending on each other to skip the module resolver.
+// Internal module registry is an array of lazily initialized "modules". Module
+// IDs are generated pre-build by `bundle-modules.ts` and inlined into JS code
+// and the C++ enum (InternalModuleRegistry::Field) This allows modules
+// depending on each other to skip the module resolver.
 //
 // Modules come from two sources:
 // - some are written in JS (src/js, there is a readme file that explain those files more.

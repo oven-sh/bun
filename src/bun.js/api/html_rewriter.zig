@@ -809,7 +809,7 @@ const DocumentHandler = struct {
         }
 
         if (try thisObject.get(global, "doctype")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("doctype must be a function", .{});
             }
             val.protect();
@@ -817,7 +817,7 @@ const DocumentHandler = struct {
         }
 
         if (try thisObject.get(global, "comments")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("comments must be a function", .{});
             }
             val.protect();
@@ -825,7 +825,7 @@ const DocumentHandler = struct {
         }
 
         if (try thisObject.get(global, "text")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("text must be a function", .{});
             }
             val.protect();
@@ -833,7 +833,7 @@ const DocumentHandler = struct {
         }
 
         if (try thisObject.get(global, "end")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("end must be a function", .{});
             }
             val.protect();
@@ -954,7 +954,7 @@ const ElementHandler = struct {
         }
 
         if (try thisObject.get(global, "element")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("element must be a function", .{});
             }
             val.protect();
@@ -962,7 +962,7 @@ const ElementHandler = struct {
         }
 
         if (try thisObject.get(global, "comments")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("comments must be a function", .{});
             }
             val.protect();
@@ -970,7 +970,7 @@ const ElementHandler = struct {
         }
 
         if (try thisObject.get(global, "text")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
                 return global.throwInvalidArguments("text must be a function", .{});
             }
             val.protect();
@@ -1614,7 +1614,7 @@ pub const Element = struct {
     ) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsNull();
-        if (function.isUndefinedOrNull() or !function.isCallable(globalObject.vm())) {
+        if (function.isUndefinedOrNull() or !function.isCallable()) {
             return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 

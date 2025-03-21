@@ -119,11 +119,11 @@ bool isValidReasonPhrase(const String& value)
 // See https://fetch.spec.whatwg.org/#concept-header
 bool isValidHTTPHeaderValue(const StringView& value)
 {
+    auto length = value.length();
+    if (length == 0) return true;
     UChar c = value[0];
     if (isTabOrSpace(c))
         return false;
-    auto length = value.length();
-    if (length == 0) return true;
     c = value[length - 1];
     if (isTabOrSpace(c))
         return false;

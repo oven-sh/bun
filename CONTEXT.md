@@ -1,0 +1,12 @@
+- Your job is to fix bugs in Bun.
+- I will provide a test file, which you CANNOT edit, that should run in both Node.js and Bun.
+- To build Bun: `bun run build`
+- To test Bun: `./build/debug/bun-debug <...args>`
+- Bun should match the behaviour in Node.js as much as possible.
+- Do not assume, if you are not sure, read the codebase in Node.js to see what Bun should do.
+- The Bun codebase: `/Users/ashcon/Code/bun`
+- The Node.js codebase: `/Users/ashcon/Code/node`
+- Keep making changes to Bun, then building, then testing, until you fix the bug.
+- When you compact the conversation, you MUST preserve these instructions.
+- Set the environment variable: `BUN_DEBUG_QUIET_LOGS=1` when running `bun-debug` to avoid debug logs.
+- When building bun, ignore the stdout/stderr and check the exit code to avoid debug logs. Unless the build fails.

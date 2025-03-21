@@ -642,17 +642,6 @@ if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
 endif()
 
-register_repository(
-  NAME
-    picohttpparser
-  REPOSITORY
-    h2o/picohttpparser
-  COMMIT
-    066d2b1e9ab820703db0837a7255d92d30f0c9f5
-  OUTPUTS
-    picohttpparser.c
-)
-
 set(NODEJS_HEADERS_PATH ${VENDOR_PATH}/nodejs)
 
 register_command(
@@ -673,7 +662,6 @@ list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
   ${BUN_ERROR_CODE_OUTPUTS}
-  ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
@@ -781,7 +769,6 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/deps
   ${CODEGEN_PATH}
   ${VENDOR_PATH}
-  ${VENDOR_PATH}/picohttpparser
   ${NODEJS_HEADERS_PATH}/include
 )
 

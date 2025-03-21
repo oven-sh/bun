@@ -1706,7 +1706,7 @@ pub fn onClose(
         // as if the transfer had complete, browsers appear to ignore
         // a missing 0\r\n chunk
         if (client.state.isChunkedEncoding()) {
-            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+            if (!picohttp.decodeChunkedIsInData(&client.state.chunked_decoder)) {
                 const buf = client.state.getBodyBuffer();
                 if (buf.list.items.len > 0) {
                     client.state.flags.received_last_chunk = true;
@@ -2015,7 +2015,7 @@ pub const InternalState = struct {
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
-    chunked_decoder: picohttp.phr_chunked_decoder = .{},
+    chunked_decoder: picohttp.ChunkedDecoder = .{},
     decompressor: Decompressor = .{ .none = {} },
     stage: Stage = Stage.pending,
     /// This is owned by the user and should not be freed here
@@ -4129,13 +4129,13 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     var buffer = buffer_ptr.*;
     try buffer.appendSlice(incoming_data);
 
-    // set consume_trailer to 1 to discard the trailing header
+    // set consume_trailer to true to discard the trailing header
     // using content-encoding per chunk is not supported
-    decoder.consume_trailer = 1;
+    decoder.consume_trailer = true;
 
     var bytes_decoded = incoming_data.len;
-    // phr_decode_chunked mutates in-place
-    const pret = picohttp.phr_decode_chunked(
+    // decodeChunked mutates in-place
+    const pret = picohttp.decodeChunked(
         decoder,
         buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
         &bytes_decoded,
@@ -4147,9 +4147,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
 
     switch (pret) {
         // Invalid HTTP response body
-        -1 => return error.InvalidHTTPResponse,
+        .Error => return error.InvalidHTTPResponse,
         // Needs more data
-        -2 => {
+        .Incomplete => {
             if (this.progress_node) |progress| {
                 progress.activate();
                 progress.setCompletedItems(buffer.list.items.len);
@@ -4196,9 +4196,9 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     var decoder = &this.state.chunked_decoder;
     assert(incoming_data.len <= single_packet_small_buffer.len);
 
-    // set consume_trailer to 1 to discard the trailing header
+    // set consume_trailer to true to discard the trailing header
     // using content-encoding per chunk is not supported
-    decoder.consume_trailer = 1;
+    decoder.consume_trailer = true;
 
     var buffer: []u8 = undefined;
 
@@ -4212,8 +4212,8 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     }
 
     var bytes_decoded = incoming_data.len;
-    // phr_decode_chunked mutates in-place
-    const pret = picohttp.phr_decode_chunked(
+    // decodeChunked mutates in-place
+    const pret = picohttp.decodeChunked(
         decoder,
         buffer.ptr + (buffer.len -| incoming_data.len),
         &bytes_decoded,
@@ -4223,11 +4223,11 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
     switch (pret) {
         // Invalid HTTP response body
-        -1 => {
+        .Error => {
             return error.InvalidHTTPResponse;
         },
         // Needs more data
-        -2 => {
+        .Incomplete => {
             if (this.progress_node) |progress| {
                 progress.activate();
                 progress.setCompletedItems(buffer.len);

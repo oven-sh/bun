@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import fs from "fs";
-import { bunExe, gc } from "harness";
+import { bunExe, bunEnv, gc } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -181,6 +181,7 @@ it.each([
   const { stderr, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "run", path],
     env: {
+      ...bunEnv,
       http_proxy: http_proxy,
       https_proxy: https_proxy,
     },

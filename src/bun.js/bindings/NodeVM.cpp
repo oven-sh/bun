@@ -407,6 +407,8 @@ public:
                     ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
                     return false;
                 }
+            } else {
+                this->filename = "evalmachine.<anonymous>"_s;
             }
 
             if (JSValue lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s))) {
@@ -760,7 +762,7 @@ static bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<Excep
         auto& stack_frame = e_stack[0];
         auto source_url = stack_frame.sourceURL(vm);
         if (source_url.isEmpty()) {
-            // copy what Node does
+            // copy what Node does: https://github.com/nodejs/node/blob/afe3909483a2d5ae6b847055f544da40571fb28d/lib/vm.js#L94
             source_url = "evalmachine.<anonymous>"_s;
         }
         auto line_and_column = stack_frame.computeLineAndColumn();

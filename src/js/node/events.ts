@@ -705,7 +705,7 @@ function listenerCountSlow(emitter, type) {
   return 0;
 }
 
-function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
+function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
   } else if (typeof emitter.removeEventListener === "function") {
@@ -852,4 +852,4 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-export default EventEmitter;
+export default EventEmitter as any as typeof import("node:events");

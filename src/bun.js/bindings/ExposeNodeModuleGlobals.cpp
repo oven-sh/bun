@@ -1,4 +1,5 @@
 // clang-format off
+#include "ModuleLoader.h"
 #include "root.h"
 
 #include <JavaScriptCore/PropertySlot.h>
@@ -47,8 +48,10 @@
     v(sqlite,                 Bun::InternalModuleRegistry::BunSqlite) \
     v(worker_threads,         Bun::InternalModuleRegistry::NodeWorkerThreads) \
     v(zlib,                   Bun::InternalModuleRegistry::NodeZlib) \
-
-
+    v(constants,              Bun::InternalModuleRegistry::NodeConstants) \
+    v(string_decoder,         Bun::InternalModuleRegistry::NodeStringDecoder) \
+    v(buffer,                 Bun::InternalModuleRegistry::NodeBuffer) \
+    v(jsc,                    Bun::InternalModuleRegistry::BunJSC) \
 
 namespace ExposeNodeModuleGlobalGetters {
 
@@ -61,25 +64,6 @@ namespace ExposeNodeModuleGlobalGetters {
     }
 FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 #undef DECL_GETTER    
-
-
-JSC_DEFINE_CUSTOM_GETTER(jsCustomGetterGetNativeModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
-{
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject); 
-    JSC::VM& vm = globalObject->vm(); 
-    
-    JSC::JSValue key = JSC::identifierToJSValue(vm, propertyName == "jsc"_s ? JSC::Identifier::fromString(vm, "bun:jsc"_s) : JSC::Identifier::fromUid(vm, propertyName.uid())); 
-    JSC::JSValue result = globalObject->requireMap()->get(globalObject, key); 
-    if (!result || result.isUndefinedOrNull()) { 
-        auto& builtinNames = WebCore::builtinNames(vm); 
-        JSC::JSFunction* function = jsCast<JSC::JSFunction*>(globalObject->getDirect(vm, builtinNames.requireNativeModulePrivateName())); 
-        JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer(); 
-        arguments.append(key); 
-        auto callData = JSC::getCallData(function); 
-        return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments)); 
-    } 
-    return JSC::JSValue::encode(result); 
-}
 
 } // namespace ExposeNodeModuleGlobalGetters
 
@@ -100,27 +84,4 @@ extern "C" void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
-
-
-    JSC::CustomGetterSetter *nativeModuleGetter = JSC::CustomGetterSetter::create(
-        vm,
-        ExposeNodeModuleGlobalGetters::jsCustomGetterGetNativeModule,
-        nullptr
-    );
-
-    static constexpr ASCIILiteral nativeModuleNames[] = {
-        "constants"_s,
-        "string_decoder"_s,
-        "buffer"_s,
-        "jsc"_s,
-    };
-
-    for (auto name : nativeModuleNames) {
-        globalObject->putDirectCustomAccessor(
-            vm,
-            JSC::Identifier::fromString(vm, name),
-            nativeModuleGetter,
-            0 | JSC::PropertyAttribute::CustomValue
-        );
-    }
 }

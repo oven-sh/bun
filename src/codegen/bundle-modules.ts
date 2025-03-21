@@ -52,7 +52,7 @@ function markVerbose(log: string) {
 
 const mark = silent ? (log: string) => {} : markVerbose;
 
-const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer } =
+const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer, nativeStartIndex } =
   createInternalModuleRegistry(BASE);
 globalThis.requireTransformer = requireTransformer;
 
@@ -78,7 +78,7 @@ async function retry(n, fn) {
 
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
-for (let i = 0; i < moduleList.length; i++) {
+for (let i = 0; i < nativeStartIndex; i++) {
   try {
     let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
 
@@ -295,7 +295,9 @@ mark("Bundle Functions");
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
-  `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}\n`,
+  `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}
+#define BUN_NATIVE_MODULE_START_INDEX ${nativeStartIndex}
+`,
 );
 
 // This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we
@@ -322,12 +324,15 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
-        return `case Field::${idToEnumName(id)}: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
+        const inner = n >= nativeStartIndex
+           ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
+           : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
         id.replace(/\.[mc]?[tj]s$/, ".js"),
       )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
         .replace(/\.[mc]?[tj]s$/, "")
-        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`
+        return `case Field::${idToEnumName(id)}: {
+      ${inner}
     }`;
       })
       .join("\n    ")}
@@ -335,6 +340,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
       __builtin_unreachable();
     }
   }
+  __builtin_unreachable();
 }
 `,
 );
@@ -353,6 +359,7 @@ if (!debug) {
 namespace Bun {
 namespace InternalModuleRegistryConstants {
   ${moduleList
+    .slice(0, nativeStartIndex)
     .map((id, n) => {
       const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
       if (!out) {
@@ -373,7 +380,7 @@ namespace InternalModuleRegistryConstants {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+  ${moduleList.slice(0, nativeStartIndex).map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
 }
 }`,
   );
@@ -392,7 +399,7 @@ pub const ResolvedSourceTag = enum(u32) {
     file = 4,
     esm = 5,
     json_for_object_loader = 6,
-    /// Generate an object with "default" set to all the exports, including a "default" propert
+    /// Generate an object with "default" set to all the exports, including a "default" property
     exports_object = 7,
 
     /// Generate a module that only exports default the input JSValue
@@ -400,10 +407,10 @@ pub const ResolvedSourceTag = enum(u32) {
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
-${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
-    // Native modules run through a different system using ESM registry.
-${Object.entries(nativeModuleIds)
-  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
+${moduleList.slice(0, nativeStartIndex).map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
+    // Native modules come after the JS modules
+${Object.entries(nativeModuleEnumToId)
+  .map(([id, n], i) => `    @"${moduleList[nativeStartIndex + i]}" = ${(1 << 9) | (n + nativeStartIndex)},`)
   .join("\n")}
 };
 `,
@@ -425,13 +432,10 @@ writeIfNotChanged(
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
-${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
-
-    // Native modules run through the same system, but with different underlying initializers.
-    // They also have bit 10 set to differentiate them from JS builtins.
-    NativeModuleFlag = (1 << 10) | (1 << 9),
+${moduleList.slice(0, nativeStartIndex).map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
+    // Native modules come after the JS modules
 ${Object.entries(nativeModuleEnumToId)
-  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
+  .map(([id, n], i) => `    ${id} = ${(1 << 9) | (i + nativeStartIndex)},`)
   .join("\n")}
 };
 
@@ -459,33 +463,42 @@ writeIfNotChanged(
     let dts = `
 // GENERATED TEMP FILE - DO NOT EDIT
 // generated by ${import.meta.path}
+
+declare module "module" {
+  global {
+    interface PropertyDescriptor {
+      __proto__?: any;
+    }
+
+    interface Function {
+      readonly $call: Function.prototype["call"];
+      readonly $apply: Function.prototype["apply"];
+    }
+
+    namespace NodeJS {
+      interface Require {
+        
 `;
 
-    for (let i = 0; i < ErrorCode.length; i++) {
-      const [code, constructor, name, ...other_constructors] = ErrorCode[i];
-      dts += `
-/**
- * Generate a ${name ?? constructor.name} error with the \`code\` property set to ${code}.
- *
- * @param msg The error message
- * @param args Additional arguments
- */
-declare function $${code}(msg: string, ...args: any[]): ${name};
-`;
+    for (let i = 0; i < nativeStartIndex; i++) {
+      const id = moduleList[i];
+      const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+      if (!out) {
+        throw new Error(`Missing output for ${id}`);
+      }
+      let internalName = idToPublicSpecifierOrEnumName(id);
+      if (internalName.startsWith("internal:")) internalName = internalName.replace(":", "/");
 
-      for (const con of other_constructors) {
-        if (con == null) continue;
-        dts += `
-/**
- * Generate a ${con.name} error with the \`code\` property set to ${code}.
- *
- * @param msg The error message
- * @param args Additional arguments
- */
-declare function $${code}_${con.name}(msg: string, ...args: any[]): ${name};
+      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;
 `;
+    }
+
+    dts += `
       }
     }
+  }
+}
+`;
 
     for (const [name] of jsclasses) {
       dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
@@ -503,12 +516,13 @@ if (!silent) {
   console.log(
     `  %s kb`,
     Math.floor(
-      (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
+      (moduleList.slice(0, nativeStartIndex).reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
         globalThis.internalFunctionJSSize) /
         1000,
     ),
   );
-  console.log(`  %s internal modules`, moduleList.length);
+  console.log(`  %s internal modules`, nativeStartIndex);
+  console.log(`  %s native modules`, Object.keys(nativeModuleIds).length);
   console.log(
     `  %s internal functions across %s files`,
     globalThis.internalFunctionCount,

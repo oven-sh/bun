@@ -250,6 +250,15 @@ it("import non exist error code", async () => {
     await import("node:missing");
     throw 1;
   } catch (e) {
+    expect(e.code).toBe("ERR_UNKNOWN_BUILTIN_MODULE");
+  }
+});
+
+it("import non exist error code", async () => {
+  try {
+    await import("./idontexist");
+    throw 1;
+  } catch (e) {
     expect(e.code).toBe("ERR_MODULE_NOT_FOUND");
   }
 });

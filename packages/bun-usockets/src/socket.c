@@ -513,9 +513,14 @@ void us_socket_nodelay(struct us_socket_t *s, int enabled) {
     }
 }
 
+/// Returns 0 on success. Returned error values depend on the platform.
+/// - on posix, returns `errno`
+/// - on windows, when libuv is used, returns a UV err code
+/// - on windows, LIBUS_USE_LIBUV is set, returns `WSAGetLastError()`
+/// - on windows, otherwise returns result of `WSAGetLastError`
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay){
     if (!us_socket_is_shut_down(0, s)) {
-        bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
+        return bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
     }
     return 0;
 }

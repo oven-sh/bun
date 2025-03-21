@@ -163,7 +163,7 @@ export function createFulfilledPromise(value) {
 }
 
 export function toDictionary(value, defaultValue, errorMessage) {
-  if (value === undefined || value === null) return defaultValue;
-  if (!$isObject(value)) throw new TypeError(errorMessage);
+  if ($isUndefinedOrNull(value)) return defaultValue;
+  if (!$isObject(value)) throw $ERR_INVALID_ARG_TYPE(errorMessage);
   return value;
 }

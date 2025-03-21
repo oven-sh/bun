@@ -131,7 +131,7 @@ pub const FDImpl = packed struct {
     pub fn isValid(this: FDImpl) bool {
         return switch (environment.os) {
             // the 'zero' value on posix is debatable. it can be standard in.
-            // TODO(@paperdave): steamroll away every use of bun.FileDescriptor.zero
+            // TODO(@paperclover): steamroll away every use of bun.FileDescriptor.zero
             else => this.value.as_system != invalid_value,
             .windows => switch (this.kind) {
                 // zero is not allowed in addition to the invalid value (zero would be a null ptr)

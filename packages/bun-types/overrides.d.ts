@@ -1,36 +1,5 @@
 export {};
 
-declare module "node:trace_events" {
-  export namespace constants {
-    const TRACE_EVENT_PHASE_BEGIN: number;
-    const TRACE_EVENT_PHASE_END: number;
-    const TRACE_EVENT_PHASE_COMPLETE: number;
-    const TRACE_EVENT_PHASE_INSTANT: number;
-    const TRACE_EVENT_PHASE_ASYNC_BEGIN: number;
-    const TRACE_EVENT_PHASE_ASYNC_STEP_INTO: number;
-    const TRACE_EVENT_PHASE_ASYNC_STEP_PAST: number;
-    const TRACE_EVENT_PHASE_ASYNC_END: number;
-    const TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN: number;
-    const TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: number;
-    const TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT: number;
-    const TRACE_EVENT_PHASE_FLOW_BEGIN: number;
-    const TRACE_EVENT_PHASE_FLOW_STEP: number;
-    const TRACE_EVENT_PHASE_FLOW_END: number;
-    const TRACE_EVENT_PHASE_METADATA: number;
-    const TRACE_EVENT_PHASE_COUNTER: number;
-    const TRACE_EVENT_PHASE_SAMPLE: number;
-    const TRACE_EVENT_PHASE_CREATE_OBJECT: number;
-    const TRACE_EVENT_PHASE_SNAPSHOT_OBJECT: number;
-    const TRACE_EVENT_PHASE_DELETE_OBJECT: number;
-    const TRACE_EVENT_PHASE_MEMORY_DUMP: number;
-    const TRACE_EVENT_PHASE_MARK: number;
-    const TRACE_EVENT_PHASE_CLOCK_SYNC: number;
-    const TRACE_EVENT_PHASE_ENTER_CONTEXT: number;
-    const TRACE_EVENT_PHASE_LEAVE_CONTEXT: number;
-    const TRACE_EVENT_PHASE_LINK_IDS: number;
-  }
-}
-
 declare global {
   namespace NodeJS {
     interface Process {
@@ -57,7 +26,34 @@ declare global {
         fs: typeof import("node:fs").constants;
         crypto: typeof import("node:crypto").constants;
         zlib: typeof import("node:zlib").constants;
-        trace: typeof import("node:trace_events").constants;
+        trace: {
+          TRACE_EVENT_PHASE_BEGIN: number;
+          TRACE_EVENT_PHASE_END: number;
+          TRACE_EVENT_PHASE_COMPLETE: number;
+          TRACE_EVENT_PHASE_INSTANT: number;
+          TRACE_EVENT_PHASE_ASYNC_BEGIN: number;
+          TRACE_EVENT_PHASE_ASYNC_STEP_INTO: number;
+          TRACE_EVENT_PHASE_ASYNC_STEP_PAST: number;
+          TRACE_EVENT_PHASE_ASYNC_END: number;
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN: number;
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: number;
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT: number;
+          TRACE_EVENT_PHASE_FLOW_BEGIN: number;
+          TRACE_EVENT_PHASE_FLOW_STEP: number;
+          TRACE_EVENT_PHASE_FLOW_END: number;
+          TRACE_EVENT_PHASE_METADATA: number;
+          TRACE_EVENT_PHASE_COUNTER: number;
+          TRACE_EVENT_PHASE_SAMPLE: number;
+          TRACE_EVENT_PHASE_CREATE_OBJECT: number;
+          TRACE_EVENT_PHASE_SNAPSHOT_OBJECT: number;
+          TRACE_EVENT_PHASE_DELETE_OBJECT: number;
+          TRACE_EVENT_PHASE_MEMORY_DUMP: number;
+          TRACE_EVENT_PHASE_MARK: number;
+          TRACE_EVENT_PHASE_CLOCK_SYNC: number;
+          TRACE_EVENT_PHASE_ENTER_CONTEXT: number;
+          TRACE_EVENT_PHASE_LEAVE_CONTEXT: number;
+          TRACE_EVENT_PHASE_LINK_IDS: number;
+        };
       };
       binding(m: string): object;
     }

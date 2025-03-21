@@ -486,21 +486,23 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn bunVM(this: *JSGlobalObject) *JSC.VirtualMachine {
-        if (comptime bun.Environment.allow_assert) {
-            if (JSC.VirtualMachine.VMHolder.vm) |vm_holder_vm| {
-                bun.assertf(
-                    this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_holder_vm)),
-                    \\expected bunVMUnsafe() to be {x} but got {x}.
-                    \\VMHolder and JSC__JSGlobalObject__bunVM disagree on the Bun VM for global object {x}.
-                    \\either there is an inconsistency with the bindings, or bunVM() was called on the wrong thread.
-                ,
-                    .{ @intFromPtr(vm_holder_vm), @intFromPtr(this.bunVMUnsafe()), @intFromPtr(this) },
-                );
-            } else {
-                @panic("This thread lacks a Bun VM");
-            }
+        const vm_holder_vm = JSC.VirtualMachine.VMHolder.vm orelse
+            @panic("internal assertion failure: bunVM() called on thread with no VM");
+        const global_object_vm = this.bunVMConcurrently();
+        if (bun.Environment.allow_assert) {
+            bun.assertf(global_object_vm == vm_holder_vm,
+                \\Bun VM for global object {x} mismatched:
+                \\{x} in VMHolder
+                \\{x} from JSC__JSGlobalObject__bunVM
+                \\either there is an inconsistency with the bindings, or bunVM() was called on the wrong thread.
+            , .{
+                @intFromPtr(this),
+                @intFromPtr(vm_holder_vm),
+                @intFromPtr(global_object_vm),
+            });
         }
-        return @ptrCast(@alignCast(this.bunVMUnsafe()));
+
+        return global_object_vm;
     }
 
     pub const TryBunVMResult = union(enum) {

@@ -218,11 +218,8 @@ algorithms.forEach(([ hash, secret, salt, info, length ]) => {
 
 if (!hasOpenSSL3) {
   const kKnownUnsupported = ['shake128', 'shake256'];
-  if (common.openSSLIsBoringSSL) {
-    kKnownUnsupported.push('rmd160', 'DSA', 'ripemd160WithRSA', 'RSA-RIPEMD160');
-  }
   getHashes()
-    .filter((hash) => !kKnownUnsupported.includes(hash) && !hash.startsWith('DSA-'))
+    .filter((hash) => !kKnownUnsupported.includes(hash))
     .forEach((hash) => {
       assert(hkdfSync(hash, 'key', 'salt', 'info', 5));
     });

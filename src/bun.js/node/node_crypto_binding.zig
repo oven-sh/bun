@@ -427,6 +427,29 @@ pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
     return global.ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by BoringSSL", .{}).throw();
 }
 
+fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
+    const from = maybe_from orelse return;
+    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
+    hashes.put(bun.span(from), {}) catch bun.outOfMemory();
+}
+
+fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    var hashes: bun.CaseInsensitiveASCIIStringArrayHashMap(void) = .init(bun.default_allocator);
+    defer hashes.deinit();
+
+    // TODO(dylan-conway): cache the names
+    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
+
+    const array = JSValue.createEmptyArray(global, hashes.count());
+
+    for (hashes.keys(), 0..) |hash, i| {
+        const str = String.createUTF8ForJS(global, hash);
+        array.putIndex(global, @intCast(i), str);
+    }
+
+    return array;
+}
+
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 8);
 
@@ -443,6 +466,8 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     crypto.put(global, String.init("getFips"), JSC.JSFunction.create(global, "getFips", getFips, 0, .{}));
     crypto.put(global, String.init("setFips"), JSC.JSFunction.create(global, "setFips", getFips, 1, .{}));
     crypto.put(global, String.init("setEngine"), JSC.JSFunction.create(global, "setEngine", getFips, 2, .{}));
+
+    crypto.put(global, String.init("getHashes"), JSC.JSFunction.create(global, "getHashes", getHashes, 0, .{}));
 
     return crypto;
 }

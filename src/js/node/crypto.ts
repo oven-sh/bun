@@ -63,6 +63,7 @@ const {
   getFips,
   setFips,
   setEngine,
+  getHashes,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString } = require("internal/validators");
@@ -1960,12 +1961,6 @@ var require_browser6 = __commonJS({
 var require_crypto_browserify2 = __commonJS({
   "node_modules/crypto-browserify/index.js"(exports) {
     "use strict";
-    var algos = require_algos(),
-      algoKeys = Object.keys(algos),
-      hashes = ["sha1", "sha224", "sha256", "sha384", "sha512", "md5", "rmd160"].concat(algoKeys);
-    exports.getHashes = function () {
-      return hashes;
-    };
     var aes = require_browser6();
     exports.Cipher = aes.Cipher;
     exports.createCipher = aes.createCipher;
@@ -2519,6 +2514,8 @@ crypto_exports.createVerify = createVerify;
     return new Hmac(hmac, key, options);
   };
 }
+
+crypto_exports.getHashes = getHashes;
 
 crypto_exports.randomInt = randomInt;
 crypto_exports.randomFill = randomFill;

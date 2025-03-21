@@ -1945,10 +1945,6 @@ const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
         }
     }
 
-    if (ignoreSHA512_224 && WTF::equalIgnoringASCIICase(name, "sha512-224"_s)) {
-        return nullptr;
-    }
-
     // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {
     //     return EVP_ripemd160();
     // }
@@ -2796,7 +2792,7 @@ EVPKeyPointer::operator Dsa() const
 bool EVPKeyPointer::validateDsaParameters() const
 {
     if (!pkey_) return false;
-    /* Validate DSA2 parameters from FIPS 186-4 */
+        /* Validate DSA2 parameters from FIPS 186-4 */
 #if OPENSSL_VERSION_MAJOR >= 3
     if (EVP_default_properties_is_fips_enabled(nullptr) && EVP_PKEY_DSA == id()) {
 #else

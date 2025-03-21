@@ -211,7 +211,7 @@ pub fn SplitNewlineIterator(comptime T: type) type {
 
 pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const input = callframe.argument(0);
-    const str = bun.String.fromJS(input, globalThis);
+    const str = try bun.String.fromJS2(input, globalThis);
     bun.assert(str.tag != .Dead);
     defer str.deref();
     if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);

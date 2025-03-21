@@ -242,5 +242,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_INTERNAL_ASSERTION", Error],
 ];
 export default errors;

@@ -58,6 +58,8 @@ const {
   randomFill,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
+const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+
 const { validateObject, validateString } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
@@ -916,12 +918,17 @@ crypto_exports.createECDH = function createECDH(curve) {
 
 {
   function getDecoder(decoder, encoding) {
-    // const normalizedEncoding = normalizeEncoding(encoding);
+    const normalizedEncoding = normalizeEncoding(encoding);
     decoder ||= new StringDecoder(encoding);
-    if (decoder.encoding !== encoding) {
-      if (encoding === undefined) {
+    if (decoder.encoding !== normalizedEncoding) {
+      if (normalizedEncoding === undefined) {
         throw $ERR_UNKNOWN_ENCODING(encoding);
       }
+
+      // there's a test for this
+      // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/lib/internal/crypto/cipher.js#L100
+      // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/test/parallel/test-crypto-encoding-validation-error.js#L31
+      throw $ERR_INTERNAL_ASSERTION("Cannot change encoding");
     }
     return decoder;
   }

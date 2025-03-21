@@ -1,5 +1,5 @@
-import { bench, run } from "../runner.mjs";
 import crypto from "node:crypto";
+import { bench, run } from "../runner.mjs";
 
 // Sample keys with different lengths
 const keys = {

@@ -469,7 +469,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-
+    thisObject->m_children.clear();
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
 }
@@ -509,6 +509,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         // Construct the array
         JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
+
+        mod->m_children.clear();
+
         return JSValue::encode(array);
     }
 

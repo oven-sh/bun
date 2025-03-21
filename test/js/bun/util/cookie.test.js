@@ -7,7 +7,7 @@ describe("Bun.Cookie", () => {
     expect(cookie.value).toBe("value");
     expect(cookie.path).toBe("/");
     expect(cookie.domain).toBe(null);
-    expect(cookie.expires).toBe(0);
+    expect(cookie.expires).toBe(undefined);
     expect(cookie.secure).toBe(false);
     expect(cookie.sameSite).toBe("lax");
   });
@@ -25,7 +25,7 @@ describe("Bun.Cookie", () => {
     expect(cookie.value).toBe("value");
     expect(cookie.domain).toBe("example.com");
     expect(cookie.path).toBe("/foo");
-    expect(cookie.expires).toBe(123456789);
+    expect(cookie.expires).toEqual(new Date(123456789000));
     expect(cookie.secure).toBe(true);
     expect(cookie.sameSite).toBe("strict");
   });

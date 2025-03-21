@@ -390,10 +390,6 @@ namespace InternalModuleRegistryConstants {
   );
 }
 
-/**
- * IDs with bits set past this offset are used for builtin modules.
- */
-const BUILTIN = 9;
 // This is a generated enum for zig code (exports.zig)
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),

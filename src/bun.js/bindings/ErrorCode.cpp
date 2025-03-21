@@ -1967,6 +1967,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PUSH_AFTER_EOF, "stream.push() after EOF"_s));
     case ErrorCode::ERR_STREAM_UNABLE_TO_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
+    case ErrorCode::ERR_STREAM_RELEASE_LOCK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Stream reader cancelled via releaseLock()"_s));
     case ErrorCode::ERR_ILLEGAL_CONSTRUCTOR:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
@@ -2029,7 +2031,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_OUT_OF_STREAMS, "No stream ID is available because maximum stream ID has been reached"_s));
     case ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
-
     default: {
         break;
     }

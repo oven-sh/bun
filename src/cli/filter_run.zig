@@ -147,6 +147,10 @@ pub const ProcessHandle = struct {
     pub fn loop(this: *This) *bun.uws.Loop {
         return this.state.event_loop.loop;
     }
+
+    pub fn getLimit(_: *This) ?*i64 {
+        return null;
+    }
 };
 
 fn fmt(comptime str: []const u8) []const u8 {

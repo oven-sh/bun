@@ -113,6 +113,10 @@ pub fn etimedoutErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError
     return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ETIMEDOUT);
 }
 
+pub fn enobufsErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ENOBUFS);
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///

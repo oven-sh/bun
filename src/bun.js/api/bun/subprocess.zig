@@ -45,6 +45,82 @@ event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
 },
 killSignal: SignalCode,
 
+stdout_maxbuf: ?*MaxBuf = null,
+stderr_maxbuf: ?*MaxBuf = null,
+exited_due_to_maxbuf: bool = false,
+
+pub const MaxBuf = struct {
+    // null after subprocess finalize
+    owned_by_subprocess: ?*Subprocess,
+    // null after pipereader finalize
+    owned_by_reader: bool,
+    // if this goes negative, onMaxBuffer is called on the subprocess
+    remaining_bytes: i64,
+    // (once both are null, it is freed)
+
+    pub fn createForSubprocess(owner: *Subprocess, ptr: *?*MaxBuf, initial: ?i64) void {
+        if (initial == null) {
+            ptr.* = null;
+            return;
+        }
+        const maxbuf = bun.default_allocator.create(MaxBuf) catch bun.outOfMemory();
+        maxbuf.* = .{
+            .owned_by_subprocess = owner,
+            .owned_by_reader = false,
+            .remaining_bytes = initial.?,
+        };
+        ptr.* = maxbuf;
+    }
+    fn disowned(this: *MaxBuf) bool {
+        return this.owned_by_subprocess != null and this.owned_by_reader == false;
+    }
+    fn destroy(this: *MaxBuf) void {
+        bun.assert(this.disowned());
+        bun.default_allocator.destroy(this);
+    }
+    pub fn removeFromSubprocess(ptr: *?*MaxBuf) void {
+        if (ptr.* == null) return;
+        const this = ptr.*.?;
+        bun.assert(this.owned_by_subprocess != null);
+        this.owned_by_subprocess = null;
+        ptr.* = null;
+        if (this.disowned()) {
+            this.destroy();
+        }
+    }
+    pub fn addToPipereader(value: ?*MaxBuf, ptr: *?*MaxBuf) void {
+        if (value == null) return;
+        bun.assert(ptr.* == null);
+        ptr.* = value;
+        bun.assert(!value.?.owned_by_reader);
+        value.?.owned_by_reader = true;
+    }
+    pub fn removeFromPipereader(ptr: *?*MaxBuf) void {
+        if (ptr.* == null) return;
+        const this = ptr.*.?;
+        bun.assert(this.owned_by_reader);
+        this.owned_by_reader = false;
+        ptr.* = null;
+        if (this.disowned()) {
+            this.destroy();
+        }
+    }
+    pub fn onReadBytes(this: *MaxBuf, bytes: u64) void {
+        this.remaining_bytes = std.math.sub(i64, this.remaining_bytes, std.math.cast(i64, bytes) orelse 0) catch -1;
+        if (this.remaining_bytes < 0 and this.owned_by_subprocess != null) {
+            const owned_by = this.owned_by_subprocess.?;
+            if (owned_by.stderr_maxbuf == this) {
+                MaxBuf.removeFromSubprocess(&owned_by.stderr_maxbuf);
+            } else if (owned_by.stdout_maxbuf == this) {
+                MaxBuf.removeFromSubprocess(&owned_by.stdout_maxbuf);
+            } else {
+                bun.assert(false);
+            }
+            owned_by.onMaxBuffer();
+        }
+    }
+};
+
 pub const Flags = packed struct {
     is_sync: bool = false,
     killed: bool = false,
@@ -182,7 +258,6 @@ pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, en
 }
 
 const log = Output.scoped(.Subprocess, false);
-const default_max_buffer_size = 1024 * 1024 * 4;
 pub const StdioKind = enum {
     stdin,
     stdout,
@@ -417,23 +492,10 @@ const Readable = union(enum) {
         }
     }
 
-    pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
+    pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: ?*MaxBuf, is_sync: bool) Readable {
         _ = allocator; // autofix
-        _ = max_size; // autofix
         _ = is_sync; // autofix
         assertStdioResult(result);
-
-        if (Environment.isWindows) {
-            return switch (stdio) {
-                .inherit => Readable{ .inherit = {} },
-                .ignore, .ipc, .path, .memfd => Readable{ .ignore = {} },
-                .fd => |fd| Readable{ .fd = fd },
-                .dup2 => |dup2| Readable{ .fd = dup2.out.toFd() },
-                .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
-                .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
-                .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
-            };
-        }
 
         if (comptime Environment.isPosix) {
             if (stdio == .pipe) {
@@ -444,12 +506,12 @@ const Readable = union(enum) {
         return switch (stdio) {
             .inherit => Readable{ .inherit = {} },
             .ignore, .ipc, .path => Readable{ .ignore = {} },
-            .fd => Readable{ .fd = result.? },
-            .memfd => Readable{ .memfd = stdio.memfd },
-            .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
+            .fd => |fd| if (Environment.isPosix) Readable{ .fd = result.? } else Readable{ .fd = fd },
+            .memfd => if (Environment.isPosix) Readable{ .memfd = stdio.memfd } else Readable{ .ignore = {} },
+            .dup2 => |dup2| if (Environment.isPosix) Output.panic("TODO: implement dup2 support in Stdio readable", .{}) else Readable{ .fd = dup2.out.toFd() },
+            .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, max_size) },
             .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
             .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
-            .dup2 => Output.panic("TODO: implement dup2 support in Stdio readable", .{}),
         };
     }
 
@@ -636,6 +698,12 @@ pub fn timeoutCallback(this: *Subprocess) JSC.API.Bun.Timer.EventLoopTimer.Arm {
     this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
     return .disarm;
+}
+
+pub fn onMaxBuffer(this: *Subprocess) void {
+    // if this is problematic, maybe nextTick?
+    this.exited_due_to_maxbuf = true;
+    _ = this.tryKill(this.killSignal);
 }
 
 fn parseSignal(arg: JSC.JSValue, globalThis: *JSC.JSGlobalObject) !SignalCode {
@@ -1040,7 +1108,7 @@ pub const PipeReader = struct {
         err: bun.sys.Error,
     } = .{ .pending = {} },
     stdio_result: StdioResult,
-
+    limit: ?*MaxBuf = null,
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
 
@@ -1062,13 +1130,15 @@ pub const PipeReader = struct {
         this.deref();
     }
 
-    pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult) *PipeReader {
+    pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, limit: ?*MaxBuf) *PipeReader {
         var this = PipeReader.new(.{
             .process = process,
             .reader = IOReader.init(@This()),
             .event_loop = event_loop,
             .stdio_result = result,
+            .limit = null,
         });
+        MaxBuf.addToPipereader(limit, &this.limit);
         if (Environment.isWindows) {
             this.reader.source = .{ .pipe = this.stdio_result.buffer };
         }
@@ -1078,7 +1148,7 @@ pub const PipeReader = struct {
 
     pub fn readAll(this: *PipeReader) void {
         if (this.state == .pending)
-            this.reader.read();
+            this.reader.read(this.limit);
     }
 
     pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *JSC.EventLoop) JSC.Maybe(void) {
@@ -1224,8 +1294,14 @@ pub const PipeReader = struct {
             bun.default_allocator.free(this.state.done);
         }
 
+        MaxBuf.removeFromPipereader(&this.limit);
+
         this.reader.deinit();
         this.destroy();
+    }
+
+    pub fn getLimit(this: *PipeReader) ?*MaxBuf {
+        return this.limit;
     }
 };
 
@@ -1733,6 +1809,9 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
     }
     this.setEventLoopTimerRefd(false);
 
+    MaxBuf.removeFromSubprocess(&this.stdout_maxbuf);
+    MaxBuf.removeFromSubprocess(&this.stderr_maxbuf);
+
     this.flags.finalized = true;
     this.deref();
 }
@@ -1923,6 +2002,7 @@ pub fn spawnMaybeSync(
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;
     var killSignal: SignalCode = SignalCode.default;
+    var maxBuffer: ?i64 = null;
 
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
@@ -2117,7 +2197,7 @@ pub fn spawnMaybeSync(
             }
 
             if (try args.get(globalThis, "timeout")) |val| {
-                if (val.isNumber()) {
+                if (val.isNumber() and val.isFinite()) {
                     timeout = @max(val.coerce(i32, globalThis), 1);
                 }
             }
@@ -2125,10 +2205,18 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "killSignal")) |val| {
                 killSignal = try parseSignal(val, globalThis);
             }
+
+            if (try args.get(globalThis, "maxBuffer")) |val| {
+                if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
+                    maxBuffer = val.coerce(i64, globalThis);
+                }
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
     }
+
+    log("spawn maxBuffer: {?d}", .{maxBuffer});
 
     if (!override_env and env_array.items.len == 0) {
         env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
@@ -2136,7 +2224,7 @@ pub fn spawnMaybeSync(
     }
 
     inline for (0..stdio.len) |fd_index| {
-        if (stdio[fd_index].canUseMemfd(is_sync)) {
+        if (stdio[fd_index].canUseMemfd(is_sync, fd_index > 0 and maxBuffer != null)) {
             stdio[fd_index].useMemfd(fd_index);
         }
     }
@@ -2291,6 +2379,9 @@ pub fn spawnMaybeSync(
     else
         bun.invalid_fd;
 
+    MaxBuf.createForSubprocess(subprocess, &subprocess.stderr_maxbuf, maxBuffer);
+    MaxBuf.createForSubprocess(subprocess, &subprocess.stdout_maxbuf, maxBuffer);
+
     // When run synchronously, subprocess isn't garbage collected
     subprocess.* = Subprocess{
         .globalThis = globalThis,
@@ -2311,7 +2402,7 @@ pub fn spawnMaybeSync(
             subprocess,
             spawned.stdout,
             jsc_vm.allocator,
-            default_max_buffer_size,
+            subprocess.stdout_maxbuf,
             is_sync,
         ),
         .stderr = Readable.init(
@@ -2320,7 +2411,7 @@ pub fn spawnMaybeSync(
             subprocess,
             spawned.stderr,
             jsc_vm.allocator,
-            default_max_buffer_size,
+            subprocess.stderr_maxbuf,
             is_sync,
         ),
         // 1. JavaScript.
@@ -2340,6 +2431,8 @@ pub fn spawnMaybeSync(
             .is_sync = is_sync,
         },
         .killSignal = killSignal,
+        .stderr_maxbuf = subprocess.stderr_maxbuf,
+        .stdout_maxbuf = subprocess.stdout_maxbuf,
     };
 
     subprocess.process.setExitHandler(subprocess);
@@ -2515,6 +2608,7 @@ pub fn spawnMaybeSync(
     const stderr = try subprocess.stderr.toBufferedValue(globalThis);
     const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
     const exitedDueToTimeout = subprocess.event_loop_timer.state == .FIRED;
+    const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
     const resultPid = JSC.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
@@ -2532,7 +2626,8 @@ pub fn spawnMaybeSync(
     sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
     sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
-    if (exitedDueToTimeout) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToTimeout"), JSC.JSValue.true);
+    if (timeout != null) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) JSC.JSValue.true else JSC.JSValue.false);
+    if (maxBuffer != null) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer) JSC.JSValue.true else JSC.JSValue.false);
     sync_value.put(globalThis, JSC.ZigString.static("pid"), resultPid);
 
     return sync_value;

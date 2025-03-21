@@ -512,4 +512,8 @@ pub const LifecycleScriptSubprocess = struct {
             });
         };
     }
+
+    pub fn getLimit(_: *LifecycleScriptSubprocess) ?*i64 {
+        return null;
+    }
 };

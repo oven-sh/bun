@@ -2670,7 +2670,7 @@ pub const DNSResolver = struct {
                 port = try port_value.toPortNumber(globalThis);
             }
 
-            options = GetAddrInfo.Options.fromJ(optionsObject, globalThis) catch |err| {
+            options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
                     error.JSError => |exception| exception,

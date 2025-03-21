@@ -7,6 +7,7 @@
 #include "AsymmetricKeyValue.h"
 #include "JSBuffer.h"
 #include "ErrorCode.h"
+#include "BunString.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -141,7 +142,7 @@ void prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>
         if (auto val = obj->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
             if (auto* cryptoKey = jsDynamicCast<JSCryptoKey*>(val.asCell())) {
 
-                JSValue typeValue = obj->get(globalObject, Identifier::fromString(vm, "type"_s));
+                JSValue typeValue = obj->get(globalObject, vm.propertyNames->type);
                 RETURN_IF_EXCEPTION(scope, );
 
                 auto wrappedKey = cryptoKey->protectedWrapped();
@@ -207,7 +208,9 @@ void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, 
 {
     if (value.isString()) {
         WTF::String str = value.toWTFString(lexicalGlobalObject);
-        buffer.append(str.utf8().span());
+        RETURN_IF_EXCEPTION(scope, );
+        UTF8View utf8(str);
+        buffer.append(utf8.span());
     } else if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
         buffer.append(view->span());
     } else if (auto* buf = jsDynamicCast<JSArrayBuffer*>(value)) {
@@ -227,6 +230,8 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
 
     V::validateString(scope, lexicalGlobalObject, hashValue, "digest"_s);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    // TODO(dylan-conway): All of these don't need to copy for sync mode
 
     WTF::Vector<uint8_t> keyData;
     prepareKey(lexicalGlobalObject, scope, keyData, keyValue);

@@ -80,7 +80,7 @@ pub const GetAddrInfo = struct {
             InvalidOptions,
         };
 
-        pub fn fromJ(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Options {
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Options {
             if (value.isEmptyOrUndefinedOrNull())
                 return Options{};
 

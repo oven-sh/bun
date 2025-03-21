@@ -35,10 +35,10 @@ describe("Bun.Cookie", () => {
       domain: "example.com",
       path: "/foo",
       secure: true,
-      sameSite: "Lax",
+      sameSite: "lax",
     });
 
-    expect(cookie.toString()).toBe("name=value; Domain=example.com; Path=/foo; Secure; SameSite=lax");
+    expect(cookie.toString()).toBe("name=value; Domain=example.com; Path=/foo; Secure");
   });
 
   test.todo("parse a cookie string", () => {

@@ -366,7 +366,7 @@ pub const S3BlobStatTask = struct {
     global: *JSC.JSGlobalObject,
     store: *Blob.Store,
 
-    usingnamespace bun.New(S3BlobStatTask);
+    pub const new = bun.TrivialNew(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
@@ -469,7 +469,7 @@ pub const S3BlobStatTask = struct {
     pub fn deinit(this: *S3BlobStatTask) void {
         this.store.deref();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

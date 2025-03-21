@@ -453,11 +453,8 @@ pub const TextEncoderStreamEncoder = struct {
     const log = Output.scoped(.TextEncoderStreamEncoder, false);
 
     pub usingnamespace JSC.Codegen.JSTextEncoderStreamEncoder;
-    pub usingnamespace bun.New(TextEncoderStreamEncoder);
-
-    pub fn finalize(this: *TextEncoderStreamEncoder) void {
-        this.destroy();
-    }
+    pub const new = bun.TrivialNew(TextEncoderStreamEncoder);
+    pub const finalize = bun.TrivialDeinit(TextEncoderStreamEncoder);
 
     pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*TextEncoderStreamEncoder {
         return TextEncoderStreamEncoder.new(.{});
@@ -644,6 +641,7 @@ pub const TextEncoderStreamEncoder = struct {
 };
 
 pub const TextDecoder = struct {
+    pub usingnamespace JSC.Codegen.JSTextDecoder;
 
     // used for utf8 decoding
     buffered: struct {
@@ -663,13 +661,8 @@ pub const TextDecoder = struct {
     fatal: bool = false,
     encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-    pub usingnamespace bun.New(TextDecoder);
-
-    pub fn finalize(this: *TextDecoder) void {
-        this.destroy();
-    }
-
-    pub usingnamespace JSC.Codegen.JSTextDecoder;
+    pub const new = bun.TrivialNew(TextDecoder);
+    pub const finalize = bun.TrivialDeinit(TextDecoder);
 
     pub fn getIgnoreBOM(
         this: *TextDecoder,

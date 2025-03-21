@@ -320,7 +320,7 @@ pub const SavedSourceMap = struct {
                 defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                const result = ParsedSourceMap.new(saved.toMapping(default_allocator, path) catch {
+                const result = bun.new(ParsedSourceMap, saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return .{};
                 });
@@ -1035,9 +1035,9 @@ pub const VirtualMachine = struct {
     pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
-                vm.active_tasks +
-                vm.event_loop.tasks.count +
-                @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+            vm.active_tasks +
+            vm.event_loop.tasks.count +
+            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
@@ -2523,7 +2523,7 @@ pub const VirtualMachine = struct {
             return;
         } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
-                strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
+            strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {
             ret.result = null;
             ret.path = specifier;
@@ -3542,7 +3542,7 @@ pub const VirtualMachine = struct {
         error_instance.toZigException(this.global, exception);
         const enable_source_code_preview = allow_source_code_preview and
             !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-                bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
 
         defer {
             if (Environment.isDebug) {
@@ -4175,13 +4175,13 @@ pub const VirtualMachine = struct {
                             // + 1 to ensure the message is a non-empty string.
                             break :has_prefix msg_chars.len > code.len + ": ".len + 1 and
                                 (if (is_utf16)
-                                    // there is no existing function to perform this slice comparison
-                                    // []const u16, []const u8
-                                    for (code, msg_chars[0..code.len]) |a, b| {
-                                        if (a != b) break false;
-                                    } else true
-                                else
-                                    bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
+                                // there is no existing function to perform this slice comparison
+                                // []const u16, []const u8
+                                for (code, msg_chars[0..code.len]) |a, b| {
+                                    if (a != b) break false;
+                                } else true
+                            else
+                                bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
                                 msg_chars[code.len] == ':' and
                                 msg_chars[code.len + 1] == ' ';
                         },
@@ -4381,12 +4381,13 @@ pub const VirtualMachine = struct {
     };
 
     pub const IPCInstance = struct {
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
+
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
         has_disconnect_called: bool = false,
-
-        pub usingnamespace bun.New(@This());
 
         const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
@@ -4436,7 +4437,7 @@ pub const VirtualMachine = struct {
                 uws.us_socket_context_free(0, this.context);
             }
             vm.channel_ref.disable();
-            this.destroy();
+            this.deinit();
         }
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
@@ -4477,7 +4478,7 @@ pub const VirtualMachine = struct {
                 this.ipc = .{ .initialized = instance };
 
                 const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
-                    instance.destroy();
+                    instance.deinit();
                     this.ipc = null;
                     Output.warn("Unable to start IPC socket", .{});
                     return null;
@@ -4498,7 +4499,7 @@ pub const VirtualMachine = struct {
                 this.ipc = .{ .initialized = instance };
 
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
-                    instance.destroy();
+                    instance.deinit();
                     this.ipc = null;
                     Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
                     return null;

@@ -45,7 +45,7 @@ pub const LifecycleScriptSubprocess = struct {
         return a.started_at < b.started_at;
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const min_milliseconds_to_log = 500;
 
@@ -445,8 +445,8 @@ pub const LifecycleScriptSubprocess = struct {
             process.deref();
         }
 
-        this.stdout.deinit();
-        this.stderr.deinit();
+        this.stdout.derefOrDeinit();
+        this.stderr.derefOrDeinit();
         this.stdout = OutputReader.init(@This());
         this.stderr = OutputReader.init(@This());
     }
@@ -456,11 +456,11 @@ pub const LifecycleScriptSubprocess = struct {
         this.ensureNotInHeap();
 
         if (!this.manager.options.log_level.isVerbose()) {
-            this.stdout.deinit();
-            this.stderr.deinit();
+            this.stdout.derefOrDeinit();
+            this.stderr.derefOrDeinit();
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {

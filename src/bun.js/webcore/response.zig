@@ -3331,7 +3331,7 @@ pub const Fetch = struct {
                     url_proxy_buffer: []const u8,
                     global: *JSC.JSGlobalObject,
 
-                    pub usingnamespace bun.New(@This());
+                    pub const new = bun.TrivialNew(@This());
 
                     pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                         const global = self.global;
@@ -3371,7 +3371,7 @@ pub const Fetch = struct {
                             },
                         }
                         bun.default_allocator.free(self.url_proxy_buffer);
-                        self.destroy();
+                        bun.destroy(self);
                     }
                 };
                 if (method != .PUT and method != .POST) {

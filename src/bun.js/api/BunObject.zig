@@ -1060,7 +1060,7 @@ pub const Crypto = struct {
         ctx: BoringSSL.HMAC_CTX,
         algorithm: EVP.Algorithm,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn init(algorithm: EVP.Algorithm, key: []const u8) ?*HMAC {
             const md = algorithm.md() orelse return null;
@@ -1105,7 +1105,7 @@ pub const Crypto = struct {
 
         pub fn deinit(this: *HMAC) void {
             BoringSSL.HMAC_CTX_cleanup(&this.ctx);
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -1294,7 +1294,7 @@ pub const Crypto = struct {
                 any_task: JSC.AnyTask = undefined,
                 poll: Async.KeepAlive = .{},
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub fn runTask(task: *JSC.WorkPoolTask) void {
                     const job: *PBKDF2.Job = @fieldParentPtr("task", task);
@@ -1342,7 +1342,7 @@ pub const Crypto = struct {
                     this.pbkdf2.deinitAndUnprotect();
                     this.promise.deinit();
                     bun.default_allocator.free(this.output);
-                    this.destroy();
+                    bun.destroy(this);
                 }
 
                 pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, data: *const PBKDF2) *Job {
@@ -1929,7 +1929,7 @@ pub const Crypto = struct {
             ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub const Result = struct {
                 value: Value,
@@ -1939,7 +1939,7 @@ pub const Crypto = struct {
                 promise: JSC.JSPromise.Strong,
                 global: *JSC.JSGlobalObject,
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub const Value = union(enum) {
                     err: PasswordObject.HashError,
@@ -1963,12 +1963,12 @@ pub const Crypto = struct {
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
-                            this.destroy();
+                            bun.destroy(this);
                             promise.reject(global, error_instance);
                         },
                         .hash => |value| {
                             const js_string = JSC.ZigString.init(value).toJS(global);
-                            this.destroy();
+                            bun.destroy(this);
                             promise.resolve(global, js_string);
                         },
                     }
@@ -1978,7 +1978,7 @@ pub const Crypto = struct {
             pub fn deinit(this: *HashJob) void {
                 this.promise.deinit();
                 bun.freeSensitive(bun.default_allocator, this.password);
-                this.destroy();
+                bun.destroy(this);
             }
 
             pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm.Value) Result.Value {
@@ -2144,7 +2144,7 @@ pub const Crypto = struct {
             ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub const Result = struct {
                 value: Value,
@@ -2154,7 +2154,7 @@ pub const Crypto = struct {
                 promise: JSC.JSPromise.Strong,
                 global: *JSC.JSGlobalObject,
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub const Value = union(enum) {
                     err: PasswordObject.HashError,
@@ -2178,11 +2178,11 @@ pub const Crypto = struct {
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
-                            this.destroy();
+                            bun.destroy(this);
                             promise.reject(global, error_instance);
                         },
                         .pass => |pass| {
-                            this.destroy();
+                            bun.destroy(this);
                             promise.resolve(global, JSC.JSValue.jsBoolean(pass));
                         },
                     }
@@ -2195,7 +2195,7 @@ pub const Crypto = struct {
                 bun.freeSensitive(bun.default_allocator, this.password);
                 bun.freeSensitive(bun.default_allocator, this.prev_hash);
 
-                this.destroy();
+                bun.destroy(this);
             }
 
             pub fn getValue(password: []const u8, prev_hash: []const u8, algorithm: ?PasswordObject.Algorithm) Result.Value {
@@ -2340,7 +2340,7 @@ pub const Crypto = struct {
         const Digest = EVP.Digest;
 
         pub usingnamespace JSC.Codegen.JSCryptoHasher;
-        usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         // For using only CryptoHasherZig in c++
         pub const Extern = struct {
@@ -2687,16 +2687,15 @@ pub const Crypto = struct {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
-            var new: CryptoHasher = undefined;
-            switch (this.*) {
-                .evp => |*inner| {
-                    new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
+            const cloned: CryptoHasher = switch (this.*) {
+                .evp => |*inner| .{
+                    .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory(),
                 },
-                .hmac => |inner| {
+                .hmac => |inner| brk: {
                     const hmac = inner orelse {
                         return throwHmacConsumed(globalObject);
                     };
-                    new = .{
+                    break :brk .{
                         .hmac = hmac.copy() catch {
                             const err = createCryptoError(globalObject, BoringSSL.ERR_get_error());
                             BoringSSL.ERR_clear_error();
@@ -2704,11 +2703,9 @@ pub const Crypto = struct {
                         },
                     };
                 },
-                .zig => |*inner| {
-                    new = .{ .zig = inner.copy() };
-                },
-            }
-            return CryptoHasher.new(new).toJS(globalObject);
+                .zig => |*inner| .{ .zig = inner.copy() },
+            };
+            return CryptoHasher.new(cloned).toJS(globalObject);
         }
 
         pub fn digest_(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.Node.StringOrBuffer) bun.JSError!JSC.JSValue {
@@ -2800,7 +2797,7 @@ pub const Crypto = struct {
                     }
                 },
             }
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -4533,10 +4530,10 @@ pub const JSZlib = struct {
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
-                arguments[1]
-            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
-                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
-            } else null;
+            arguments[1]
+        else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+        } else null;
 
         if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };

@@ -388,7 +388,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .emit_visualizer_events = 0,
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
-                bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
+            bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
         .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
@@ -1350,7 +1350,9 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
+            html.html_bundle.bundle.data.ref_count.dumpActiveRefs();
+
+            try entry_points.append(alloc, html.html_bundle.bundle.data.path, .{ .client = true });
         },
     }
 
@@ -1487,7 +1489,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     const before_head_end = bundled_html[0..script_injection_offset];
     const after_head_end = bundled_html[script_injection_offset..];
 
-    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
+    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.bundle.data.path), ".html");
     // TODO: function for URL safe chars
     if (!bun.strings.isAllASCII(display_name)) display_name = "page";
 
@@ -2383,7 +2385,7 @@ pub fn finalizeBundle(
     if (will_hear_hot_update and
         current_bundle.had_reload_event and
         (dev.incremental_result.framework_routes_affected.items.len +
-            dev.incremental_result.html_routes_hard_affected.items.len) > 0 and
+        dev.incremental_result.html_routes_hard_affected.items.len) > 0 and
         dev.bundling_failures.count() == 0)
     {
         has_route_bits_set = true;
@@ -2622,7 +2624,7 @@ pub fn finalizeBundle(
             else
                 null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
-            .html => |html| dev.relativePath(html.html_bundle.html_bundle.path),
+            .html => |html| dev.relativePath(html.html_bundle.bundle.data.path),
             .framework => |fw| file_name: {
                 const route = dev.router.routePtr(fw.route_index);
                 const opaque_id = route.file_page.unwrap() orelse
@@ -2872,7 +2874,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 .cached_css_file_array = .empty,
             } },
             .html => |html| brk: {
-                const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.html_bundle.path, false, true);
+                const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.bundle.data.path, false, true);
                 dev.client_graph.source_maps.items[incremental_graph_index.get()].extra.empty.html_bundle_route_index = .init(bundle_index.get());
                 break :brk .{ .html = .{
                     .html_bundle = html,

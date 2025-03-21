@@ -93,7 +93,7 @@ pub const TransformTask = struct {
     global: *JSGlobalObject,
     replace_exports: Runtime.Features.ReplaceableExport.Map = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const AsyncTransformTask = JSC.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
@@ -245,10 +245,9 @@ pub const TransformTask = struct {
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
         if (this.tsconfig) |tsconfig| {
-            tsconfig.destroy();
+            tsconfig.deinit();
         }
-
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

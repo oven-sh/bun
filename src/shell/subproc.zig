@@ -964,7 +964,7 @@ pub const PipeReader = struct {
     out_type: bun.shell.subproc.ShellSubprocess.OutKind,
     captured_writer: CapturedWriter = .{},
     buffered_output: BufferedOutput = .{ .bytelist = .{} },
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     const BufferedOutput = union(enum) {
         bytelist: bun.ByteList,
@@ -1013,7 +1013,10 @@ pub const PipeReader = struct {
         }
     };
 
-    pub usingnamespace bun.NewRefCounted(PipeReader, deinit, null);
+    const Self = @This();
+    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const CapturedWriter = struct {
         dead: bool = true,
@@ -1104,7 +1107,8 @@ pub const PipeReader = struct {
     }
 
     pub fn create(event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, capture: ?*sh.IOWriter, out_type: bun.shell.Subprocess.OutKind) *PipeReader {
-        var this: *PipeReader = PipeReader.new(.{
+        var this: *PipeReader = bun.new(PipeReader, .{
+            .ref_count = .init(),
             .process = process,
             .reader = IOReader.init(@This()),
             .event_loop = event_loop,
@@ -1121,10 +1125,10 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source =
                 switch (result) {
-                    .buffer => .{ .pipe = this.stdio_result.buffer },
-                    .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
-                    .unavailable => @panic("Shouldn't happen."),
-                };
+                .buffer => .{ .pipe = this.stdio_result.buffer },
+                .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
+                .unavailable => @panic("Shouldn't happen."),
+            };
         }
         this.reader.setParent(this);
 
@@ -1337,7 +1341,7 @@ pub const PipeReader = struct {
         return this.event_loop.loop();
     }
 
-    pub fn deinit(this: *PipeReader) void {
+    fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
             assert(this.reader.isDone() or this.state == .err);
@@ -1364,8 +1368,8 @@ pub const PipeReader = struct {
 
         this.buffered_output.deinit();
 
-        this.reader.deinit();
-        this.destroy();
+        this.reader.derefOrDeinit();
+        bun.destroy(this);
     }
 };
 

@@ -141,8 +141,8 @@ fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob,
             content
         else if (blob.wasString())
             MimeType.text
-                // TODO: should we get the mime type off of the Blob.Store if it exists?
-                // A little wary of doing this right now due to causing some breaking change
+            // TODO: should we get the mime type off of the Blob.Store if it exists?
+            // A little wary of doing this right now due to causing some breaking change
         else
             MimeType.other;
     };
@@ -2179,7 +2179,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: ?*uws.Request,
-        request_weakref: Request.WeakRef = .{},
+        request_weakref: Request.WeakRef = .empty,
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
 
@@ -2729,7 +2729,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
-                this.request_weakref.deinit();
+                this.request_weakref.deref();
             }
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
@@ -2800,7 +2800,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 request.request_context = AnyRequestContext.Null;
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
-                this.request_weakref.deinit();
+                this.request_weakref.deref();
             }
 
             // if signal is not aborted, abort the signal
@@ -4914,7 +4914,7 @@ pub const ServerWebSocket = struct {
     }
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
-    pub usingnamespace bun.New(ServerWebSocket);
+    pub const new = bun.TrivialNew(ServerWebSocket);
 
     pub fn memoryCost(this: *const ServerWebSocket) usize {
         if (this.flags.closed) {
@@ -5233,7 +5233,7 @@ pub const ServerWebSocket = struct {
 
     pub fn finalize(this: *ServerWebSocket) void {
         log("finalize", .{});
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn publish(
@@ -6148,7 +6148,7 @@ pub const NodeHTTPResponse = struct {
     onWritableCallback: JSC.Strong = .empty,
     onAbortedCallback: JSC.Strong = .empty,
 
-    ref_count: u32 = 1,
+    ref_count: RefCount,
     js_ref: JSC.Ref = .{},
     aborted: bool = false,
     finished: bool = false,
@@ -6173,7 +6173,9 @@ pub const NodeHTTPResponse = struct {
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
+    const RefCount = bun.ptr.RefCount(NodeHTTPResponse, "ref_count", deinit);
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const UpgradeCTX = struct {
         context: ?*uws.uws_socket_context_t = null,
@@ -6418,7 +6420,8 @@ pub const NodeHTTPResponse = struct {
             has_body.* = @intFromBool(req_len > 0 or request.header("transfer-encoding") != null);
         }
 
-        const response = NodeHTTPResponse.new(.{
+        const response = bun.new(NodeHTTPResponse, .{
+            .ref_count = .init(),
             .upgrade_context = .{
                 .context = @ptrCast(upgrade_ctx),
                 .request = request,
@@ -6433,7 +6436,6 @@ pub const NodeHTTPResponse = struct {
             // 1 - the JS object
             // 1 - the Server handler.
             // 1 - the onData callback (request bod)
-            .ref_count = if (has_body.* != 0) 4 else 3,
         });
         if (has_body.* != 0) {
             response.body_read_ref.ref(vm);
@@ -7152,7 +7154,7 @@ pub const NodeHTTPResponse = struct {
         this.deref();
     }
 
-    pub fn deinit(this: *NodeHTTPResponse) void {
+    fn deinit(this: *NodeHTTPResponse) void {
         bun.debugAssert(!this.body_read_ref.has);
         bun.debugAssert(!this.js_ref.has);
         bun.debugAssert(!this.is_request_pending);
@@ -7165,7 +7167,7 @@ pub const NodeHTTPResponse = struct {
         this.onDataCallback.deinit();
         this.onWritableCallback.deinit();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 
     comptime {
@@ -7176,10 +7178,12 @@ pub const NodeHTTPResponse = struct {
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
     state: State,
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     /// Reference count is incremented while there are other objects that are waiting on plugin loads.
-    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
+    const RefCount = bun.ptr.RefCount(ServePlugins, "ref_count", deinit);
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const State = union(enum) {
         unqueued: []const []const u8,
@@ -7208,17 +7212,17 @@ const ServePlugins = struct {
     };
 
     pub fn init(plugins: []const []const u8) *ServePlugins {
-        return ServePlugins.new(.{ .state = .{ .unqueued = plugins } });
+        return bun.new(ServePlugins, .{ .ref_count = .init(), .state = .{ .unqueued = plugins } });
     }
 
-    pub fn deinit(this: *ServePlugins) void {
+    fn deinit(this: *ServePlugins) void {
         switch (this.state) {
             .unqueued => {},
             .pending => assert(false), // should have one ref while pending!
             .loaded => |loaded| loaded.deinit(),
             .err => {},
         }
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
@@ -7403,7 +7407,7 @@ const PluginsResult = union(enum) {
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
         pub usingnamespace NamespaceType;
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub const ssl_enabled = ssl_enabled_;
         pub const debug_mode = debug_mode_;
@@ -7840,7 +7844,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
-            upgrader.request_weakref.deinit();
+            upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
             const ws = ServerWebSocket.new(.{
@@ -8445,7 +8449,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 plugins.deref();
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn init(config: *ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
@@ -9023,7 +9027,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .signal = signal.ref(),
                 .body = body.ref(),
             });
-            ctx.request_weakref = Request.WeakRef.create(request_object);
+            ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
@@ -9146,7 +9150,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .body = body.ref(),
             });
             ctx.upgrade_context = upgrade_ctx;
-            ctx.request_weakref = Request.WeakRef.create(request_object);
+            ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.JSValue{
                 request_object.toJS(this.globalThis),
@@ -9576,7 +9580,7 @@ pub const ServerAllConnectionsClosedTask = struct {
     promise: JSC.JSPromise.Strong,
     tracker: JSC.AsyncTaskTracker,
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
@@ -9588,7 +9592,7 @@ pub const ServerAllConnectionsClosedTask = struct {
 
         var promise = this.promise;
         defer promise.deinit();
-        this.destroy();
+        bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
             promise.resolve(globalObject, .undefined);

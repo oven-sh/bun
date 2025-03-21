@@ -789,7 +789,7 @@ pub const FFI = struct {
             }
         }
 
-        // TODO: pub usingnamespace bun.New(FFI)
+        // TODO: pub const new = bun.TrivialNew(FFI)
         var lib = bun.default_allocator.create(FFI) catch bun.outOfMemory();
         lib.* = .{
             .dylib = null,

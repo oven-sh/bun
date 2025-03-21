@@ -1606,7 +1606,7 @@ pub const FileSystemFlags = enum(c_int) {
 /// Stats and BigIntStats classes from node:fs
 pub fn StatType(comptime big: bool) type {
     return struct {
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
         value: bun.Stat,
 
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
@@ -2190,7 +2190,8 @@ pub fn StatFSType(comptime big: bool) type {
 
     return extern struct {
         pub usingnamespace if (big) JSC.Codegen.JSBigIntStatFs else JSC.Codegen.JSStatFs;
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
+        pub const finalize = bun.TrivialDeinit(@This());
 
         // Common fields between Linux and macOS
         _fstype: Int,
@@ -2230,10 +2231,6 @@ pub fn StatFSType(comptime big: bool) type {
         pub const bavail = getter(._bavail);
         pub const files = getter(._files);
         pub const ffree = getter(._ffree);
-
-        pub fn finalize(this: *This) void {
-            this.destroy();
-        }
 
         pub fn init(statfs_: bun.StatFS) This {
             const fstype_, const bsize_, const blocks_, const bfree_, const bavail_, const files_, const ffree_ = switch (comptime Environment.os) {

@@ -593,7 +593,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         target);
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder, bool hasHmr)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -610,8 +610,36 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedPlugins));
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
-
+    arguments.append(JSC::jsBoolean(hasHmr));
+    
     return JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments));
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolveEditPlugin(
+    JSC::JSGlobalObject* global,
+    JSC::EncodedJSValue server,
+    JSC::EncodedJSValue devServer,
+    const BunString* path,
+    JSC::EncodedJSValue fn1,
+    JSC::EncodedJSValue fn2
+) {
+    auto& vm = global->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto* builtinFn = JSC::JSFunction::create(vm, global, WebCore::bundlerPluginLoadEditPluginCodeGenerator(vm), global);
+
+    JSC::CallData callData = JSC::getCallData(builtinFn);
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        return JSValue::encode(jsUndefined());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSC::jsString(vm, path->toWTFString()));
+    arguments.append(JSValue::decode(server));
+    arguments.append(JSValue::decode(devServer));
+    arguments.append(JSValue::decode(fn1));
+    arguments.append(JSValue::decode(fn2));
+
+    return JSC::JSValue::encode(JSC::profiledCall(global, ProfilingReason::API, builtinFn, callData, jsNull(), arguments));
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(

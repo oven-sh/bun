@@ -46,7 +46,7 @@
   },
 
   // lldb
-  "lldb.launch.initCommands": ["command source ${workspaceFolder}/.lldbinit"],
+  // "lldb.launch.initCommands": ["command source ${workspaceFolder}/.lldbinit"],
   "lldb.verboseLogging": false,
 
   // C++

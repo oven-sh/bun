@@ -7205,6 +7205,8 @@ const ServePlugins = struct {
             /// Promise may be empty if the plugin load finishes synchronously.
             plugin: *bun.JSC.API.JSBundler.Plugin,
             promise: JSC.JSPromise.Strong,
+
+            // In practice, only one of these two will be populated.
             html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundle.Route),
             dev_server: ?*bun.bake.DevServer,
         },
@@ -7242,7 +7244,7 @@ const ServePlugins = struct {
     pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
         sw: switch (this.state) {
             .unqueued => {
-                this.loadAndResolvePlugins(global);
+                this.loadAndResolvePlugins(global, cb == .dev_server);
                 continue :sw this.state; // could jump to any branch if synchronously resolved
             },
             .pending => |*pending| {
@@ -7267,9 +7269,10 @@ const ServePlugins = struct {
         plugin: *bun.JSC.API.JSBundler.Plugin,
         plugins: JSC.JSValue,
         bunfig_folder: JSC.JSValue,
+        has_hmr: bool,
     ) JSValue;
 
-    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject) void {
+    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject, has_hmr: bool) void {
         bun.assert(this.state == .unqueued);
         const plugin_list = this.state.unqueued;
         const bunfig_folder = bun.path.dirname(global.bunVM().transpiler.options.bunfig_path, .auto);
@@ -7296,7 +7299,7 @@ const ServePlugins = struct {
         } };
 
         global.bunVM().eventLoop().enter();
-        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugin_js_array, bunfig_folder_bunstr);
+        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugin_js_array, bunfig_folder_bunstr, has_hmr);
         global.bunVM().eventLoop().exit();
 
         // handle the case where js synchronously throws an error
@@ -7457,6 +7460,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         } = .{},
 
         plugins: ?*ServePlugins = null,
+        plugin_routes: std.ArrayListUnmanaged(PluginRoute) = .empty,
 
         dev_server: ?*bun.bake.DevServer,
 
@@ -7483,6 +7487,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.route.deinit();
             }
         };
+
+        const PluginRoute = struct { cb: JSC.Strong, path: []const u8, server: *ThisServer };
 
         /// Returns:
         /// - .ready if no plugin has to be loaded
@@ -7580,7 +7586,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
-            if (this.config.websocket == null)
+            if (this.config.websocket == null and (this.dev_server == null or this.dev_server.?.active_websocket_connections.size == 0))
                 return JSValue.jsNumber(0);
 
             const app = this.app.?;
@@ -8922,6 +8928,22 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
+        pub fn onPluginRouteRequest(plugin_route: *PluginRoute, req: *uws.Request, resp: *App.Response) void {
+            var should_deinit_context = false;
+            const this = plugin_route.server;
+            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, true) orelse return;
+
+            const js_value = this.jsValueAssertAlive();
+            const response_value = plugin_route.cb.get().?.call(
+                this.globalThis,
+                js_value,
+                &.{ prepared.js_request, js_value },
+            ) catch |err|
+                this.globalThis.takeException(err);
+
+            this.handleRequest(&should_deinit_context, prepared, req, response_value);
+        }
+
         pub fn onRequestFromSaved(
             this: *ThisServer,
             req: SavedRequest.Union,
@@ -9206,7 +9228,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         fn setRoutes(this: *ThisServer) JSC.JSValue {
             var route_list_value = JSC.JSValue.zero;
-            // TODO: move devserver and plugin logic away
             const app = this.app.?;
             const any_server = AnyServer.from(this);
             const dev_server = this.dev_server;
@@ -9322,6 +9343,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .framework_router => {},
                     }
                 }
+            }
+
+            for (this.plugin_routes.items) |*plugin_route| {
+                app.any(plugin_route.path, *PluginRoute, plugin_route, onPluginRouteRequest);
             }
 
             // If there are plugins, initialize the ServePlugins object in
@@ -9629,7 +9654,7 @@ pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, tru
 pub const AnyServer = struct {
     ptr: Ptr,
 
-    const Ptr = bun.TaggedPointerUnion(.{
+    pub const Ptr = bun.TaggedPointerUnion(.{
         HTTPServer,
         HTTPSServer,
         DebugHTTPServer,
@@ -9837,6 +9862,16 @@ pub const AnyServer = struct {
             Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).dev_server,
             Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).dev_server,
             Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).dev_server,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
+
+    pub fn jsValue(this: AnyServer) ?JSC.JSValue {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).js_value.get(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).js_value.get(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).js_value.get(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).js_value.get(),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

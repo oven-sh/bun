@@ -870,9 +870,7 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__createObject2(global, key1, key2, value1, value2);
     }
 
-    pub fn asPromisePtr(this: JSValue, comptime T: type) *T {
-        return asPtr(this, T);
-    }
+    pub const asPromisePtr = asPtr;
 
     extern fn JSC__JSValue__createRopeString(this: JSValue, rhs: JSValue, globalThis: *JSC.JSGlobalObject) JSValue;
     pub fn createRopeString(this: JSValue, rhs: JSValue, globalThis: *JSC.JSGlobalObject) JSValue {

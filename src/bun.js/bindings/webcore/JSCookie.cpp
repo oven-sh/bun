@@ -3,6 +3,7 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -37,6 +38,39 @@ static Cookie* toCookieWrapped(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
     if (UNLIKELY(!impl))
         throwVMTypeError(lexicalGlobalObject, throwScope);
     return impl;
+}
+
+static double getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, JSValue expiresValue)
+{
+    if (expiresValue.isUndefined() || expiresValue.isNull()) {
+        return 0;
+    }
+
+    if (auto* dateInstance = jsDynamicCast<JSC::DateInstance*>(expiresValue)) {
+        double date = dateInstance->internalNumber();
+        if (UNLIKELY(std::isnan(date))) {
+            throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a valid Date (or Number)"_s));
+            return 0;
+        }
+        return date / 1000;
+    }
+
+    if (expiresValue.isNumber()) {
+        double expires = expiresValue.asNumber();
+        if (UNLIKELY(std::isnan(expires) || !std::isfinite(expires))) {
+            throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a valid Number"_s));
+            return 0;
+        }
+
+        if (UNLIKELY(expires < 0)) {
+            throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a positive Number"_s));
+            return 0;
+        }
+
+        return expires;
+    }
+
+    return Bun::ERR::INVALID_ARG_VALUE(throwScope, lexicalGlobalObject, "expires"_s, expiresValue, "Invalid expires value. Must be a Date or a number"_s);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toString);
@@ -158,65 +192,57 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             auto* optionsObj = options.getObject();
 
             // domain
-            if (auto domainValue = optionsObj->get(lexicalGlobalObject, names.domainPublicName());
+            if (auto domainValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());
                 !domainValue.isUndefined() && !domainValue.isNull()) {
                 domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
-                RETURN_IF_EXCEPTION(throwScope, {});
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // path
-            if (auto pathValue = optionsObj->get(lexicalGlobalObject, names.pathPublicName());
+            if (auto pathValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName());
                 !pathValue.isUndefined() && !pathValue.isNull()) {
                 path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
-                RETURN_IF_EXCEPTION(throwScope, {});
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // expires
-            if (auto expiresValue = optionsObj->get(lexicalGlobalObject, names.expiresPublicName());
-                !expiresValue.isUndefined() && !expiresValue.isNull()) {
-                // Handle both Date objects and numeric timestamps
-                if (expiresValue.inherits<JSC::DateInstance>()) {
-                    JSC::DateInstance* dateInstance = JSC::jsCast<JSC::DateInstance*>(expiresValue.asCell());
-                    expires = dateInstance->internalNumber();
-                } else if (expiresValue.isNumber()) {
-                    expires = expiresValue.asNumber();
-                }
-                RETURN_IF_EXCEPTION(throwScope, {});
+            if (auto expiresValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.expiresPublicName())) {
+                expires = getExpiresValue(lexicalGlobalObject, throwScope, expiresValue);
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // maxAge
-            if (auto maxAgeValue = optionsObj->get(lexicalGlobalObject, names.maxAgePublicName());
+            if (auto maxAgeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.maxAgePublicName());
                 !maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
                 maxAge = maxAgeValue.asNumber();
-                RETURN_IF_EXCEPTION(throwScope, {});
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // secure
-            if (auto secureValue = optionsObj->get(lexicalGlobalObject, names.securePublicName());
+            if (auto secureValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.securePublicName());
                 !secureValue.isUndefined()) {
                 secure = secureValue.toBoolean(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // httpOnly
-            if (auto httpOnlyValue = optionsObj->get(lexicalGlobalObject, names.httpOnlyPublicName());
+            if (auto httpOnlyValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.httpOnlyPublicName());
                 !httpOnlyValue.isUndefined()) {
                 httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // partitioned
-            if (auto partitionedValue = optionsObj->get(lexicalGlobalObject, names.partitionedPublicName());
+            if (auto partitionedValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.partitionedPublicName());
                 !partitionedValue.isUndefined()) {
                 partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             // sameSite
-            if (auto sameSiteValue = optionsObj->get(lexicalGlobalObject, names.sameSitePublicName());
+            if (auto sameSiteValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.sameSitePublicName());
                 !sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
                 String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
-                RETURN_IF_EXCEPTION(throwScope, {});
 
                 if (sameSiteStr == "strict"_s)
                     sameSite = CookieSameSite::Strict;
@@ -227,6 +253,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
                 else
                     return throwVMTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         auto cookie = Cookie::create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
@@ -421,7 +448,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         auto* options = callFrame->uncheckedArgument(2).getObject();
 
         // domain
-        auto domainValue = options->get(lexicalGlobalObject, builtinNames.domainPublicName());
+        auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.domainPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!domainValue.isUndefined() && !domainValue.isNull()) {
             domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
@@ -429,7 +456,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // path
-        auto pathValue = options->get(lexicalGlobalObject, builtinNames.pathPublicName());
+        auto pathValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.pathPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!pathValue.isUndefined() && !pathValue.isNull()) {
             path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
@@ -437,19 +464,13 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // expires
-        auto expiresValue = options->get(lexicalGlobalObject, builtinNames.expiresPublicName());
+        auto expiresValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.expiresPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (!expiresValue.isUndefined() && !expiresValue.isNull()) {
-            if (auto* dateInstance = jsDynamicCast<JSC::DateInstance*>(expiresValue)) {
-                expires = dateInstance->internalNumber();
-            } else if (expiresValue.isNumber()) {
-                expires = expiresValue.asNumber();
-            }
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
+        expires = getExpiresValue(lexicalGlobalObject, throwScope, expiresValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         // maxAge
-        auto maxAgeValue = options->get(lexicalGlobalObject, builtinNames.maxAgePublicName());
+        auto maxAgeValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.maxAgePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
             maxAge = maxAgeValue.asNumber();
@@ -457,7 +478,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // secure
-        auto secureValue = options->get(lexicalGlobalObject, builtinNames.securePublicName());
+        auto secureValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.securePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!secureValue.isUndefined()) {
             secure = secureValue.toBoolean(lexicalGlobalObject);
@@ -465,7 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // httpOnly
-        auto httpOnlyValue = options->get(lexicalGlobalObject, builtinNames.httpOnlyPublicName());
+        auto httpOnlyValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.httpOnlyPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!httpOnlyValue.isUndefined()) {
             httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
@@ -473,7 +494,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // partitioned
-        auto partitionedValue = options->get(lexicalGlobalObject, builtinNames.partitionedPublicName());
+        auto partitionedValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.partitionedPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!partitionedValue.isUndefined()) {
             partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
@@ -481,7 +502,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // sameSite
-        auto sameSiteValue = options->get(lexicalGlobalObject, builtinNames.sameSitePublicName());
+        auto sameSiteValue = options->getIfPropertyExists(lexicalGlobalObject, builtinNames.sameSitePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
             String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
@@ -889,5 +910,4 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CookieSameSite sameSite)
     __builtin_unreachable();
     return {};
 }
-
 }

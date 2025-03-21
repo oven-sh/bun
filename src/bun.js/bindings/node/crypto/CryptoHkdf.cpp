@@ -207,9 +207,11 @@ void prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>
 void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue value, const WTF::ASCIILiteral& name, WTF::Vector<uint8_t>& buffer)
 {
     if (value.isString()) {
-        WTF::String str = value.toWTFString(lexicalGlobalObject);
+        JSString* str = value.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, );
-        UTF8View utf8(str);
+        GCOwnedDataScope<WTF::StringView> view = str->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        UTF8View utf8(view);
         buffer.append(utf8.span());
     } else if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
         buffer.append(view->span());

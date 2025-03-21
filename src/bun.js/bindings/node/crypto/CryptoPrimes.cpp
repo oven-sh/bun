@@ -91,10 +91,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     int32_t checks = 0;
-    if (optionsValue.isObject()) {
-        JSObject* options = optionsValue.getObject();
+    if (auto* optionsObj = optionsValue.getObject()) {
         auto clientData = WebCore::clientData(vm);
-        JSValue checksValue = options->get(lexicalGlobalObject, clientData->builtinNames().checksPublicName());
+        JSValue checksValue = optionsObj->get(lexicalGlobalObject, clientData->builtinNames().checksPublicName());
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!checksValue.isUndefined()) {

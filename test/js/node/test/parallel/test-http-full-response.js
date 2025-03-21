@@ -30,6 +30,10 @@ const bodyLength = 12345;
 
 const body = 'c'.repeat(bodyLength);
 
+if (typeof Bun !== "undefined" && !Bun.which("ab")) {
+  common.skip("ab not found");
+}
+
 const server = http.createServer(function(req, res) {
   res.writeHead(200, {
     'Content-Length': bodyLength,

@@ -122,17 +122,17 @@ function createWindow(windowUrl) {
         // Wait for all CSS assets to be fully loaded before emitting the event
         let checkAttempts = 0;
         const MAX_CHECK_ATTEMPTS = 20; // Prevent infinite waiting
-        
+
         const checkCSSLoaded = () => {
           checkAttempts++;
-          
+
           // Get all link elements with rel="stylesheet"
           const styleLinks = window.document.querySelectorAll('link[rel="stylesheet"]');
           // Get all style elements
-          const styleTags = window.document.querySelectorAll('style');
+          const styleTags = window.document.querySelectorAll("style");
           // Check for adoptedStyleSheets
           const adoptedSheets = window.document.adoptedStyleSheets || [];
-          
+
           // If no stylesheets of any kind, just emit the event
           if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
             process.nextTick(() => {
@@ -140,11 +140,11 @@ function createWindow(windowUrl) {
             });
             return;
           }
-          
+
           // Check if all stylesheets are loaded
           let allLoaded = true;
           let pendingCount = 0;
-          
+
           // Check link elements
           for (const link of styleLinks) {
             // If the stylesheet is not loaded yet
@@ -153,7 +153,7 @@ function createWindow(windowUrl) {
               pendingCount++;
             }
           }
-          
+
           // Check style elements - these should be loaded immediately
           for (const style of styleTags) {
             if (!style.sheet) {
@@ -161,7 +161,7 @@ function createWindow(windowUrl) {
               pendingCount++;
             }
           }
-          
+
           // Check adoptedStyleSheets - these should be loaded immediately
           for (const sheet of adoptedSheets) {
             if (!sheet.cssRules) {
@@ -169,7 +169,7 @@ function createWindow(windowUrl) {
               pendingCount++;
             }
           }
-          
+
           if (allLoaded || checkAttempts >= MAX_CHECK_ATTEMPTS) {
             // All CSS is loaded or we've reached max attempts, emit the event
             if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
@@ -180,11 +180,13 @@ function createWindow(windowUrl) {
             });
           } else {
             // Wait a bit and check again
-            console.info(`[I] Waiting for ${pendingCount} CSS assets to load (attempt ${checkAttempts}/${MAX_CHECK_ATTEMPTS})...`);
+            console.info(
+              `[I] Waiting for ${pendingCount} CSS assets to load (attempt ${checkAttempts}/${MAX_CHECK_ATTEMPTS})...`,
+            );
             setTimeout(checkCSSLoaded, 50);
           }
         };
-        
+
         // Start checking for CSS loaded state
         checkCSSLoaded();
       }

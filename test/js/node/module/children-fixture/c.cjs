@@ -1,1 +1,1 @@
-require('./d.cjs');
+require("./d.cjs");

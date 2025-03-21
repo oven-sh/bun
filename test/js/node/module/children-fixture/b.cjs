@@ -1,3 +1,3 @@
-require('./a.cjs');
-require('./b.cjs');
-require('./c.cjs');
+require("./a.cjs");
+require("./b.cjs");
+require("./c.cjs");

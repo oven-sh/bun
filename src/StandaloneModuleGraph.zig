@@ -1155,7 +1155,7 @@ pub const StandaloneModuleGraph = struct {
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
+        var json = bun.JSON.parse(&json_src, &log, arena) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse
@@ -1174,7 +1174,7 @@ pub const StandaloneModuleGraph = struct {
             return error.InvalidSourceMap;
         }
 
-        const map_vlq: []const u8 = mappings_str.data.e_string.slice(arena);
+        const map_vlq: []const u8 = try mappings_str.data.e_string.asWtf8CollapseRope(arena);
 
         try out.writeInt(u32, sources_paths.items.len, .little);
         try out.writeInt(u32, @intCast(map_vlq.len), .little);
@@ -1188,7 +1188,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const decoded = try item.data.e_string.stringCloned(arena);
+            const decoded = try item.data.e_string.dupe(arena);
 
             const offset = string_payload.items.len;
             try string_payload.appendSlice(decoded);
@@ -1205,7 +1205,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf8 = try item.data.e_string.stringCloned(arena);
+            const utf8 = try item.data.e_string.dupe(arena);
             defer arena.free(utf8);
 
             const offset = string_payload.items.len;

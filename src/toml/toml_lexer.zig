@@ -138,51 +138,14 @@ pub const Lexer = struct {
         self.prev_error_loc = r.loc;
     }
 
-    /// Look ahead at the next n codepoints without advancing the iterator.
-    /// If fewer than n codepoints are available, then return the remainder of the string.
-    fn peek(it: *Lexer, n: usize) string {
-        const original_i = it.current;
-        defer it.current = original_i;
-
-        var end_ix = original_i;
-        var found: usize = 0;
-        while (found < n) : (found += 1) {
-            const next_codepoint = it.nextCodepointSlice();
-            if (next_codepoint.len == 0) break;
-            end_ix += next_codepoint.len;
-        }
-
-        return it.source.contents[original_i..end_ix];
-    }
-
-    inline fn nextCodepointSlice(it: *Lexer) []const u8 {
-        if (it.current >= it.source.contents.len) {
-            return "";
-        }
-        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
-        return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
-    }
-
     inline fn nextCodepoint(it: *Lexer) CodePoint {
-        if (it.current >= it.source.contents.len) {
-            it.end = it.source.contents.len;
-            return -1;
-        }
-        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
-        const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
-
-        const code_point = switch (slice.len) {
-            0 => -1,
-            1 => @as(CodePoint, slice[0]),
-            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), CodePoint, strings.unicode_replacement),
-        };
+        const dec_res = strings.unicode.decodeFirst(.utf8_replace_invalid, it.source.contents[it.current..]);
+        const cp_len = if (dec_res) |a| a.advance else 0;
+        const code_point: i32 = if (dec_res) |a| a.codepoint else -1;
 
         it.end = it.current;
 
-        it.current += if (code_point != strings.unicode_replacement)
-            cp_len
-        else
-            1;
+        it.current += cp_len;
 
         return code_point;
     }
@@ -1187,12 +1150,12 @@ pub const Lexer = struct {
 
     pub inline fn toString(lexer: *Lexer, loc_: logger.Loc) js_ast.Expr {
         if (lexer.string_literal_is_ascii) {
-            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = lexer.string_literal_slice }, loc_);
+            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(lexer.string_literal_slice), loc_);
         }
 
         return js_ast.Expr.init(
             js_ast.E.String,
-            .{ .data = lexer.string_literal_slice },
+            js_ast.E.String.init(lexer.string_literal_slice),
             loc_,
         );
     }

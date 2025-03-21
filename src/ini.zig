@@ -169,17 +169,17 @@ pub const Parser = struct {
                         @intCast(line_offset + @as(i32, @intCast(eq_sign_idx)) + 1),
                         .value,
                     );
-                    break :brk Expr.init(E.String, E.String{ .data = "" }, Loc.Empty);
+                    break :brk Expr.init(E.String, E.String.init(""), Loc.Empty);
                 }
                 break :brk Expr.init(E.Boolean, E.Boolean{ .value = true }, Loc.Empty);
             };
 
             const value: Expr = switch (value_raw.data) {
-                .e_string => |s| if (bun.strings.eqlComptime(s.data, "true"))
+                .e_string => |s| if (s.eqlComptime("true"))
                     Expr.init(E.Boolean, E.Boolean{ .value = true }, Loc.Empty)
-                else if (bun.strings.eqlComptime(s.data, "false"))
+                else if (s.eqlComptime("false"))
                     Expr.init(E.Boolean, E.Boolean{ .value = false }, Loc.Empty)
-                else if (bun.strings.eqlComptime(s.data, "null"))
+                else if (s.eqlComptime("null"))
                     Expr.init(E.Null, E.Null{}, Loc.Empty)
                 else
                     value_raw,
@@ -457,7 +457,7 @@ pub const Parser = struct {
     fn commitRopePart(this: *Parser, arena_allocator: Allocator, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) OOM!void {
         _ = this; // autofix
         const slice = try arena_allocator.dupe(u8, unesc.items[0..]);
-        const expr = Expr.init(E.String, E.String{ .data = slice }, Loc.Empty);
+        const expr = Expr.init(E.String, E.String.init(slice), Loc.Empty);
         if (existing_rope.*) |_r| {
             const r: *Rope = _r;
             _ = try r.append(expr, ropealloc);
@@ -634,7 +634,7 @@ pub const ToStringFormatter = struct {
             .e_object => try writer.print("[Object object]", .{}),
             .e_boolean => try writer.print("{s}", .{if (this.d.e_boolean.value) "true" else "false"}),
             .e_number => try writer.print("{d}", .{this.d.e_number.value}),
-            .e_string => try writer.print("{s}", .{this.d.e_string.data}),
+            .e_string => try writer.print("{s}", .{this.d.e_string.asWtf8AssertNotRope()}),
             .e_null => try writer.print("null", .{}),
 
             else => |tag| if (bun.Environment.isDebug) {

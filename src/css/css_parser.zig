@@ -1697,15 +1697,15 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
 
                             const layer: ?struct { value: ?LayerName } =
                                 if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) == .result)
-                                .{ .value = null }
-                            else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
-                                break :brk .{
-                                    .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
-                                        .result => |v| v,
-                                        .err => |e| return .{ .err = e },
-                                    },
-                                };
-                            } else null;
+                                    .{ .value = null }
+                                else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
+                                    break :brk .{
+                                        .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
+                                            .result => |v| v,
+                                            .err => |e| return .{ .err = e },
+                                        },
+                                    };
+                                } else null;
 
                             const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) == .result) brk: {
                                 const Func = struct {
@@ -4710,11 +4710,12 @@ pub const nth = struct {
         if (bytes.len >= 3 and
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
             brk: {
-            for (bytes[2..]) |b| {
-                if (b < '0' or b > '9') break :brk false;
-            }
-            break :brk true;
-        }) {
+                for (bytes[2..]) |b| {
+                    if (b < '0' or b > '9') break :brk false;
+                }
+                break :brk true;
+            })
+        {
             return parse_number_saturate(allocator, str[1..]); // Include the minus sign
         } else {
             return .{ .err = {} };
@@ -5736,14 +5737,12 @@ const Tokenizer = struct {
     }
 
     pub fn splitSourceMap(contents: []const u8) ?[]const u8 {
-        // FIXME: Use bun CodepointIterator
-        var iter = std.unicode.Utf8Iterator{ .bytes = contents, .i = 0 };
-        while (iter.nextCodepoint()) |c| {
-            switch (c) {
+        var i: usize = 0;
+        while (bun.strings.unicode.decodeFirst(.utf8_replace_invalid, contents[i..])) |dec_res| {
+            i += dec_res.advance;
+            switch (dec_res.codepoint) {
                 ' ', '\t', FORM_FEED_BYTE, '\r', '\n' => {
-                    const start = 0;
-                    const end = iter.i;
-                    return contents[start..end];
+                    return contents[0..i];
                 },
                 else => {},
             }
@@ -5877,8 +5876,10 @@ const Tokenizer = struct {
     }
 
     pub inline fn nextChar(this: *Tokenizer) u32 {
-        const len = bun.strings.utf8ByteSequenceLength(this.src[this.position]);
-        return bun.strings.decodeWTF8RuneT(this.src[this.position..].ptr[0..4], len, u32, bun.strings.unicode_replacement);
+        const dec_res = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, this.src[this.position..]) orelse {
+            return bun.strings.unicode_replacement; // ?
+        };
+        return @intCast(dec_res.codepoint);
     }
 
     pub inline fn nextByteUnchecked(this: *Tokenizer) u8 {

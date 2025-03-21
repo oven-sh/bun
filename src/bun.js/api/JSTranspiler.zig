@@ -292,9 +292,9 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) bun.JSErr
     }
 
     if (value.isString()) {
-        const str = JSAst.E.String{
-            .data = try std.fmt.allocPrint(bun.default_allocator, "{}", .{try value.getZigString(globalThis)}),
-        };
+        const str = JSAst.E.String.init(
+            try std.fmt.allocPrint(bun.default_allocator, "{}", .{try value.getZigString(globalThis)}),
+        );
         const out = try bun.default_allocator.create(JSAst.E.String);
         out.* = str;
         return Expr{
@@ -491,7 +491,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 source,
                 allocator,
                 .json,
-                false,
             ) catch null) orelse break :macros;
             transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
         }

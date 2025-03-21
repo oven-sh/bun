@@ -3870,73 +3870,6 @@ pub fn wtf8Sequence(code_point: u32) [4]u8 {
     };
 }
 
-pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
-    return switch (first_byte) {
-        0 => 0,
-        1...0x80 - 1 => 1,
-        else => if ((first_byte & 0xE0) == 0xC0)
-            @as(u3, 2)
-        else if ((first_byte & 0xF0) == 0xE0)
-            @as(u3, 3)
-        else if ((first_byte & 0xF8) == 0xF0)
-            @as(u3, 4)
-        else
-            @as(u3, 1),
-    };
-}
-
-/// 0 == invalid
-pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
-    return switch (first_byte) {
-        0...0x80 - 1 => 1,
-        else => if ((first_byte & 0xE0) == 0xC0)
-            @as(u3, 2)
-        else if ((first_byte & 0xF0) == 0xE0)
-            @as(u3, 3)
-        else if ((first_byte & 0xF8) == 0xF0)
-            @as(u3, 4)
-        else
-            @as(u3, 1),
-    };
-}
-
-/// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
-/// Invalid codepoints are replaced with `zero` parameter
-/// This is a clone of esbuild's decodeWTF8Rune
-/// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
-/// Asserts a multi-byte codepoint
-pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
-    if (comptime Environment.allow_assert) assert(len > 1);
-
-    const s1 = p[1];
-    if ((s1 & 0xC0) != 0x80) return zero;
-
-    if (len == 2) {
-        const cp = @as(T, p[0] & 0x1F) << 6 | @as(T, s1 & 0x3F);
-        if (cp < 0x80) return zero;
-        return cp;
-    }
-
-    const s2 = p[2];
-
-    if ((s2 & 0xC0) != 0x80) return zero;
-
-    if (len == 3) {
-        const cp = (@as(T, p[0] & 0x0F) << 12) | (@as(T, s1 & 0x3F) << 6) | (@as(T, s2 & 0x3F));
-        if (cp < 0x800) return zero;
-        return cp;
-    }
-
-    const s3 = p[3];
-    {
-        const cp = (@as(T, p[0] & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
-        if (cp < 0x10000 or cp > 0x10FFFF) return zero;
-        return cp;
-    }
-
-    unreachable;
-}
-
 pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
 pub const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
 pub const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
@@ -4289,88 +4222,6 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
         const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\n' or char == '\r') {
             return @as(u32, @truncate((@intFromPtr(char_) - @intFromPtr(slice.ptr)))) + offset;
-        }
-    }
-
-    return null;
-}
-
-pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
-    const slice = slice_;
-    var remaining = slice;
-
-    if (remaining.len == 0)
-        return false;
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '"')))));
-
-            if (@reduce(.Max, cmp) > 0) {
-                return true;
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '"') {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/// JSON escape
-pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
-    var remaining = slice;
-    if (remaining.len == 0)
-        return null;
-
-    if (remaining[0] >= 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == quote_char or (quote_char == '`' and remaining[0] == '$')) {
-        return 0;
-    }
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp: AsciiVectorU1 = if (comptime quote_char == '`') ( //
-                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
-            ) else ( //
-                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
-            );
-
-            if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
-                const first = @ctz(bitmask);
-
-                return @as(u32, first) + @as(u32, @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr)));
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\\' or char == quote_char or (quote_char == '`' and char == '$')) {
-            return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
         }
     }
 
@@ -4975,70 +4826,6 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
     return null;
 }
 
-/// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
-/// - Invalid codepoints are replaced with `zero` parameter
-/// - Null bytes return 0
-pub fn decodeWTF8RuneT(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
-    if (len == 0) return zero;
-    if (len == 1) return p[0];
-
-    return decodeWTF8RuneTMultibyte(p, len, T, zero);
-}
-
-pub fn codepointSize(comptime R: type, r: R) u3 {
-    return switch (r) {
-        0b0000_0000...0b0111_1111 => 1,
-        0b1100_0000...0b1101_1111 => 2,
-        0b1110_0000...0b1110_1111 => 3,
-        0b1111_0000...0b1111_0111 => 4,
-        else => 0,
-    };
-}
-
-// /// Encode Type into UTF-8 bytes.
-// /// - Invalid unicode data becomes U+FFFD REPLACEMENT CHARACTER.
-// /// -
-// pub fn encodeUTF8RuneT(out: *[4]u8, comptime R: type, c: R) u3 {
-//     switch (c) {
-//         0b0000_0000...0b0111_1111 => {
-//             out[0] = @intCast(u8, c);
-//             return 1;
-//         },
-//         0b1100_0000...0b1101_1111 => {
-//             out[0] = @truncate(u8, 0b11000000 | (c >> 6));
-//             out[1] = @truncate(u8, 0b10000000 | c & 0b111111);
-//             return 2;
-//         },
-
-//         0b1110_0000...0b1110_1111 => {
-//             if (0xd800 <= c and c <= 0xdfff) {
-//                 // Replacement character
-//                 out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
-
-//                 return 3;
-//             }
-
-//             out[0] = @truncate(u8, 0b11100000 | (c >> 12));
-//             out[1] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
-//             out[2] = @truncate(u8, 0b10000000 | c & 0b111111);
-//             return 3;
-//         },
-//         0b1111_0000...0b1111_0111 => {
-//             out[0] = @truncate(u8, 0b11110000 | (c >> 18));
-//             out[1] = @truncate(u8, 0b10000000 | (c >> 12) & 0b111111);
-//             out[2] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
-//             out[3] = @truncate(u8, 0b10000000 | c & 0b111111);
-//             return 4;
-//         },
-//         else => {
-//             // Replacement character
-//             out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
-
-//             return 3;
-//         },
-//     }
-// }
-
 pub fn containsNonBmpCodePoint(text: string) bool {
     var iter = CodepointIterator.init(text);
     var curs = CodepointIterator.Cursor{};
@@ -5241,27 +5028,16 @@ pub const PackedCodepointIterator = struct {
             return false;
         }
 
-        const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
-        const error_char = comptime std.math.minInt(CodePointType);
-
-        const codepoint = @as(
-            CodePointType,
-            switch (cp_len) {
-                0 => return false,
-                1 => it.bytes[pos],
-                else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
-            },
-        );
+        const dec_res = unicode.decodeFirst(.wtf8_replace_invalid, it.bytes[pos..]).?;
+        const cp_len = dec_res.advance;
+        const codepoint = dec_res.codepoint;
 
         {
             @setRuntimeSafety(false);
             cursor.* = Cursor{
                 .i = pos,
-                .c = if (error_char != codepoint)
-                    @truncate(codepoint)
-                else
-                    unicode_replacement,
-                .width = if (codepoint != error_char) cp_len else 1,
+                .c = @intCast(codepoint),
+                .width = @intCast(cp_len),
             };
         }
 
@@ -5281,20 +5057,6 @@ pub const PackedCodepointIterator = struct {
         const slice = bytes[prev..][0..cp_len];
         it.width = @as(u3, @intCast(slice.len));
         return slice;
-    }
-
-    pub fn needsUTF8Decoding(slice: string) bool {
-        var it = Iterator{ .bytes = slice, .i = 0 };
-
-        while (true) {
-            const part = it.nextCodepointSlice();
-            @setRuntimeSafety(false);
-            switch (part.len) {
-                0 => return false,
-                1 => continue,
-                else => return true,
-            }
-        }
     }
 
     pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
@@ -5379,25 +5141,14 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
                 return false;
             }
 
-            const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
-            const error_char = comptime std.math.minInt(CodePointType);
-
-            const codepoint = @as(
-                CodePointType,
-                switch (cp_len) {
-                    0 => return false,
-                    1 => it.bytes[pos],
-                    else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
-                },
-            );
+            const dec_res = unicode.decodeFirst(.wtf8_replace_invalid, it.bytes[pos..]).?;
+            const cp_len = dec_res.advance;
+            const codepoint = dec_res.codepoint;
 
             cursor.* = Cursor{
                 .i = pos,
-                .c = if (error_char != codepoint)
-                    codepoint
-                else
-                    unicode_replacement,
-                .width = if (codepoint != error_char) cp_len else 1,
+                .c = @intCast(codepoint),
+                .width = @intCast(cp_len),
             };
 
             return true;
@@ -5416,20 +5167,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             const slice = bytes[prev..][0..cp_len];
             it.width = @as(u3, @intCast(slice.len));
             return slice;
-        }
-
-        pub fn needsUTF8Decoding(slice: string) bool {
-            var it = Iterator{ .bytes = slice, .i = 0 };
-
-            while (true) {
-                const part = it.nextCodepointSlice();
-                @setRuntimeSafety(false);
-                switch (part.len) {
-                    0 => return false,
-                    1 => continue,
-                    else => return true,
-                }
-            }
         }
 
         pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
@@ -5464,21 +5201,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             };
 
             return it.c;
-        }
-
-        /// Look ahead at the next n codepoints without advancing the iterator.
-        /// If fewer than n codepoints are available, then return the remainder of the string.
-        pub fn peek(it: *Iterator, n: usize) []const u8 {
-            const original_i = it.i;
-            defer it.i = original_i;
-
-            var end_ix = original_i;
-            for (0..n) |_| {
-                const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
-                end_ix += next_codepoint.len;
-            }
-
-            return it.bytes[original_i..end_ix];
         }
     };
 }
@@ -5591,11 +5313,7 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
 pub const ExactSizeMatcher = @import("exact_size_matcher.zig").ExactSizeMatcher;
 
 pub const unicode_replacement = 0xFFFD;
-pub const unicode_replacement_str = brk: {
-    var out: [std.unicode.utf8CodepointSequenceLength(unicode_replacement) catch unreachable]u8 = undefined;
-    _ = std.unicode.utf8Encode(unicode_replacement, &out) catch unreachable;
-    break :brk out;
-};
+pub const unicode_replacement_str = "\u{FFFD}".*;
 
 pub fn isIPAddress(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
@@ -5667,14 +5385,9 @@ pub fn hasPrefixWithWordBoundary(input: []const u8, comptime prefix: []const u8)
         if (input.len == prefix.len) return true;
 
         const next = input[prefix.len..];
-        var bytes: [4]u8 = .{
-            next[0],
-            if (next.len > 1) next[1] else 0,
-            if (next.len > 2) next[2] else 0,
-            if (next.len > 3) next[3] else 0,
-        };
 
-        if (!bun.js_lexer.isIdentifierContinue(decodeWTF8RuneT(&bytes, wtf8ByteSequenceLength(next[0]), i32, -1))) {
+        const dec_res = unicode.decodeFirst(.wtf8_replace_invalid, next).?;
+        if (!bun.js_lexer.isIdentifierContinue(dec_res.codepoint)) {
             return true;
         }
     }
@@ -6528,23 +6241,12 @@ pub const visible = struct {
         while (bun.strings.firstNonASCII(bytes)) |i| {
             len += asciiFn(bytes[0..i]);
             const this_chunk = bytes[i..];
-            const byte = this_chunk[0];
 
-            const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
-            const cp_bytes: [4]u8 = switch (@min(@as(usize, skip), this_chunk.len)) {
-                inline 1, 2, 3, 4 => |cp_len| .{
-                    byte,
-                    if (comptime cp_len > 1) this_chunk[1] else 0,
-                    if (comptime cp_len > 2) this_chunk[2] else 0,
-                    if (comptime cp_len > 3) this_chunk[3] else 0,
-                },
-                else => unreachable,
-            };
+            const dec_res = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, this_chunk).?;
+            const cp = dec_res.codepoint;
+            len += visibleCodepointWidth(@intCast(cp), false);
 
-            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
-            len += visibleCodepointWidth(cp, false);
-
-            bytes = bytes[@min(i + skip, bytes.len)..];
+            bytes = bytes[@min(i + dec_res.advance, bytes.len)..];
         }
 
         len += asciiFn(bytes);
@@ -6670,7 +6372,7 @@ pub const QuoteEscapeFormatFlags = struct {
     quote_char: u8,
     ascii_only: bool = false,
     json: bool = false,
-    str_encoding: Encoding = .utf8,
+    str_encoding: unicode.Encoding = .wtf8_replace_invalid,
 };
 /// usage: print(" string: '{'}' ", .{formatEscapesJS("hello'world!")});
 pub fn formatEscapes(str: []const u8, comptime flags: QuoteEscapeFormatFlags) QuoteEscapeFormat(flags) {
@@ -6681,7 +6383,7 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
         data: []const u8,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
+            try bun.js_printer.writePreQuotedString(flags.str_encoding, self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json);
         }
     };
 }
@@ -6751,29 +6453,245 @@ pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
     return null;
 }
 
+pub const unicode = struct {
+    pub const Encoding = enum {
+        ascii_assert_no_invalid,
+        latin1,
+        utf8_assert_no_invalid,
+        utf8_replace_invalid,
+        wtf8_assert_no_invalid,
+        wtf8_replace_invalid,
+        utf16_assert_no_invalid,
+        utf16_replace_invalid,
+        wtf16,
+
+        pub fn isUtf16(self: unicode.Encoding) bool {
+            return switch (self) {
+                .utf16_assert_no_invalid, .utf16_replace_invalid => true,
+            };
+        }
+        pub fn isWtf8(self: unicode.Encoding) bool {
+            return switch (self) {
+                .wtf8_assert_no_invalid, .wtf8_replace_invalid => true,
+                else => false,
+            };
+        }
+        pub fn isWtf8Like(self: unicode.Encoding) bool {
+            return switch (self) {
+                .ascii_assert_no_invalid,
+                .utf8_assert_no_invalid,
+                .utf8_replace_invalid,
+                .wtf8_assert_no_invalid,
+                .wtf8_replace_invalid,
+                => true,
+                else => false,
+            };
+        }
+        pub fn isAssert(self: unicode.Encoding) bool {
+            return switch (self) {
+                .ascii_assert_no_invalid, .utf8_assert_no_invalid, .wtf8_assert_no_invalid, .utf16_assert_no_invalid => true,
+                else => false,
+            };
+        }
+        pub fn Unit(self: unicode.Encoding) type {
+            return switch (self) {
+                .utf16_assert_no_invalid, .utf16_replace_invalid, .wtf16 => u16,
+                else => u8,
+            };
+        }
+    };
+    /// equivalent to `{const codepoint = decodeFirst(.wtf8_replace_invalid).codepoint; return codepoint >= first_high_surrogate and codepoint <= last_high_surrogate}`
+    pub fn isWtf8HighSurrogate(wtf8: *const [3]u8) bool {
+        return wtf8[0] == 0b11101101 and ((wtf8[1] & 0b1111_0000) == 0b1010_0000) and ((wtf8[2] & 0b11_000000) == 0b10_000000);
+    }
+    /// equivalent to `{const codepoint = decodeFirst(.wtf8_replace_invalid).codepoint; return codepoint >= first_low_surrogate and codepoint <= last_low_surrogate}`
+    pub fn isWtf8LowSurrogate(wtf8: *const [3]u8) bool {
+        return wtf8[0] == 0b11101101 and ((wtf8[1] & 0b1111_0000) == 0b1011_0000) and ((wtf8[2] & 0b11_000000) == 0b10_000000);
+    }
+
+    pub const first_high_surrogate = 0xD800;
+    pub const last_high_surrogate = 0xDBFF;
+    pub const first_low_surrogate = 0xDC00;
+    pub const last_low_surrogate = 0xDFFF;
+    pub fn combineLowAndHighSurrogateToCodepoint(low: i32, high: i32) i32 {
+        bun.assert(low >= first_low_surrogate and low <= last_low_surrogate and high >= first_high_surrogate and high <= last_high_surrogate);
+        return 0x10000 + ((high & 0x03ff) << 10) | (low & 0x03ff);
+    }
+
+    pub fn encodeWtf8WithInvalid(buf: *[4]u8, codepoint: i32) usize {
+        return std.unicode.wtf8Encode(@intCast(codepoint), buf) catch {
+            @memcpy(buf[0..strings.unicode_replacement_str.len], &strings.unicode_replacement_str);
+            return strings.unicode_replacement_str.len;
+        };
+    }
+
+    pub const DecodeResult = struct { codepoint: i32, advance: u32 };
+    /// Returns null if slice.len == 0
+    /// Decodes the first codepoint from a string in the given encoding. If the encoding
+    /// is _replace_invalid, 0xFFFD is returned for an invalid sequence and advance is 1.
+    pub inline fn decodeFirst(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) ?DecodeResult {
+        // inline is used because it improves performance by 1.7x in ReleaseFast (~5.607 ms / 10mb -> ~3.298ms / 10mb)
+        if (slice.len == 0) return null;
+        const s0 = slice[0];
+        failure: {
+            switch (encoding) {
+                .ascii_assert_no_invalid => {
+                    if (s0 >= 0x80) break :failure;
+                    return .{ .codepoint = s0, .advance = 1 };
+                },
+                .latin1 => {
+                    if (s0 < 0x80) return .{ .codepoint = s0, .advance = 1 };
+                    return .{ .codepoint = latin1ToCodepointAssumeNotASCII(s0, i32), .advance = 1 };
+                },
+                .utf8_assert_no_invalid, .utf8_replace_invalid, .wtf8_assert_no_invalid, .wtf8_replace_invalid => {
+                    const T = i32;
+                    const len: u32 = switch (s0) {
+                        0b0000_0000...0b0111_1111 => return .{ .codepoint = s0, .advance = 1 },
+                        0b1100_0000...0b1101_1111 => 2,
+                        0b1110_0000...0b1110_1111 => 3,
+                        0b1111_0000...0b1111_0111 => 4,
+                        else => {
+                            if (comptime encoding.isAssert()) unreachable;
+                            break :failure;
+                        },
+                    };
+                    if (len > slice.len) {
+                        if (comptime encoding.isAssert()) unreachable;
+                        // this means (0b11110)(0b10)(0b10)(0b0) will read as (?)(?)(?)(ascii)
+                        // alternatively, here we could read the actual number of trail bytes like TextDecoder does
+                        // to convert to (?)(ascii), two fewer 0xFFFD bytes
+                        break :failure;
+                        // and below, rather than break :failure, we can return .advance = (number of trail bytes read)
+                        // this would not match node
+                    }
+
+                    const s1 = slice[1];
+                    if ((s1 & 0xC0) != 0x80) {
+                        if (comptime encoding.isAssert()) unreachable;
+                        break :failure;
+                    }
+                    if (len == 2) {
+                        const cp = @as(T, s0 & 0x1F) << 6 | @as(T, s1 & 0x3F);
+                        if (cp < 0x80) {
+                            if (comptime encoding.isAssert()) unreachable;
+                            break :failure;
+                        }
+                        return .{ .codepoint = cp, .advance = 2 };
+                    }
+
+                    const s2 = slice[2];
+                    if ((s2 & 0xC0) != 0x80) {
+                        if (comptime encoding.isAssert()) unreachable;
+                        break :failure;
+                    }
+                    if (len == 3) {
+                        const cp = (@as(T, s0 & 0x0F) << 12) | (@as(T, s1 & 0x3F) << 6) | (@as(T, s2 & 0x3F));
+                        if (cp < 0x800) {
+                            if (comptime encoding.isAssert()) unreachable;
+                            break :failure;
+                        }
+                        if (!encoding.isWtf8()) {
+                            if (cp >= first_high_surrogate and cp <= last_high_surrogate or cp >= first_low_surrogate and cp <= last_low_surrogate) {
+                                if (comptime encoding.isAssert()) unreachable;
+                                break :failure;
+                            }
+                        }
+                        return .{ .codepoint = cp, .advance = 3 };
+                    }
+
+                    const s3 = slice[3];
+                    if ((s3 & 0xC0) != 0x80) {
+                        if (comptime encoding.isAssert()) unreachable;
+                        break :failure;
+                    }
+                    {
+                        const cp = (@as(T, s0 & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
+                        if (cp < 0x10000 or cp > 0x10FFFF) {
+                            if (comptime encoding.isAssert()) unreachable;
+                            break :failure;
+                        }
+                        return .{ .codepoint = cp, .advance = 4 };
+                    }
+
+                    unreachable;
+                },
+                .utf16_assert_no_invalid, .utf16_replace_invalid, .wtf16 => {
+                    if (encoding.isUtf16() and s0 >= first_low_surrogate and s0 <= last_low_surrogate) break :failure;
+                    if (s0 >= first_high_surrogate and s0 <= last_high_surrogate) {
+                        // try to pair
+                        if (slice.len > 1) {
+                            const trail = slice[1];
+                            if (trail >= first_low_surrogate and trail <= last_low_surrogate) {
+                                // pair success
+                                return .{ .codepoint = combineLowAndHighSurrogateToCodepoint(trail, s0), .advance = 2 };
+                            }
+                        }
+                        // pair failure
+                        if (encoding.isUtf16()) break :failure;
+                    }
+                    return .{ .codepoint = s0, .advance = 1 };
+                },
+            }
+        }
+        return .{ .codepoint = unicode_replacement, .advance = 1 };
+    }
+
+    pub fn isValid(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) bool {
+        return switch (encoding) {
+            .ascii_assert_no_invalid => isAllASCII(slice),
+            .latin1 => true, // all byte slices are valid latin-1
+            .utf8_assert_no_invalid => isValidUTF8(slice),
+            .utf8_replace_invalid => true,
+            .wtf8_assert_no_invalid => std.unicode.wtf8ValidateSlice(slice), // according to the spec, you're not allowed to validate wtf-8. this implementation is wrong; it allows \uD800\uDC00
+            .wtf8_replace_invalid => true,
+            .utf16_assert_no_invalid => @compileError("todo"),
+            .utf16_replace_invalid => true,
+            .wtf16 => true,
+        };
+    }
+
+    pub fn codepointIterator(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) unicode.CodepointIterator(encoding) {
+        if (Environment.allow_assert) bun.assert(isValid(encoding, slice));
+        return .{ .str = slice, .i = 0, .c = -2, .width = 0 };
+    }
+    pub fn CodepointIterator(comptime encoding: unicode.Encoding) type {
+        return struct {
+            const Iterator = @This();
+            str: []const encoding.Unit(),
+            i: usize,
+            width: u32,
+            c: i32,
+
+            pub fn next(self: *Iterator) bool {
+                self.i += self.width;
+                self.width = 0;
+                const dec_res = decodeFirst(encoding, self.str[self.i..]) orelse return false;
+                self.width = @intCast(dec_res.advance);
+                self.c = dec_res.codepoint;
+                return true;
+            }
+        };
+    }
+};
+
 pub fn percentEncodeWrite(
     utf8_input: []const u8,
     writer: *std.ArrayList(u8),
-) error{ OutOfMemory, IncompleteUTF8 }!void {
+) error{OutOfMemory}!void {
     var remaining = utf8_input;
     while (indexOfNeedsURLEncode(remaining)) |j| {
         const safe = remaining[0..j];
         remaining = remaining[j..];
-        const code_point_len: usize = wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        if (remaining.len < code_point_len) {
-            @branchHint(.unlikely);
-            return error.IncompleteUTF8;
-        }
 
-        const to_encode = remaining[0..code_point_len];
-        remaining = remaining[code_point_len..];
+        const to_encode = remaining[0..1];
+        remaining = remaining[1..];
 
-        try writer.ensureUnusedCapacity(safe.len + ("%FF".len) * code_point_len);
+        try writer.ensureUnusedCapacity(safe.len + ("%FF".len) * 1);
 
         // Write the safe bytes
         writer.appendSliceAssumeCapacity(safe);
 
-        // URL encode the code point
+        // URL encode the unsafe bytes
         for (to_encode) |byte| {
             writer.appendSliceAssumeCapacity(&.{
                 '%',

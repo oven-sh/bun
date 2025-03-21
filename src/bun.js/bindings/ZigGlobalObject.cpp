@@ -605,7 +605,7 @@ WTF::String Bun::formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0) {
+            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
 
@@ -929,7 +929,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
-        if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > -1)) {
+        if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1)) {
             auto* structure = Zig::GlobalObject::createStructure(vm);
             if (UNLIKELY(!structure)) {
                 return nullptr;
@@ -1029,12 +1029,15 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue key = callFrame->argument(0);
-
-    auto moduleKey = key.toWTFString(globalObject);
+    JSC::JSValue keyAny = callFrame->argument(0);
+    JSC::JSString* moduleKeyString = keyAny.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto moduleKey = moduleKeyString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (moduleKey.endsWith(".node"_s)) {
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (moduleKey->endsWith(".node"_s)) {
         throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
         return {};
     }
@@ -1047,7 +1050,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
 
     JSValue result = Bun::fetchESMSourceCodeSync(
         globalObject,
-        key,
+        moduleKeyString,
         &res,
         &specifier,
         &specifier,
@@ -1057,7 +1060,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
 
-    globalObject->moduleLoader()->provideFetch(globalObject, key, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
+    globalObject->moduleLoader()->provideFetch(globalObject, keyAny, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
@@ -3824,7 +3827,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.requireNativeModulePrivateName(), moduleRequireNativeModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), moduleOverridableRequireCodeGenerator(vm), 0);
 
@@ -3842,7 +3844,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectNativeFunction(vm, this,
         builtinNames.evaluateCommonJSModulePrivateName(),
         2,
-        Bun::jsFunctionLoadModule,
+        Bun::jsFunctionEvaluateCommonJSModule,
         ImplementationVisibility::Public,
         NoIntrinsic,
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
@@ -4452,11 +4454,13 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto moduleKey = key.toWTFString(globalObject);
+    auto moduleKeyJS = key.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto moduleKey = moduleKeyJS->value(globalObject);
     if (UNLIKELY(scope.exception()))
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
-    if (moduleKey.endsWith(".node"_s)) {
+    if (moduleKey->endsWith(".node"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
@@ -4489,7 +4493,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     JSValue result = Bun::fetchESMSourceCodeAsync(
         reinterpret_cast<Zig::GlobalObject*>(globalObject),
-        key,
+        moduleKeyJS,
         &res,
         &moduleKeyBun,
         &source,

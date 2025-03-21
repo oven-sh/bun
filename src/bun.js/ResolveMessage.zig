@@ -25,18 +25,35 @@ pub const ResolveMessage = struct {
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         switch (this.msg.metadata) {
             .resolve => |resolve| {
-                const label: []const u8 = brk: {
-                    if (resolve.import_kind.isCommonJS()) {
-                        break :brk "MODULE_NOT_FOUND";
-                    }
+                const code: []const u8 = brk: {
+                    const specifier = this.msg.metadata.resolve.specifier.slice(this.msg.data.text);
 
                     break :brk switch (resolve.import_kind) {
-                        .stmt, .dynamic => "ERR_MODULE_NOT_FOUND",
-                        else => "RESOLVE_ERROR",
+                        // Match Node.js error codes. CommonJS is historic
+                        // before they started prefixing with 'ERR_'
+                        .require => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                            break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
+                        else
+                            break :brk "MODULE_NOT_FOUND",
+                        // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
+                        .require_resolve => "MODULE_NOT_FOUND",
+                        .stmt, .dynamic => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                            break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
+                        else
+                            break :brk "ERR_MODULE_NOT_FOUND",
+
+                        .entry_point_run,
+                        .entry_point_build,
+                        .at,
+                        .at_conditional,
+                        .url,
+                        .internal,
+                        .composes,
+                        => "RESOLVE_ERROR",
                     };
                 };
 
-                var atom = bun.String.createAtomASCII(label);
+                var atom = bun.String.createAtomASCII(code);
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },
@@ -61,7 +78,11 @@ pub const ResolveMessage = struct {
         return JSC.JSValue.jsNumber(@as(i32, 0));
     }
 
-    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
+    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror, import_kind: bun.ImportKind) !string {
+        if (import_kind != .require_resolve and bun.strings.hasPrefixComptime(specifier, "node:")) {
+            // This matches Node.js exactly.
+            return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
+        }
         switch (err) {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
@@ -75,6 +96,9 @@ pub const ResolveMessage = struct {
             },
             error.InvalidDataURL => {
                 return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
+            },
+            error.InvalidURL => {
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {

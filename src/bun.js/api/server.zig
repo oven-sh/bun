@@ -62,7 +62,6 @@ const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
-const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
@@ -5176,6 +5175,10 @@ pub const ServerWebSocket = struct {
         const signal = this.signal;
         this.signal = null;
 
+        if (ServerWebSocket.socketGetCached(this.getThisValue())) |socket| {
+            Bun__callNodeHTTPServerSocketOnClose(socket);
+        }
+
         defer {
             if (signal) |sig| {
                 sig.pendingActivityUnref();
@@ -6155,6 +6158,7 @@ pub const NodeHTTPResponse = struct {
     finished: bool = false,
     ended: bool = false,
     upgraded: bool = false,
+    hasCustomOnData: bool = false,
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
@@ -6224,17 +6228,15 @@ pub const NodeHTTPResponse = struct {
         done = 2,
     };
 
-    extern "C" fn Bun__getNodeHTTPResponseThisValue(c_int, *anyopaque) JSC.JSValue;
+    extern "C" fn Bun__getNodeHTTPResponseThisValue(bool, *anyopaque) JSC.JSValue;
     fn getThisValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+        return Bun__getNodeHTTPResponseThisValue(this.response == .SSL, this.response.socket());
     }
 
-    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(c_int, *anyopaque) JSC.JSValue;
+    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(bool, *anyopaque) JSC.JSValue;
     fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPServerSocketThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+        return Bun__getNodeHTTPServerSocketThisValue(this.response == .SSL, this.response.socket());
     }
-
-    extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, *anyopaque) void;
 
     pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
         const upgrade_ctx = this.upgrade_context.context orelse return false;
@@ -6256,6 +6258,7 @@ pub const NodeHTTPResponse = struct {
         defer if (new_socket) |socket| {
             this.upgraded = true;
             Bun__setNodeHTTPServerSocketUsSocketValue(socketValue, socket);
+            ServerWebSocket.socketSetCached(ws.getThisValue(), ws_handler.globalObject, socketValue);
             defer this.js_ref.unref(JSC.VirtualMachine.get());
             switch (this.response) {
                 .SSL => this.response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
@@ -6336,7 +6339,7 @@ pub const NodeHTTPResponse = struct {
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
         this.upgrade_context.deinit(); // we can discard the upgrade context now
 
-        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
+        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and (!this.hasCustomOnData or !this.onDataCallback.has())) {
             const had_ref = this.body_read_ref.has;
             this.response.clearOnData();
             this.body_read_ref.unref(vm);
@@ -6399,7 +6402,7 @@ pub const NodeHTTPResponse = struct {
     pub fn create(
         any_server_tag: u64,
         globalObject: *JSC.JSGlobalObject,
-        has_body: *i32,
+        has_body: *bool,
         request: *uws.Request,
         is_ssl: i32,
         response_ptr: *anyopaque,
@@ -6416,7 +6419,7 @@ pub const NodeHTTPResponse = struct {
                 break :brk 0;
             };
 
-            has_body.* = @intFromBool(req_len > 0 or request.header("transfer-encoding") != null);
+            has_body.* = req_len > 0 or request.header("transfer-encoding") != null;
         }
 
         const response = NodeHTTPResponse.new(.{
@@ -6429,14 +6432,14 @@ pub const NodeHTTPResponse = struct {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
                 false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
             },
-            .body_read_state = if (has_body.* != 0) .pending else .none,
+            .body_read_state = if (has_body.*) .pending else .none,
             // 1 - the HTTP response
             // 1 - the JS object
             // 1 - the Server handler.
-            // 1 - the onData callback (request bod)
-            .ref_count = if (has_body.* != 0) 4 else 3,
+            // 1 - the onData callback (request body)
+            .ref_count = if (has_body.*) 4 else 3,
         });
-        if (has_body.* != 0) {
+        if (has_body.*) {
             response.body_read_ref.ref(vm);
         }
         response.js_ref.ref(vm);
@@ -6599,7 +6602,7 @@ pub const NodeHTTPResponse = struct {
         }
     }
 
-    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(1).slice();
         _ = arguments; // autofix
         if (this.isDone()) {
@@ -6965,7 +6968,7 @@ pub const NodeHTTPResponse = struct {
         if (is_end) {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
             // This is the equivalent of req._dump().
-            if (this.body_read_ref.has and this.body_read_state == .pending and !this.onDataCallback.has()) {
+            if (this.body_read_ref.has and this.body_read_state == .pending and (!this.hasCustomOnData or !this.onDataCallback.has())) {
                 this.body_read_ref.unref(JSC.VirtualMachine.get());
                 this.deref();
                 this.body_read_state = .none;
@@ -7022,15 +7025,28 @@ pub const NodeHTTPResponse = struct {
     pub fn setOnAbort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
         if (this.isDone() or value == .undefined) {
             this.onAbortedCallback.clearWithoutDeallocation();
-            return true;
+        } else {
+            this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         }
 
-        this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         return true;
     }
 
     pub fn getOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
         return this.onDataCallback.get() orelse .undefined;
+    }
+
+    pub fn getHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.jsBoolean(this.hasCustomOnData);
+    }
+
+    pub fn getUpgraded(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.jsBoolean(this.upgraded);
+    }
+
+    pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
+        this.hasCustomOnData = value.toBoolean();
+        return true;
     }
 
     fn clearOnDataCallback(this: *NodeHTTPResponse) void {
@@ -7069,6 +7085,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         this.onDataCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
+        this.hasCustomOnData = true;
         this.response.onData(*NodeHTTPResponse, onData, this);
         this.is_data_buffered_during_pause = false;
 
@@ -8817,6 +8834,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         else
             NodeHTTPServer__onRequest_http;
 
+        pub fn setUsingCustomExpectHandler(this: *ThisServer, value: bool) void {
+            NodeHTTP_setUsingCustomExpectHandler(ssl_enabled, this.app.?, value);
+        }
+
         var did_send_idletimeout_warning_once = false;
         fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
             if (debug_mode and !did_send_idletimeout_warning_once) {
@@ -9331,7 +9352,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
-                NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
+                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
             } else if (this.config.onRequest != .zero and !@"has /*") {
                 app.any("/*", *ThisServer, this, onRequest);
             }
@@ -9500,6 +9521,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.app = app;
 
                 route_list_value = this.setRoutes();
+            }
+
+            if (this.config.onNodeHTTPRequest != .zero) {
+                this.setUsingCustomExpectHandler(true);
             }
 
             switch (this.config.address) {
@@ -9874,7 +9899,9 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
-extern fn NodeHTTP_assignOnCloseFunction(c_int, *anyopaque) void;
+extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
+
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
     const err_code = BoringSSL.ERR_get_error();
@@ -9903,3 +9930,6 @@ extern "c" fn Bun__ServerRouteList__create(
     paths: [*]ZigString,
     pathsLength: usize,
 ) JSC.JSValue;
+
+extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, ?*anyopaque) void;
+extern "C" fn Bun__callNodeHTTPServerSocketOnClose(JSC.JSValue) void;

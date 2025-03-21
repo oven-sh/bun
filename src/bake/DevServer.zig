@@ -388,7 +388,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .emit_visualizer_events = 0,
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
-            bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
+                bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
         .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
@@ -2383,7 +2383,7 @@ pub fn finalizeBundle(
     if (will_hear_hot_update and
         current_bundle.had_reload_event and
         (dev.incremental_result.framework_routes_affected.items.len +
-        dev.incremental_result.html_routes_hard_affected.items.len) > 0 and
+            dev.incremental_result.html_routes_hard_affected.items.len) > 0 and
         dev.bundling_failures.count() == 0)
     {
         has_route_bits_set = true;

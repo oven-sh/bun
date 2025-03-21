@@ -17,7 +17,7 @@ pub const LOLHTMLContext = struct {
     const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    
+
     ref_count: RefCount,
     selectors: SelectorMap = .{},
     element_handlers: std.ArrayListUnmanaged(*ElementHandler) = .{},
@@ -395,7 +395,7 @@ pub const HTMLRewriter = struct {
         const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
-        
+
         ref_count: RefCount,
         global: *JSGlobalObject,
         bytes: bun.MutableString,
@@ -1075,14 +1075,14 @@ pub const TextChunk = struct {
     const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    
+
     ref_count: RefCount,
     text_chunk: ?*LOLHTML.TextChunk = null,
 
     pub usingnamespace JSC.Codegen.JSTextChunk;
-    
+
     pub fn init(text_chunk: *LOLHTML.TextChunk) *TextChunk {
-        return bun.new(TextChunk, .{ 
+        return bun.new(TextChunk, .{
             .ref_count = .init(),
             .text_chunk = text_chunk,
         });
@@ -1194,7 +1194,7 @@ pub const DocType = struct {
     }
 
     pub fn init(doctype: *LOLHTML.DocType) *DocType {
-        return bun.new(DocType, .{ 
+        return bun.new(DocType, .{
             .ref_count = .init(),
             .doctype = doctype,
         });
@@ -1274,9 +1274,9 @@ pub const DocEnd = struct {
     pub usingnamespace JSC.Codegen.JSDocEnd;
 
     pub fn init(doc_end: *LOLHTML.DocEnd) *DocEnd {
-        return bun.new(DocEnd, .{ 
+        return bun.new(DocEnd, .{
             .ref_count = .init(),
-            .doc_end = doc_end, 
+            .doc_end = doc_end,
         });
     }
 
@@ -1330,7 +1330,7 @@ pub const Comment = struct {
     pub usingnamespace JSC.Codegen.JSComment;
 
     pub fn init(comment: *LOLHTML.Comment) *Comment {
-        return bun.new(Comment, .{ 
+        return bun.new(Comment, .{
             .ref_count = .init(),
             .comment = comment,
         });
@@ -1451,9 +1451,9 @@ pub const EndTag = struct {
     end_tag: ?*LOLHTML.EndTag,
 
     pub fn init(end_tag: *LOLHTML.EndTag) *EndTag {
-        return bun.new(EndTag, .{ 
+        return bun.new(EndTag, .{
             .ref_count = .init(),
-            .end_tag = end_tag, 
+            .end_tag = end_tag,
         });
     }
 
@@ -1583,7 +1583,7 @@ pub const AttributeIterator = struct {
     iterator: ?*LOLHTML.Attribute.Iterator = null,
 
     pub fn init(iterator: *LOLHTML.Attribute.Iterator) *AttributeIterator {
-        return bun.new(AttributeIterator, .{ 
+        return bun.new(AttributeIterator, .{
             .ref_count = .init(),
             .iterator = iterator,
         });
@@ -1650,7 +1650,7 @@ pub const Element = struct {
     pub usingnamespace JSC.Codegen.JSElement;
 
     pub fn init(element: *LOLHTML.Element) *Element {
-        return bun.new(Element, .{ 
+        return bun.new(Element, .{
             .ref_count = .init(),
             .element = element,
         });
@@ -1940,7 +1940,7 @@ pub const Element = struct {
             return JSValue.jsUndefined();
 
         const iter = this.element.?.attributes() orelse return createLOLHTMLError(globalObject);
-        var attr_iter = bun.new(AttributeIterator, .{ 
+        var attr_iter = bun.new(AttributeIterator, .{
             .ref_count = .init(),
             .iterator = iter,
         });

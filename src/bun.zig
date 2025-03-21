@@ -2743,10 +2743,10 @@ pub const MakePath = struct {
         while (true) {
             const sub_path_w = if (comptime T == u16)
                 try w.wToPrefixedFileW(self.fd,
-                // TODO: report this bug
-                // they always copy it
-                // it doesn't need to be [:0]const u16
-                @ptrCast(component.path))
+                    // TODO: report this bug
+                    // they always copy it
+                    // it doesn't need to be [:0]const u16
+                    @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{

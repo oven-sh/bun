@@ -315,7 +315,7 @@ pub const SNativeZlib = struct {
     const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    
+
     pub usingnamespace JSC.Codegen.JSNativeZlib;
     pub usingnamespace CompressionStream(@This());
 
@@ -686,7 +686,7 @@ pub const SNativeBrotli = struct {
     const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    
+
     pub usingnamespace JSC.Codegen.JSNativeBrotli;
     pub usingnamespace CompressionStream(@This());
 

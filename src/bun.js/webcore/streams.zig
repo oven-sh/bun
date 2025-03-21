@@ -4165,8 +4165,8 @@ pub const FileReader = struct {
                 if ((file.is_atty orelse false) or
                     (fd.int() < 3 and std.posix.isatty(fd.cast())) or
                     (file.pathlike == .fd and
-                    bun.FDTag.get(file.pathlike.fd) != .none and
-                    std.posix.isatty(file.pathlike.fd.cast())))
+                        bun.FDTag.get(file.pathlike.fd) != .none and
+                        std.posix.isatty(file.pathlike.fd.cast())))
                 {
                     // var termios = std.mem.zeroes(std.posix.termios);
                     // _ = std.c.tcgetattr(fd.cast(), &termios);

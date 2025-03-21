@@ -1125,10 +1125,10 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source =
                 switch (result) {
-                .buffer => .{ .pipe = this.stdio_result.buffer },
-                .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
-                .unavailable => @panic("Shouldn't happen."),
-            };
+                    .buffer => .{ .pipe = this.stdio_result.buffer },
+                    .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
+                    .unavailable => @panic("Shouldn't happen."),
+                };
         }
         this.reader.setParent(this);
 

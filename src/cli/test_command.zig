@@ -1335,7 +1335,7 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "./") or
                     strings.startsWith(arg, "../") or
                     (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+                        strings.startsWith(arg, "..\\")))) break true;
             } else false) {
                 // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
                 for (ctx.positionals[1..]) |arg| {
@@ -1453,9 +1453,9 @@ pub const TestCommand = struct {
 
                     if (has_file_like == null and
                         (strings.hasSuffixComptime(filter, ".ts") or
-                        strings.hasSuffixComptime(filter, ".tsx") or
-                        strings.hasSuffixComptime(filter, ".js") or
-                        strings.hasSuffixComptime(filter, ".jsx")))
+                            strings.hasSuffixComptime(filter, ".tsx") or
+                            strings.hasSuffixComptime(filter, ".js") or
+                            strings.hasSuffixComptime(filter, ".jsx")))
                     {
                         has_file_like = i;
                     }

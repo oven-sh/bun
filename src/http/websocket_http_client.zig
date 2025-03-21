@@ -499,11 +499,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
                 switch (err) {
-                    error.Malformed_HTTP_Response, error.MalformedResponse, 
-                    error.BadRequest, error.BadHeaders, error.InvalidMethod, 
-                    error.InvalidPath, error.InvalidHTTPVersion, 
-                    error.InvalidStatusCode, error.MalformedRequest, 
-                    error.HeadersTooLarge, error.ChunkedEncodingError => {
+                    error.Malformed_HTTP_Response, error.MalformedResponse, error.BadRequest, error.BadHeaders, error.InvalidMethod, error.InvalidPath, error.InvalidHTTPVersion, error.InvalidStatusCode, error.MalformedRequest, error.HeadersTooLarge, error.ChunkedEncodingError => {
                         this.terminate(ErrorCode.invalid_response);
                         return;
                     },

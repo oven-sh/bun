@@ -699,6 +699,7 @@ declare function $ERR_HTTP2_ALTSVC_LENGTH(): TypeError;
 declare function $ERR_HTTP2_PING_LENGTH(): RangeError;
 declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
+declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 
 /**

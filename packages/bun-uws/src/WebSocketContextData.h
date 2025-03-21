@@ -82,7 +82,7 @@ public:
     std::pair<unsigned short, unsigned short> idleTimeoutComponents;
 
     /* This is run once on start-up */
-    void calculateIdleTimeoutCompnents(unsigned short idleTimeout) {
+    void calculateIdleTimeoutComponents(unsigned short idleTimeout) {
         unsigned short margin = 4;
         /* 4, 8 or 16 seconds margin based on idleTimeout */
         while ((int) idleTimeout - margin * 2 >= margin * 2 && margin < 16) {

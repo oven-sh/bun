@@ -122,7 +122,9 @@ bool isValidHTTPHeaderValue(const StringView& value)
     UChar c = value[0];
     if (isTabOrSpace(c))
         return false;
-    c = value[value.length() - 1];
+    auto length = value.length();
+    if (length == 0) return true;
+    c = value[length - 1];
     if (isTabOrSpace(c))
         return false;
     if (value.is8Bit()) {

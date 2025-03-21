@@ -492,7 +492,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     if (extra_options) |options| {
         if (options.isObject()) {
             if (try options.getTruthyComptime(globalThis, "method")) |method_| {
-                method = Method.fromJS(globalThis, method_) orelse {
+                method = try Method.fromJS(globalThis, method_) orelse {
                     return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
                 };
             }

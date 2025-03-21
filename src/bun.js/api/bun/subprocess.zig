@@ -1976,11 +1976,8 @@ pub fn spawnMaybeSync(
                         maybe_ipc_mode = ipc_mode: {
                             if (try args.getTruthy(globalThis, "serialization")) |mode_val| {
                                 if (mode_val.isString()) {
-                                    break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
-                                        if (!globalThis.hasException()) {
-                                            return globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
-                                        }
-                                        return error.JSError;
+                                    break :ipc_mode try IPC.Mode.fromJS(globalThis, mode_val) orelse {
+                                        return globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
                                     };
                                 } else {
                                     if (!globalThis.hasException()) {

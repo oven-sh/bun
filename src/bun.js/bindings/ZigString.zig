@@ -12,6 +12,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const JSString = @import("JSString.zig").JSString;
 const C_API = bun.JSC.C;
+const JSError = bun.JSError;
 const Environment = bun.Environment;
 const Mimalloc = bun.Mimalloc;
 
@@ -259,7 +260,7 @@ pub const ZigString = extern struct {
         return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
     }
 
-    pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) ![]u8 {
+    pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) OOM![]u8 {
         if (this.isUTF8())
             return try allocator.dupeZ(u8, this.slice());
 
@@ -276,7 +277,7 @@ pub const ZigString = extern struct {
         return list.items;
     }
 
-    pub fn toOwnedSliceZ(this: ZigString, allocator: std.mem.Allocator) ![:0]u8 {
+    pub fn toOwnedSliceZ(this: ZigString, allocator: std.mem.Allocator) OOM![:0]u8 {
         if (this.isUTF8())
             return allocator.dupeZ(u8, this.slice());
 

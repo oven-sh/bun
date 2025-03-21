@@ -17,7 +17,7 @@
 #include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
-static _Atomic int orig_termios_spinlock;
+static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
 
 static int current_tty_mode = 0;

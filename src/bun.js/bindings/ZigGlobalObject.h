@@ -553,6 +553,7 @@ public:
     LazyClassStructure m_JSHmacClassStructure;
     LazyClassStructure m_JSHashClassStructure;
     LazyClassStructure m_JSECDHClassStructure;
+    LazyClassStructure m_JSCipherClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

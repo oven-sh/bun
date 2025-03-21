@@ -5,6 +5,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
 pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
     var js_type = value.jsType();

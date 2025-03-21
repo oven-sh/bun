@@ -489,7 +489,7 @@ declare function $createCommonJSModule(
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: CommonJSModuleRecord,
   sourceModule: CommonJSModuleRecord
-): boolean;
+): CommonJSModuleRecord[];
 
 declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
 

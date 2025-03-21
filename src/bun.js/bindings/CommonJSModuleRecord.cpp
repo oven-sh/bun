@@ -257,12 +257,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
 
-    JSValue returnValue = JSValue::JSFalse;
+    JSValue returnValue = JSValue::JSNull;
     if (LIKELY(referrer)) {
         if (UNLIKELY(referrer->m_childrenValue)) {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
-            returnValue = JSValue::JSTrue;
+            returnValue = referrer->m_childrenValue.get();
         } else {
             referrer->m_children.append(WriteBarrier<Unknown>());
             referrer->m_children.last().set(vm, referrer, moduleObject);

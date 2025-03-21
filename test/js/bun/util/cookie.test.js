@@ -9,7 +9,7 @@ describe("Bun.Cookie", () => {
     expect(cookie.domain).toBe(null);
     expect(cookie.expires).toBe(0);
     expect(cookie.secure).toBe(false);
-    expect(cookie.sameSite).toBe("strict");
+    expect(cookie.sameSite).toBe("lax");
   });
 
   test("can create a cookie with options", () => {
@@ -18,7 +18,7 @@ describe("Bun.Cookie", () => {
       path: "/foo",
       expires: 123456789,
       secure: true,
-      sameSite: "lax",
+      sameSite: "strict",
     });
 
     expect(cookie.name).toBe("name");
@@ -27,7 +27,7 @@ describe("Bun.Cookie", () => {
     expect(cookie.path).toBe("/foo");
     expect(cookie.expires).toBe(123456789);
     expect(cookie.secure).toBe(true);
-    expect(cookie.sameSite).toBe("lax");
+    expect(cookie.sameSite).toBe("strict");
   });
 
   test("stringify a cookie", () => {
@@ -205,7 +205,7 @@ describe("Bun.CookieMap", () => {
         "value": "value",
         "path": "/",
         "secure": false,
-        "sameSite": "strict",
+        "sameSite": "lax",
         "httpOnly": false,
         "partitioned": false
       },
@@ -217,7 +217,7 @@ describe("Bun.CookieMap", () => {
         "value": "bar",
         "path": "/",
         "secure": false,
-        "sameSite": "strict",
+        "sameSite": "lax",
         "httpOnly": false,
         "partitioned": false
       },

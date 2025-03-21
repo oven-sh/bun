@@ -513,8 +513,6 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
 )
 
-
-
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
   ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
@@ -841,7 +839,6 @@ if(DEBUG AND NOT CI)
   )
 endif()
 
-
 # --- Compiler options ---
 
 if(NOT WIN32)
@@ -852,6 +849,13 @@ if(NOT WIN32)
     -fno-pie
     -faddrsig
   )
+
+  if(LINUX AND CMAKE_DWP_PROGRAM)
+    target_compile_options(${bun} PUBLIC
+      -gsplit-dwarf
+    )
+  endif()
+
   if(DEBUG)
     # TODO: this shouldn't be necessary long term
     if (NOT ABI STREQUAL "musl")
@@ -971,6 +975,7 @@ if(LINUX)
       -Wl,--wrap=logf
       -Wl,--wrap=pow
       -Wl,--wrap=powf
+      -Wl,--gdb-index
     )
   else()
     target_link_options(${bun} PUBLIC
@@ -979,6 +984,7 @@ if(LINUX)
       -Wl,--wrap=log2f
       -Wl,--wrap=logf
       -Wl,--wrap=powf
+      -Wl,--gdb-index
     )
   endif()
   endif()
@@ -1166,6 +1172,11 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(bunStrip)
+    if(LINUX)
+      # For split DWARF, we need to keep the .gnu_debuglink section
+      set(CMAKE_STRIP_FLAGS ${CMAKE_STRIP_FLAGS} --keep-section=.gnu_debuglink)
+    endif()
+
     register_command(
       TARGET
         ${bun}
@@ -1251,6 +1262,25 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
+  if(LINUX AND CMAKE_DWP_PROGRAM)
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Generating ${bun}.dwp"
+      COMMAND
+        ${CMAKE_DWP_PROGRAM}
+          -e ${bun}
+          -o ${bun}.dwp
+      CWD
+        ${BUILD_PATH}
+      OUTPUTS
+        ${BUILD_PATH}/${bun}.dwp
+    )
+  endif()
+
   if(CI)
     set(bunTriplet bun-${OS}-${ARCH})
     if(LINUX AND ABI STREQUAL "musl")
@@ -1265,12 +1295,15 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)
       list(APPEND bunFiles ${bun}.dSYM)
+    elseif(LINUX AND CMAKE_DWP_PROGRAM)
+      file(GLOB DWO_FILES "${BUILD_PATH}/*.dwo")
+      list(APPEND bunFiles ${DWO_FILES})
+      list(APPEND bunFiles ${bun}.dwp)
     endif()
 
     if(APPLE OR LINUX)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
-
 
     register_command(
       TARGET

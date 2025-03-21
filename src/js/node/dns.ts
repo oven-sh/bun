@@ -395,7 +395,7 @@ var InternalResolver = class Resolver {
     validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
-      .resolve(hostname)
+      .resolve(hostname, rrtype)
       .then(
         results => {
           switch (rrtype?.toLowerCase()) {

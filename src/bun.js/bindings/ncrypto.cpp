@@ -1945,6 +1945,10 @@ const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
         }
     }
 
+    if (ignoreSHA512_224 && WTF::equalIgnoringASCIICase(name, "sha512-224"_s)) {
+        return nullptr;
+    }
+
     // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {
     //     return EVP_ripemd160();
     // }

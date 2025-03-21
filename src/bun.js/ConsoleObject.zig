@@ -554,7 +554,7 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
-                const tabular_obj = this.tabular_data.toObject(globalObject);
+                const tabular_obj = try this.tabular_data.toObject(globalObject);
                 var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,

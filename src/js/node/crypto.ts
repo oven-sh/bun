@@ -44,7 +44,7 @@ const {
   checkPrimeSync,
   generatePrime,
   generatePrimeSync,
-  CipherBase: _CipherBase,
+  Cipher: _Cipher,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
@@ -987,8 +987,9 @@ crypto_exports.createECDH = function createECDH(curve) {
       return new Cipheriv(cipher, key, iv, options);
     }
 
-    this[kHandle] = new _CipherBase(cipher, key, iv, options);
-    this.LazyTransform.$apply(this, [options]);
+    this[kHandle] = new _Cipher(false, cipher, key, iv, options);
+    LazyTransform.$apply(this, [options]);
+    this._decoder = null;
   }
   $toClass(Cipheriv, "Cipheriv", LazyTransform);
 
@@ -1005,8 +1006,9 @@ crypto_exports.createECDH = function createECDH(curve) {
       return new Decipheriv(cipher, key, iv, options);
     }
 
-    this[kHandle] = new _CipherBase(cipher, key, iv, options);
+    this[kHandle] = new _Cipher(true, cipher, key, iv, options);
     LazyTransform.$apply(this, [options]);
+    this._decoder = null;
   }
   $toClass(Decipheriv, "Decipheriv", LazyTransform);
 
@@ -1018,15 +1020,13 @@ crypto_exports.createECDH = function createECDH(curve) {
   Decipheriv.prototype.update = update;
   Decipheriv.prototype.final = final;
 
-  function createCipheriv(cipher, key, iv, options) {
+  crypto_exports.Cipheriv = Cipheriv;
+  crypto_exports.Decipheriv = Decipheriv;
+  crypto_exports.createCipheriv = function createCipheriv(cipher, key, iv, options) {
     return new Cipheriv(cipher, key, iv, options);
-  }
-
-  function createDecipheriv(cipher, key, iv, options) {
+  };
+  crypto_exports.createDecipheriv = function createDecipheriv(cipher, key, iv, options) {
     return new Decipheriv(cipher, key, iv, options);
-  }
-
-  crypto_exports.createCipheriv = createCipheriv;
-  crypto_exports.createDecipheriv = createDecipheriv;
-  crypto_exports.getCipher = getCiphers;
+  };
+  crypto_exports.getCiphers = getCiphers;
 }

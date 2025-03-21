@@ -45,6 +45,7 @@
 #include "JSHmac.h"
 #include "JSHash.h"
 #include "CryptoPrimes.h"
+#include "JSCipher.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -423,6 +424,9 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 3, "checkPrime"_s, jsCheckPrime, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
         JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Cipher"_s)),
+        globalObject->m_JSCipherClassStructure.constructor(globalObject));
 
     return obj;
 }

@@ -933,6 +933,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
 };
 } // namespace WebCore
 

@@ -1,5 +1,4 @@
 // Hardcoded module "node:crypto"
-var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
@@ -44,18 +43,25 @@ const {
   checkPrimeSync,
   generatePrime,
   generatePrimeSync,
-  Cipher: _Cipher,
+  Cipher,
+  hkdf,
+  hkdfSync,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
   pbkdf2: _pbkdf2,
-  pbkdf2Sync: _pbkdf2Sync,
-  timingSafeEqual: _timingSafeEqual,
+  pbkdf2Sync,
+  timingSafeEqual,
   randomInt,
   randomUUID,
   randomBytes,
   randomFillSync,
   randomFill,
+  secureHeapUsed,
+  getFips,
+  setFips,
+  setEngine,
+  getHashes,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
@@ -120,222 +126,10 @@ function getArrayBufferOrView(buffer, name, encoding?) {
 
 const crypto = globalThis.crypto;
 
-var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
-  function () {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  };
+var crypto_exports: any = {};
 
-// node_modules/browserify-sign/browser/algorithms.json
-var require_algorithms = __commonJS({
-  "node_modules/browserify-sign/browser/algorithms.json"(exports, module) {
-    module.exports = {
-      sha224WithRSAEncryption: {
-        sign: "rsa",
-        hash: "sha224",
-        id: "302d300d06096086480165030402040500041c",
-      },
-      "RSA-SHA224": {
-        sign: "ecdsa/rsa",
-        hash: "sha224",
-        id: "302d300d06096086480165030402040500041c",
-      },
-      sha256WithRSAEncryption: {
-        sign: "rsa",
-        hash: "sha256",
-        id: "3031300d060960864801650304020105000420",
-      },
-      "RSA-SHA256": {
-        sign: "ecdsa/rsa",
-        hash: "sha256",
-        id: "3031300d060960864801650304020105000420",
-      },
-      sha384WithRSAEncryption: {
-        sign: "rsa",
-        hash: "sha384",
-        id: "3041300d060960864801650304020205000430",
-      },
-      "RSA-SHA384": {
-        sign: "ecdsa/rsa",
-        hash: "sha384",
-        id: "3041300d060960864801650304020205000430",
-      },
-      sha512WithRSAEncryption: {
-        sign: "rsa",
-        hash: "sha512",
-        id: "3051300d060960864801650304020305000440",
-      },
-      "RSA-SHA512": {
-        sign: "ecdsa/rsa",
-        hash: "sha512",
-        id: "3051300d060960864801650304020305000440",
-      },
-      "RSA-SHA1": {
-        sign: "rsa",
-        hash: "sha1",
-        id: "3021300906052b0e03021a05000414",
-      },
-      "ecdsa-with-SHA1": {
-        sign: "ecdsa",
-        hash: "sha1",
-        id: "3021300906052b0e03021a05000414",
-      },
-      sha1: {
-        sign: "ecdsa/rsa",
-        hash: "sha1",
-        id: "3021300906052b0e03021a05000414",
-      },
-      sha256: {
-        sign: "ecdsa/rsa",
-        hash: "sha256",
-        id: "3031300d060960864801650304020105000420",
-      },
-      sha224: {
-        sign: "ecdsa/rsa",
-        hash: "sha224",
-        id: "302d300d06096086480165030402040500041c",
-      },
-      sha384: {
-        sign: "ecdsa/rsa",
-        hash: "sha384",
-        id: "3041300d060960864801650304020205000430",
-      },
-      sha512: {
-        sign: "ecdsa/rsa",
-        hash: "sha512",
-        id: "3051300d060960864801650304020305000440",
-      },
-      "DSA-SHA": {
-        sign: "dsa",
-        hash: "sha1",
-        id: "",
-      },
-      "DSA-SHA1": {
-        sign: "dsa",
-        hash: "sha1",
-        id: "",
-      },
-      DSA: {
-        sign: "dsa",
-        hash: "sha1",
-        id: "",
-      },
-      "DSA-WITH-SHA224": {
-        sign: "dsa",
-        hash: "sha224",
-        id: "",
-      },
-      "DSA-SHA224": {
-        sign: "dsa",
-        hash: "sha224",
-        id: "",
-      },
-      "DSA-WITH-SHA256": {
-        sign: "dsa",
-        hash: "sha256",
-        id: "",
-      },
-      "DSA-SHA256": {
-        sign: "dsa",
-        hash: "sha256",
-        id: "",
-      },
-      "DSA-WITH-SHA384": {
-        sign: "dsa",
-        hash: "sha384",
-        id: "",
-      },
-      "DSA-SHA384": {
-        sign: "dsa",
-        hash: "sha384",
-        id: "",
-      },
-      "DSA-WITH-SHA512": {
-        sign: "dsa",
-        hash: "sha512",
-        id: "",
-      },
-      "DSA-SHA512": {
-        sign: "dsa",
-        hash: "sha512",
-        id: "",
-      },
-      "DSA-RIPEMD160": {
-        sign: "dsa",
-        hash: "rmd160",
-        id: "",
-      },
-      ripemd160WithRSA: {
-        sign: "rsa",
-        hash: "rmd160",
-        id: "3021300906052b2403020105000414",
-      },
-      "RSA-RIPEMD160": {
-        sign: "rsa",
-        hash: "rmd160",
-        id: "3021300906052b2403020105000414",
-      },
-      md5WithRSAEncryption: {
-        sign: "rsa",
-        hash: "md5",
-        id: "3020300c06082a864886f70d020505000410",
-      },
-      "RSA-MD5": {
-        sign: "rsa",
-        hash: "md5",
-        id: "3020300c06082a864886f70d020505000410",
-      },
-    };
-  },
-});
-
-// node_modules/browserify-sign/algos.js
-var require_algos = __commonJS({
-  "node_modules/browserify-sign/algos.js"(exports, module) {
-    module.exports = require_algorithms();
-  },
-});
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
-
-function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
-}
-
-// node_modules/crypto-browserify/index.js
-var require_crypto_browserify2 = __commonJS({
-  "node_modules/crypto-browserify/index.js"(exports) {
-    "use strict";
-    var algos = require_algos(),
-      algoKeys = Object.keys(algos),
-      hashes = ["sha1", "sha224", "sha256", "sha384", "sha512", "md5", "rmd160"].concat(algoKeys);
-    exports.getHashes = function () {
-      return hashes;
-    };
-    exports.pbkdf2Sync = pbkdf2Sync;
-    exports.pbkdf2 = pbkdf2;
-
-    exports.getRandomValues = values => crypto.getRandomValues(values);
-    exports.constants = $processBindingConstants.crypto;
-  },
-});
-
-// crypto.js
-var crypto_exports = require_crypto_browserify2();
+crypto_exports.getRandomValues = crypto.getRandomValues;
+crypto_exports.constants = $processBindingConstants.crypto;
 
 var scryptSync =
     "scryptSync" in crypto
@@ -695,15 +489,36 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-crypto_exports.getFips = function getFips() {
-  return 0;
-};
+// TODO: move this to zig
+function pbkdf2(password, salt, iterations, keylen, digest, callback) {
+  if (typeof digest === "function") {
+    callback = digest;
+    digest = undefined;
+  }
+
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
+  if (callback) {
+    promise.then(
+      result => callback(null, result),
+      err => callback(err),
+    );
+    return;
+  }
+
+  promise.then(() => {});
+}
+
+crypto_exports.pbkdf2 = pbkdf2;
+crypto_exports.pbkdf2Sync = pbkdf2Sync;
+
+crypto_exports.hkdf = hkdf;
+crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = _timingSafeEqual;
+crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
@@ -850,6 +665,8 @@ crypto_exports.createVerify = createVerify;
   };
 }
 
+crypto_exports.getHashes = getHashes;
+
 crypto_exports.randomInt = randomInt;
 crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
@@ -860,6 +677,16 @@ crypto_exports.checkPrime = checkPrime;
 crypto_exports.checkPrimeSync = checkPrimeSync;
 crypto_exports.generatePrime = generatePrime;
 crypto_exports.generatePrimeSync = generatePrimeSync;
+
+crypto_exports.secureHeapUsed = secureHeapUsed;
+crypto_exports.setEngine = setEngine;
+crypto_exports.getFips = getFips;
+crypto_exports.setFips = setFips;
+Object.defineProperty(crypto_exports, "fips", {
+  __proto__: null,
+  get: getFips,
+  set: setFips,
+});
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
@@ -994,7 +821,7 @@ crypto_exports.createECDH = function createECDH(curve) {
       return new Cipheriv(cipher, key, iv, options);
     }
 
-    this[kHandle] = new _Cipher(false, cipher, key, iv, options);
+    this[kHandle] = new Cipher(false, cipher, key, iv, options);
     LazyTransform.$apply(this, [options]);
     this._decoder = null;
   }
@@ -1013,7 +840,7 @@ crypto_exports.createECDH = function createECDH(curve) {
       return new Decipheriv(cipher, key, iv, options);
     }
 
-    this[kHandle] = new _Cipher(true, cipher, key, iv, options);
+    this[kHandle] = new Cipher(true, cipher, key, iv, options);
     LazyTransform.$apply(this, [options]);
     this._decoder = null;
   }

@@ -2743,7 +2743,7 @@ fn NewSocket(comptime ssl: bool) type {
             var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
 
-            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
+            if (try JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
                 defer sb.deinit();
                 const session_slice = sb.slice();
                 const ssl_ptr = this.socket.ssl();
@@ -2860,7 +2860,7 @@ fn NewSocket(comptime ssl: bool) type {
                 var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
 
-                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
+                if (try JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
                     defer sb.deinit();
                     const context_slice = sb.slice();
 

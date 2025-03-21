@@ -636,7 +636,7 @@ pub const Crypto = struct {
                 if (arguments[0] != .undefined) {
                     if (arguments[0].isString()) {
                         encoding_value = arguments[0];
-                        break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
+                        break :brk try JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
                             return globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
                         };
                     }

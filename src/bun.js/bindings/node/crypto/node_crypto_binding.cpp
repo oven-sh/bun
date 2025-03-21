@@ -46,6 +46,7 @@
 #include "JSHash.h"
 #include "CryptoPrimes.h"
 #include "JSCipher.h"
+#include "CryptoHkdf.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -427,6 +428,11 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Cipher"_s)),
         globalObject->m_JSCipherClassStructure.constructor(globalObject));
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdf"_s)),
+        JSFunction::create(vm, globalObject, 6, "hkdf"_s, jsHkdf, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdfSync"_s)),
+        JSFunction::create(vm, globalObject, 5, "hkdfSync"_s, jsHkdfSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

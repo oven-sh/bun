@@ -1431,7 +1431,7 @@ pub const JestPrettyFormat = struct {
                         break :brk JSValue.undefined;
                     };
 
-                    const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                    const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                         .MessageEvent, .ErrorEvent => |evt| evt,
                         else => {
                             return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);

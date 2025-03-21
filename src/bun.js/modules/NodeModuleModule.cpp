@@ -882,7 +882,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 {
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
-                      ->hasOverriddenModuleResolveFilenameFunction));
+                ->hasOverriddenModuleResolveFilenameFunction));
 }
 
 } // namespace Bun

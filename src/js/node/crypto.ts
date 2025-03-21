@@ -46,17 +46,24 @@ const {
   checkPrimeSync,
   generatePrime,
   generatePrimeSync,
+  hkdf,
+  hkdfSync,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
   pbkdf2: _pbkdf2,
-  pbkdf2Sync: _pbkdf2Sync,
-  timingSafeEqual: _timingSafeEqual,
+  pbkdf2Sync,
+  timingSafeEqual,
   randomInt,
   randomUUID,
   randomBytes,
   randomFillSync,
   randomFill,
+  secureHeapUsed,
+  getFips,
+  setFips,
+  setEngine,
+  getHashes,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString } = require("internal/validators");
@@ -422,27 +429,6 @@ var require_algos = __commonJS({
     module.exports = require_algorithms();
   },
 });
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
-
-function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
-}
 
 // node_modules/des.js/lib/des/utils.js
 var require_utils = __commonJS({
@@ -1975,14 +1961,6 @@ var require_browser6 = __commonJS({
 var require_crypto_browserify2 = __commonJS({
   "node_modules/crypto-browserify/index.js"(exports) {
     "use strict";
-    var algos = require_algos(),
-      algoKeys = Object.keys(algos),
-      hashes = ["sha1", "sha224", "sha256", "sha384", "sha512", "md5", "rmd160"].concat(algoKeys);
-    exports.getHashes = function () {
-      return hashes;
-    };
-    exports.pbkdf2Sync = pbkdf2Sync;
-    exports.pbkdf2 = pbkdf2;
     var aes = require_browser6();
     exports.Cipher = aes.Cipher;
     exports.createCipher = aes.createCipher;
@@ -2361,15 +2339,36 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-crypto_exports.getFips = function getFips() {
-  return 0;
-};
+// TODO: move this to zig
+function pbkdf2(password, salt, iterations, keylen, digest, callback) {
+  if (typeof digest === "function") {
+    callback = digest;
+    digest = undefined;
+  }
+
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
+  if (callback) {
+    promise.then(
+      result => callback(null, result),
+      err => callback(err),
+    );
+    return;
+  }
+
+  promise.then(() => {});
+}
+
+crypto_exports.pbkdf2 = pbkdf2;
+crypto_exports.pbkdf2Sync = pbkdf2Sync;
+
+crypto_exports.hkdf = hkdf;
+crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = _timingSafeEqual;
+crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
@@ -2516,6 +2515,8 @@ crypto_exports.createVerify = createVerify;
   };
 }
 
+crypto_exports.getHashes = getHashes;
+
 crypto_exports.randomInt = randomInt;
 crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
@@ -2526,6 +2527,16 @@ crypto_exports.checkPrime = checkPrime;
 crypto_exports.checkPrimeSync = checkPrimeSync;
 crypto_exports.generatePrime = generatePrime;
 crypto_exports.generatePrimeSync = generatePrimeSync;
+
+crypto_exports.secureHeapUsed = secureHeapUsed;
+crypto_exports.setEngine = setEngine;
+crypto_exports.getFips = getFips;
+crypto_exports.setFips = setFips;
+Object.defineProperty(crypto_exports, "fips", {
+  __proto__: null,
+  get: getFips,
+  set: setFips,
+});
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {

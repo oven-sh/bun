@@ -654,7 +654,7 @@ pub const ParsedShellScript = struct {
         const str_js = arguments.nextEat() orelse {
             return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
-        const str = bun.String.fromJS(str_js, globalThis);
+        const str = try bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }
@@ -1699,7 +1699,7 @@ pub const Interpreter = struct {
 
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value = callframe.argument(0);
-        const str = bun.String.fromJS(value, globalThis);
+        const str = try bun.String.fromJS(value, globalThis);
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();

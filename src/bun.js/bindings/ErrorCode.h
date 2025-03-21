@@ -107,6 +107,7 @@ JSC::EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH(JSC::ThrowScope&, JSC::JSGlo
 JSC::EncodedJSValue CRYPTO_UNKNOWN_DH_GROUP(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope&, JSC::JSGlobalObject*, WTF::ASCIILiteral message);
 JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope&, JSC::JSGlobalObject*);
+JSC::EncodedJSValue CRYPTO_INVALID_KEYLEN(JSC::ThrowScope&, JSC::JSGlobalObject*);
 
 // URL
 

@@ -45,6 +45,7 @@
 #include "JSHmac.h"
 #include "JSHash.h"
 #include "CryptoPrimes.h"
+#include "CryptoHkdf.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -423,6 +424,11 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 3, "checkPrime"_s, jsCheckPrime, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
         JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdf"_s)),
+        JSFunction::create(vm, globalObject, 6, "hkdf"_s, jsHkdf, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdfSync"_s)),
+        JSFunction::create(vm, globalObject, 5, "hkdfSync"_s, jsHkdfSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

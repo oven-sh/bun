@@ -1598,6 +1598,23 @@ const OutgoingMessagePrototype = {
   usesChunkedEncodingByDefault: true,
   _closed: false,
 
+  get _headerNames() {
+    process.emitWarning("OutgoingMessage.prototype._headerNames is deprecated", "DeprecationWarning", "DEP0066");
+
+    const headers = this[headersSymbol];
+    if (!headers) return null;
+
+    const out = Object.create(null);
+    for (const key of headers.keys()) {
+      out[key.toLowerCase()] = key;
+    }
+    return out;
+  },
+
+  set _headerNames(val) {
+    process.emitWarning("OutgoingMessage.prototype._headerNames is deprecated", "DeprecationWarning", "DEP0066");
+  },
+
   appendHeader(name, value) {
     var headers = (this[headersSymbol] ??= new Headers());
     headers.append(name, value);

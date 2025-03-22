@@ -8003,6 +8003,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
+
+            if (this.config.onRequest == .zero) {
+                return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
+            }
+
             const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
@@ -8088,6 +8093,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var request = Request.new(existing_request);
 
+            bun.assert(this.config.onRequest != .zero); // confirmed above
             const response_value = this.config.onRequest.call(
                 this.globalThis,
                 this.jsValueAssertAlive(),

@@ -10,6 +10,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include "wtf/URL.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
@@ -44,6 +45,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPProcessArrayHeaders);
 
 // Create a static hash table of values containing an onclose DOMAttributeGetterSetter and a close function
 static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
@@ -125,6 +127,7 @@ public:
 
     void close()
     {
+        auto* socket = this->socket;
         if (socket) {
             us_socket_close(is_ssl, socket, 0, nullptr);
         }
@@ -404,7 +407,7 @@ static void* getNodeHTTPResponsePtr(us_socket_t* socket)
     return responseObject->wrapped();
 }
 
-extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
+extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(int is_ssl, us_socket_t* socket)
 {
     if (is_ssl) {
         return JSValue::encode(getNodeHTTPResponse<true>(socket));
@@ -412,7 +415,7 @@ extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_sock
     return JSValue::encode(getNodeHTTPResponse<false>(socket));
 }
 
-extern "C" EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl, us_socket_t* socket)
+extern "C" EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(int is_ssl, us_socket_t* socket)
 {
     if (is_ssl) {
         return JSValue::encode(getNodeHTTPServerSocket<true>(socket));
@@ -424,12 +427,6 @@ extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(EncodedJSValue thisVal
 {
     auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
     response->socket = socket;
-}
-
-extern "C" void Bun__callNodeHTTPServerSocketOnClose(EncodedJSValue thisValue)
-{
-    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
-    response->onClose();
 }
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
@@ -843,7 +840,7 @@ static void assignOnCloseFunction(uWS::TemplatedApp<isSSL>* app)
     });
 }
 
-extern "C" void NodeHTTP_assignOnCloseFunction(bool is_ssl, void* uws_app)
+extern "C" void NodeHTTP_assignOnCloseFunction(int is_ssl, void* uws_app)
 {
     if (is_ssl) {
         assignOnCloseFunction<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
@@ -851,17 +848,7 @@ extern "C" void NodeHTTP_assignOnCloseFunction(bool is_ssl, void* uws_app)
         assignOnCloseFunction<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
     }
 }
-
-extern "C" void NodeHTTP_setUsingCustomExpectHandler(bool is_ssl, void* uws_app, bool value)
-{
-    if (is_ssl) {
-        reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app)->setUsingCustomExpectHandler(value);
-    } else {
-        reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app)->setUsingCustomExpectHandler(value);
-    }
-}
-
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
@@ -889,7 +876,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         return JSValue::encode(exception);
     }
 
-    bool hasBody = false;
+    int hasBody = 0;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
 
     JSC::CallData callData = getCallData(callbackObject);
@@ -1297,6 +1284,160 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsHTTPProcessArrayHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue headersArrayValue = callFrame->argument(0);
+    JSValue targetValue = callFrame->argument(1);
+
+    if (UNLIKELY(!isArray(globalObject, headersArrayValue) || !targetValue.isObject())) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto* headersArray = jsCast<JSArray*>(headersArrayValue);
+    auto* targetObject = targetValue.getObject();
+
+    struct HeaderEntry {
+        String originalName;
+        Vector<String> values;
+    };
+    HashMap<String, HeaderEntry> headerMap;
+
+    auto addHeaderEntry = [&](const String& name, const String& value) {
+        String lowercaseName = name.convertToASCIILowercase();
+        auto result = headerMap.ensure(lowercaseName, [&name] {
+            HeaderEntry entry;
+            entry.originalName = name;
+            return entry;
+        });
+
+        result.iterator->value.values.append(value);
+    };
+
+    auto joinHeaderValues = [](const Vector<String>& values, ASCIILiteral delimiter) -> String {
+        if (UNLIKELY(values.isEmpty()))
+            return emptyString();
+
+        if (UNLIKELY(values.size() == 1))
+            return values[0];
+
+        StringBuilder builder;
+        builder.append(values[0]);
+
+        for (size_t i = 1; i < values.size(); i++) {
+            builder.append(delimiter);
+            builder.append(values[i]);
+        }
+
+        return builder.toString();
+    };
+
+    bool isNestedArray = false;
+    if (headersArray->length() > 0) {
+        JSValue firstItem = headersArray->getIndex(globalObject, 0);
+        isNestedArray = isArray(globalObject, firstItem);
+    }
+
+    if (isNestedArray) {
+        // Process array of form [['key', 'value'], ['key2', 'value2']]
+        forEachInIterable(globalObject, headersArrayValue, [&](JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue entryValue) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+
+            if (UNLIKELY(!isArray(globalObject, entryValue)))
+                return;
+
+            auto* entryArray = jsCast<JSArray*>(entryValue);
+            if (UNLIKELY(entryArray->length() < 2))
+                return;
+
+            JSValue nameValue = entryArray->getIndex(globalObject, 0);
+            JSValue valueValue = entryArray->getIndex(globalObject, 1);
+
+            if (UNLIKELY(!nameValue.isString() || !valueValue.isString()))
+                return;
+
+            String name = nameValue.toWTFString(globalObject);
+            if (UNLIKELY(scope.exception()))
+                return;
+
+            String value = valueValue.toWTFString(globalObject);
+            if (UNLIKELY(scope.exception()))
+                return;
+
+            addHeaderEntry(name, value);
+        });
+    } else {
+        // Process array of form ['key', 'value', 'key2', 'value2']
+        unsigned arrayLength = headersArray->length();
+        if (arrayLength % 2 == 0) {
+            for (unsigned i = 0; i < arrayLength; i += 2) {
+                JSValue nameValue = headersArray->getIndex(globalObject, i);
+                JSValue valueValue = headersArray->getIndex(globalObject, i + 1);
+
+                if (UNLIKELY(!nameValue.isString() || !valueValue.isString()))
+                    continue;
+
+                auto entryScope = DECLARE_THROW_SCOPE(vm);
+
+                String name = nameValue.toWTFString(globalObject);
+                if (UNLIKELY(entryScope.exception()))
+                    continue;
+
+                String value = valueValue.toWTFString(globalObject);
+                if (UNLIKELY(entryScope.exception()))
+                    continue;
+
+                addHeaderEntry(name, value);
+            }
+        }
+    }
+
+    // Set of header names that should only use the first value when multiple values are sent
+    // These are based on RFC2616 and the multipleForbidden list in Node.js HTTP tests
+    static const HashSet<String> singleValueHeaders = {
+        "host"_s,
+        "content-type"_s,
+        "user-agent"_s,
+        "referer"_s,
+        "authorization"_s,
+        "proxy-authorization"_s,
+        "if-modified-since"_s,
+        "if-unmodified-since"_s,
+        "from"_s,
+        "location"_s,
+        "max-forwards"_s
+    };
+
+    for (auto& entry : headerMap) {
+        const String& lowercaseName = entry.key;
+        const HeaderEntry& headerEntry = entry.value;
+        const Vector<String>& values = headerEntry.values;
+
+        if (UNLIKELY(values.isEmpty()))
+            continue;
+
+        String headerName = headerEntry.originalName;
+        String headerValue;
+
+        // Headers that should only use the first value
+        if (singleValueHeaders.contains(lowercaseName)) {
+            headerValue = values[0];
+        } else if (lowercaseName == "cookie") {
+            // Cookie headers use semicolon+space as separator
+            headerValue = joinHeaderValues(values, ASCIILiteral("; "));
+        } else {
+            // All other headers use comma+space as separator
+            headerValue = joinHeaderValues(values, ASCIILiteral(", "));
+        }
+
+        targetObject->putDirect(vm, Identifier::fromString(vm, headerName), jsString(vm, headerValue), 0);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1368,6 +1509,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignEventCallback"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "assignEventCallback"_s, jsHTTPAssignEventCallback, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "processArrayHeaders"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "processArrayHeaders"_s, jsHTTPProcessArrayHeaders, ImplementationVisibility::Public), 0);
 
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRequestTimeout"_s)),

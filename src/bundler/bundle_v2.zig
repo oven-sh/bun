@@ -1859,7 +1859,8 @@ pub const BundleV2 = struct {
         event_loop: *bun.JSC.EventLoop,
         _: std.mem.Allocator,
     ) OOM!*JSBundleCompletionTask {
-        const completion = JSBundleCompletionTask.new(.{
+        const completion = bun.new(JSBundleCompletionTask, .{
+            .ref_count = .init(),
             .config = config,
             .jsc_event_loop = event_loop,
             .globalThis = globalThis,
@@ -1926,6 +1927,11 @@ pub const BundleV2 = struct {
     };
 
     pub const JSBundleCompletionTask = struct {
+        pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit);
+        // pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
         config: bun.JSC.API.JSBundler.Config,
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
@@ -1943,10 +1949,7 @@ pub const BundleV2 = struct {
         next: ?*JSBundleCompletionTask = null,
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
-
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -2027,7 +2030,7 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        fn _deinit(this: *JSBundleCompletionTask) void {
+        fn deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
             this.log.deinit();
             this.poll_ref.disable();
@@ -2036,7 +2039,7 @@ pub const BundleV2 = struct {
             }
             this.config.deinit(bun.default_allocator);
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {

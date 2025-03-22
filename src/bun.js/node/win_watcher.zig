@@ -28,7 +28,7 @@ pub const PathWatcherManager = struct {
     vm: *JSC.VirtualMachine,
     deinit_on_last_watcher: bool = false,
 
-    pub usingnamespace bun.New(PathWatcherManager);
+    pub const new = bun.TrivialNew(PathWatcherManager);
 
     pub fn init(vm: *JSC.VirtualMachine) *PathWatcherManager {
         return PathWatcherManager.new(.{
@@ -55,6 +55,7 @@ pub const PathWatcherManager = struct {
             _ = this.watchers.swapRemoveAt(index);
         }
     }
+
     fn deinit(this: *PathWatcherManager) void {
         // enable to create a new manager
         if (default_manager == this) {
@@ -76,7 +77,7 @@ pub const PathWatcherManager = struct {
         }
 
         this.watchers.deinit(bun.default_allocator);
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -88,7 +89,8 @@ pub const PathWatcher = struct {
     manager: ?*PathWatcherManager,
     emit_in_progress: bool = false,
     handlers: std.AutoArrayHashMapUnmanaged(*anyopaque, ChangeEvent) = .{},
-    pub usingnamespace bun.New(PathWatcher);
+
+    pub const new = bun.TrivialNew(PathWatcher);
 
     const log = Output.scoped(.@"fs.watch", false);
 
@@ -238,7 +240,7 @@ pub const PathWatcher = struct {
         log("onClose", .{});
         const event = bun.cast(*uv.uv_fs_event_t, handler);
         const this = bun.cast(*PathWatcher, event.data);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn detach(this: *PathWatcher, handler: *anyopaque) void {
@@ -266,7 +268,7 @@ pub const PathWatcher = struct {
             }
         }
         if (uv.uv_is_closed(@ptrCast(&this.handle))) {
-            this.destroy();
+            bun.destroy(this);
         } else {
             _ = uv.uv_fs_event_stop(&this.handle);
             _ = uv.uv_close(@ptrCast(&this.handle), PathWatcher.uvClosedCallback);

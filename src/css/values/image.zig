@@ -131,7 +131,7 @@ pub const Image = union(enum) {
         // Legacy -webkit-gradient()
         if (prefixes.contains(VendorPrefix.WEBKIT) and
             if (targets.browsers) |browsers| css.prefixes.Feature.isWebkitGradient(browsers) else false and
-            prefix_image.* == .gradient)
+                prefix_image.* == .gradient)
         {
             if (prefix_image.getLegacyWebkit(allocator)) |legacy| {
                 res.append(allocator, legacy);
@@ -262,10 +262,9 @@ pub const ImageSet = struct {
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
         return css.Feature.isCompatible(.image_set, browsers) and
-            for (this.options.items) |opt|
-        {
-            if (!opt.image.isCompatible(browsers)) break false;
-        } else true;
+            for (this.options.items) |opt| {
+                if (!opt.image.isCompatible(browsers)) break false;
+            } else true;
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.

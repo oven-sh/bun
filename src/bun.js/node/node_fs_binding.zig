@@ -97,7 +97,7 @@ pub const NodeJSFS = struct {
     node_fs: JSC.Node.NodeFS = .{},
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {
         if (this.node_fs.vm) |vm| {
@@ -106,7 +106,7 @@ pub const NodeJSFS = struct {
             }
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

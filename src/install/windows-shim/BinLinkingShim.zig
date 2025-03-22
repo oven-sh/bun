@@ -297,7 +297,7 @@ pub fn looseDecode(input: []const u8) ?Decoded {
         }
         break :bin_path_u8 input[0..bin_path_byte_len];
     } else (
-    // path slice is 0..flags-2
+        // path slice is 0..flags-2
         input[0 .. input.len - @sizeOf(Flags)]);
 
     if (bin_path_u8.len % 2 != 0) {

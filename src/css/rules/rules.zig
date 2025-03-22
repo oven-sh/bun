@@ -497,7 +497,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 } else {
                     if (!dest.minify and
                         !(last_without_block and
-                        (rule.* == .import or rule.* == .namespace or rule.* == .layer_statement)))
+                            (rule.* == .import or rule.* == .namespace or rule.* == .layer_statement)))
                     {
                         try dest.writeChar('\n');
                     }

@@ -177,9 +177,10 @@ pub const TokenList = struct {
         if (!dest.minify and
             i != this.v.items.len - 1 and
             !(this.v.items[i + 1] == .token and switch (this.v.items[i + 1].token) {
-            .comma, .close_paren => true,
-            else => false,
-        })) {
+                .comma, .close_paren => true,
+                else => false,
+            }))
+        {
             // Whitespace is removed during parsing, so add it back if we aren't minifying.
             try dest.writeChar(' ');
             return true;

@@ -124,7 +124,7 @@ pub const Async = struct {
 
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             var this: *AsyncMkdirp = @fieldParentPtr("task", task);
@@ -181,10 +181,8 @@ pub const Async = struct {
 
             pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "UvTask";
 
-            pub usingnamespace bun.New(@This());
-
             pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, task_args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
-                var task = Task.new(.{
+                var task = bun.new(Task, .{
                     .promise = JSC.JSPromise.Strong.init(globalObject),
                     .args = task_args,
                     .result = undefined,
@@ -372,7 +370,7 @@ pub const Async = struct {
                     this.args.deinit();
                 }
                 this.promise.deinit();
-                this.destroy();
+                bun.destroy(this);
             }
         };
     }
@@ -1007,7 +1005,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pending_err: ?Syscall.Error = null,
     pending_err_mutex: bun.Mutex = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
@@ -1050,13 +1048,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         basename: bun.PathString = bun.PathString.empty,
         task: JSC.WorkPoolTask = .{ .callback = call },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn call(task: *JSC.WorkPoolTask) void {
             var this: *Subtask = @alignCast(@fieldParentPtr("task", task));
             defer {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
-                this.destroy();
+                bun.destroy(this);
             }
             var buf: bun.PathBuffer = undefined;
             this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
@@ -1308,7 +1306,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

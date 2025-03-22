@@ -358,7 +358,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         globalObject,
-        moduleMainCodeGenerator(vm),
+        commonJSMainCodeGenerator(vm),
         globalObject->globalScope());
 
     this->putDirectAccessor(

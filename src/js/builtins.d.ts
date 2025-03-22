@@ -92,7 +92,7 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
 ): Fields[N];
 declare function $fulfillPromise(...args: any[]): TODO;
-declare function $loadCJS2ESM(...args: any[]): TODO;
+declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
@@ -355,7 +355,7 @@ declare function $importer(): TODO;
 declare function $inFlightCloseRequest(): TODO;
 declare function $inFlightWriteRequest(): TODO;
 declare function $initializeWith(): TODO;
-declare function $internalRequire(path: string): TODO;
+declare function $internalRequire(id: string, parent: CommonJSModuleRecord): TODO;
 declare function $internalStream(): TODO;
 declare function $internalWritable(): TODO;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
@@ -484,7 +484,7 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: CommonJSModuleRecord,
+  parent: ?CommonJSModuleRecord,
 ): CommonJSModuleRecord;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: CommonJSModuleRecord,

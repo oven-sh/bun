@@ -927,6 +927,13 @@ const JSC::ClassInfo JSModuleConstructor::s_info = {
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
+    globalObject->m_requireExtensionsProxyObject.initLater(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            // JSObject* moduleConstructor = JSModuleConstructor::create(
+            //     init.vm, static_cast<Zig::GlobalObject*>(init.owner));
+            // init.set(moduleConstructor);
+        });
+
     globalObject->m_nodeModuleConstructor.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
             JSObject* moduleConstructor = JSModuleConstructor::create(

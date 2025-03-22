@@ -58,50 +58,9 @@ export const timingSafeEqual =
       }
     : undefined;
 
-export const scryptSync =
-  "scryptSync" in crypto
-    ? (password, salt, keylen, options) => {
-        const res = crypto.scryptSync(password, salt, keylen, options);
-        return DEFAULT_ENCODING !== "buffer" ? new Buffer(res).toString(DEFAULT_ENCODING) : new Buffer(res);
-      }
-    : undefined;
-
-export const scrypt =
-  "scryptSync" in crypto
-    ? function (password, salt, keylen, options, callback) {
-        if (typeof options === "function") {
-          callback = options;
-          options = undefined;
-        }
-
-        if (typeof callback !== "function") {
-          var err = new TypeError("callback must be a function");
-          err.code = "ERR_INVALID_CALLBACK";
-          throw err;
-        }
-
-        try {
-          const result = crypto.scryptSync(password, salt, keylen, options);
-          process.nextTick(
-            callback,
-            null,
-            DEFAULT_ENCODING !== "buffer" ? new Buffer(result).toString(DEFAULT_ENCODING) : new Buffer(result),
-          );
-        } catch (err) {
-          throw err;
-        }
-      }
-    : undefined;
-
 if (timingSafeEqual) {
   // hide it from stack trace
   Object.defineProperty(timingSafeEqual, "name", {
-    value: "::bunternal::",
-  });
-  Object.defineProperty(scrypt, "name", {
-    value: "::bunternal::",
-  });
-  Object.defineProperty(scryptSync, "name", {
     value: "::bunternal::",
   });
 }
@@ -113,8 +72,6 @@ export default {
   getRandomValues,
   randomUUID,
   timingSafeEqual,
-  scryptSync,
-  scrypt,
   webcrypto,
   getCurves,
 };

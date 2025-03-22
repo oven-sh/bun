@@ -221,6 +221,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
+        clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
         clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
@@ -672,6 +673,7 @@ pub const Arguments = struct {
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
+            const preloads2 = args.options("--require");
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
@@ -751,13 +753,23 @@ pub const Arguments = struct {
                 }
             }
 
-            if (ctx.preloads.len > 0 and preloads.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
+            if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
                 all.appendSliceAssumeCapacity(ctx.preloads);
                 all.appendSliceAssumeCapacity(preloads);
+                all.appendSliceAssumeCapacity(preloads2);
                 ctx.preloads = all.items;
             } else if (preloads.len > 0) {
-                ctx.preloads = preloads;
+                if (preloads2.len > 0) {
+                    var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
+                    all.appendSliceAssumeCapacity(preloads);
+                    all.appendSliceAssumeCapacity(preloads2);
+                    ctx.preloads = all.items;
+                } else {
+                    ctx.preloads = preloads;
+                }
+            } else if (preloads2.len > 0) {
+                ctx.preloads = preloads2;
             }
 
             if (args.option("--print")) |script| {

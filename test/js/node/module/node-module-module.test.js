@@ -178,3 +178,56 @@ test("require cache node builtins specifier", () => {
 test("require a cjs file uses the 'module.exports' export", () => {
   expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
 });
+
+test("Module.runMain", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "--require", path.join(import.meta.dir, "overwrite-module-run-main-1.cjs"), path.join(import.meta.dir, "overwrite-module-run-main-2.cjs")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim()).toBe("pass");
+  expect(exitCode).toBe(0);
+});
+test("Module.runMain 2", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "--require", path.join(import.meta.dir, "overwrite-module-run-main-3.cjs"), path.join(import.meta.dir, "overwrite-module-run-main-2.cjs")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim()).toBe("pass");
+  expect(exitCode).toBe(0);
+});
+test.each([
+  "no args",
+  "--access-early",
+])("children, %s", arg => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(stdout.toString().trim()).toBe(`. (./a.cjs)
+ ./b.cjs
+  . (./a.cjs) (seen)
+  ./b.cjs (seen)
+  ./c.cjs
+   ./d.cjs
+    ./d.cjs (seen)
+ ./d.cjs (seen)
+ ./f.cjs
+  ./d.cjs (seen)
+ ./g.cjs
+  ./b.cjs (seen)
+  . (./a.cjs) (seen)
+  ./h.cjs
+   ./i.cjs
+    ./j.cjs
+     ./i.cjs (seen)
+     ./j.cjs (seen)
+     ./k.cjs
+      ./j.cjs (seen)
+   ./j.cjs (seen)
+   ./k.cjs (seen)`);
+});

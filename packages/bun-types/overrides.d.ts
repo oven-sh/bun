@@ -1,18 +1,71 @@
 export {};
 
-import type { BunFile, Env, PathLike } from "bun";
-
 declare global {
   namespace NodeJS {
+    interface Process {
+      readonly version: string;
+      browser: boolean;
+
+      /**
+       * Whether you are using Bun
+       */
+      isBun: true;
+
+      /**
+       * The current git sha of Bun
+       */
+      revision: string;
+
+      reallyExit(code?: number): never;
+      dlopen(module: { exports: any }, filename: string, flags?: number): void;
+      _exiting: boolean;
+      noDeprecation: boolean;
+
+      binding(m: "constants"): {
+        os: typeof import("node:os").constants;
+        fs: typeof import("node:fs").constants;
+        crypto: typeof import("node:crypto").constants;
+        zlib: typeof import("node:zlib").constants;
+        trace: {
+          TRACE_EVENT_PHASE_BEGIN: number;
+          TRACE_EVENT_PHASE_END: number;
+          TRACE_EVENT_PHASE_COMPLETE: number;
+          TRACE_EVENT_PHASE_INSTANT: number;
+          TRACE_EVENT_PHASE_ASYNC_BEGIN: number;
+          TRACE_EVENT_PHASE_ASYNC_STEP_INTO: number;
+          TRACE_EVENT_PHASE_ASYNC_STEP_PAST: number;
+          TRACE_EVENT_PHASE_ASYNC_END: number;
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN: number;
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: number;
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT: number;
+          TRACE_EVENT_PHASE_FLOW_BEGIN: number;
+          TRACE_EVENT_PHASE_FLOW_STEP: number;
+          TRACE_EVENT_PHASE_FLOW_END: number;
+          TRACE_EVENT_PHASE_METADATA: number;
+          TRACE_EVENT_PHASE_COUNTER: number;
+          TRACE_EVENT_PHASE_SAMPLE: number;
+          TRACE_EVENT_PHASE_CREATE_OBJECT: number;
+          TRACE_EVENT_PHASE_SNAPSHOT_OBJECT: number;
+          TRACE_EVENT_PHASE_DELETE_OBJECT: number;
+          TRACE_EVENT_PHASE_MEMORY_DUMP: number;
+          TRACE_EVENT_PHASE_MARK: number;
+          TRACE_EVENT_PHASE_CLOCK_SYNC: number;
+          TRACE_EVENT_PHASE_ENTER_CONTEXT: number;
+          TRACE_EVENT_PHASE_LEAVE_CONTEXT: number;
+          TRACE_EVENT_PHASE_LINK_IDS: number;
+        };
+      };
+      binding(m: string): object;
+    }
+
     interface ProcessVersions extends Dict<string> {
       bun: string;
     }
-    interface ProcessEnv extends Env {}
   }
 }
 
 declare module "fs/promises" {
-  function exists(path: PathLike): Promise<boolean>;
+  function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
 declare module "tls" {
@@ -22,7 +75,7 @@ declare module "tls" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | NodeJS.TypedArray | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | Buffer | NodeJS.TypedArray | Bun.BunFile | Array<string | Buffer | Bun.BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -38,8 +91,8 @@ declare module "tls" {
       | string
       | Buffer
       | NodeJS.TypedArray
-      | BunFile
-      | Array<string | Buffer | NodeJS.TypedArray | BunFile>
+      | Bun.BunFile
+      | Array<string | Buffer | NodeJS.TypedArray | Bun.BunFile>
       | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
@@ -54,9 +107,9 @@ declare module "tls" {
     key?:
       | string
       | Buffer
-      | BunFile
+      | Bun.BunFile
       | NodeJS.TypedArray
-      | Array<string | Buffer | BunFile | NodeJS.TypedArray | KeyObject>
+      | Array<string | Buffer | Bun.BunFile | NodeJS.TypedArray | KeyObject>
       | undefined;
   }
 

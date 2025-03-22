@@ -20,15 +20,13 @@ That's it! VS Code and TypeScript automatically load `@types/*` packages into yo
 
 # Contributing
 
-The `@types/bun` package is a shim that loads `bun-types`. The `bun-types` package lives in the Bun repo under `packages/bun-types`. It is generated via [./scripts/bundle.ts](./scripts/bundle.ts).
+The `@types/bun` package is a shim that loads `bun-types`. The `bun-types` package lives in the Bun repo under `packages/bun-types`.
 
 To add a new file, add it under `packages/bun-types`. Then add a [triple-slash directive](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) pointing to it inside [./index.d.ts](./index.d.ts).
 
 ```diff
 + /// <reference path="./newfile.d.ts" />
 ```
-
-[`./bundle.ts`](./bundle.ts) merges the types in this folder into a single file. To run it:
 
 ```bash
 bun build

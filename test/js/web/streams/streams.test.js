@@ -306,6 +306,20 @@ describe("ReadableStream.prototype.tee", () => {
         throw e;
       }
     });
+
+    it("can be cancelled", async () => {
+      let cancelled = false;
+      const stream = new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+        type: "direct",
+      });
+
+      await stream.cancel();
+
+      expect(cancelled).toBe(true);
+    });
   });
 });
 

@@ -714,11 +714,13 @@ pub const Response = struct {
 
             if (response_init.fastGet(globalThis, .status)) |status_value| {
                 const number = status_value.coerceToInt64(globalThis);
-                if ((200 <= number and number < 600) or number == 101) {
+                // Even though the fetch spec says the range is [200, 599], there are some websites
+                // that use status codes up to 999, like linkedin.com, so allow it.
+                if ((200 <= number and number <= 999) or number == 101) {
                     result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
                 } else {
                     if (!globalThis.hasException()) {
-                        const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                        const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 999]", .{number});
                         return globalThis.throwValue(err);
                     }
                     return error.JSError;

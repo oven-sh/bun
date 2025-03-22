@@ -430,7 +430,7 @@ fn genericDump(
         bun.crash_handler.dumpStackTrace(entry.value_ptr.acquired_at.trace(), AllocationScope.trace_limits);
         i += 1;
         if (i >= 3) {
-            std.debug.print("  {d} omitted ...\n", .{map.count() - i});
+            bun.Output.prettyError("  {d} omitted ...\n", .{map.count() - i});
             break;
         }
     }

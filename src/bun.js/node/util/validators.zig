@@ -62,16 +62,16 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
         return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
     }
 
-    const num = value.asNumber();
-
-    if (!value.isAnyInt()) {
-        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
+    if (!value.isInteger()) {
+        return globalThis.throwRangeError(value.asNumber(), .{ .field_name = name, .msg = "an integer" });
     }
 
-    const int = value.asInt52();
+    const int: i64 = @intFromFloat(value.asNumber());
+
     if (int < min or int > max) {
         return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
     }
+
     return int;
 }
 

@@ -34,7 +34,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 
 #include "../modules/ObjectModule.h"
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "../modules/_NativeModule.h"
 
 namespace Bun {

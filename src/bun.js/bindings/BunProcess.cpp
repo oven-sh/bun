@@ -6,7 +6,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"

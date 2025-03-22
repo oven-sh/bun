@@ -1968,7 +1968,7 @@ declare module "bun" {
    *   user: 'dbuser',
    *   password: 'secretpass',
    *   database: 'myapp',
-   *   idleTimeout: 30000,
+   *   idleTimeout: 30,
    *   max: 20,
    *   onconnect: (client) => {
    *     console.log('Connected to database');

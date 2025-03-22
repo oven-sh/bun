@@ -36,7 +36,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnTimeoutCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
-    
+
     /* When we are done with a response we mark it like so */
     void markDone() {
         onAborted = nullptr;
@@ -53,7 +53,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
-    bool callOnWritable( uWS::HttpResponse<SSL>* response, uint64_t offset) {
+    bool callOnWritable(uWS::HttpResponse<SSL>* response, uint64_t offset) {
         /* Borrow real onWritable */
         auto* borrowedOnWritable = std::move(onWritable);
 
@@ -100,6 +100,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Current state (content-length sent, status sent, write called, etc */
     uint8_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
+    bool fromAncientRequest = false;
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;

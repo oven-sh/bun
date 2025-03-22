@@ -421,6 +421,8 @@ function(register_command)
       file(RELATIVE_PATH filename ${BUILD_PATH} ${artifact})
       if(filename STREQUAL "libbun-profile.a")
         # libbun-profile.a is now over 5gb in size, compress it first
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
         list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -6 libbun-profile.a)
         list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-profile.a.gz)
       else()

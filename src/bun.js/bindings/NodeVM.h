@@ -10,6 +10,7 @@
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/Nodes.h>
 
 namespace Bun {
 

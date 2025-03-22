@@ -637,8 +637,62 @@ const Scrypt = struct {
         return ctx;
     }
 
+    const scrypt_pr_max = 1 << 30 - 1;
+    const scrypt_max_mem = 1024 * 1024 * 65;
+    const block_t = extern struct { words: [16]u32 };
+
+    // Translated from boringssl:
+    //
+    //   if (r == 0 || p == 0 || p > SCRYPT_PR_MAX / r ||
+    //       // |N| must be a power of two.
+    //       N < 2 || (N & (N - 1)) ||
+    //       // We only support |N| <= 2^32 in |scryptROMix|.
+    //       N > UINT64_C(1) << 32 ||
+    //       // Check that |N| < 2^(128×r / 8).
+    //       (16 * r <= 63 && N >= UINT64_C(1) << (16 * r))) {
+    //     OPENSSL_PUT_ERROR(EVP, EVP_R_INVALID_PARAMETERS);
+    //     return 0
+    //
+    // and:
+    //
+    //   size_t max_scrypt_blocks = max_mem / (2 * r * sizeof(block_t));
+    //   if (max_scrypt_blocks < p + 1 || max_scrypt_blocks - p - 1 < N) {
+    //     OPENSSL_PUT_ERROR(EVP, EVP_R_MEMORY_LIMIT_EXCEEDED);
+    //     return 0;
+    //   }
     fn checkScryptParams(this: *const Scrypt, global: *JSGlobalObject) JSError!void {
-        if (BoringSSL.EVP_PBE_scrypt(null, 0, null, 0, this.N, this.r, this.p, this.maxmem, null, 0) == 0) {
+        const N = this.N;
+        const r = this.r;
+        const p = this.p;
+
+        if (r == 0 or p == 0 or p > scrypt_pr_max / r) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_INVALID_PARAMETERS, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+
+        if (N < 2 or (N & (N - 1)) != 0 or N > @as(u64, 1) << 32) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_INVALID_PARAMETERS, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+
+        // Check that N < 2^(128×r / 8)
+        if (16 * r <= 63 and N >= (@as(u64, 1) << @as(u6, @intCast(16 * r)))) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_INVALID_PARAMETERS, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+
+        var maxmem = this.maxmem;
+        if (maxmem == 0) {
+            maxmem = scrypt_max_mem;
+        }
+
+        const max_scrypt_blocks = maxmem / (2 * r * @sizeOf(block_t));
+        if (max_scrypt_blocks < p + 1 or max_scrypt_blocks - p - 1 < N) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED, src.file.ptr, src.line);
             return global.throwInvalidScryptParams();
         }
     }

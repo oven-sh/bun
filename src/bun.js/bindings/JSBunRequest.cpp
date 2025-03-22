@@ -66,9 +66,12 @@ JSObject* JSBunRequest::cookies() const
     return nullptr;
 }
 
+extern "C" void Request__setCookiesOnRequestContext(void* internalZigRequestPointer, CookieMap* cookieMap);
+
 void JSBunRequest::setCookies(JSObject* cookies)
 {
     m_cookies.set(Base::vm(), this, cookies);
+    Request__setCookiesOnRequestContext(this->wrapped(), WebCoreCast<WebCore::JSCookieMap, WebCore::CookieMap>(JSValue::encode(cookies)));
 }
 
 JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
@@ -181,7 +184,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         auto cookieHeader = fetchHeaders.internalHeaders().get(HTTPHeaderName::Cookie);
 
         // Create a CookieMap from the cookie header
-        auto cookieMapResult = WebCore::CookieMap::create(cookieHeader);
+        auto cookieMapResult = WebCore::CookieMap::createFromCookieHeader(cookieHeader);
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         if (cookieMapResult.hasException()) {
             WebCore::propagateException(*globalObject, throwScope, cookieMapResult.releaseException());

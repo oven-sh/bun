@@ -38,6 +38,14 @@ public:
     WTF::StringView m_view {};
     bool m_isCString { false };
 
+    std::span<const uint8_t> bytes() const
+    {
+        if (m_isCString) {
+            return std::span(reinterpret_cast<const uint8_t*>(m_underlying.data()), m_underlying.length());
+        }
+        return std::span(reinterpret_cast<const uint8_t*>(m_view.span8().data()), m_view.length());
+    }
+
     std::span<const char> span() const
     {
         if (m_isCString) {

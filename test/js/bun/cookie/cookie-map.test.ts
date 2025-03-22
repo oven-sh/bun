@@ -99,7 +99,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.maxAge).toBe(3600);
     expect(cookie.secure).toBe(true);
     expect(cookie.httpOnly).toBe(true);
-    expect(cookie.expires).toEqual(Date.parse("Thu, 13 Mar 2025 12:00:00 GMT"));
+    expect(cookie.expires).toEqual(new Date("Thu, 13 Mar 2025 12:00:00 GMT"));
     expect(cookie.partitioned).toBe(true);
     expect(cookie.sameSite).toBe("strict");
   });

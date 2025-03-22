@@ -89,10 +89,9 @@ inline void propagateException(JSC::JSGlobalObject& lexicalGlobalObject, JSC::Th
         propagateException(lexicalGlobalObject, throwScope, value.releaseException());
 }
 
-inline void propagateException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, ExceptionOr<void>&& value)
+ALWAYS_INLINE void propagateException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
-    if (UNLIKELY(value.hasException()))
-        propagateException(lexicalGlobalObject, throwScope, value.releaseException());
+    return propagateException(*lexicalGlobalObject, throwScope, WTFMove(exception));
 }
 
 template<typename Functor> void invokeFunctorPropagatingExceptionIfNecessary(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Functor&& functor)

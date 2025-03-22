@@ -15,22 +15,45 @@ enum class CookieSameSite : uint8_t {
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, CookieSameSite);
 
+struct CookieInit {
+    String name = String();
+    String value = String();
+    String domain = String();
+    String path = String();
+
+    int64_t expires = emptyExpiresAtValue;
+    bool secure = false;
+    CookieSameSite sameSite = CookieSameSite::Lax;
+    bool httpOnly = false;
+    double maxAge = 0;
+    bool partitioned = false;
+    static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
+
+    static std::optional<CookieInit> fromJS(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value);
+    static std::optional<CookieInit> fromJS(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue input, String name, String cookieValue);
+};
+
 class Cookie : public RefCounted<Cookie> {
 public:
     ~Cookie();
-
+    static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
     static Ref<Cookie> create(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite,
+        int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
-    static ExceptionOr<Ref<Cookie>> parse(const String& cookieString);
+    static Ref<Cookie> create(const CookieInit& init)
+    {
+        return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
+    }
+
+    static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
     static Ref<Cookie> from(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite,
+        int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
-    static String serialize(JSC::VM& vm, const Vector<Ref<Cookie>>& cookies);
+    static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
 
     const String& name() const { return m_name; }
     void setName(const String& name) { m_name = name; }
@@ -44,8 +67,9 @@ public:
     const String& path() const { return m_path; }
     void setPath(const String& path) { m_path = path; }
 
-    double expires() const { return m_expires; }
-    void setExpires(double expires) { m_expires = expires; }
+    int64_t expires() const { return m_expires; }
+    void setExpires(int64_t ms) { m_expires = ms; }
+    bool hasExpiry() const { return m_expires != emptyExpiresAtValue; }
 
     bool secure() const { return m_secure; }
     void setSecure(bool secure) { m_secure = secure; }
@@ -72,19 +96,19 @@ public:
 private:
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite,
+        int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
     String m_name;
     String m_value;
     String m_domain;
     String m_path;
-    double m_expires;
-    bool m_secure;
-    CookieSameSite m_sameSite;
-    bool m_httpOnly;
-    double m_maxAge;
-    bool m_partitioned;
+    int64_t m_expires = Cookie::emptyExpiresAtValue;
+    bool m_secure = false;
+    CookieSameSite m_sameSite = CookieSameSite::Lax;
+    bool m_httpOnly = false;
+    double m_maxAge = 0;
+    bool m_partitioned = false;
 };
 
 } // namespace WebCore

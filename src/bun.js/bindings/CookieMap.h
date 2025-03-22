@@ -12,29 +12,31 @@
 namespace WebCore {
 
 struct CookieStoreGetOptions {
-    String name;
-    String url;
+    String name {};
+    String url {};
 };
 
 struct CookieStoreDeleteOptions {
-    String name;
-    String domain;
-    String path;
+    String name {};
+    String domain {};
+    String path {};
 };
 
 class CookieMap : public RefCounted<CookieMap> {
 public:
     ~CookieMap();
 
-    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init);
+    // Define a simple struct to hold the key-value pair
 
-    RefPtr<Cookie> get(const String& name) const;
-    RefPtr<Cookie> get(const CookieStoreGetOptions& options) const;
+    static ExceptionOr<Ref<CookieMap>> createFromSetCookieHeaders(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
+    static ExceptionOr<Ref<CookieMap>> createFromCookieHeader(const StringView& forCookieHeader);
 
-    Vector<Ref<Cookie>> getAll(const String& name) const;
-    Vector<Ref<Cookie>> getAll(const CookieStoreGetOptions& options) const;
+    std::optional<String> get(const String& name) const;
+    RefPtr<Cookie> getModifiedEntry(const String& name) const;
+    Vector<KeyValuePair<String, String>> getAll() const;
+    HashMap<String, Ref<Cookie>> getAllModifiedItems() const { return m_modifiedCookies; }
 
-    bool has(const String& name, const String& value = String()) const;
+    bool has(const String& name) const;
 
     void set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge);
     void set(const String& name, const String& value);
@@ -43,31 +45,19 @@ public:
     void remove(const String& name);
     void remove(const CookieStoreDeleteOptions& options);
 
-    String toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::JSGlobalObject*) const;
-    size_t size() const { return m_cookies.size(); }
+    size_t size() const;
     size_t memoryCost() const;
-
-    // Define a simple struct to hold the key-value pair
-    struct KeyValuePair {
-        KeyValuePair(const String& k, RefPtr<Cookie> c)
-            : key(k)
-            , value(c)
-        {
-        }
-
-        String key;
-        RefPtr<Cookie> value;
-    };
 
     class Iterator {
     public:
         explicit Iterator(CookieMap&);
 
-        std::optional<KeyValuePair> next();
+        std::optional<KeyValuePair<String, String>> next();
 
     private:
         Ref<CookieMap> m_target;
+        Vector<KeyValuePair<String, String>> m_items;
         size_t m_index { 0 };
     };
 
@@ -76,14 +66,11 @@ public:
 
 private:
     CookieMap();
-    CookieMap(const String& cookieString);
-    CookieMap(const HashMap<String, String>& pairs);
-    CookieMap(const Vector<Vector<String>>& pairs);
+    CookieMap(WTF::Vector<Ref<Cookie>>&& cookies);
+    CookieMap(HashMap<String, String>&& cookies);
 
-    Vector<Ref<Cookie>> getCookiesMatchingDomain(const String& domain) const;
-    Vector<Ref<Cookie>> getCookiesMatchingPath(const String& path) const;
-
-    Vector<Ref<Cookie>> m_cookies;
+    HashMap<String, String> m_originalCookies;
+    HashMap<String, Ref<Cookie>> m_modifiedCookies;
 };
 
 } // namespace WebCore

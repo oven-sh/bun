@@ -149,10 +149,10 @@ declare interface Error {
   code?: string;
 }
 
-interface CommonJSModuleRecord {
+interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
   $requireNativeModule(id: string): any;
-  children: CommonJSModuleRecord[];
+  children: JSCommonJSModule[];
   exports: any;
   id: string;
   loaded: boolean;

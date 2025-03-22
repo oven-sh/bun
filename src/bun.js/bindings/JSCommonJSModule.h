@@ -140,10 +140,10 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForCommonJSModuleRecord.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForCommonJSModuleRecord.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSCommonJSModule.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCommonJSModule = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSCommonJSModule.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCommonJSModule = std::forward<decltype(space)>(space); });
     }
 
     bool hasEvaluated = false;

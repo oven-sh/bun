@@ -611,7 +611,7 @@ const Server = function Server(options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = {};
-  } else if (options == null || typeof options === "object") {
+  } else if (options == null || (typeof options === "object" && !Array.isArray(options))) {
     options = { ...options };
     this[tlsSymbol] = null;
     let key = options.key;
@@ -670,7 +670,7 @@ const Server = function Server(options, callback) {
       this[tlsSymbol] = null;
     }
   } else {
-    throw new Error("bun-http-polyfill: invalid arguments");
+    throw $ERR_INVALID_ARG_TYPE("options", "object or function", options);
   }
 
   this[optionsSymbol] = options;

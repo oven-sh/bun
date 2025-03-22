@@ -10,6 +10,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include "wtf/URL.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
@@ -44,6 +45,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPProcessArrayHeaders);
 
 // Create a static hash table of values containing an onclose DOMAttributeGetterSetter and a close function
 static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
@@ -1297,6 +1299,141 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsHTTPProcessArrayHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue headersArrayValue = callFrame->argument(0);
+    JSValue targetValue = callFrame->argument(1);
+
+    if (UNLIKELY(!isArray(globalObject, headersArrayValue) || !targetValue.isObject())) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto* headersArray = jsCast<JSArray*>(headersArrayValue);
+    auto* targetObject = targetValue.getObject();
+
+    struct HeaderEntry {
+        String originalName;
+        Vector<String> values;
+    };
+    HashMap<String, HeaderEntry> headerMap;
+
+    auto addHeaderEntry = [&](const String& name, const String& value) {
+        String lowercaseName = name.convertToASCIILowercase();
+        auto result = headerMap.ensure(lowercaseName, [&name] {
+            HeaderEntry entry;
+            entry.originalName = name;
+            return entry;
+        });
+
+        result.iterator->value.values.append(value);
+    };
+
+    auto joinHeaderValues = [](const Vector<String>& values, ASCIILiteral delimiter) -> String {
+        if (UNLIKELY(values.isEmpty()))
+            return emptyString();
+
+        if (UNLIKELY(values.size() == 1))
+            return values[0];
+
+        StringBuilder builder;
+        builder.append(values[0]);
+
+        for (size_t i = 1; i < values.size(); i++) {
+            builder.append(delimiter);
+            builder.append(values[i]);
+        }
+
+        return builder.toString();
+    };
+
+    bool isNestedArray = false;
+    if (headersArray->length() > 0) {
+        JSValue firstItem = headersArray->getIndex(globalObject, 0);
+        isNestedArray = isArray(globalObject, firstItem);
+    }
+
+    if (isNestedArray) {
+        // Process array of form [['key', 'value'], ['key2', 'value2']]
+        forEachInIterable(globalObject, headersArrayValue, [&](JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue entryValue) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+
+            if (UNLIKELY(!isArray(globalObject, entryValue)))
+                return;
+
+            auto* entryArray = jsCast<JSArray*>(entryValue);
+            if (UNLIKELY(entryArray->length() < 2))
+                return;
+
+            JSValue nameValue = entryArray->getIndex(globalObject, 0);
+            JSValue valueValue = entryArray->getIndex(globalObject, 1);
+
+            if (UNLIKELY(!nameValue.isString() || !valueValue.isString()))
+                return;
+
+            String name = nameValue.toWTFString(globalObject);
+            if (UNLIKELY(scope.exception()))
+                return;
+
+            String value = valueValue.toWTFString(globalObject);
+            if (UNLIKELY(scope.exception()))
+                return;
+
+            addHeaderEntry(name, value);
+        });
+    } else {
+        // Process array of form ['key', 'value', 'key2', 'value2']
+        unsigned arrayLength = headersArray->length();
+        if (arrayLength % 2 == 0) {
+            for (unsigned i = 0; i < arrayLength; i += 2) {
+                JSValue nameValue = headersArray->getIndex(globalObject, i);
+                JSValue valueValue = headersArray->getIndex(globalObject, i + 1);
+
+                if (UNLIKELY(!nameValue.isString() || !valueValue.isString()))
+                    continue;
+
+                auto entryScope = DECLARE_THROW_SCOPE(vm);
+
+                String name = nameValue.toWTFString(globalObject);
+                if (UNLIKELY(entryScope.exception()))
+                    continue;
+
+                String value = valueValue.toWTFString(globalObject);
+                if (UNLIKELY(entryScope.exception()))
+                    continue;
+
+                addHeaderEntry(name, value);
+            }
+        }
+    }
+
+    for (auto& entry : headerMap) {
+        const String& lowercaseName = entry.key;
+        const HeaderEntry& headerEntry = entry.value;
+        const Vector<String>& values = headerEntry.values;
+
+        if (UNLIKELY(values.isEmpty()))
+            continue;
+
+        String headerName = headerEntry.originalName;
+        String headerValue;
+
+        if (lowercaseName == "host") {
+            headerValue = values[0];
+        } else if (lowercaseName == "cookie") {
+            headerValue = joinHeaderValues(values, ASCIILiteral("; "));
+        } else {
+            headerValue = joinHeaderValues(values, ASCIILiteral(", "));
+        }
+
+        targetObject->putDirect(vm, Identifier::fromString(vm, headerName), jsString(vm, headerValue), 0);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1368,6 +1505,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignEventCallback"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "assignEventCallback"_s, jsHTTPAssignEventCallback, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "processArrayHeaders"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "processArrayHeaders"_s, jsHTTPProcessArrayHeaders, ImplementationVisibility::Public), 0);
 
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRequestTimeout"_s)),

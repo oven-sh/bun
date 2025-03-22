@@ -2873,7 +2873,7 @@ function ClientRequest(input, options, cb) {
       const iterate = () => {
         if (candidates.length === 0) {
           // If we get to this point, it means that none of the addresses could be connected to.
-          fail(`connect ECONNREFUSED ${options.hostname}:${options.port}`, "Error", "ECONNREFUSED", "connect");
+          fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
           return;
         }
 

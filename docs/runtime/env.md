@@ -213,6 +213,11 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ---
 
+- `BUN_CONFIG_ELIDE_LINES`
+- Control the number of lines elided. Argument via `bun run --elide-lines <n>` takes precedence over the environment variable. Set to 0 to show all lines.
+
+---
+
 - `DO_NOT_TRACK`
 - Disable uploading crash reports to `bun.report` on crash. On macOS & Windows, crash report uploads are enabled by default. Otherwise, telemetry is not sent yet as of May 21st, 2024, but we are planning to add telemetry in the coming weeks. If `DO_NOT_TRACK=1`, then auto-uploading crash reports and telemetry are both [disabled](https://do-not-track.dev/).
 

@@ -489,6 +489,22 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
+    // ECMA-262 20.1.2.3 Number.isInteger
+    pub fn isInteger(this: JSValue) bool {
+        if (this.isInt32()) {
+            return true;
+        }
+
+        if (this.isDouble()) {
+            const num = this.asDouble();
+            if (std.math.isFinite(num) and @trunc(num) == num) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // https://tc39.es/ecma262/#sec-number.issafeinteger
     pub fn isSafeInteger(this: JSValue) bool {
         if (this.isInt32()) {

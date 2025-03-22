@@ -396,6 +396,7 @@ pub const ArrayBuffer = extern struct {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
+    // TODO: this can throw an error! should use JSError!JSValue
     pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSC.JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {

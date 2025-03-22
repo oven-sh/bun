@@ -34,10 +34,7 @@
     macro(OperationWasAborted, "The operation was aborted.") \
     macro(OperationTimedOut, "The operation timed out.") \
     macro(ConnectionWasClosed, "The connection was closed.") \
-    macro(OperationFailed, "The operation failed.") \
-    macro(strict, "strict") \
-    macro(lax, "lax") \
-    macro(none, "none")
+    macro(OperationFailed, "The operation failed.")
 
 // clang-format on
 

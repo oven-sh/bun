@@ -2034,6 +2034,12 @@ void JSGlobalObject__throwOutOfMemoryError(JSC::JSGlobalObject* globalObject)
     throwOutOfMemoryError(globalObject, scope);
 }
 
+JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* globalObject)
+{
+    JSObject* exception = createOutOfMemoryError(globalObject);
+    return JSValue::encode(exception);
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {

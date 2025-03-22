@@ -1637,9 +1637,12 @@ pub const JSValue = enum(i64) {
     ///
     /// For values that are already objects, this is effectively a reinterpret
     /// cast.
-    extern fn JSC__JSValue__toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject;
-    pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
-        return JSC__JSValue__toObject(this, globalThis);
+    ///
+    /// ## References
+    /// - [ECMA-262 7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
+    extern fn JSC__JSValue__toObject(this: JSValue, globalThis: *JSGlobalObject) ?*JSObject;
+    pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) JSError!*JSObject {
+        return JSC__JSValue__toObject(this, globalThis) orelse error.JSError;
     }
 
     /// Statically cast a value to a JSObject.
@@ -2068,13 +2071,13 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?*JSC.JSObject {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
-            if (!prop.jsTypeLoose().isObject()) {
+            const obj = prop.getObject() orelse {
                 return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-            }
+            };
 
-            return prop;
+            return obj;
         }
 
         return null;

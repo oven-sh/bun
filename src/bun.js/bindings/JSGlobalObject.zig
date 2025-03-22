@@ -400,6 +400,11 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
+    pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = this.createTypeErrorInstance(fmt, args);
+        return this.throwValue(instance);
+    }
+
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
         if (err == error.OutOfMemory) {
             return this.throwOutOfMemory();

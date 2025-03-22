@@ -557,11 +557,11 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
-    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
+    pub fn deinit(this: *TestScope) void {
         if (this.label.len > 0) {
             const label = this.label;
             this.label = "";
-            getAllocator(globalThis).free(label);
+            bun.default_allocator.free(label);
         }
     }
 
@@ -811,7 +811,10 @@ pub const DescribeScope = struct {
     value: JSValue = .zero,
     done: bool = false,
     skip_count: u32 = 0,
+    ref_count: u32 = 1,
     tag: Tag = .pass,
+
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, "DescribeScope");
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1136,7 +1139,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.deinit(globalObject);
+                this.deref();
                 return;
             }
             if (end == 0) {
@@ -1195,11 +1198,11 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
-        this.deinit(globalThis);
+        this.deref();
     }
 
-    pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
-        const allocator = getAllocator(globalThis);
+    fn deinit(this: *DescribeScope) void {
+        const allocator = bun.default_allocator;
 
         if (this.label.len > 0) {
             const label = this.label;
@@ -1209,7 +1212,7 @@ pub const DescribeScope = struct {
 
         this.pending_tests.deinit(allocator);
         for (this.tests.items) |*t| {
-            t.deinit(globalThis);
+            t.deinit();
         }
         this.tests.clearAndFree(allocator);
     }
@@ -1349,6 +1352,9 @@ pub const TestRunnerTask = struct {
             this.deinit();
             return false;
         }
+
+        this.describe.ref();
+        defer this.describe.deref();
 
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;

@@ -72,7 +72,8 @@ const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
 const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject } = require("internal/validators");
-const { isIPv6 } = require("node:net");
+const { isIP, isIPv6 } = require("node:net");
+const dns = require("node:dns");
 const ObjectKeys = Object.keys;
 
 const {
@@ -2638,10 +2639,14 @@ function ClientRequest(input, options, cb) {
     }
   };
 
+  let fetching = false;
+
   const startFetch = (customBody?) => {
-    if (this[kFetchRequest] !== undefined) {
+    if (fetching) {
       return false;
     }
+
+    fetching = true;
 
     const method = this[kMethod];
 
@@ -2678,7 +2683,7 @@ function ClientRequest(input, options, cb) {
 
     let [url, proxy] = getURL(host);
 
-    const go = url => {
+    const go = (url, proxy, softFail = false) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -2755,86 +2760,129 @@ function ClientRequest(input, options, cb) {
       }
 
       //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions)
-        .then(response => {
-          if (this.aborted) {
+      this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
+        if (this.aborted) {
+          maybeEmitClose();
+          return;
+        }
+
+        handleResponse = () => {
+          this[kFetchRequest] = null;
+          this[kClearTimeout]();
+          handleResponse = undefined;
+          const prevIsHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = response.url.startsWith("https:");
+          var res = (this.res = new IncomingMessage(response, {
+            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+            [reqSymbol]: this,
+          }));
+          isNextIncomingMessageHTTPS = prevIsHTTPS;
+          res.req = this;
+          process.nextTick(
+            (self, res) => {
+              // If the user did not listen for the 'response' event, then they
+              // can't possibly read the data, so we ._dump() it into the void
+              // so that the socket doesn't hang there in a paused state.
+              if (self.aborted || !self.emit("response", res)) {
+                res._dump();
+              }
+            },
+            this,
+            res,
+          );
+          maybeEmitClose();
+          if (res.statusCode === 304) {
+            res.complete = true;
             maybeEmitClose();
             return;
           }
+        };
 
-          handleResponse = () => {
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-            handleResponse = undefined;
-            const prevIsHTTPS = isNextIncomingMessageHTTPS;
-            isNextIncomingMessageHTTPS = response.url.startsWith("https:");
-            var res = (this.res = new IncomingMessage(response, {
-              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-              [reqSymbol]: this,
-            }));
-            isNextIncomingMessageHTTPS = prevIsHTTPS;
-            res.req = this;
-            process.nextTick(
-              (self, res) => {
-                // If the user did not listen for the 'response' event, then they
-                // can't possibly read the data, so we ._dump() it into the void
-                // so that the socket doesn't hang there in a paused state.
-                if (self.aborted || !self.emit("response", res)) {
-                  res._dump();
-                }
-              },
-              this,
-              res,
-            );
-            maybeEmitClose();
-            if (res.statusCode === 304) {
-              res.complete = true;
-              maybeEmitClose();
+        if (!keepOpen) {
+          handleResponse();
+        }
+
+        onEnd();
+      });
+
+      if (!softFail) {
+        // Don't emit an error if we're iterating over multiple possible addresses and we haven't reached the end yet.
+        // This is for the happy eyeballs implementation.
+        this[kFetchRequest]
+          .catch(err => {
+            // Node treats AbortError separately.
+            // The "abort" listener on the abort controller should have called this
+            if (isAbortError(err)) {
               return;
             }
-          };
 
-          if (!keepOpen) {
-            handleResponse();
-          }
+            if (!!$debug) globalReportError(err);
 
-          onEnd();
-        })
-        .catch(err => {
-          // Node treats AbortError separately.
-          // The "abort" listener on the abort controller should have called this
-          if (isAbortError(err)) {
-            return;
-          }
+            this.emit("error", err);
+          })
+          .finally(() => {
+            fetching = false;
+            if (!keepOpen) {
+              this[kFetchRequest] = null;
+              this[kClearTimeout]();
+            }
+          });
+      }
 
-          if (!!$debug) globalReportError(err);
-
-          this.emit("error", err);
-        })
-        .finally(() => {
-          if (!keepOpen) {
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-          }
-        });
+      return this[kFetchRequest];
     };
 
-    if (options.lookup) {
-      options.lookup(options.hostname, (err, address, family) => {
-        if (err) {
-          if (!!$debug) globalReportError(err);
-          this.emit("error", err);
-        } else {
-          [url, proxy] = getURL(address);
-          if (!this.hasHeader("Host")) {
-            this.setHeader("Host", options.hostname);
-          }
-          go(url);
-        }
-      });
-    } else {
-      go(url);
+    if (isIP(host) || !options.lookup) {
+      // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      go(url, proxy, false);
+      return true;
     }
+
+    options.lookup(host, { all: true }, (err, results) => {
+      if (err) {
+        if (!!$debug) globalReportError(err);
+        this.emit("error", err);
+        return;
+      }
+
+      let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
+
+      const fail = (message, name, code, syscall) => {
+        const error = new Error(message);
+        error.name = name;
+        error.code = code;
+        error.syscall = syscall;
+        if (!!$debug) globalReportError(error);
+        this.emit("error", error);
+      };
+
+      if (candidates.length === 0) {
+        fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+        return;
+      }
+
+      if (!this.hasHeader("Host")) {
+        this.setHeader("Host", `${host}:${port}`);
+      }
+
+      // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.
+      // All addresses except for the last are allowed to "soft fail" -- instead of reporting
+      // an error to the user, we'll just skip to the next address.
+      // The last address is required to work, and if it fails we'll throw an error.
+
+      const iterate = () => {
+        if (candidates.length === 0) {
+          // If we get to this point, it means that none of the addresses could be connected to.
+          fail(`connect ECONNREFUSED ${options.hostname}:${options.port}`, "Error", "ECONNREFUSED", "connect");
+          return;
+        }
+
+        const [url, proxy] = getURL(candidates.shift().address);
+        go(url, proxy, candidates.length > 0).catch(iterate);
+      };
+
+      iterate();
+    });
 
     return true;
   };

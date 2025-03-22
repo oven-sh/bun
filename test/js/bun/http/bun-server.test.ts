@@ -421,7 +421,7 @@ describe("Server", () => {
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
       expect.unreachable();
     } catch (err: any) {
-      expect(err.code).toBe("ConnectionClosed");
+      expect(err.code).toBe("ECONNRESET");
     }
 
     {
@@ -1207,7 +1207,7 @@ describe("websocket and routes test", () => {
     const { routes, fetch: serverFetch, shouldBeUpgraded, hasPOST, expectedPath, testName } = config;
     test(testName, async () => {
       using server = Bun.serve({
-       port: 0,
+        port: 0,
         routes,
         fetch: serverFetch,
         websocket: {

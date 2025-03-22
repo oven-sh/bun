@@ -2220,3 +2220,35 @@ it("should allow Strict-Transport-Security when using node:http", async () => {
   expect(response.status).toBe(200);
   expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
 });
+
+it("should support localAddress", async () => {
+  await new Promise(resolve => {
+    const server = http.createServer((req, res) => {
+      const { localAddress, localFamily, localPort } = req.socket;
+      res.end();
+      server.close();
+      expect(localAddress).toStartWith("127.");
+      expect(localFamily).toBe("IPv4");
+      expect(localPort).toBeGreaterThan(0);
+      resolve();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      http.request(`http://localhost:${server.address().port}`).end();
+    });
+  });
+
+  await new Promise(resolve => {
+    const server = http.createServer((req, res) => {
+      const { localAddress, localFamily, localPort } = req.socket;
+      res.end();
+      server.close();
+      expect(localAddress).toStartWith("::");
+      expect(localFamily).toBe("IPv6");
+      expect(localPort).toBeGreaterThan(0);
+      resolve();
+    });
+    server.listen(0, "::1", () => {
+      http.request(`http://[::1]:${server.address().port}`).end();
+    });
+  });
+});

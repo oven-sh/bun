@@ -1662,7 +1662,10 @@ pub const Fetch = struct {
                 bun.String.empty;
 
             const fetch_error = JSC.SystemError{
-                .code = bun.String.static(@errorName(this.result.fail.?)),
+                .code = bun.String.static(switch (this.result.fail.?) {
+                    error.ConnectionClosed => "ECONNRESET",
+                    else => |e| @errorName(e),
+                }),
                 .message = switch (this.result.fail.?) {
                     error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),

@@ -36,7 +36,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSModuleMock;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
@@ -73,11 +73,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
+
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParamsIterator;
-    
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookie;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookieMap;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookieMapIterator;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExposedToWorkerAndWindow;
 

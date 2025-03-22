@@ -8,6 +8,10 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
@@ -372,7 +376,6 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
         EncodedJSValue thisValue,
         PropertyName propertyName))
 {
-
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     return JSValue::encode(
         globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(
@@ -655,7 +658,7 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
 {
     // This does not cache anything because it is assumed nobody reads it more than once.
     VM& vm = global->vm();
-    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::moduleGetWrapperArrayProxyCodeGenerator(vm), global);
+    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::commonJSGetWrapperArrayProxyCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);
 
     JSC::MarkedArgumentBuffer args;
@@ -724,9 +727,74 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSInternalPromise* promise);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto arg1 = callFrame->argument(0);
+    auto name = makeAtomString(arg1.toWTFString(globalObject));
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
+        vm, globalObject, 1, String(), resolverFunctionCallback);
+
+    auto result = promise->then(globalObject, resolverFunction, nullptr);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    return JSValue::encode(
+        globalObject->m_moduleRunMainFunction.getInitializedOnMainThread(
+            globalObject));
+}
+
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
+{
+    auto overrideHandler = jsCast<JSObject*>(global->m_moduleRunMainFunction.get(global));
+    MarkedArgumentBuffer args;
+    args.append(argv1);
+    return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto value = JSValue::decode(encodedValue);
+    if (value.isCell()) {
+        bool isOriginal = false;
+        if (value.isCallable()) {
+            JSC::CallData callData = JSC::getCallData(value);
+            if (callData.type == JSC::CallData::Type::Native) {
+                if (callData.native.function.untaggedPtr() == &jsFunctionRunMain) {
+                    isOriginal = true;
+                }
+            }
+        }
+        Bun__VirtualMachine__setOverrideModuleRunMain(globalObject->bunVM(), !isOriginal);
+        globalObject->m_moduleRunMainFunction.set(
+            lexicalGlobalObject->vm(), globalObject, value.asCell());
+    }
+
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPreloadModules,
@@ -785,13 +853,13 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
-findSourceMap            jsFunctionFindSourceMap           Function 0
+findSourceMap           jsFunctionFindSourceMap           Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          PropertyCallback
 register                jsFunctionRegister                Function 1
-runMain                 jsFunctionRunMain                 Function 0
+runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
@@ -864,6 +932,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
+        });
+
+    globalObject->m_moduleRunMainFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            JSFunction* runMainFunction = JSFunction::create(
+                init.vm, init.owner, 2, "runMain"_s,
+                jsFunctionRunMain, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, jsFunctionRunMain);
+            init.set(runMainFunction);
         });
 
     globalObject->m_moduleResolveFilenameFunction.initLater(

@@ -173,11 +173,11 @@ coverageThreshold = { line = 0.7, function = 0.8, statement = 0.9 }
 
 ### `test.coverageSkipTestFiles`
 
-Whether to skip test files when computing coverage statistics. Default `false`.
+Whether to skip test files when computing coverage statistics. Default `true`.
 
 ```toml
 [test]
-coverageSkipTestFiles = false
+coverageSkipTestFiles = true
 ```
 
 ### `test.coverageReporter`

@@ -401,15 +401,15 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   get localAddress() {
-    return this.address() ? "127.0.0.1" : undefined;
+    return this[kHandle]?.localAddress?.address;
   }
 
   get localFamily() {
-    return "IPv4";
+    return this[kHandle]?.localAddress?.family;
   }
 
   get localPort() {
-    return 80;
+    return this[kHandle]?.localAddress?.port;
   }
 
   get pending() {

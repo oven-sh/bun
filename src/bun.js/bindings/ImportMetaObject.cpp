@@ -45,7 +45,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
 #include "wtf/text/StringView.h"

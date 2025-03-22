@@ -7,7 +7,7 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: CommonJSModuleRecord, id: string) {
+export function require(this: JSCommonJSModule, id: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
@@ -15,7 +15,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: CommonJSModuleRecord, originalId: string) {
+export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   const id = $resolveSync(originalId, this.filename, false);
   if (id.startsWith('node:')) {
     if (id !== originalId) {
@@ -151,7 +151,7 @@ export function requireResolve(this: string | { filename?: string; id?: string }
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: CommonJSModuleRecord) {
+export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
   $assert(id.endsWith(".node"));
 

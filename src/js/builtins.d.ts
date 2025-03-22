@@ -355,7 +355,7 @@ declare function $importer(): TODO;
 declare function $inFlightCloseRequest(): TODO;
 declare function $inFlightWriteRequest(): TODO;
 declare function $initializeWith(): TODO;
-declare function $internalRequire(id: string, parent: CommonJSModuleRecord): TODO;
+declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
 declare function $internalStream(): TODO;
 declare function $internalWritable(): TODO;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
@@ -418,7 +418,7 @@ declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, CommonJSModuleRecord>;
+declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(name: string, from: string, isESM?: boolean, isUserRequireResolve?: boolean): string;
@@ -484,14 +484,14 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: ?CommonJSModuleRecord,
-): CommonJSModuleRecord;
+  parent: ?JSCommonJSModule,
+): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
-  moduleToEvaluate: CommonJSModuleRecord,
-  sourceModule: CommonJSModuleRecord
-): CommonJSModuleRecord[];
+  moduleToEvaluate: JSCommonJSModule,
+  sourceModule: JSCommonJSModule
+): JSCommonJSModule[];
 
-declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
+declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

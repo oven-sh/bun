@@ -65,7 +65,7 @@
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "ConsoleObject.h"
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"

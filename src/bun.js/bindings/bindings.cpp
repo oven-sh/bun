@@ -272,7 +272,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
-    if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
+    if (jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -324,7 +324,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             }
 
-            if (auto* booleanObject = jsDynamicCast<BooleanObject*>(otherProp)) {
+            if (jsDynamicCast<BooleanObject*>(otherProp)) {
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -336,7 +336,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             }
 
-            if (auto* numberObject = jsDynamicCast<NumberObject*>(otherProp)) {
+            if (jsDynamicCast<NumberObject*>(otherProp)) {
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -1760,7 +1760,8 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
                 *values = { i, value.length() };
                 i += value.length();
             } else {
-                ASSERT_WITH_MESSAGE(value.containsOnlyASCII(), "Header value must be ASCII. This should already be validated before calling this function.");
+                // HTTP headers can contain non-ASCII characters according to RFC 7230
+                // Non-ASCII content should be properly encoded
                 WTF::CString valueCString = value.utf8();
                 memcpy(&buf[i], valueCString.data(), valueCString.length());
                 *values = { i, static_cast<uint32_t>(valueCString.length()) };
@@ -2032,6 +2033,12 @@ void JSGlobalObject__throwOutOfMemoryError(JSC::JSGlobalObject* globalObject)
     throwOutOfMemoryError(globalObject, scope);
 }
 
+JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* globalObject)
+{
+    JSObject* exception = createOutOfMemoryError(globalObject);
+    return JSValue::encode(exception);
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {
@@ -2236,7 +2243,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     }
 
     case WebCore::JSDOMWrapperType: {
-        if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
+        if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
         if (auto* blob = jsDynamicCast<WebCore::JSBlob*>(cell)) {
@@ -2436,7 +2443,7 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
         handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
-    } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
+    } else if (JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
         RELEASE_ASSERT(false);
     }
 }
@@ -3177,19 +3184,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, nullptr);
-
-    // if (promise->status(globalObject->vm()) ==
-    // JSC::JSPromise::Status::Fulfilled) {
-    //     return reinterpret_cast<JSC::JSInternalPromise*>(
-    //         JSC::JSInternalPromise::resolvedPromise(
-    //             globalObject,
-    //             doLink(globalObject, promise->result(globalObject->vm()))
-    //         )
-    //     );
-    // }
-
-    return result;
+    return promise->then(globalObject, resolverFunction, nullptr);
 }
 #pragma mark - JSC::JSPromise
 

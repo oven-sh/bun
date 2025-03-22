@@ -3014,11 +3014,15 @@ pub const Expect = struct {
                     }.anythingInIterator);
                     pass = !any_properties_in_iterator;
                 } else {
+                    const cell = value.toCell() orelse {
+                        return globalThis.throwTypeError("Expected value to be a string, object, or iterable", .{});
+                    };
                     var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = false,
                         .own_properties_only = false,
                         .include_value = true,
-                    }).init(globalThis, value);
+                        // FIXME: can we do this?
+                    }).init(globalThis, cell.toObject(globalThis));
                     defer props_iter.deinit();
                     pass = props_iter.len == 0;
                 }
@@ -4583,10 +4587,8 @@ pub const Expect = struct {
             if (total_count >= return_count and times_value.isCell()) {
                 if (try times_value.get(globalThis, "type")) |type_string| {
                     if (type_string.isString()) {
-                        break :brk ReturnStatus.Map.fromJS(globalThis, type_string) orelse {
-                            if (!globalThis.hasException())
-                                return globalThis.throw("Expected value must be a mock function with returns: {}", .{value});
-                            return .zero;
+                        break :brk try ReturnStatus.Map.fromJS(globalThis, type_string) orelse {
+                            return globalThis.throw("Expected value must be a mock function with returns: {}", .{value});
                         };
                     }
                 }
@@ -4683,7 +4685,8 @@ pub const Expect = struct {
         var expect_constructor = Expect.getConstructor(globalThis);
         var expect_static_proto = ExpectStatic__getPrototype(globalThis);
 
-        const matchers_to_register = args[0];
+        // SAFETY: already checked that args[0] is an object
+        const matchers_to_register = args[0].getObject().?;
         {
             var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
@@ -4857,7 +4860,7 @@ pub const Expect = struct {
                 assert(message.isCallable()); // checked above
 
             const message_result = try message.callWithGlobalThis(globalThis, &.{});
-            message_text = try bun.String.fromJS2(message_result, globalThis);
+            message_text = try bun.String.fromJS(message_result, globalThis);
         }
 
         const matcher_params = CustomMatcherParamsFormatter{

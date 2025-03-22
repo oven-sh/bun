@@ -44,6 +44,17 @@ public:
     mutable JSC::WriteBarrier<JSString> m_dirname;
     // Initialized lazily; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_paths;
+    // Children must always be tracked in case the script decides to access
+    // `module.children`. In that case, all children may also need their
+    // children fields to exist, recursively. To avoid allocating a *JSArray for
+    // each module, the children array is constructed internally as a
+    // Vector of pointers. If accessed, deduplication happens and array is
+    // moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
+    // `m_childrenValue` can be set to any value via the user-exposed setter,
+    // but Bun does not test that behavior besides ensuring it does not crash.
+    mutable JSC::WriteBarrier<Unknown> m_childrenValue;
+    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
+    WTF::Vector<WriteBarrier<Unknown>> m_children;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.
@@ -129,10 +140,10 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForCommonJSModuleRecord.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForCommonJSModuleRecord.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSCommonJSModule.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCommonJSModule = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSCommonJSModule.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCommonJSModule = std::forward<decltype(space)>(space); });
     }
 
     bool hasEvaluated = false;

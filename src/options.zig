@@ -618,7 +618,7 @@ pub const Format = enum {
             return global.throwInvalidArguments("format must be a string", .{});
         }
 
-        return Map.fromJS(global, format) orelse {
+        return try Map.fromJS(global, format) orelse {
             return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }

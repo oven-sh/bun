@@ -7,20 +7,13 @@
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "JSFetchHeaders.h"
-#include "JSCookieMap.h"
-#include "Cookie.h"
-#include "CookieMap.h"
-#include "JSDOMExceptionHandling.h"
 
 namespace Bun {
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
-static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
 
 static const HashTableValue JSBunRequestPrototypeValues[] = {
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
-    { "cookies"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetCookies, nullptr } },
 };
 
 JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSObject* params)
@@ -58,19 +51,6 @@ void JSBunRequest::setParams(JSObject* params)
     m_params.set(Base::vm(), this, params);
 }
 
-JSObject* JSBunRequest::cookies() const
-{
-    if (m_cookies) {
-        return m_cookies.get();
-    }
-    return nullptr;
-}
-
-void JSBunRequest::setCookies(JSObject* cookies)
-{
-    m_cookies.set(Base::vm(), this, cookies);
-}
-
 JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
     : Base(vm, structure, sinkPtr)
 {
@@ -81,7 +61,6 @@ void JSBunRequest::finishCreation(JSC::VM& vm, JSObject* params)
 {
     Base::finishCreation(vm);
     m_params.setMayBeNull(vm, this, params);
-    m_cookies.clear();
     Bun__JSRequest__calculateEstimatedByteSize(this->wrapped());
 
     auto size = Request__estimatedSize(this->wrapped());
@@ -94,7 +73,6 @@ void JSBunRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBunRequest* thisCallSite = jsCast<JSBunRequest*>(cell);
     Base::visitChildren(thisCallSite, visitor);
     visitor.append(thisCallSite->m_params);
-    visitor.append(thisCallSite->m_cookies);
 }
 
 DEFINE_VISIT_CHILDREN(JSBunRequest);
@@ -157,47 +135,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalO
     }
 
     return JSValue::encode(params);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
-    if (!request)
-        return JSValue::encode(jsUndefined());
-
-    auto* cookies = request->cookies();
-    if (!cookies) {
-        auto& vm = globalObject->vm();
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        auto& names = builtinNames(vm);
-        JSC::JSValue headersValue = request->get(globalObject, names.headersPublicName());
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue);
-        if (!headers)
-            return JSValue::encode(jsUndefined());
-
-        auto& fetchHeaders = headers->wrapped();
-
-        auto cookieHeader = fetchHeaders.internalHeaders().get(HTTPHeaderName::Cookie);
-
-        // Create a CookieMap from the cookie header
-        auto cookieMapResult = WebCore::CookieMap::create(cookieHeader);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        if (cookieMapResult.hasException()) {
-            WebCore::propagateException(*globalObject, throwScope, cookieMapResult.releaseException());
-            return JSValue::encode(jsUndefined());
-        }
-
-        auto cookieMap = cookieMapResult.releaseReturnValue();
-
-        // Convert to JS
-        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMap));
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        request->setCookies(cookies.getObject());
-        return JSValue::encode(cookies);
-    }
-
-    return JSValue::encode(cookies);
 }
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)

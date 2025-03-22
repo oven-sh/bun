@@ -90,6 +90,8 @@ const ctxLog = Output.scoped(.RequestContext, false);
 const S3 = bun.S3;
 const SocketAddress = @import("bun/socket.zig").SocketAddress;
 
+const bun_docs_url = "https://bun.sh/docs";
+
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -1673,7 +1675,16 @@ pub const ServerConfig = struct {
 
             if (try arg.getTruthy(global, "fetch")) |onRequest_| {
                 if (!onRequest_.isCallable()) {
-                    return global.throwInvalidArguments("Expected fetch() to be a function", .{});
+                    if (onRequest_.isUndefined()) {
+                        return global.throwInvalidArguments(
+                            "Bun.serve() requires a fetch() function to handle incoming requests. For more information, see " ++ bun_docs_url ++ "api/http#bun-serve",
+                            .{},
+                        );
+                    } else {
+                        const ty = try global.determineSpecificType(onRequest_);
+                        defer ty.deref();
+                        return global.throwInvalidArguments("Expected 'fetch()' to be a function, got {s}", .{ty});
+                    }
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());

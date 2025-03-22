@@ -96,6 +96,7 @@ function getTargetLabel(target) {
  * @property {string} release
  * @property {Tier} [tier]
  * @property {string[]} [features]
+ * @property {boolean} [zigTests] This platform wants Zig unit tests.
  */
 
 /**
@@ -105,7 +106,7 @@ const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"], zigTests: true },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
@@ -476,18 +477,42 @@ function getBuildZigStep(platform, options) {
 }
 
 /**
+ * Similar to {@link getBuildZigStep}, but builds Zig unit tests instead of the
+ * normal `bun-zig` object file.
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getLinkBunStep(platform, options) {
+function getBuildZigTestsStep(platform, options) {
+  const toolchain = getBuildToolchain(platform);
   return {
-    key: `${getTargetKey(platform)}-build-bun`,
-    label: `${getTargetLabel(platform)} - build-bun`,
+    key: `${getTargetKey(platform)}-build-zig-tests`,
+    label: `${getTargetLabel(platform)} - build-zig-tests`,
+    agents: getZigAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: getBuildEnv(platform, options),
+    // note: uses same target name. See `BuildBun.cmake` for details.
+    command: `bun run build:ci:test --target bun-zig --toolchain ${toolchain}`,
+    timeout_in_minutes: 35,
+  };
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @param {boolean} zigTests link Zig unit tests instead of the normal `bun-zig` object file. Default: `false`
+ * @returns {Step}
+ */
+function getLinkBunStep(platform, options, zigTests = false) {
+  const suffix = zigTests ? "build-bug-zig-tests" : "build-bun";
+  return {
+    key: `${getTargetKey(platform)}-${suffix}`,
+    label: `${getTargetLabel(platform)} - ${suffix}`,
     depends_on: [
       `${getTargetKey(platform)}-build-vendor`,
       `${getTargetKey(platform)}-build-cpp`,
-      `${getTargetKey(platform)}-build-zig`,
+      `${getTargetKey(platform)}-build-zig${zigTests ? "-tests" : ""}`,
     ],
     agents: getCppAgent(platform, options),
     retry: getRetry(),
@@ -496,7 +521,7 @@ function getLinkBunStep(platform, options) {
       BUN_LINK_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: "bun run build:ci --target bun",
+    command: `bun run ${zigTests ? "build:ci:test" : "build:ci"} --target bun`,
   };
 }
 
@@ -560,6 +585,33 @@ function getTestBunStep(platform, options, testOptions = {}) {
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
         : `./scripts/runner.node.mjs ${args.join(" ")}`,
+  };
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @param {TestOptions} [testOptions]
+ * @returns {Step}
+ */
+function getZigTestBunStep(platform, options, testOptions = {}) {
+  const { buildId } = testOptions;
+
+  const depends = [];
+  if (!buildId) {
+    depends.push(`${getTargetKey(platform)}-build-bun-zig-tests`);
+  }
+  const profile = platform.profile?.toLowerCase() ?? "release";
+  return {
+    key: `${getPlatformKey(platform)}-test-zig-bun`,
+    label: `${getPlatformLabel(platform)} - test-zig-bun`,
+    depends_on: depends,
+    agents: getTestAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // TODO: run tests in parallel
+    // parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
+    command: `./build/${profile}/bun-test`,
   };
 }
 
@@ -1028,6 +1080,7 @@ async function getPipelineOptions() {
  */
 async function getPipeline(options = {}) {
   const priority = getPriority();
+  const isMain = isMainBranch();
 
   if (isBuildManual() && !Object.keys(options).length) {
     return {
@@ -1076,6 +1129,13 @@ async function getPipeline(options = {}) {
     }
   }
 
+  /**
+   * @param {Platform} target
+   * @returns {boolean}
+   */
+  const targetWantsZigTest = target =>
+    Boolean(target.zigTests && (!(isMain || options.skipTests) || options.forceTests));
+
   if (!buildId) {
     steps.push(
       ...buildPlatforms
@@ -1094,6 +1154,11 @@ async function getPipeline(options = {}) {
                     getBuildCppStep(target, options),
                     getBuildZigStep(target, options),
                     getLinkBunStep(target, options),
+                    // TODO: blocked by https://github.com/ziglang/zig/issues/23281
+                    // un-comment once fixed.
+                    // ...(targetWantsZigTest(target)
+                    //   ? [getBuildZigTestsStep(target, options), getLinkBunStep(target, options, true)]
+                    //   : []),
                   ],
             },
             imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
@@ -1102,7 +1167,7 @@ async function getPipeline(options = {}) {
     );
   }
 
-  if (!isMainBranch()) {
+  if (!isMain) {
     const { skipTests, forceTests, unifiedTests, testFiles } = options;
     if (!skipTests || forceTests) {
       steps.push(
@@ -1111,13 +1176,18 @@ async function getPipeline(options = {}) {
           .map(target => ({
             key: getTargetKey(target),
             group: getTargetLabel(target),
-            steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
+            steps: [
+              getTestBunStep(target, options, { unifiedTests, testFiles, buildId }),
+              // TODO: blocked by https://github.com/ziglang/zig/issues/23281
+              // un-comment once fixed.
+              // ...(targetWantsZigTest(target)
+              //   ? [getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })]
+              //   : []),
+            ],
           })),
       );
     }
-  }
-
-  if (isMainBranch()) {
+  } else {
     steps.push(getReleaseStep(buildPlatforms, options));
   }
 

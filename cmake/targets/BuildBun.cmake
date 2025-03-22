@@ -12,6 +12,10 @@ else()
   set(bunStrip bun)
 endif()
 
+if(TEST)
+  set(bun ${bun}-test)
+endif()
+
 set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
 
 if(bunStrip)
@@ -528,7 +532,6 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/src/main.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
@@ -550,7 +553,11 @@ else()
   list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 endif()
 
-set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+if (TEST)
+  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
+else()
+  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
@@ -573,6 +580,12 @@ if(NOT "${REVISION}" STREQUAL "")
   set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
 endif()
 
+if (TEST)
+  set(ZIG_STEPS test)
+else()
+  set(ZIG_STEPS obj)
+endif()
+
 register_command(
   TARGET
     bun-zig
@@ -582,7 +595,7 @@ register_command(
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
     ${ZIG_EXECUTABLE}
-      build obj
+      build ${ZIG_STEPS}
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
       -Dobj_format=${ZIG_OBJECT_FORMAT}
@@ -596,6 +609,7 @@ register_command(
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
       --prominent-compile-errors
+      --summary all
       ${ZIG_FLAGS_BUN}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}

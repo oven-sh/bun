@@ -9401,7 +9401,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
             } else if (!has_dev_catch_all and this.config.onRequest == .zero and !@"has /*") {
-
                 app.any("/*", *ThisServer, this, onUnimplementedRequest);
             } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
                 app.post("/*", *ThisServer, this, onUnimplementedRequest);
@@ -9419,14 +9418,38 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn onUnimplementedRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             const method = req.method();
             const path = req.url();
+
+            var found_path = false;
+            var allowed_methods = std.ArrayList(u8).init(bun.default_allocator);
+            defer allowed_methods.deinit();
+
             for (this.user_routes.items) |route| {
                 if (std.mem.eql(u8, route.route.path, path)) {
-                    if (comptime Environment.enable_logs)
-                        httplog("{s} - {s} 405", .{ method, path });
-                    resp.writeStatus("405 Method Not Allowed");
-                    resp.end("", false);
-                    return;
+                    found_path = true;
+
+                    switch (route.route.method) {
+                        .any => {
+                            resp.writeStatus("501 Method Not Allowed");
+                            resp.end("", false);
+                            return;
+                        },
+                        .specific => |specific_method| {
+                            if (allowed_methods.items.len > 0) {
+                                allowed_methods.appendSlice(", ") catch {};
+                            }
+                            allowed_methods.appendSlice(@tagName(specific_method)) catch {};
+                        },
+                    }
                 }
+            }
+            if (found_path) {
+                if (comptime Environment.enable_logs)
+                    httplog("{s} - {s} 405", .{ method, path });
+
+                resp.writeStatus("405 Method Not Allowed");
+                resp.writeHeader("Allow", allowed_methods.items);
+                resp.end("", false);
+                return;
             }
 
             if (comptime Environment.enable_logs)

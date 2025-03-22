@@ -548,26 +548,29 @@ it("returns 405 when method is not implemented for a route", async () => {
     routes: {
       "/test": {
         GET: () => new Response("bun"),
+        HEAD: () => new Response("bun"),
       },
     },
   });
 
-  // Test that GET works
+  // Get should work
   expect(await fetch(new URL("/test", server.url)).then(res => res.text())).toBe("bun");
   
-  // Test that POST returns 405
+  // Post should 405
   const postResponse = await fetch(new URL("/test", server.url), {
     method: "POST",
   });
   expect(postResponse.status).toBe(405);
+  expect(postResponse.headers.get("Allow")).toBe("GET, HEAD");
   
-  // Test that PUT returns 405
+  // Put should also 405
   const putResponse = await fetch(new URL("/test", server.url), {
     method: "PUT",
   });
   expect(putResponse.status).toBe(405);
+  expect(putResponse.headers.get("Allow")).toBe("GET, HEAD");
 
-  // Test that non-existent path still returns 404
+  // Non-existent path still returns 404
   const notFoundResponse = await fetch(new URL("/nonexistent", server.url));
   expect(notFoundResponse.status).toBe(404);
 });

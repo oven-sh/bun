@@ -1149,13 +1149,11 @@ pub const FileSystem = struct {
             return &temp_entries_option;
         }
 
-        fn readFileError(_: *RealFS, _: string, _: anyerror) void {}
-
         pub fn readFileWithHandle(
             fs: *RealFS,
             path: string,
             _size: ?usize,
-            file: std.fs.File,
+            file: bun.sys.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
@@ -1173,16 +1171,18 @@ pub const FileSystem = struct {
         }
 
         pub fn readFileWithHandleAndAllocator(
-            fs: *RealFS,
+            _: *RealFS,
             allocator: std.mem.Allocator,
             path: string,
             _size: ?usize,
-            file: std.fs.File,
+            file: bun.sys.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !PathContentsPair {
-            FileSystem.setMaxFd(file.handle);
+            if (comptime Environment.isPosix) {
+                FileSystem.setMaxFd(file.handle.int());
+            }
 
             var file_contents: []u8 = undefined;
 
@@ -1194,11 +1194,8 @@ pub const FileSystem = struct {
                 shared_buffer.reset();
 
                 // Skip the extra file.stat() call when possible
-                var size = _size orelse (file.getEndPos() catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                });
-                debug("stat({d}) = {d}", .{ file.handle, size });
+                var size = _size orelse try file.getEndPos().unwrap();
+                debug("stat({}) = {d}", .{ file.handle, size });
 
                 // Skip the pread call for empty files
                 // Otherwise will get out of bounds errors
@@ -1223,28 +1220,21 @@ pub const FileSystem = struct {
                 while (true) {
 
                     // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                    const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
-                        fs.readFileError(path, err);
-                        return err;
-                    };
-                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
+                    const win_prev_file_pos = if (comptime Environment.isWindows) try file.getPos().unwrap() else 0;
+                    const read_amount = try file.preadAll(shared_buffer.list.items[offset..], offset).unwrap();
+                    if (comptime Environment.isWindows) try file.seekTo(@intCast(win_prev_file_pos)).unwrap();
+                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_amount + offset];
                     file_contents = shared_buffer.list.items;
-                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                     if (comptime stream) {
                         // check again that stat() didn't change the file size
                         // another reason to only do this when stream
-                        const new_size = file.getEndPos() catch |err| {
-                            fs.readFileError(path, err);
-                            return err;
-                        };
+                        const new_size = try file.getEndPos().unwrap();
 
-                        offset += read_count;
+                        offset += read_amount;
 
                         // don't infinite loop is we're still not reading more
-                        if (read_count == 0) break;
+                        if (read_amount == 0) break;
 
                         if (offset < new_size) {
                             try shared_buffer.growBy(new_size - size);
@@ -1272,11 +1262,11 @@ pub const FileSystem = struct {
                 // that we need to dynamically allocate memory to read it.
                 const initial_read = if (_size == null) brk: {
                     var buf: []u8 = &initial_buf;
-                    prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(buf, 0) catch |err| {
-                        fs.readFileError(path, err);
-                        return err;
-                    };
+                    prev_file_pos = if (comptime Environment.isWindows)
+                        try file.getPos().unwrap()
+                    else
+                        0;
+                    const read_count = try file.preadAll(buf, 0).unwrap();
                     if (read_count + 1 < buf.len) {
                         var allocation = try allocator.alloc(u8, read_count + 1);
                         @memcpy(allocation[0..read_count], buf[0..read_count]);
@@ -1287,7 +1277,7 @@ pub const FileSystem = struct {
                             debug("Convert {s} BOM", .{@tagName(bom)});
                             file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
                         }
-                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
+                        if (comptime Environment.isWindows) try file.seekTo(@intCast(prev_file_pos.?)).unwrap();
 
                         return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
                     }
@@ -1297,16 +1287,13 @@ pub const FileSystem = struct {
 
                 if (comptime Environment.isWindows) {
                     if (prev_file_pos == null) {
-                        prev_file_pos = try file.getPos();
+                        prev_file_pos = try file.getPos().unwrap();
                     }
                 }
 
                 // Skip the extra file.stat() call when possible
-                const size = _size orelse (file.getEndPos() catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                });
-                debug("stat({d}) = {d}", .{ file.handle, size });
+                const size = _size orelse try file.getEndPos().unwrap();
+                debug("stat({}) = {d}", .{ file.handle, size });
 
                 var buf = try allocator.alloc(u8, size + 1);
                 @memcpy(buf[0..initial_read.len], initial_read);
@@ -1318,13 +1305,12 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const read_count = file.preadAll(buf[initial_read.len..], initial_read.len) catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                };
-                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
-                file_contents = buf[0 .. read_count + initial_read.len];
-                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                const read_buf = try file.preadAll(buf[initial_read.len..], initial_read.len).unwrap();
+                if (comptime Environment.isWindows) {
+                    try file.seekTo(@intCast(prev_file_pos.?)).unwrap();
+                }
+
+                file_contents = buf[0 .. read_buf + initial_read.len];
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});

@@ -16,9 +16,9 @@ const enum NodeHTTPIncomingRequestType {
   NodeHTTPResponse,
 }
 const enum NodeHTTPHeaderState {
-  none,
-  assigned,
-  sent,
+  none = 0,
+  assigned = 1 << 0,
+  sent = 1 << 1,
 }
 const enum NodeHTTPBodyReadState {
   none,
@@ -130,20 +130,26 @@ function checkInvalidHeaderChar(val: string) {
   return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
-const validateHeaderName = (name, label?) => {
+const validateHeaderName = (name, label) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
+    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
 };
 
 const validateHeaderValue = (name, value) => {
   if (value === undefined) {
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+    // throw new ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+    throw $ERR_HTTP_INVALID_HEADER_VALUE(`Invalid header value: ${value} for ${name}`);
   }
   if (checkInvalidHeaderChar(value)) {
-    throw $ERR_INVALID_CHAR("header content", name);
+    // throw new ERR_INVALID_CHAR("header content", name);
+    throw $ERR_INVALID_CHAR(`Invalid header value: ${value} for ${name}`);
   }
 };
+
+function ERR_HTTP_SOCKET_ASSIGNED() {
+  return new Error(`ServerResponse has an already assigned socket`);
+}
 
 // TODO: add primordial for URL
 // Importing from node:url is unnecessary
@@ -175,7 +181,7 @@ function isValidTLSArray(obj) {
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false; // prettier-ignore
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
     }
     return true;
   }
@@ -185,6 +191,16 @@ function isValidTLSArray(obj) {
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
     throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+  }
+
+  // Ensure that msecs fits into signed int32
+  const TIMEOUT_MAX = 2 ** 31 - 1;
+  if (numberlike > TIMEOUT_MAX) {
+    process.emitWarning(
+      `${numberlike} does not fit into a 32-bit signed integer.` + `\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+      "TimeoutOverflowWarning",
+    );
+    return TIMEOUT_MAX;
   }
 
   return numberlike;
@@ -348,8 +364,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = null;
     const message = this._httpMessage;
     const req = message?.req;
-    if (req && !req.complete && !req[kHandle]?.upgraded) {
-      // At this point the socket is already destroyed; let's avoid UAF
+    if (req && !req.complete) {
+      // at this point the socket is already destroyed, lets avoid UAF
       req[kHandle] = undefined;
       req.destroy(new ConnResetException("aborted"));
     }
@@ -968,24 +984,19 @@ const ServerPrototype = {
             didFinish = true;
             resolveFunction && resolveFunction();
           }
-
           http_res.once("close", onClose);
           if (reachedRequestsLimit) {
             server.emit("dropRequest", http_req, socket);
             http_res.writeHead(503);
             http_res.end();
             socket.destroy();
-          } else if (http_req.headers.upgrade) {
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          } else if (http_req.headers.expect === "100-continue") {
-            if (server.listenerCount("checkContinue") > 0) {
-              server.emit("checkContinue", http_req, http_res);
+          } else {
+            const upgrade = http_req.headers.upgrade;
+            if (upgrade) {
+              server.emit("upgrade", http_req, socket, kEmptyBuffer);
             } else {
-              http_res.writeContinue();
               server.emit("request", http_req, http_res);
             }
-          } else {
-            server.emit("request", http_req, http_res);
           }
 
           socket.cork();
@@ -993,14 +1004,18 @@ const ServerPrototype = {
           if (capturedError) {
             handle = undefined;
             http_res.removeListener("close", onClose);
-            http_res.detachSocket(socket);
+            if (socket._httpMessage === http_res) {
+              socket._httpMessage = null;
+            }
             throw capturedError;
           }
 
           if (handle.finished || didFinish) {
             handle = undefined;
             http_res.removeListener("close", onClose);
-            http_res.detachSocket(socket);
+            if (socket._httpMessage === http_res) {
+              socket._httpMessage = null;
+            }
             return;
           }
 
@@ -1176,7 +1191,7 @@ function hasServerResponseFinished(self, chunk, callback) {
     if (finished || destroyed) {
       let err;
       if (finished) {
-        err = $ERR_STREAM_WRITE_AFTER_END();
+        err = $ERR_STREAM_WRITE_AFTER_END("Stream is already finished");
       } else if (destroyed) {
         err = $ERR_STREAM_DESTROYED("Stream is destroyed");
       }
@@ -1370,7 +1385,6 @@ const IncomingMessagePrototype = {
 
       if (!internalRequest.ondata) {
         internalRequest.ondata = onDataIncomingMessage.bind(this);
-        internalRequest.hasCustomOnData = false;
       }
 
       return true;
@@ -1605,7 +1619,7 @@ const OutgoingMessagePrototype = {
   },
 
   _implicitHeader() {
-    throw $ERR_METHOD_NOT_IMPLEMENTED("_implicitHeader()");
+    throw $ERR_METHOD_NOT_IMPLEMENTED("The method _implicitHeader() is not implemented");
   },
   flushHeaders() {},
   getHeader(name) {
@@ -1654,8 +1668,8 @@ const OutgoingMessagePrototype = {
   },
 
   removeHeader(name) {
-    if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
-      throw $ERR_HTTP_HEADERS_SENT("remove");
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("Cannot remove header after headers have been sent.");
     }
     const headers = this[headersSymbol];
     if (!headers) return;
@@ -1666,6 +1680,41 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
+    return this;
+  },
+
+  setHeaders(headers) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    if (!headers || Array.isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const [key, value] of headers) {
+      if (key === "set-cookie") {
+        if (Array.isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
+    }
+
     return this;
   },
 
@@ -1812,7 +1861,7 @@ function emitContinueAndSocketNT(self) {
     self.emit("socket", self.socket);
   }
 
-  // Emit continue event for the client (internally we auto handle it)
+  //Emit continue event for the client (internally we auto handle it)
   if (!self._closed && self.getHeader("expect") === "100-continue") {
     self.emit("continue");
   }
@@ -1916,9 +1965,7 @@ const ServerResponsePrototype = {
   _removedContLen: false,
   _hasBody: true,
   get headersSent() {
-    return (
-      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
-    );
+    return this[headerStateSymbol] >= NodeHTTPHeaderState.assigned;
   },
   set headersSent(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
@@ -1959,18 +2006,14 @@ const ServerResponsePrototype = {
     this._writeRaw("HTTP/1.1 102 Processing\r\n\r\n", "ascii", cb);
   },
   writeContinue(cb) {
-    this.socket[kHandle]?.response?.writeContinue();
-    cb?.();
+    this._writeRaw("HTTP/1.1 100 Continue\r\n\r\n", "ascii", cb);
   },
 
   // This end method is actually on the OutgoingMessage prototype in Node.js
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
-    if (handle?.aborted) {
-      return this;
-    }
-
+    const isFinished = this.finished || handle?.finished;
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;
@@ -1985,76 +2028,70 @@ const ServerResponsePrototype = {
     if (hasServerResponseFinished(this, chunk, callback)) {
       return this;
     }
-
     if (chunk && !this._hasBody) {
       if (this.req?.method === "HEAD") {
         chunk = undefined;
       } else {
-        throw $ERR_HTTP_BODY_NOT_ALLOWED();
+        throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
       }
     }
 
-    if (!handle) {
-      if (typeof callback === "function") {
-        process.nextTick(callback);
+    if (handle) {
+      const headerState = this[headerStateSymbol];
+      callWriteHeadIfObservable(this, headerState);
+
+      if (headerState !== NodeHTTPHeaderState.sent) {
+        handle.cork(() => {
+          handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+
+          // If handle.writeHead throws, we don't want headersSent to be set to true.
+          // So we set it here.
+          this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
+          // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
+          this._contentLength = handle.end(chunk, encoding);
+        });
+      } else {
+        // If there's no data but you already called end, then you're done.
+        // We can ignore it in that case.
+        if (!(!chunk && handle.ended) && !handle.aborted) {
+          handle.end(chunk, encoding);
+        }
       }
-      return this;
-    }
-
-    const headerState = this[headerStateSymbol];
-    callWriteHeadIfObservable(this, headerState);
-
-    if (headerState !== NodeHTTPHeaderState.sent) {
-      handle.cork(() => {
-        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-
-        // If handle.writeHead throws, we don't want headersSent to be set to true.
-        // So we set it here.
-        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-        this._contentLength = handle.end(chunk, encoding);
-      });
-    } else {
-      // If there's no data but you already called end, then you're done.
-      // We can ignore it in that case.
-      if (!(!chunk && handle.ended) && !handle.aborted) {
-        handle.end(chunk, encoding);
+      this._header = " ";
+      const req = this.req;
+      const socket = req.socket;
+      if (!req._consuming && !req?._readableState?.resumeScheduled) {
+        req._dump();
       }
-    }
-    this._header = " ";
-    const req = this.req;
-    const socket = req.socket;
-    if (!req._consuming && !req?._readableState?.resumeScheduled) {
-      req._dump();
-    }
-    this.detachSocket(socket);
-    this.finished = true;
-    this.emit("prefinish");
-    this._callPendingCallbacks();
+      this.detachSocket(socket);
+      this.finished = true;
+      this.emit("prefinish");
+      this._callPendingCallbacks();
 
-    if (callback) {
-      process.nextTick(
-        function (callback, self) {
-          // In Node.js, the "finish" event triggers the "close" event.
-          // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
+      if (callback) {
+        process.nextTick(
+          function (callback, self) {
+            // In Node.js, the "finish" event triggers the "close" event.
+            // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
+            self.emit("finish");
+            try {
+              callback();
+            } catch (err) {
+              self.emit("error", err);
+            }
+
+            process.nextTick(emitCloseNT, self);
+          },
+          callback,
+          this,
+        );
+      } else {
+        process.nextTick(function (self) {
           self.emit("finish");
-          try {
-            callback();
-          } catch (err) {
-            self.emit("error", err);
-          }
-
           process.nextTick(emitCloseNT, self);
-        },
-        callback,
-        this,
-      );
-    } else {
-      process.nextTick(function (self) {
-        self.emit("finish");
-        process.nextTick(emitCloseNT, self);
-      }, this);
+        }, this);
+      }
     }
 
     return this;
@@ -2082,20 +2119,12 @@ const ServerResponsePrototype = {
       return false;
     }
     if (chunk && !this._hasBody) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
     }
     let result = 0;
 
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);
-
-    if (!handle) {
-      if (this.socket) {
-        return this.socket.write(chunk, encoding, callback);
-      } else {
-        return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
-      }
-    }
 
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
@@ -2212,9 +2241,44 @@ const ServerResponsePrototype = {
     return this;
   },
 
+  setHeaders(headers) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    if (!headers || Array.isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const [key, value] of headers) {
+      if (key === "set-cookie") {
+        if (Array.isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
+    }
+
+    return this;
+  },
+
   assignSocket(socket) {
     if (socket._httpMessage) {
-      throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+      throw ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
     socket.once("close", onServerResponseClose);
@@ -2282,7 +2346,7 @@ const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback
   }
   if (this.destroyed || this.finished) {
     if (chunk) {
-      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
     }
     return false;
   }
@@ -2365,7 +2429,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
 
   if (this.destroyed || this.finished) {
     if (chunk) {
-      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
     }
     return false;
   }
@@ -2407,7 +2471,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
       req.complete = true;
       process.nextTick(emitRequestCloseNT, req);
     }
-    callback?.();
+    callback && callback();
     return;
   }
 
@@ -2489,14 +2553,14 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
-  let resolveNextChunk: ((end: boolean) => void) | undefined = end => {};
+  let resolveNextChunk = () => {};
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
     if (writeCount > 1) {
       startFetch();
     }
-    resolveNextChunk?.(false);
+    resolveNextChunk?.();
   };
 
   const write_ = (chunk, encoding, callback) => {
@@ -2527,7 +2591,7 @@ function ClientRequest(input, options, cb) {
 
     for (let chunk of this[kBodyChunks]) {
       bodySize += chunk.length;
-      if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
+      if (bodySize > MAX_FAKE_BACKPRESSURE_SIZE) {
         break;
       }
     }
@@ -2555,7 +2619,7 @@ function ClientRequest(input, options, cb) {
 
     if (chunk) {
       if (this.finished) {
-        emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
+        emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
         return this;
       }
 
@@ -2651,196 +2715,179 @@ function ClientRequest(input, options, cb) {
       keepalive = agentKeepalive;
     }
 
+    let url: string;
+    let proxy: string | undefined;
     const protocol = this[kProtocol];
     const path = this[kPath];
     let host = this[kHost];
+    if (isIPv6(host)) {
+      host = `[${host}]`;
+    }
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      url = path;
+      proxy = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
+    } else {
+      // Always include the port when globalAgent.defaultPort has been explicitly changed
+      // or when the port is not the standard default (80 for http, 443 for https)
+      const includePort =
+        !this[kUseDefaultPort] ||
+        (this[kAgent] &&
+          this[kPort] === this[kAgent].defaultPort &&
+          ((protocol === "http:" && this[kPort] !== 80) || (protocol === "https:" && this[kPort] !== 443)));
 
-    const getURL = host => {
-      if (isIPv6(host)) {
-        host = `[${host}]`;
-      }
+      url = `${protocol}//${host}${includePort ? ":" + this[kPort] : ""}${path}`;
+      // support agent proxy url/string for http/https
+      try {
+        // getters can throw
+        const agentProxy = this[kAgent]?.proxy;
+        // this should work for URL like objects and strings
+        proxy = agentProxy?.href || agentProxy;
+      } catch {}
+    }
 
-      if (path.startsWith("http://") || path.startsWith("https://")) {
-        return [path`${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
-      } else {
-        let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
-        // support agent proxy url/string for http/https
-        try {
-          // getters can throw
-          const agentProxy = this[kAgent]?.proxy;
-          // this should work for URL like objects and strings
-          proxy = agentProxy?.href || agentProxy;
-        } catch {}
-        return [url, proxy];
-      }
+    const tls = protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
+
+    const fetchOptions: any = {
+      method,
+      headers: this.getHeaders(),
+      redirect: "manual",
+      signal: this[kAbortController]?.signal,
+      // Timeouts are handled via this.setTimeout.
+      timeout: false,
+      // Disable auto gzip/deflate
+      decompress: false,
+      keepalive,
     };
+    let keepOpen = false;
 
-    let [url, proxy] = getURL(host);
+    if (customBody === undefined) {
+      fetchOptions.duplex = "half";
+      keepOpen = true;
+    }
 
-    const go = url => {
-      const tls =
-        protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
+    if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      const self = this;
+      if (customBody !== undefined) {
+        fetchOptions.body = customBody;
+      } else {
+        fetchOptions.body = async function* () {
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
+          }
 
-      const fetchOptions: any = {
-        method,
-        headers: this.getHeaders(),
-        redirect: "manual",
-        signal: this[kAbortController]?.signal,
-        // Timeouts are handled via this.setTimeout.
-        timeout: false,
-        // Disable auto gzip/deflate
-        decompress: false,
-        keepalive,
-      };
-      let keepOpen = false;
+          if (self[kBodyChunks]?.length === 0) {
+            self.emit("drain");
+          }
 
-      if (customBody === undefined) {
-        fetchOptions.duplex = "half";
-        keepOpen = true;
-      }
-
-      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-        const self = this;
-        if (customBody !== undefined) {
-          fetchOptions.body = customBody;
-        } else {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
+          while (!self.finished) {
+            yield await new Promise(resolve => {
+              resolveNextChunk = end => {
+                resolveNextChunk = undefined;
+                if (end) {
+                  resolve(undefined);
+                } else {
+                  resolve(self[kBodyChunks].shift());
+                }
+              };
+            });
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
+          }
 
-            while (!self.finished) {
-              yield await new Promise(resolve => {
-                resolveNextChunk = end => {
-                  resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
-                };
-              });
+          handleResponse?.();
+        };
+      }
+    }
 
-              if (self[kBodyChunks]?.length === 0) {
-                self.emit("drain");
-              }
-            }
+    if (tls) {
+      fetchOptions.tls = tls;
+    }
 
-            handleResponse?.();
-          };
+    if (!!$debug) {
+      fetchOptions.verbose = true;
+    }
+
+    if (proxy) {
+      fetchOptions.proxy = proxy;
+    }
+
+    const socketPath = this[kSocketPath];
+
+    if (socketPath) {
+      fetchOptions.unix = socketPath;
+    }
+
+    //@ts-ignore
+    this[kFetchRequest] = fetch(url, fetchOptions)
+      .then(response => {
+        if (this.aborted) {
+          maybeEmitClose();
+          return;
         }
-      }
 
-      if (tls) {
-        fetchOptions.tls = tls;
-      }
-
-      if (!!$debug) {
-        fetchOptions.verbose = true;
-      }
-
-      if (proxy) {
-        fetchOptions.proxy = proxy;
-      }
-
-      const socketPath = this[kSocketPath];
-
-      if (socketPath) {
-        fetchOptions.unix = socketPath;
-      }
-
-      //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions)
-        .then(response => {
-          if (this.aborted) {
+        handleResponse = () => {
+          this[kFetchRequest] = null;
+          this[kClearTimeout]();
+          handleResponse = undefined;
+          const prevIsHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = response.url.startsWith("https:");
+          var res = (this.res = new IncomingMessage(response, {
+            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+            [reqSymbol]: this,
+          }));
+          isNextIncomingMessageHTTPS = prevIsHTTPS;
+          res.req = this;
+          process.nextTick(
+            (self, res) => {
+              // If the user did not listen for the 'response' event, then they
+              // can't possibly read the data, so we ._dump() it into the void
+              // so that the socket doesn't hang there in a paused state.
+              if (self.aborted || !self.emit("response", res)) {
+                res._dump();
+              }
+            },
+            this,
+            res,
+          );
+          maybeEmitClose();
+          if (res.statusCode === 304) {
+            res.complete = true;
             maybeEmitClose();
             return;
           }
+        };
 
-          handleResponse = () => {
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-            handleResponse = undefined;
-            const prevIsHTTPS = isNextIncomingMessageHTTPS;
-            isNextIncomingMessageHTTPS = response.url.startsWith("https:");
-            var res = (this.res = new IncomingMessage(response, {
-              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-              [reqSymbol]: this,
-            }));
-            isNextIncomingMessageHTTPS = prevIsHTTPS;
-            res.req = this;
-            process.nextTick(
-              (self, res) => {
-                // If the user did not listen for the 'response' event, then they
-                // can't possibly read the data, so we ._dump() it into the void
-                // so that the socket doesn't hang there in a paused state.
-                if (self.aborted || !self.emit("response", res)) {
-                  res._dump();
-                }
-              },
-              this,
-              res,
-            );
-            maybeEmitClose();
-            if (res.statusCode === 304) {
-              res.complete = true;
-              maybeEmitClose();
-              return;
-            }
-          };
+        if (!keepOpen) {
+          handleResponse();
+        }
 
-          if (!keepOpen) {
-            handleResponse();
-          }
+        onEnd();
+      })
+      .catch(err => {
+        // Node treats AbortError separately.
+        // The "abort" listener on the abort controller should have called this
+        if (isAbortError(err)) {
+          return;
+        }
 
-          onEnd();
-        })
-        .catch(err => {
-          // Node treats AbortError separately.
-          // The "abort" listener on the abort controller should have called this
-          if (isAbortError(err)) {
-            return;
-          }
+        if (!!$debug) globalReportError(err);
 
-          if (!!$debug) globalReportError(err);
-
-          this.emit("error", err);
-        })
-        .finally(() => {
-          if (!keepOpen) {
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-          }
-        });
-    };
-
-    if (options.lookup) {
-      options.lookup(options.hostname, (err, address, family) => {
-        if (err) {
-          if (!!$debug) globalReportError(err);
-          this.emit("error", err);
-        } else {
-          [url, proxy] = getURL(address);
-          if (!this.hasHeader("Host")) {
-            this.setHeader("Host", options.hostname);
-          }
-          go(url);
+        this.emit("error", err);
+      })
+      .finally(() => {
+        if (!keepOpen) {
+          this[kFetchRequest] = null;
+          this[kClearTimeout]();
         }
       });
-    } else {
-      go(url);
-    }
 
     return true;
   };
 
   let onEnd = () => {};
-  let handleResponse: (() => void) | undefined = () => {};
+  let handleResponse = () => {};
 
   const send = () => {
     this.finished = true;
@@ -2957,13 +3004,17 @@ function ClientRequest(input, options, cb) {
   if (options.path) {
     const path = String(options.path);
     if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
-      throw $ERR_UNESCAPED_CHARACTERS("Request path");
+      throw $ERR_UNESCAPED_CHARACTERS("Request path contains unescaped characters");
     }
   }
 
-  const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
-  this[kUseDefaultPort] = this[kPort] === defaultPort;
+  // Ensure we use the latest defaultPort value from the agent
+  const defaultPort = options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || 80;
+  const port = (this[kPort] = options.port || defaultPort);
+
+  // When port is explicitly specified, we need to include it in the URL
+  // When port is equal to the agent's default port, we can omit it
+  this[kUseDefaultPort] = (this[kPort] === 80 && defaultPort === 80) || (this[kPort] === 443 && defaultPort === 443);
   const host =
     (this[kHost] =
     options.host =
@@ -2993,7 +3044,7 @@ function ClientRequest(input, options, cb) {
 
   if (methodIsString && method) {
     if (!checkIsHttpToken(method)) {
-      throw $ERR_INVALID_HTTP_TOKEN("Method", method);
+      throw $ERR_INVALID_HTTP_TOKEN("Method");
     }
     method = this[kMethod] = StringPrototypeToUpperCase.$call(method);
   } else {
@@ -3117,26 +3168,33 @@ function ClientRequest(input, options, cb) {
       }
     }
 
-    // if (host && !this.getHeader("host") && setHost) {
-    //   let hostHeader = host;
+    // Always set the Host header if not already set
+    if (host && !this.getHeader("host")) {
+      let hostHeader = host;
 
-    //   // For the Host header, ensure that IPv6 addresses are enclosed
-    //   // in square brackets, as defined by URI formatting
-    //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-    //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-    //   if (
-    //     posColon !== -1 &&
-    //     StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
-    //     StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
-    //   ) {
-    //     hostHeader = `[${hostHeader}]`;
-    //   }
+      // For the Host header, ensure that IPv6 addresses are enclosed
+      // in square brackets, as defined by URI formatting
+      // https://tools.ietf.org/html/rfc3986#section-3.2.2
+      const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+      if (
+        posColon !== -1 &&
+        StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
+        StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
+      ) {
+        hostHeader = `[${hostHeader}]`;
+      }
 
-    //   if (port && +port !== defaultPort) {
-    //     hostHeader += ":" + port;
-    //   }
-    //   this.setHeader("Host", hostHeader);
-    // }
+      // Only include the port in the Host header if it's not the default port for the protocol
+      // Also check the agent.defaultPort as some tests set it programmatically
+      const defaultPort =
+        options.defaultPort || (this[kAgent] && this[kAgent].defaultPort) || (protocol === "https:" ? 443 : 80);
+
+      if (port && +port !== defaultPort) {
+        hostHeader += ":" + port;
+      }
+
+      this.setHeader("Host", hostHeader);
+    }
 
     var auth = options.auth;
     if (auth && !this.getHeader("Authorization")) {
@@ -3226,6 +3284,20 @@ function ClientRequest(input, options, cb) {
 const ClientRequestPrototype = {
   constructor: ClientRequest,
   __proto__: OutgoingMessage.prototype,
+
+  clearTimeout(callback) {
+    const timeoutTimer = this[kTimeoutTimer];
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      this[kTimeoutTimer] = undefined;
+      if (callback) {
+        this.removeListener("timeout", callback);
+      } else {
+        this.removeAllListeners("timeout");
+      }
+    }
+    return this;
+  },
 
   get path() {
     return this[kPath];
@@ -3439,7 +3511,7 @@ function _normalizeArgs(args) {
 function _writeHead(statusCode, reason, obj, response) {
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
-    throw $ERR_HTTP_INVALID_STATUS_CODE(statusCode);
+    throw $ERR_HTTP_INVALID_STATUS_CODE(`Invalid status code: ${statusCode}`);
   }
 
   if (typeof reason === "string") {

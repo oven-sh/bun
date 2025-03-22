@@ -2681,8 +2681,6 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    let [url, proxy] = getURL(host);
-
     const go = (url, proxy, softFail = false) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
@@ -2834,6 +2832,7 @@ function ClientRequest(input, options, cb) {
 
     if (isIP(host) || !options.lookup) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      const [url, proxy] = getURL(host);
       go(url, proxy, false);
       return true;
     }

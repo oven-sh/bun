@@ -9421,7 +9421,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const path = req.url();
             for (this.user_routes.items) |route| {
                 if (std.mem.eql(u8, route.route.path, path)) {
-                    std.debug.print("bazinga\n", .{});
                     if (comptime Environment.enable_logs)
                         httplog("{s} - {s} 405", .{ method, path });
                     resp.writeStatus("405 Method Not Allowed");

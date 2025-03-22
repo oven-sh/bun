@@ -98,3 +98,188 @@ describe("Bun.Cookie validation tests", () => {
     });
   });
 });
+
+describe("Bun.serve() cookies", () => {
+  const server = Bun.serve({
+    port: 0,
+    routes: {
+      "/tester": {
+        POST: async req => {
+          const body: [string, string | null, { domain?: string; path?: string } | undefined][] = await req.json();
+          for (const [key, value, options] of body) {
+            if (value == null) {
+              req.cookies.delete({
+                name: key,
+                ...options,
+              });
+            } else {
+              req.cookies.set(key, value, options);
+            }
+          }
+          return new Response(JSON.stringify(req.cookies), {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+        },
+      },
+    },
+  });
+
+  test("set-cookie", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([["test", "test"]]),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      [
+        [
+          "test",
+          {
+            "httpOnly": false,
+            "name": "test",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "test",
+          },
+        ],
+      ]
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "test=test; SameSite=Lax",
+      ]
+    `);
+  });
+  test("set two cookies", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([
+        ["test", "test"],
+        ["test2", "test2"],
+      ]),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      [
+        [
+          "test2",
+          {
+            "httpOnly": false,
+            "name": "test2",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "test2",
+          },
+        ],
+        [
+          "test",
+          {
+            "httpOnly": false,
+            "name": "test",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "test",
+          },
+        ],
+      ]
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "test2=test2; SameSite=Lax",
+        "test=test; SameSite=Lax",
+      ]
+    `);
+  });
+  test("delete cookie", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([["test", null]]),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      [
+        [
+          "test",
+          {
+            "expires": "1970-01-01T00:00:00.001Z",
+            "httpOnly": false,
+            "name": "test",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "",
+          },
+        ],
+      ]
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "test=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      ]
+    `);
+  });
+  test("request with cookies", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([
+        ["do_modify", "c"],
+        ["add_cookie", "d"],
+      ]),
+      headers: {
+        "Cookie": "dont_modify=a;do_modify=b",
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      [
+        [
+          "add_cookie",
+          {
+            "httpOnly": false,
+            "name": "add_cookie",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "d",
+          },
+        ],
+        [
+          "do_modify",
+          {
+            "httpOnly": false,
+            "name": "do_modify",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "c",
+          },
+        ],
+        [
+          "dont_modify",
+          "a",
+        ],
+      ]
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "add_cookie=d; SameSite=Lax",
+        "do_modify=c; SameSite=Lax",
+      ]
+    `);
+  });
+});

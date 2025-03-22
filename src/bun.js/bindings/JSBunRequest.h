@@ -1,5 +1,6 @@
 #pragma once
 
+#include "JSCookieMap.h"
 #include "root.h"
 #include "ZigGeneratedClasses.h"
 

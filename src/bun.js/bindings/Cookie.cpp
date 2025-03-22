@@ -123,7 +123,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
     bool secure = false;
     CookieSameSite sameSite = CookieSameSite::Lax;
     bool httpOnly = false;
-    double maxAge = 0;
+    double maxAge = std::numeric_limits<double>::quiet_NaN();
     bool partitioned = false;
     bool hasMaxAge = false;
     ASSERT(value.isEmpty() || isValidHTTPHeaderValue(value));
@@ -235,7 +235,7 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
     }
 
     // Add Max-Age if present
-    if (m_maxAge != 0) {
+    if (!std::isnan(m_maxAge)) {
         builder.append("; Max-Age="_s);
         builder.append(String::number(m_maxAge));
     }
@@ -256,13 +256,15 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
 
     switch (m_sameSite) {
     case CookieSameSite::Strict:
-        builder.append("; SameSite=strict"_s);
+        builder.append("; SameSite=Strict"_s);
         break;
     case CookieSameSite::Lax:
-        // lax is the default.
+        // lax is the default. but we still need to set it explicitly.
+        // https://groups.google.com/a/chromium.org/g/blink-dev/c/AknSSyQTGYs/m/YKBxPCScCwAJ
+        builder.append("; SameSite=Lax"_s);
         break;
     case CookieSameSite::None:
-        builder.append("; SameSite=none"_s);
+        builder.append("; SameSite=None"_s);
         break;
     }
 }
@@ -287,7 +289,7 @@ JSC::JSValue Cookie::toJSON(JSC::VM& vm, JSC::JSGlobalObject* globalObject) cons
     if (hasExpiry())
         object->putDirect(vm, builtinNames.expiresPublicName(), JSC::DateInstance::create(vm, globalObject->dateStructure(), m_expires));
 
-    if (m_maxAge != 0)
+    if (!std::isnan(m_maxAge))
         object->putDirect(vm, builtinNames.maxAgePublicName(), JSC::jsNumber(m_maxAge));
 
     object->putDirect(vm, builtinNames.securePublicName(), JSC::jsBoolean(m_secure));

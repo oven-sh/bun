@@ -89,7 +89,7 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
     String domain;
     String path = "/"_s;
     int64_t expires = Cookie::emptyExpiresAtValue;
-    double maxAge = 0;
+    double maxAge = std::numeric_limits<double>::quiet_NaN();
     bool secure = false;
     bool httpOnly = false;
     bool partitioned = false;

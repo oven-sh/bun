@@ -7601,13 +7601,10 @@ declare module "bun" {
      */
     static fromCookieHeader(value: string): CookieMap;
 
-    get(name: string): Cookie | null;
-    get(options?: CookieStoreGetOptions): Cookie | null;
+    get(name: string): string | null;
+    getModifiedEntry(name: string): Cookie | null;
 
-    getAll(name: string): Cookie[];
-    getAll(options?: CookieStoreGetOptions): Cookie[];
-
-    has(name: string, value?: string): boolean;
+    has(name: string): boolean;
 
     set(name: string, value: string, options?: CookieInit): void;
     set(options: CookieInit): void;
@@ -7615,9 +7612,7 @@ declare module "bun" {
     delete(name: string): void;
     delete(options: CookieStoreDeleteOptions): void;
 
-    toString(): string;
-
-    toJSON(): Record<string, ReturnType<Cookie["toJSON"]>>;
+    toJSON(): [[name: string, value: string | ReturnType<Cookie["toJSON"]>]];
     readonly size: number;
 
     entries(): IterableIterator<[string, Cookie]>;

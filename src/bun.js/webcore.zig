@@ -6,6 +6,7 @@ pub usingnamespace @import("./webcore/S3Stat.zig");
 pub usingnamespace @import("./webcore/S3Client.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
+pub const CookieMap = @import("./webcore/CookieMap.zig").CookieMap;
 pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
 const JSC = bun.JSC;
 const std = @import("std");

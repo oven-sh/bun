@@ -66,9 +66,12 @@ JSObject* JSBunRequest::cookies() const
     return nullptr;
 }
 
+extern "C" void Request__setCookiesOnRequestContext(void* internalZigRequestPointer, CookieMap* cookieMap);
+
 void JSBunRequest::setCookies(JSObject* cookies)
 {
     m_cookies.set(Base::vm(), this, cookies);
+    Request__setCookiesOnRequestContext(this->wrapped(), WebCoreCast<WebCore::JSCookieMap, WebCore::CookieMap>(JSValue::encode(cookies)));
 }
 
 JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)

@@ -29,3 +29,8 @@ declare module "*.svg" {
   var contents: `${string}.svg`;
   export = contents;
 }
+
+declare module "*.module.css" {
+    var classes: { readonly [key: string]: string };
+    export = classes;
+}

@@ -9429,6 +9429,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                     switch (route.route.method) {
                         .any => {
+                            // TODO: Issue #18406 there's a problem upstream where this path isn't entered.
                             resp.writeStatus("501 Method Not Allowed");
                             resp.end("", false);
                             return;

@@ -454,6 +454,8 @@ pub const Options = struct {
     source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
+    source_map_is_internal: bool = false,
+
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 
@@ -5847,6 +5849,7 @@ pub fn getSourceMapBuilder(
         .source_map = .init(
             opts.source_map_allocator orelse opts.allocator,
             is_bun_platform and generate_source_map == .lazy,
+            opts.source_map_is_internal and is_bun_platform and generate_source_map == .lazy,
         ),
         .cover_lines_without_mappings = true,
         .approximate_input_line_count = tree.approximate_newline_count,

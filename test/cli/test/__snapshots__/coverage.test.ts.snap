@@ -1,5 +1,34 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`coveragePathIgnorePatterns coverage path ignore patterns 1`] = `
+"TN:
+SF:demo.test.ts
+FNF:1
+FNH:1
+DA:2,60
+DA:3,32
+DA:4,34
+DA:5,19
+DA:6,28
+DA:7,30
+DA:8,2
+LF:9
+LH:7
+end_of_record
+TN:
+SF:demo1.ts
+FNF:1
+FNH:1
+DA:3,10
+DA:4,9
+LF:6
+LH:2
+end_of_record
+"
+`;
+
+exports[`coveragePathIgnorePatterns coverage path ignore everything 1`] = `""`;
+
 exports[`lcov coverage reporter 1`] = `
 "TN:
 SF:demo1.ts

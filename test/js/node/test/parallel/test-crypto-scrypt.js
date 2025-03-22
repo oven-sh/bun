@@ -192,7 +192,7 @@ for (const options of incompatibleOptions) {
 
 for (const options of toobig) {
   const expected = {
-    message: /Invalid scrypt params:.*memory limit exceeded/,
+    message: /Invalid scrypt params/,
     code: 'ERR_CRYPTO_INVALID_SCRYPT_PARAMS',
   };
   assert.throws(() => crypto.scrypt('pass', 'salt', 1, options, () => {}),

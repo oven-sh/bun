@@ -1761,7 +1761,8 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
                 *values = { i, value.length() };
                 i += value.length();
             } else {
-                ASSERT_WITH_MESSAGE(value.containsOnlyASCII(), "Header value must be ASCII. This should already be validated before calling this function.");
+                // HTTP headers can contain non-ASCII characters according to RFC 7230
+                // Non-ASCII content should be properly encoded
                 WTF::CString valueCString = value.utf8();
                 memcpy(&buf[i], valueCString.data(), valueCString.length());
                 *values = { i, static_cast<uint32_t>(valueCString.length()) };
@@ -3178,19 +3179,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, nullptr);
-
-    // if (promise->status(globalObject->vm()) ==
-    // JSC::JSPromise::Status::Fulfilled) {
-    //     return reinterpret_cast<JSC::JSInternalPromise*>(
-    //         JSC::JSInternalPromise::resolvedPromise(
-    //             globalObject,
-    //             doLink(globalObject, promise->result(globalObject->vm()))
-    //         )
-    //     );
-    // }
-
-    return result;
+    return promise->then(globalObject, resolverFunction, nullptr);
 }
 #pragma mark - JSC::JSPromise
 

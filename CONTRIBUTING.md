@@ -53,39 +53,39 @@ $ brew install bun
 
 ## Install LLVM
 
-Bun requires LLVM 18 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 19 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@18
+$ brew install llvm@19
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 18 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm clang18 lld
+$ sudo pacman -S llvm clang19 lld
 ```
 
 ```bash#Fedora
-$ sudo dnf install llvm18 clang18 lld18-devel
+$ sudo dnf install llvm19 clang19 lld19-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang18 lld18 llvm18
+$ sudo zypper install clang19 lld19 llvm19
 ```
 
 {% /codetabs %}
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-19.1.7).
 
-Make sure Clang/LLVM 18 is in your path:
+Make sure Clang/LLVM 19 is in your path:
 
 ```bash
-$ which clang-18
+$ which clang-19
 ```
 
 If not, run this to manually add it:
@@ -94,13 +94,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@18)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@18)/bin:$PATH"
+# use path+="$(brew --prefix llvm@19)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@19)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm18/bin"
+$ export PATH="$PATH:/usr/lib/llvm19/bin"
 ```
 
 {% /codetabs %}
@@ -250,7 +250,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-18"
+  "/usr/bin/clang++-19"
 
 is not able to compile a simple test program.
 ```

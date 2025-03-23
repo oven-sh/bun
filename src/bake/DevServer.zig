@@ -6066,9 +6066,21 @@ const HmrSocket = struct {
     /// `hot_update` events for when the route is updated.
     active_route: RouteBundle.Index.Optional,
 
+    user_id: u32 = 0,
+
+    var hmr_socket_id_counter = std.atomic.Value(u32).init(0);
+
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
         s.underlying = ws;
+        if (s.dev.on_event_callback_hack.get()) |cb| {
+            s.user_id = hmr_socket_id_counter.fetchAdd(1, .monotonic);
+            s.dev.vm.eventLoop().runCallback(cb, s.dev.vm.global, s.dev.vm.global.toJSValue(), &.{
+                bun.String.createUTF8ForJS(s.dev.vm.global, "bun:hmr:connect"),
+                .undefined,
+                JSValue.jsNumber(s.user_id),
+            });
+        }
     }
 
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
@@ -6166,6 +6178,7 @@ const HmrSocket = struct {
                         vm.eventLoop().runCallback(cb, globalObject, globalObject.toJSValue(), &.{
                             bun.String.createUTF8ForJS(globalObject, name),
                             JSC.ArrayBuffer.createBuffer(globalObject, binary_data),
+                            JSValue.jsNumber(s.user_id),
                         });
                     }
                 } else if (s.dev.on_event_callback_hack.get()) |cb| {
@@ -6184,6 +6197,7 @@ const HmrSocket = struct {
                     vm.eventLoop().runCallback(cb, globalObject, globalObject.toJSValue(), &.{
                         bun.String.createUTF8ForJS(globalObject, name),
                         parsed,
+                        JSValue.jsNumber(s.user_id),
                     });
                 }
             },
@@ -6229,6 +6243,45 @@ const HmrSocket = struct {
         }
     }
 
+    const DispatchCloseEvent = struct {
+        callback: JSC.Strong,
+        globalObject: *JSC.JSGlobalObject,
+        task: JSC.AnyTask,
+        id: u32,
+
+        const ThisTask = JSC.AnyTask.New(@This(), runFromJS);
+
+        fn runFromJS(this: *@This()) void {
+            const cb = this.callback.swap();
+            const vm = JSC.VirtualMachine.get();
+            const global = this.globalObject;
+            const eventLoop = vm.eventLoop();
+            defer this.deinit();
+
+            eventLoop.runCallback(cb, global, global.toJSValue(), &.{
+                bun.String.createUTF8ForJS(global, "bun:hmr:disconnect"),
+                .undefined,
+                JSValue.jsNumber(this.id),
+            });
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.callback.deinit();
+            bun.destroy(this);
+        }
+
+        pub fn dispatch(callback: JSC.JSValue, event_loop: *JSC.EventLoop, globalObject: *JSC.JSGlobalObject, id: u32) void {
+            const this = bun.default_allocator.create(@This()) catch bun.outOfMemory();
+            this.* = .{
+                .callback = JSC.Strong.create(callback, globalObject),
+                .globalObject = globalObject,
+                .task = ThisTask.init(this),
+                .id = id,
+            };
+            this.task.enqueue(event_loop);
+        }
+    };
+
     pub fn onClose(s: *HmrSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
         _ = ws;
         _ = exit_code;
@@ -6240,6 +6293,10 @@ const HmrSocket = struct {
 
         if (s.active_route.unwrap()) |old| {
             s.dev.routeBundlePtr(old).active_viewers -= 1;
+        }
+
+        if (s.dev.on_event_callback_hack.get()) |cb| {
+            DispatchCloseEvent.dispatch(cb, s.dev.vm.eventLoop(), s.dev.vm.global, s.user_id);
         }
 
         bun.debugAssert(s.dev.active_websocket_connections.remove(s));
@@ -7641,28 +7698,35 @@ const ErrorReportRequest = struct {
 
         const dev = ctx.dev;
         if (dev.on_error_callback_hack.get()) |cb| {
-            const global = dev.vm.global;
-            _ = cb.call(global, global.toJSValue(), &.{JSC.JSObject.create(.{
-                .name = bun.String.createUTF8ForJS(global, name),
-                .message = bun.String.createUTF8ForJS(global, message),
-                .stack = stack: {
-                    var stack = JSC.JSValue.createEmptyArray(global, exception.stack.frames_len);
-                    for (exception.stack.frames(), 0..) |frame, i| {
-                        stack.putIndex(
-                            global,
-                            @intCast(i),
-                            JSC.JSObject.create(.{
-                                .function_name = bun.String.createUTF8ForJS(global, frame.function_name.value.ZigString.slice()),
-                                .source_url = bun.String.createUTF8ForJS(global, frame.source_url.value.ZigString.slice()),
-                                .line = JSValue.jsNumber(frame.position.line.oneBased()),
-                                .column = JSValue.jsNumber(frame.position.column.oneBased()),
-                            }, global).toJS(),
-                        );
-                    }
-                    break :stack stack;
-                },
-            }, global).toJS()}) catch |err|
-                global.reportActiveExceptionAsUnhandled(err);
+            const vm = dev.vm;
+            const global = vm.global;
+            const eventLoop = vm.eventLoop();
+
+            eventLoop.runCallback(
+                cb,
+                global,
+                global.toJSValue(),
+                &.{JSC.JSObject.create(.{
+                    .name = bun.String.createUTF8ForJS(global, name),
+                    .message = bun.String.createUTF8ForJS(global, message),
+                    .stack = stack: {
+                        var stack = JSC.JSValue.createEmptyArray(global, exception.stack.frames_len);
+                        for (exception.stack.frames(), 0..) |frame, i| {
+                            stack.putIndex(
+                                global,
+                                @intCast(i),
+                                JSC.JSObject.create(.{
+                                    .function_name = bun.String.createUTF8ForJS(global, frame.function_name.value.ZigString.slice()),
+                                    .source_url = bun.String.createUTF8ForJS(global, frame.source_url.value.ZigString.slice()),
+                                    .line = JSValue.jsNumber(frame.position.line.oneBased()),
+                                    .column = JSValue.jsNumber(frame.position.column.oneBased()),
+                                }, global).toJS(),
+                            );
+                        }
+                        break :stack stack;
+                    },
+                }, global).toJS()},
+            );
         }
 
         StaticRoute.sendBlobThenDeinit(r, &.fromArrayList(out), .{

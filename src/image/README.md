@@ -62,9 +62,13 @@ The Lanczos3 implementation includes SIMD optimizations for significant performa
 ## Roadmap
 
 - [x] Lanczos3 resampling
-- [ ] Bilinear resampling
-- [ ] Bicubic resampling
-- [ ] Box (nearest neighbor) resampling
-- [ ] Pixel format conversion
-- [ ] PNG encoding/decoding
-- [ ] JPEG encoding/decoding
+- [x] Bilinear resampling
+- [x] Bicubic resampling
+- [x] Box (nearest neighbor) resampling
+- [x] Pixel format conversion
+- [x] JPEG encoding (macOS)
+- [x] PNG encoding (macOS)
+- [ ] JPEG encoding (Linux/Windows)
+- [ ] PNG encoding (Linux/Windows)
+- [ ] WebP encoding/decoding
+- [ ] AVIF encoding/decoding

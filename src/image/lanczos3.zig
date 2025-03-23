@@ -666,7 +666,6 @@ pub const Lanczos3 = struct {
         dest_height: usize,
         bytes_per_pixel: usize,
     ) ![]u8 {
-
         // Calculate buffer sizes
         const buffer_sizes = calculateBufferSizes(src_width, src_height, dest_width, dest_height, bytes_per_pixel);
 
@@ -686,6 +685,39 @@ pub const Lanczos3 = struct {
         try resizeWithBuffers(src, src_width, src_height, dest, dest_width, dest_height, temp, column_buffer, bytes_per_pixel);
 
         return dest;
+    }
+    
+    /// Resize a portion of an image directly into a pre-allocated destination buffer
+    /// This is useful for streaming implementations where you want to resize part of
+    /// an image and write directly to a buffer.
+    pub fn resizePartial(
+        allocator: std.mem.Allocator,
+        src: []const u8,
+        src_width: usize,
+        src_height: usize,
+        dest_width: usize,
+        dest_height: usize,
+        bytes_per_pixel: usize,
+        dest_buffer: []u8,
+    ) !void {
+        // Calculate buffer sizes
+        const buffer_sizes = calculateBufferSizes(src_width, src_height, dest_width, dest_height, bytes_per_pixel);
+        
+        // Verify destination buffer is large enough
+        if (dest_buffer.len < buffer_sizes.dest_size) {
+            return error.DestBufferTooSmall;
+        }
+
+        // Allocate a temporary buffer for the horizontal pass
+        const temp = try allocator.alloc(u8, buffer_sizes.temp_size);
+        defer allocator.free(temp);
+
+        // Allocate a buffer for columns during vertical processing
+        const column_buffer = try allocator.alloc(u8, buffer_sizes.column_buffer_size);
+        defer allocator.free(column_buffer);
+
+        // Perform the resize
+        try resizeWithBuffers(src, src_width, src_height, dest_buffer, dest_width, dest_height, temp, column_buffer, bytes_per_pixel);
     }
 };
 

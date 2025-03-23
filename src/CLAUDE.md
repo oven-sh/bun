@@ -92,6 +92,7 @@ Some tips for working with Zig:
 
 - It's `or` `and`, not `||` `&&`
 - Zig changed it's syntax to use RLS, so `@as(Type, @truncate(value))` instead of `@truncate(Type, value)`
+- Read vendor/zig/lib/std/simd.zig
 
 Here's a complete list of Zig builtin functions:
 

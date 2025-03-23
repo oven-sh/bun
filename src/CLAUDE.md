@@ -13,7 +13,7 @@ Let's get started
 - [x] src/image/lanczos3.zig: lanczos3 algorithm
 - [x] src/image/bicubic.zig: bicubic algorithm
 - [x] src/image/bilinear.zig: bilinear algorithm
-- [ ] src/image/box.zig: box algorithm
+- [x] src/image/box.zig: box algorithm
 
 Run `zig test src/image/lanczos3.zig` to test the lanczos3 algorithm.
 Run `zig test src/image/scaling_tests.zig` to run more comprehensive resizing tests (but next time lets put it in the same file)
@@ -25,7 +25,9 @@ If you want to create a sample program just make a `main` function in the file.
 
 2. Pixel format conversion
 
-- [ ] src/image/pixel_format.zig: pixel format conversion
+- [x] src/image/pixel_format.zig: pixel format conversion
+
+Run `zig test src/image/pixel_format.zig` to test the pixel format conversion.
 
 3. Image encoding and decoding
 

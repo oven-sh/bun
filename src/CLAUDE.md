@@ -70,6 +70,8 @@ namespace Bun {
 }
 ```
 
+The bindings generator code goes in `src/image/Image.classes.ts` and `src/image/Image.zig`. See `src/bun.js/ResolveMessage.zig` and `src/bun.js/resolve_message.classes.ts` for an example.
+
 Use Zig's @Vector intrinsics for SIMD. Here's a couple examples:
 
 ```

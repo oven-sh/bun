@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import './debug';
+import "./debug";
 import {
   loadModuleAsync,
   replaceModules,
@@ -18,12 +18,31 @@ import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
 
-// TODO: move this into overlay.ts
-const wumbo = document.createElement("button");
-wumbo.id = "bun-wumbo";
-wumbo.setAttribute(
-  "style",
-  `
+let wumbo: HTMLButtonElement | null = null;
+
+switch (globalThis?.localStorage?.getItem?.("bun:wumbo")) {
+  case "true": {
+    const url = await (await fetch("/_bun/init_wumbo", { method: "POST" })).text();
+    if (!unloadedModuleRegistry[url]) {
+      const load = Promise.withResolvers();
+      onHotEvent("bun:afterUpdate", function handler() {
+        if (unloadedModuleRegistry[url]) {
+          offHotEvent("bun:afterUpdate", handler);
+          load.resolve();
+        }
+      });
+      await load.promise;
+    }
+    loadModuleAsync(url, false, null);
+    break;
+  }
+  default: {
+    // TODO: move this into overlay.ts
+    wumbo = document.createElement("button");
+    wumbo.id = "bun-wumbo";
+    wumbo.setAttribute(
+      "style",
+      `
     position: fixed !important;
     bottom: 16px !important;
     left: 16px !important;
@@ -36,24 +55,30 @@ wumbo.setAttribute(
     z-index: 2147483646 !important;
     display: none !important;
   `,
-);
-wumbo.addEventListener("click", async () => {
-  wumbo.remove();
-  const url = await (await fetch("/_bun/init_wumbo", { method: "POST" })).text();
-  if (!unloadedModuleRegistry[url]) {
-    const load = Promise.withResolvers();
-    onHotEvent("bun:afterUpdate", function handler() {
-      if (unloadedModuleRegistry[url]) {
-        offHotEvent("bun:afterUpdate", handler);
-        load.resolve();
+    );
+    wumbo.addEventListener("click", async () => {
+      if (globalThis.localStorage) {
+        globalThis.localStorage?.setItem?.("bun:wumbo", "true");
       }
-    });
-    await load.promise;
-  }
-  loadModuleAsync(url, false, null);
-});
-document.body.appendChild(wumbo);
 
+      wumbo!.remove();
+      const url = await (await fetch("/_bun/init_wumbo", { method: "POST" })).text();
+      if (!unloadedModuleRegistry[url]) {
+        const load = Promise.withResolvers();
+        onHotEvent("bun:afterUpdate", function handler() {
+          if (unloadedModuleRegistry[url]) {
+            offHotEvent("bun:afterUpdate", handler);
+            load.resolve();
+          }
+        });
+        await load.promise;
+      }
+      loadModuleAsync(url, false, null);
+    });
+    document.body.appendChild(wumbo);
+    break;
+  }
+}
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
@@ -274,7 +299,9 @@ try {
     await loadModuleAsync(entry, false, null);
   }
 
-  wumbo.style.display = "block";
+  if (wumbo) {
+    wumbo.style.display = "block";
+  }
 
   emitEvent("bun:ready", null);
 } catch (e) {

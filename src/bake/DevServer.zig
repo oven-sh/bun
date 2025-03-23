@@ -6152,28 +6152,39 @@ const HmrSocket = struct {
                     ws.close();
                     return;
                 }
-                const json_data = payload[name.len + 1 ..];
-                if (json_data.len == 0) {
+                const user_data = payload[name.len + 1 ..];
+                if (user_data.len == 0) {
                     ws.close();
                     return;
                 }
-                if (s.dev.on_event_callback_hack.get()) |cb| {
+                const vm = s.dev.vm;
+                const globalObject = vm.global;
+                if (user_data.len > 1 and user_data[0] == 0) {
+                    // Binary message
+                    const binary_data = user_data[1..];
+                    if (s.dev.on_event_callback_hack.get()) |cb| {
+                        vm.eventLoop().runCallback(cb, globalObject, globalObject.toJSValue(), &.{
+                            bun.String.createUTF8ForJS(globalObject, name),
+                            JSC.ArrayBuffer.createBuffer(globalObject, binary_data),
+                        });
+                    }
+                } else if (s.dev.on_event_callback_hack.get()) |cb| {
+                    // json message
                     const global = s.dev.vm.global;
-                    var str = bun.String.createUTF8(json_data);
-                    defer str.deref();
 
-                    const parsed = str.toJSByParseJSON(global) catch {
-                        ws.close();
-                        global.clearException();
-                        return;
+                    const parsed = brk: {
+                        var str = bun.String.createUTF8(user_data);
+                        defer str.deref();
+                        break :brk str.toJSByParseJSON(global) catch {
+                            ws.close();
+                            global.clearException();
+                            return;
+                        };
                     };
-
-                    var key = bun.String.createUTF8(name);
-                    defer key.deref();
-                    _ = cb.call(global, global.toJSValue(), &.{
-                        key.toJS(global),
-                        parsed.toJS(global),
-                    }) catch |err| global.reportActiveExceptionAsUnhandled(err);
+                    vm.eventLoop().runCallback(cb, globalObject, globalObject.toJSValue(), &.{
+                        bun.String.createUTF8ForJS(globalObject, name),
+                        parsed,
+                    });
                 }
             },
             .testing_batch_events => switch (s.dev.testing_batch_events) {

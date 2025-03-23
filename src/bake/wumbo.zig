@@ -23,7 +23,15 @@ pub fn onInitRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
 
 fn onInit(dev: *DevServer, _: *Request, resp: AnyResponse) bun.JSOOM!void {
     // TODO: auto install code here
-    const entry_point_string = bun.String.createUTF8(bun.Environment.base_path ++ "/packages/bun-wumbo/plugin.ts");
+    const entry_point_string = bun.String.createUTF8(
+        brk: {
+            if (bun.getenvZ("BUN_WUMBO_PLUGIN")) |plugin| {
+                break :brk plugin;
+            }
+
+            break :brk bun.Environment.base_path ++ "/packages/bun-wumbo/plugin.ts";
+        },
+    );
     defer entry_point_string.deref();
 
     const promise = JSBundlerPlugin__loadAndResolveEditPlugin(
@@ -72,7 +80,13 @@ pub fn onInitSetupResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     defer ctx.dev.allocator.destroy(ctx);
     const dev = ctx.dev;
 
-    const entry = dev.addPreload(.client, bun.Environment.base_path ++ "/packages/bun-wumbo/frontend.ts") catch bun.outOfMemory();
+    const entry = dev.addPreload(.client, brk: {
+        if (bun.getenvZ("BUN_WUMBO_FRONTEND")) |frontend| {
+            break :brk frontend;
+        }
+
+        break :brk bun.Environment.base_path ++ "/packages/bun-wumbo/frontend.ts";
+    }) catch bun.outOfMemory();
 
     if (!ctx.aborted) {
         ctx.resp.clearAborted();

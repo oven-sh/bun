@@ -362,3 +362,186 @@ test "Transcode with different quality settings" {
     // so we use a loose check
     try testing.expect(jpeg_sizes[0] <= jpeg_sizes[2]);
 }
+
+// Test TIFF encoding
+test "Encode TIFF" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Create test RGBA image
+    const width = 200;
+    const height = 200;
+    const image_format = PixelFormat.RGBA;
+
+    const image_data = try createTestImage(allocator, width, height, image_format);
+
+    // Encode to TIFF
+    const encoded_tiff = encoder.encodeTIFF(allocator, image_data, width, height, image_format) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("TIFF encoder not implemented on this platform, skipping test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(encoded_tiff);
+
+    // Verify we got some data back
+    try testing.expect(encoded_tiff.len > 0);
+
+    // Verify TIFF signature (either II or MM for Intel or Motorola byte order)
+    try testing.expect(encoded_tiff[0] == encoded_tiff[1]); // Either II or MM
+    try testing.expect(encoded_tiff[0] == 'I' or encoded_tiff[0] == 'M');
+    
+    // Check for TIFF identifier (42 in appropriate byte order)
+    if (encoded_tiff[0] == 'I') {
+        // Little endian (Intel)
+        try testing.expectEqual(@as(u8, 42), encoded_tiff[2]);
+        try testing.expectEqual(@as(u8, 0), encoded_tiff[3]);
+    } else {
+        // Big endian (Motorola)
+        try testing.expectEqual(@as(u8, 0), encoded_tiff[2]);
+        try testing.expectEqual(@as(u8, 42), encoded_tiff[3]);
+    }
+
+    // Optionally save the file for visual inspection
+    if (false) {
+        try saveToFile(allocator, encoded_tiff, "test_output.tiff");
+    }
+}
+
+// Test HEIC encoding
+test "Encode HEIC" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Create test RGBA image
+    const width = 200;
+    const height = 200;
+    const image_format = PixelFormat.RGBA;
+
+    const image_data = try createTestImage(allocator, width, height, image_format);
+
+    // Encode to HEIC with quality 80
+    const encoded_heic = encoder.encodeHEIC(allocator, image_data, width, height, image_format, 80) catch |err| {
+        if (err == error.NotImplemented or err == error.DestinationCreationFailed) {
+            std.debug.print("HEIC encoder not implemented or not supported on this platform, skipping test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(encoded_heic);
+
+    // Verify we got some data back
+    try testing.expect(encoded_heic.len > 0);
+
+    // HEIC files start with ftyp box
+    // Check for 'ftyp' marker at position 4-8
+    if (encoded_heic.len >= 8) {
+        try testing.expectEqual(@as(u8, 'f'), encoded_heic[4]);
+        try testing.expectEqual(@as(u8, 't'), encoded_heic[5]);
+        try testing.expectEqual(@as(u8, 'y'), encoded_heic[6]);
+        try testing.expectEqual(@as(u8, 'p'), encoded_heic[7]);
+    }
+
+    // Optionally save the file for visual inspection
+    if (false) {
+        try saveToFile(allocator, encoded_heic, "test_output.heic");
+    }
+}
+
+// Test transcoding to TIFF
+test "Transcode to TIFF" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Create test RGBA image
+    const width = 200;
+    const height = 200;
+    const image_format = PixelFormat.RGBA;
+
+    const image_data = try createTestImage(allocator, width, height, image_format);
+
+    // First encode to PNG
+    const png_data = encoder.encodePNG(allocator, image_data, width, height, image_format) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("PNG encoder not implemented on this platform, skipping test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(png_data);
+
+    // Transcode PNG to TIFF
+    const transcoded_tiff = encoder.transcodeToTIFF(allocator, png_data, .PNG) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("Transcode to TIFF not implemented on this platform, skipping test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(transcoded_tiff);
+
+    // Verify TIFF signature
+    try testing.expect(transcoded_tiff.len > 0);
+    try testing.expect(transcoded_tiff[0] == transcoded_tiff[1]); // Either II or MM
+    try testing.expect(transcoded_tiff[0] == 'I' or transcoded_tiff[0] == 'M');
+
+    // Optionally save the files for visual inspection
+    if (false) {
+        try saveToFile(allocator, png_data, "test_original.png");
+        try saveToFile(allocator, transcoded_tiff, "test_transcoded.tiff");
+    }
+}
+
+// Test transcoding to HEIC
+test "Transcode to HEIC" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Create test RGBA image
+    const width = 200;
+    const height = 200;
+    const image_format = PixelFormat.RGBA;
+
+    const image_data = try createTestImage(allocator, width, height, image_format);
+
+    // First encode to PNG
+    const png_data = encoder.encodePNG(allocator, image_data, width, height, image_format) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("PNG encoder not implemented on this platform, skipping test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(png_data);
+
+    // Transcode PNG to HEIC
+    const transcoded_heic = encoder.transcodeToHEIC(allocator, png_data, .PNG, 80) catch |err| {
+        if (err == error.NotImplemented or err == error.DestinationCreationFailed) {
+            std.debug.print("Transcode to HEIC not implemented or not supported on this platform, skipping test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(transcoded_heic);
+
+    // Verify HEIC signature (look for ftyp marker)
+    try testing.expect(transcoded_heic.len > 0);
+    
+    if (transcoded_heic.len >= 8) {
+        try testing.expectEqual(@as(u8, 'f'), transcoded_heic[4]);
+        try testing.expectEqual(@as(u8, 't'), transcoded_heic[5]);
+        try testing.expectEqual(@as(u8, 'y'), transcoded_heic[6]);
+        try testing.expectEqual(@as(u8, 'p'), transcoded_heic[7]);
+    }
+
+    // Optionally save the files for visual inspection
+    if (false) {
+        try saveToFile(allocator, png_data, "test_original.png");
+        try saveToFile(allocator, transcoded_heic, "test_transcoded.heic");
+    }
+}

@@ -180,7 +180,7 @@ fn encodeJPEG(
     libjpeg.jpeg_finish_compress(&cinfo);
     
     // Copy the JPEG data to our own buffer
-    var result = try allocator.alloc(u8, jpeg_buffer_size);
+    const result = try allocator.alloc(u8, jpeg_buffer_size);
     @memcpy(result, jpeg_buffer[0..jpeg_buffer_size]);
     
     // Clean up
@@ -247,7 +247,7 @@ fn encodeWebP(
     }
     
     // Copy to our own buffer
-    var result = try allocator.alloc(u8, output_size);
+    const result = try allocator.alloc(u8, output_size);
     @memcpy(result, output[0..output_size]);
     
     // Free WebP's output buffer

@@ -154,7 +154,7 @@ fn loadSymbol(comptime T: type, name: [:0]const u8) ?T {
     if (lib_handle) |handle| {
         const symbol = std.c.dlsym(handle, name.ptr);
         if (symbol == null) return null;
-        return @ptrCast(T, symbol);
+        return @as(T, @ptrCast(symbol));
     }
     return null;
 }

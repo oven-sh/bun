@@ -41,14 +41,44 @@ Run `zig test src/image/pixel_format.zig` to test the pixel format conversion.
 Run `zig test src/image/streaming_tests.zig` to test the streaming and encoder functionality.
 Run `zig test src/image/encoder_tests.zig` to test the encoding and transcoding functionality.
 
+4. JavaScript bindings:
+
+Match these TypeScript signatures:
+
+```ts
+namespace Bun {
+  interface Image {
+    readonly encoding: "jpg" | "png" | "webp" | "avif";
+
+    size(): Promise<{ width: number; height: number }>;
+    resize(width: number, height: number, quality?: number): Image;
+    resize(options: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      quality?: number;
+    }): Image;
+    bytes(): Promise<Buffer>;
+    blob(): Promise<Blob>;
+    jpg(options: { quality?: number }): Image;
+    png(options: { quality?: number }): Image;
+    webp(options: { quality?: number }): Image;
+    avif(options: { quality?: number }): Image;
+  }
+  function image(bytes: Uint8Array): Image;
+}
+```
+
 Use Zig's @Vector intrinsics for SIMD. Here's a couple examples:
 
 ```
+
 /// Count the occurrences of a character in an ASCII byte array
 /// uses SIMD
 pub fn countChar(self: string, char: u8) usize {
-    var total: usize = 0;
-    var remaining = self;
+var total: usize = 0;
+var remaining = self;
 
     const splatted: AsciiVector = @splat(char);
 
@@ -65,13 +95,14 @@ pub fn countChar(self: string, char: u8) usize {
     }
 
     return total;
+
 }
 
-fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
-    var text = text_;
-    const quote_: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, quote));
-    const backslash: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\\'));
-    const V1x16 = strings.AsciiVectorU1;
+fn indexOfInterestingCharacterInStringLiteral(text*: []const u8, quote: u8) ?usize {
+var text = text*;
+const quote\_: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, quote));
+const backslash: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\\'));
+const V1x16 = strings.AsciiVectorU1;
 
     while (text.len >= strings.ascii_vector_size) {
         const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
@@ -92,7 +123,9 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
     }
 
     return null;
+
 }
+
 ```
 
 Some tips for working with Zig:
@@ -219,3 +252,7 @@ Here's a complete list of Zig builtin functions:
 - @workGroupId
 - @workGroupSize
 - @workItemId
+
+```
+
+```

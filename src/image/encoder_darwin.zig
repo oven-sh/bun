@@ -29,6 +29,8 @@ fn getUTIForFormat(format: ImageFormat) c.CFStringRef {
         .PNG => CFSTR("public.png"),
         .WEBP => CFSTR("org.webmproject.webp"), // WebP type
         .AVIF => CFSTR("public.avif"), // AVIF type
+        .TIFF => CFSTR("public.tiff"), // TIFF type
+        .HEIC => CFSTR("public.heic"), // HEIC type
     };
 }
 

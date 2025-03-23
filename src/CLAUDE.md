@@ -1,18 +1,18 @@
 # Image library
 
-We are implementing a high-performance image library in Zig. The end goal is to have a simple builtin alternative to `sharp` for Bun.
+We are implementing a high-performance streaming image library in Zig. The end goal is to have a simple builtin alternative to `sharp` for Bun. Avoid memory allocation at all costs. Prefer passing in buffers and writing to them.
 
-1. Image resizing algorithms
-2. Pixel format conversion
-3. Image encoding and decoding
+1. Image resizing algorithms (streaming)
+2. Pixel format conversion (streaming)
+3. Image encoding and decoding (streaming)
 
 Let's get started
 
 1. Image resizing algorithms
 
 - [x] src/image/lanczos3.zig: lanczos3 algorithm
-- [ ] src/image/bicubic.zig: bicubic algorithm
-- [ ] src/image/bilinear.zig: bilinear algorithm
+- [x] src/image/bicubic.zig: bicubic algorithm
+- [x] src/image/bilinear.zig: bilinear algorithm
 - [ ] src/image/box.zig: box algorithm
 
 Run `zig test src/image/lanczos3.zig` to test the lanczos3 algorithm.

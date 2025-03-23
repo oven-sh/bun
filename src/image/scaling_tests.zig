@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const lanczos3 = @import("lanczos3.zig");
+const bilinear = @import("bilinear.zig");
 
 test "resize larger grayscale" {
     // Create a 2x2 grayscale test image
@@ -20,7 +21,12 @@ test "resize larger grayscale" {
     defer arena.deinit();
     
     const allocator = arena.allocator();
+    
+    // Test with Lanczos3 algorithm
     const dest = try lanczos3.Lanczos3.resize(allocator, &src, src_width, src_height, dest_width, dest_height, 1);
+    
+    // Just for verification that Bilinear also works, but we won't verify its results here
+    _ = try bilinear.Bilinear.resize(allocator, &src, src_width, src_height, dest_width, dest_height, 1);
     
     // Verify that the resized image has the correct size
     try testing.expectEqual(dest.len, dest_width * dest_height);
@@ -250,4 +256,324 @@ test "resize stress test with various sizes" {
             }
         }
     }
+}
+
+test "streaming chunked resize" {
+    // Create test image
+    const src_width = 16;
+    const src_height = 16;
+    var src = try testing.allocator.alloc(u8, src_width * src_height);
+    defer testing.allocator.free(src);
+    
+    // Fill with a pattern
+    for (0..src_width * src_height) |i| {
+        src[i] = @as(u8, @intCast(i % 256));
+    }
+    
+    const dest_width = 32;
+    const dest_height = 24;
+    const bytes_per_pixel = 1;
+    
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    
+    // Calculate required buffer sizes for full resize
+    const buffer_sizes = lanczos3.Lanczos3.calculateBufferSizes(
+        src_width, 
+        src_height, 
+        dest_width, 
+        dest_height, 
+        bytes_per_pixel
+    );
+    
+    // Allocate buffers for full resize and chunked resize
+    var dest_full = try allocator.alloc(u8, buffer_sizes.dest_size);
+    var dest_chunked = try allocator.alloc(u8, buffer_sizes.dest_size);
+    
+    // For full resize
+    var temp_full = try allocator.alloc(u8, buffer_sizes.temp_size);
+    var column_buffer_full = try allocator.alloc(u8, buffer_sizes.column_buffer_size);
+    
+    // For chunked resize
+    // We'll divide the source into 4 chunks, so we need a smaller temp buffer
+    const chunk_size = src_height / 4;
+    const temp_chunk_size = dest_width * chunk_size * bytes_per_pixel;
+    var temp_chunk = try allocator.alloc(u8, temp_chunk_size);
+    var column_buffer_chunk = try allocator.alloc(u8, buffer_sizes.column_buffer_size);
+    
+    // Perform regular resize
+    try lanczos3.Lanczos3.resizeWithBuffers(
+        src,
+        src_width,
+        src_height,
+        dest_full,
+        dest_width,
+        dest_height,
+        temp_full,
+        column_buffer_full,
+        bytes_per_pixel
+    );
+    
+    // Clear the chunked destination buffer
+    std.mem.set(u8, dest_chunked, 0);
+    
+    // Perform chunked resize
+    for (0..4) |chunk_idx| {
+        const yStart = chunk_idx * chunk_size;
+        const yEnd = if (chunk_idx == 3) src_height else (chunk_idx + 1) * chunk_size;
+        
+        try lanczos3.Lanczos3.resizeChunk(
+            src,
+            src_width,
+            src_height,
+            yStart,
+            yEnd,
+            dest_chunked,
+            dest_width,
+            dest_height,
+            temp_chunk,
+            column_buffer_chunk,
+            bytes_per_pixel
+        );
+    }
+    
+    // Compare the results - they should be similar
+    // Note: There might be small differences at chunk boundaries due to numerical precision
+    var match_count: usize = 0;
+    for (dest_full, dest_chunked, 0..) |full_val, chunk_val, i| {
+        if (full_val == chunk_val) {
+            match_count += 1;
+        }
+    }
+    
+    // We expect at least 95% of pixels to match exactly
+    const match_percent = @as(f64, @floatFromInt(match_count)) / @as(f64, @floatFromInt(dest_full.len)) * 100.0;
+    std.debug.print("Match percent: {d:.2}%\n", .{match_percent});
+    try testing.expect(match_percent > 95.0);
+}
+
+test "resize with memory limit" {
+    // Create a larger test image to better test memory constraints
+    const src_width = 64;
+    const src_height = 64;
+    var src = try testing.allocator.alloc(u8, src_width * src_height);
+    defer testing.allocator.free(src);
+    
+    // Fill with a pattern
+    for (0..src_width * src_height) |i| {
+        src[i] = @as(u8, @intCast((i * 13) % 256));
+    }
+    
+    const dest_width = 128;
+    const dest_height = 128;
+    const bytes_per_pixel = 1;
+    
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    
+    // Perform regular resize
+    const dest_regular = try lanczos3.Lanczos3.resize(
+        allocator, 
+        src, 
+        src_width, 
+        src_height, 
+        dest_width, 
+        dest_height, 
+        bytes_per_pixel
+    );
+    
+    // Set a very low memory limit to force multiple small chunks
+    // This should be just enough for a few rows at a time
+    const row_memory = (src_width + dest_width) * bytes_per_pixel;
+    const memory_limit = row_memory * 10; // Allow for ~10 rows at a time
+    
+    // Perform memory-limited resize
+    const dest_limited = try lanczos3.Lanczos3.resizeWithMemoryLimit(
+        allocator, 
+        src, 
+        src_width, 
+        src_height, 
+        dest_width, 
+        dest_height, 
+        bytes_per_pixel,
+        memory_limit
+    );
+    
+    // Compare the results - they should be similar
+    // Note: There might be small differences at chunk boundaries due to numerical precision
+    var match_count: usize = 0;
+    var close_match_count: usize = 0;
+    
+    for (dest_regular, dest_limited, 0..) |regular_val, limited_val, i| {
+        if (regular_val == limited_val) {
+            match_count += 1;
+        }
+        
+        // Also count "close matches" (within a small tolerance)
+        const diff = if (regular_val > limited_val) 
+            regular_val - limited_val 
+        else 
+            limited_val - regular_val;
+            
+        if (diff <= 5) {
+            close_match_count += 1;
+        }
+    }
+    
+    // Calculate match percentages
+    const exact_match_percent = @as(f64, @floatFromInt(match_count)) / @as(f64, @floatFromInt(dest_regular.len)) * 100.0;
+    const close_match_percent = @as(f64, @floatFromInt(close_match_count)) / @as(f64, @floatFromInt(dest_regular.len)) * 100.0;
+    
+    std.debug.print("Exact match percent: {d:.2}%\n", .{exact_match_percent});
+    std.debug.print("Close match percent: {d:.2}%\n", .{close_match_percent});
+    
+    // We expect at least 80% of pixels to match exactly
+    try testing.expect(exact_match_percent > 80.0);
+    
+    // We expect at least 95% of pixels to be close matches
+    try testing.expect(close_match_percent > 95.0);
+    
+    // Test that the chunk size calculation works correctly
+    const chunk_size = lanczos3.Lanczos3.calculateChunkSize(
+        src_width,
+        src_height,
+        dest_width,
+        bytes_per_pixel,
+        memory_limit
+    );
+    
+    // Verify the chunk size is reasonable given our memory limit
+    std.debug.print("Calculated chunk size: {d} rows\n", .{chunk_size});
+    try testing.expect(chunk_size > 0);
+    try testing.expect(chunk_size < src_height); // Should be less than full image
+    
+    // Very rough estimate of memory used per chunk
+    const estimated_chunk_memory = (src_width + dest_width) * bytes_per_pixel * chunk_size;
+    try testing.expect(estimated_chunk_memory <= memory_limit);
+}
+
+test "streaming resize with pre-allocated buffers" {
+    // Create test image
+    const src_width = 16;
+    const src_height = 16;
+    var src = try testing.allocator.alloc(u8, src_width * src_height);
+    defer testing.allocator.free(src);
+    
+    // Fill with a pattern
+    for (0..src_width * src_height) |i| {
+        src[i] = @as(u8, @intCast(i % 256));
+    }
+    
+    const dest_width = 32;
+    const dest_height = 24;
+    const bytes_per_pixel = 1;
+    
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    
+    // Calculate required buffer sizes
+    const buffer_sizes = lanczos3.Lanczos3.calculateBufferSizes(
+        src_width, 
+        src_height, 
+        dest_width, 
+        dest_height, 
+        bytes_per_pixel
+    );
+    
+    // Allocate buffers
+    var dest1 = try allocator.alloc(u8, buffer_sizes.dest_size);
+    var dest2 = try allocator.alloc(u8, buffer_sizes.dest_size);
+    var temp = try allocator.alloc(u8, buffer_sizes.temp_size);
+    var column_buffer = try allocator.alloc(u8, buffer_sizes.column_buffer_size);
+    
+    // Test standard resize
+    const dest_std = try lanczos3.Lanczos3.resize(
+        allocator, 
+        src, 
+        src_width, 
+        src_height, 
+        dest_width, 
+        dest_height, 
+        bytes_per_pixel
+    );
+    
+    // Test streaming resize
+    try lanczos3.Lanczos3.resizeWithBuffers(
+        src,
+        src_width,
+        src_height,
+        dest1,
+        dest_width,
+        dest_height,
+        temp,
+        column_buffer,
+        bytes_per_pixel
+    );
+    
+    // Compare results - they should be identical
+    try testing.expectEqual(dest_std.len, dest1.len);
+    
+    var all_equal = true;
+    for (dest_std, 0..) |value, i| {
+        if (value != dest1[i]) {
+            all_equal = false;
+            break;
+        }
+    }
+    try testing.expect(all_equal);
+    
+    // Now test buffer size checks
+    // 1. Test with too small destination buffer
+    var small_dest = try allocator.alloc(u8, buffer_sizes.dest_size - 1);
+    try testing.expectError(
+        error.DestBufferTooSmall,
+        lanczos3.Lanczos3.resizeWithBuffers(
+            src,
+            src_width,
+            src_height,
+            small_dest,
+            dest_width,
+            dest_height,
+            temp,
+            column_buffer,
+            bytes_per_pixel
+        )
+    );
+    
+    // 2. Test with too small temp buffer
+    var small_temp = try allocator.alloc(u8, buffer_sizes.temp_size - 1);
+    try testing.expectError(
+        error.TempBufferTooSmall,
+        lanczos3.Lanczos3.resizeWithBuffers(
+            src,
+            src_width,
+            src_height,
+            dest2,
+            dest_width,
+            dest_height,
+            small_temp,
+            column_buffer,
+            bytes_per_pixel
+        )
+    );
+    
+    // 3. Test with too small column buffer
+    var small_column = try allocator.alloc(u8, buffer_sizes.column_buffer_size - 1);
+    try testing.expectError(
+        error.ColumnBufferTooSmall,
+        lanczos3.Lanczos3.resizeWithBuffers(
+            src,
+            src_width,
+            src_height,
+            dest2,
+            dest_width,
+            dest_height,
+            temp,
+            small_column,
+            bytes_per_pixel
+        )
+    );
 }

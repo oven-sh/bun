@@ -103,9 +103,6 @@ pub const TestRunner = struct {
 
     unhandled_errors_between_tests: u32 = 0,
 
-    /// used to prevent adding new tests while test() is executing
-    allow_adding_new_tests: bool = true,
-
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
@@ -812,7 +809,6 @@ pub const DescribeScope = struct {
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
-    locked: bool = false,
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
@@ -1119,7 +1115,6 @@ pub const DescribeScope = struct {
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
-        this.locked = true;
 
         const file = this.file_id;
         const allocator = getAllocator(globalObject);
@@ -1391,9 +1386,7 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
         jsc_vm.auto_killer.enable();
-        if (Jest.runner) |r| r.allow_adding_new_tests = false;
         var result = TestScope.run(&test_, this);
-        if (Jest.runner) |r| r.allow_adding_new_tests = true;
 
         if (this.describe.tests.items.len > test_id) {
             this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
@@ -1799,10 +1792,6 @@ inline fn createScope(
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
-
-    if (Jest.runner) |r| if (!r.allow_adding_new_tests) {
-        return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
-    };
 
     var tag_to_use = tag;
 

@@ -27,7 +27,6 @@ namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
 
-
 template <bool SSL>
 struct alignas(16) HttpContextData {
     template <bool> friend struct HttpContext;
@@ -52,6 +51,7 @@ private:
     void *upgradedWebSocket = nullptr;
     bool isParsingHttp = false;
     bool rejectUnauthorized = false;
+    bool usingCustomExpectHandler = false;
 
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;

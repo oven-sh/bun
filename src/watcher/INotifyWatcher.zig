@@ -16,6 +16,7 @@ const EventListBytes = [eventlist_bytes_size]u8;
 fd: bun.FileDescriptor = bun.invalid_fd,
 loaded: bool = false,
 
+// Avoid statically allocating because it increases the binary size.
 eventlist_bytes: *EventListBytes align(@alignOf(Event)) = undefined,
 /// pointers into the next chunk of events
 eventlist_ptrs: [max_count]*align(1) Event = undefined,

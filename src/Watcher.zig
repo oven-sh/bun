@@ -4,6 +4,7 @@ const DebugLogScope = bun.Output.Scoped(.watcher, false);
 const log = DebugLogScope.log;
 
 // This will always be [max_count]WatchEvent,
+// We avoid statically allocating because it increases the binary size.
 watch_events: []WatchEvent = &.{},
 changed_filepaths: [max_count]?[:0]u8,
 

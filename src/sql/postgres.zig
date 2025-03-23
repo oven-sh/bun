@@ -1038,7 +1038,7 @@ pub const PostgresRequest = struct {
                 },
 
                 else => {
-                    const str = try String.fromJS2(value, globalObject);
+                    const str = try String.fromJS(value, globalObject);
                     if (str.tag == .Dead) return error.OutOfMemory;
                     defer str.deref();
                     const slice = str.toUTF8WithoutRef(bun.default_allocator);

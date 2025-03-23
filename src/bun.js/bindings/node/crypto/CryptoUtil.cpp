@@ -92,6 +92,36 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
 
 }
 
+JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue bigIntValue, ASCIILiteral name)
+{
+    ASSERT(bigIntValue.isBigInt());
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigInt* bigInt = bigIntValue.asHeapBigInt();
+
+    if (bigInt->sign()) {
+        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, ">= 0"_s, bigIntValue);
+        return {};
+    }
+
+    WTF::String hex = bigInt->toString(lexicalGlobalObject, 16);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSString* paddedHex = hex.length() % 2
+        ? jsString(vm, tryMakeString('0', hex))
+        : jsString(vm, hex);
+    if (UNLIKELY(!paddedHex)) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+
+    GCOwnedDataScope<WTF::StringView> paddedView = paddedHex->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(lexicalGlobalObject, paddedView, BufferEncodingType::hex));
+    RELEASE_AND_RETURN(scope, buffer);
+}
+
 WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
 {
     BufferEncodingType res = BufferEncodingType::buffer;
@@ -252,8 +282,7 @@ std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObje
     return std::nullopt;
 }
 
-// Throws a crypto error with optional OpenSSL error details
-void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsigned long err, const char* message)
+JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message)
 {
     JSC::VM& vm = globalObject->vm();
 
@@ -265,15 +294,15 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
     }
 
     WTF::String errorMessage = WTF::String::fromUTF8(message);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Create error object with the message
     JSC::JSObject* errorObject = createError(globalObject, errorMessage);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, {});
 
     PutPropertySlot messageSlot(errorObject, false);
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, {});
 
     ncrypto::CryptoErrorList errorStack;
     errorStack.capture();
@@ -290,7 +319,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
             WTF::String libString = WTF::String::fromUTF8(lib);
             PutPropertySlot slot(errorObject, false);
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "library"_s), jsString(vm, libString), slot);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         // Add function info if available
@@ -299,7 +328,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
             PutPropertySlot slot(errorObject, false);
 
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "function"_s), jsString(vm, funcString), slot);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         // Add reason info if available
@@ -308,7 +337,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
             PutPropertySlot reasonSlot(errorObject, false);
 
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "reason"_s), jsString(vm, reasonString), reasonSlot);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, {});
 
             // Convert reason to error code (e.g. "this error" -> "ERR_OSSL_THIS_ERROR")
             String upperReason = reasonString.convertToASCIIUppercase();
@@ -316,7 +345,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
 
             PutPropertySlot codeSlot(errorObject, false);
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "code"_s), jsString(vm, code), codeSlot);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -324,16 +353,28 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
     if (errorStack.size() > 0) {
         PutPropertySlot stackSlot(errorObject, false);
         auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, {});
         for (int32_t i = 0; i < errorStack.size(); i++) {
             WTF::String error = errorStack.pop_back().value();
             arr->putDirectIndex(globalObject, i, jsString(vm, error));
         }
         errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // Throw the decorated error
+    return errorObject;
+}
+
+extern "C" EncodedJSValue Bun__NodeCrypto__createCryptoError(JSC::JSGlobalObject* globalObject, uint32_t err, const char* message)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return JSValue::encode(createCryptoError(globalObject, scope, err, message));
+}
+
+void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message)
+{
+    JSValue errorObject = createCryptoError(globalObject, scope, err, message);
+    RETURN_IF_EXCEPTION(scope, void());
     throwException(globalObject, scope, errorObject);
 }
 

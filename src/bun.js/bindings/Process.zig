@@ -1,15 +1,5 @@
-const bun = @import("root").bun;
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-const Shimmer = @import("./shimmer.zig").Shimmer;
-
 /// Process information and control APIs
-pub const Process = extern struct {
-    pub const shim = Shimmer("Bun", "Process", @This());
-    pub const name = "Process";
-    pub const namespace = shim.namespace;
+pub const Process = opaque {
     var title_mutex = bun.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
@@ -36,45 +26,21 @@ pub const Process = extern struct {
     pub const getExecPath = JSC.Node.Process.getExecPath;
     pub const getExecArgv = JSC.Node.Process.getExecArgv;
 
-    pub const Export = shim.exportFunctions(.{
-        .getTitle = getTitle,
-        .setTitle = setTitle,
-        .getArgv = getArgv,
-        .getCwd = getCwd,
-        .setCwd = setCwd,
-        .exit = exit,
-        .getArgv0 = getArgv0,
-        .getExecPath = getExecPath,
-        .getExecArgv = getExecArgv,
-    });
-
     comptime {
-        @export(&getTitle, .{
-            .name = Export[0].symbol_name,
-        });
-        @export(&setTitle, .{
-            .name = Export[1].symbol_name,
-        });
-        @export(&getArgv, .{
-            .name = Export[2].symbol_name,
-        });
-        @export(&getCwd, .{
-            .name = Export[3].symbol_name,
-        });
-        @export(&setCwd, .{
-            .name = Export[4].symbol_name,
-        });
-        @export(&exit, .{
-            .name = Export[5].symbol_name,
-        });
-        @export(&getArgv0, .{
-            .name = Export[6].symbol_name,
-        });
-        @export(&getExecPath, .{
-            .name = Export[7].symbol_name,
-        });
-        @export(&getExecArgv, .{
-            .name = Export[8].symbol_name,
-        });
+        @export(&getTitle, .{ .name = "Bun__Process__getTitle" });
+        @export(&setTitle, .{ .name = "Bun__Process__setTitle" });
+        @export(&getArgv, .{ .name = "Bun__Process__getArgv" });
+        @export(&getCwd, .{ .name = "Bun__Process__getCwd" });
+        @export(&setCwd, .{ .name = "Bun__Process__setCwd" });
+        @export(&exit, .{ .name = "Bun__Process__exit" });
+        @export(&getArgv0, .{ .name = "Bun__Process__getArgv0" });
+        @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
+        @export(&getExecArgv, .{ .name = "Bun__Process__getExecArgv" });
     }
 };
+
+const bun = @import("root").bun;
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

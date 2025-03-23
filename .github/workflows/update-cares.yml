@@ -89,4 +89,6 @@ jobs:
 
             Updates c-ares to version ${{ steps.check-version.outputs.tag }}
 
+            Compare: https://github.com/c-ares/c-ares/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-cares.yml)

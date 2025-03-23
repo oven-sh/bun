@@ -229,7 +229,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperclover)
     compile: true,
     files: {
       "/entry.ts": `

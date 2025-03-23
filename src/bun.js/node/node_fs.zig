@@ -1734,7 +1734,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -1777,7 +1777,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "throwIfNoEntry")) |throw_if_no_entry_val| {
@@ -1813,7 +1813,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -2485,7 +2485,7 @@ pub const Arguments = struct {
             };
 
             const buffer_value = arguments.next();
-            const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
+            const buffer = try StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);

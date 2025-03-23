@@ -2,6 +2,7 @@ const bun = @import("root").bun;
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
+const JSError = bun.JSError;
 
 pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.c.AI_V4MAPPED;
 pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.c.AI_ADDRCONFIG;
@@ -71,7 +72,15 @@ pub const GetAddrInfo = struct {
             return hints;
         }
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Options {
+        const FromJSError = Family.FromJSError ||
+            SocketType.FromJSError ||
+            Protocol.FromJSError ||
+            Backend.FromJSError || error{
+            InvalidFlags,
+            InvalidOptions,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Options {
             if (value.isEmptyOrUndefinedOrNull())
                 return Options{};
 
@@ -125,7 +134,11 @@ pub const GetAddrInfo = struct {
             .{ "any", Family.unspecified },
         });
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Family {
+        const FromJSError = JSError || error{
+            InvalidFamily,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Family {
             if (value.isEmptyOrUndefinedOrNull())
                 return .unspecified;
 
@@ -139,7 +152,7 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                return map.fromJS(globalObject, value) orelse {
+                return try map.fromJS(globalObject, value) orelse {
                     if (value.toString(globalObject).length() == 0) {
                         return .unspecified;
                     }
@@ -181,7 +194,11 @@ pub const GetAddrInfo = struct {
             }
         }
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !SocketType {
+        const FromJSError = JSError || error{
+            InvalidSocketType,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!SocketType {
             if (value.isEmptyOrUndefinedOrNull())
                 // Default to .stream
                 return .stream;
@@ -196,7 +213,7 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                return map.fromJS(globalObject, value) orelse {
+                return try map.fromJS(globalObject, value) orelse {
                     if (value.toString(globalObject).length() == 0)
                         return .unspecified;
 
@@ -218,7 +235,11 @@ pub const GetAddrInfo = struct {
             .{ "udp", Protocol.udp },
         });
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Protocol {
+        const FromJSError = JSError || error{
+            InvalidProtocol,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Protocol {
             if (value.isEmptyOrUndefinedOrNull())
                 return .unspecified;
 
@@ -232,7 +253,7 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                return map.fromJS(globalObject, value) orelse {
+                return try map.fromJS(globalObject, value) orelse {
                     const str = value.toString(globalObject);
                     if (str.length() == 0)
                         return .unspecified;
@@ -273,12 +294,16 @@ pub const GetAddrInfo = struct {
             else => .c_ares,
         };
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Backend {
+        pub const FromJSError = JSError || error{
+            InvalidBackend,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Backend {
             if (value.isEmptyOrUndefinedOrNull())
                 return default;
 
             if (value.isString()) {
-                return label.fromJS(globalObject, value) orelse {
+                return try label.fromJS(globalObject, value) orelse {
                     if (value.toString(globalObject).length() == 0) {
                         return default;
                     }

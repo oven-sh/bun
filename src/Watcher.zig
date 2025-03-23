@@ -251,7 +251,7 @@ pub fn flushEvictions(this: *Watcher) void {
     // swapRemove messes up the order
     // But, it only messes up the order if any elements in the list appear after the item being removed
     // So if we just sort the list by the biggest index first, that should be fine
-    std.sort.pdq(
+    std.sort.insertion(
         WatchItemIndex,
         this.evict_list[0..this.evict_list_i],
         {},
@@ -268,7 +268,7 @@ pub fn flushEvictions(this: *Watcher) void {
 
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor
-            // TODO do we need to call inotify_rm_watch on linux?
+            // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
             if (fds[item].isValid()) {
                 _ = bun.sys.close(fds[item]);
             }
@@ -279,7 +279,7 @@ pub fn flushEvictions(this: *Watcher) void {
     last_item = no_watch_item;
     // This is split into two passes because reading the slice while modified is potentially unsafe.
     for (this.evict_list[0..this.evict_list_i]) |item| {
-        if (item == last_item) continue;
+        if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
         last_item = item;
     }

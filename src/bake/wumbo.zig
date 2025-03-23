@@ -109,12 +109,10 @@ fn onHttp200(resp: AnyResponse, str: []const u8) void {
 }
 
 fn addRoutes(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSOOM!JSC.JSValue {
-    const dev_encoded, const routes = call_frame.argumentsAsArray(2);
+    const dev_encoded, const routes_value = call_frame.argumentsAsArray(2);
     const dev = dev_encoded.asPtr(DevServer);
     bun.assert(dev.server.?.devServer() == dev); // sanity
-    if (!routes.isObject()) {
-        return global.throwInvalidArguments("Routes must be an object of functions", .{});
-    }
+    const routes = routes_value.getObject() orelse return global.throwInvalidArguments("Routes must be an object of functions", .{});
     const any_server = dev.server.?;
     const Ptr = JSC.API.AnyServer.Ptr;
     switch (any_server.ptr.tag()) {
@@ -166,7 +164,7 @@ fn addRoutes(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSOOM!
                     return global.throwInvalidArguments("Invalid route {}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
                 }
 
-                if (!value.isCallable(global.vm())) {
+                if (!value.isCallable()) {
                     return global.throwInvalidArguments("Invalid route {}. Must be a function.", .{bun.fmt.quote(path)});
                 }
 

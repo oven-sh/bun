@@ -611,7 +611,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
     arguments.append(JSC::jsBoolean(hasHmr));
-    
+
     return JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments));
 }
 
@@ -621,8 +621,8 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolveEditPlugin(
     JSC::EncodedJSValue devServer,
     const BunString* path,
     JSC::EncodedJSValue fn1,
-    JSC::EncodedJSValue fn2
-) {
+    JSC::EncodedJSValue fn2)
+{
     auto& vm = global->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 

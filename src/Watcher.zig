@@ -3,8 +3,8 @@ const Watcher = @This();
 const DebugLogScope = bun.Output.Scoped(.watcher, false);
 const log = DebugLogScope.log;
 
-// Consumer-facing
-watch_events: [max_count]WatchEvent,
+// This will always be [max_count]WatchEvent,
+watch_events: []WatchEvent = &.{},
 changed_filepaths: [max_count]?[:0]u8,
 
 /// The platform-specific implementation of the watcher
@@ -86,7 +86,7 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
         .onFileUpdate = &wrapped.onFileUpdateWrapped,
         .onError = &wrapped.onErrorWrapped,
         .platform = .{},
-        .watch_events = undefined,
+        .watch_events = try allocator.alloc(WatchEvent, max_count),
         .changed_filepaths = [_]?[:0]u8{null} ** max_count,
     };
 

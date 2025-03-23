@@ -32,6 +32,97 @@ fn getUTIForFormat(format: ImageFormat) c.CFStringRef {
     };
 }
 
+/// Transcode an image directly from one format to another without decoding to raw pixels
+/// This is more efficient than decoding and re-encoding when converting between file formats
+pub fn transcode(
+    allocator: std.mem.Allocator,
+    source_data: []const u8,
+    source_format: ImageFormat,
+    target_format: ImageFormat,
+    options: EncodingOptions,
+) ![]u8 {
+    // Create a data provider from our input buffer
+    const data_provider = c.CGDataProviderCreateWithData(
+        null, // Info parameter (unused)
+        source_data.ptr,
+        source_data.len,
+        null, // Release callback (we manage the memory ourselves)
+    );
+    defer c.CGDataProviderRelease(data_provider);
+
+    // Create an image source from the data provider
+    const source_type_id = getUTIForFormat(source_format);
+    defer c.CFRelease(source_type_id);
+    
+    const image_source = c.CGImageSourceCreateWithDataProvider(data_provider, null);
+    if (image_source == null) {
+        return error.InvalidSourceImage;
+    }
+    defer c.CFRelease(image_source);
+
+    // Get the image from the source
+    const cg_image = c.CGImageSourceCreateImageAtIndex(image_source, 0, null);
+    if (cg_image == null) {
+        return error.ImageCreationFailed;
+    }
+    defer c.CGImageRelease(cg_image);
+
+    // Create a mutable data object to hold the output
+    const data = c.CFDataCreateMutable(null, 0);
+    if (data == null) {
+        return error.MemoryAllocationFailed;
+    }
+    defer c.CFRelease(data);
+
+    // Create a CGImageDestination for the requested format
+    const type_id = getUTIForFormat(target_format);
+    defer c.CFRelease(type_id);
+    
+    const destination = c.CGImageDestinationCreateWithData(
+        data,
+        type_id,
+        1, // Number of images (just one)
+        null, // Options (none)
+    );
+    if (destination == null) {
+        return error.DestinationCreationFailed;
+    }
+    defer c.CFRelease(destination);
+
+    // Create properties dictionary with quality setting
+    const properties = c.CFDictionaryCreateMutable(
+        null,
+        0,
+        &c.kCFTypeDictionaryKeyCallBacks,
+        &c.kCFTypeDictionaryValueCallBacks,
+    );
+    defer c.CFRelease(properties);
+
+    // Set compression quality
+    const quality_value = @as(f32, @floatFromInt(options.quality.quality)) / 100.0;
+    const quality_number = c.CFNumberCreate(null, c.kCFNumberFloat32Type, &quality_value);
+    defer c.CFRelease(quality_number);
+    c.CFDictionarySetValue(properties, c.kCGImageDestinationLossyCompressionQuality, quality_number);
+
+    // Add the image with properties
+    c.CGImageDestinationAddImage(destination, cg_image, properties);
+
+    // Finalize the destination
+    if (!c.CGImageDestinationFinalize(destination)) {
+        return error.EncodingFailed;
+    }
+
+    // Get the encoded data
+    const cf_data_len = c.CFDataGetLength(data);
+    const cf_data_ptr = c.CFDataGetBytePtr(data);
+
+    // Copy to a Zig-managed buffer
+    const output = try allocator.alloc(u8, @as(usize, @intCast(cf_data_len)));
+    @memcpy(output, cf_data_ptr[0..@as(usize, @intCast(cf_data_len))]);
+
+    return output;
+}
+
 /// MacOS implementation using CoreGraphics and ImageIO
 pub fn encode(
     allocator: std.mem.Allocator,

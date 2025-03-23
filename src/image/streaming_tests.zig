@@ -395,3 +395,112 @@ test "Encoder with different formats" {
         try testing.expectEqual(@as(u8, 0x47), png_data_opt[3]); // G
     }
 }
+
+// Test the new transcode functionality
+test "Image transcoding" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    
+    const width: usize = 100;
+    const height: usize = 100;
+    const format = PixelFormat.RGBA;
+    
+    // Create a test image
+    const image_data = try createTestImage(allocator, width, height, format);
+    defer allocator.free(image_data);
+    
+    // First encode to PNG
+    const png_options = EncodingOptions{
+        .format = .PNG,
+    };
+    
+    const png_data = encoder.encode(
+        allocator,
+        image_data,
+        width,
+        height,
+        format,
+        png_options,
+    ) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("PNG encoder not implemented on this platform, skipping transcode test\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(png_data);
+    
+    // Verify PNG signature
+    try testing.expect(png_data.len > 0);
+    try testing.expectEqual(@as(u8, 0x89), png_data[0]);
+    try testing.expectEqual(@as(u8, 0x50), png_data[1]); // P
+    try testing.expectEqual(@as(u8, 0x4E), png_data[2]); // N
+    try testing.expectEqual(@as(u8, 0x47), png_data[3]); // G
+    
+    // Now transcode PNG to JPEG
+    const jpeg_options = EncodingOptions{
+        .format = .JPEG,
+        .quality = EncodingQuality.high(),
+    };
+    
+    const transcoded_jpeg = encoder.transcode(
+        allocator,
+        png_data,
+        .PNG,
+        .JPEG,
+        jpeg_options,
+    ) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("Transcode not implemented on this platform, skipping\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(transcoded_jpeg);
+    
+    // Verify JPEG signature
+    try testing.expect(transcoded_jpeg.len > 0);
+    try testing.expect(transcoded_jpeg[0] == 0xFF);
+    try testing.expect(transcoded_jpeg[1] == 0xD8);
+    try testing.expect(transcoded_jpeg[2] == 0xFF);
+    
+    // Try the shorthand API too (PNG to JPEG)
+    const shorthand_jpeg = encoder.transcodeToJPEG(
+        allocator,
+        png_data,
+        90, // Quality
+    ) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("TranscodeToJPEG not implemented on this platform, skipping\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(shorthand_jpeg);
+    
+    // Verify JPEG signature
+    try testing.expect(shorthand_jpeg.len > 0);
+    try testing.expect(shorthand_jpeg[0] == 0xFF);
+    try testing.expect(shorthand_jpeg[1] == 0xD8);
+    
+    // Now try transcoding JPEG back to PNG
+    const transcoded_png = encoder.transcodeToPNG(
+        allocator,
+        transcoded_jpeg,
+    ) catch |err| {
+        if (err == error.NotImplemented) {
+            std.debug.print("TranscodeToPNG not implemented on this platform, skipping\n", .{});
+            return;
+        }
+        return err;
+    };
+    defer allocator.free(transcoded_png);
+    
+    // Verify PNG signature
+    try testing.expect(transcoded_png.len > 0);
+    try testing.expectEqual(@as(u8, 0x89), transcoded_png[0]);
+    try testing.expectEqual(@as(u8, 0x50), transcoded_png[1]); // P
+    try testing.expectEqual(@as(u8, 0x4E), transcoded_png[2]); // N
+    try testing.expectEqual(@as(u8, 0x47), transcoded_png[3]); // G
+}

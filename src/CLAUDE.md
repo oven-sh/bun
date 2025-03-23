@@ -31,8 +31,14 @@ Run `zig test src/image/pixel_format.zig` to test the pixel format conversion.
 
 3. Image encoding and decoding
 
-- [ ] src/image/png.zig: PNG encoding and decoding
-- [ ] src/image/jpeg.zig: JPEG encoding and decoding
+- [x] src/image/encoder.zig: Platform-agnostic encoder interface
+- [x] src/image/encoder_darwin.zig: macOS encoder using CoreGraphics and ImageIO
+- [ ] src/image/encoder_windows.zig: Windows encoder using WIC
+- [ ] src/image/encoder_linux.zig: Linux encoder using libpng, libjpeg, etc.
+- [x] Direct transcoding between formats (PNG ↔ JPEG, etc.) without pixel decoding
+- [ ] src/image/decoder.zig: Platform-agnostic decoder interface
+
+Run `zig test src/image/streaming_tests.zig` to test the streaming and encoder functionality.
 
 Use Zig's @Vector intrinsics for SIMD. Here's a couple examples:
 

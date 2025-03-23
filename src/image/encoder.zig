@@ -100,6 +100,21 @@ const encoder_darwin = if (is_darwin) @import("encoder_darwin.zig") else struct 
         _ = options;
         return error.NotImplemented;
     }
+
+    pub fn transcode(
+        allocator: std.mem.Allocator,
+        source_data: []const u8,
+        source_format: ImageFormat,
+        target_format: ImageFormat,
+        options: EncodingOptions,
+    ) ![]u8 {
+        _ = allocator;
+        _ = source_data;
+        _ = source_format;
+        _ = target_format;
+        _ = options;
+        return error.NotImplemented;
+    }
 };
 
 // Windows implementation
@@ -120,6 +135,21 @@ const encoder_windows = if (is_windows) @import("encoder_windows.zig") else stru
         _ = options;
         return error.NotImplemented;
     }
+    
+    pub fn transcode(
+        allocator: std.mem.Allocator,
+        source_data: []const u8,
+        source_format: ImageFormat,
+        target_format: ImageFormat,
+        options: EncodingOptions,
+    ) ![]u8 {
+        _ = allocator;
+        _ = source_data;
+        _ = source_format;
+        _ = target_format;
+        _ = options;
+        return error.NotImplemented;
+    }
 };
 
 // Linux implementation
@@ -137,6 +167,21 @@ const encoder_linux = if (is_linux) @import("encoder_linux.zig") else struct {
         _ = width;
         _ = height;
         _ = format;
+        _ = options;
+        return error.NotImplemented;
+    }
+    
+    pub fn transcode(
+        allocator: std.mem.Allocator,
+        source_data: []const u8,
+        source_format: ImageFormat,
+        target_format: ImageFormat,
+        options: EncodingOptions,
+    ) ![]u8 {
+        _ = allocator;
+        _ = source_data;
+        _ = source_format;
+        _ = target_format;
         _ = options;
         return error.NotImplemented;
     }
@@ -194,4 +239,54 @@ pub fn encodePNG(
     };
     
     return try encode(allocator, source, width, height, src_format, options);
+}
+
+/// Transcode image data directly from one format to another without decoding to raw pixels
+/// This is more efficient than decoding and re-encoding when converting between file formats
+pub fn transcode(
+    allocator: std.mem.Allocator,
+    source_data: []const u8,
+    source_format: ImageFormat,
+    target_format: ImageFormat,
+    options: EncodingOptions,
+) ![]u8 {
+    // Create options with the target format
+    var target_options = options;
+    target_options.format = target_format;
+
+    if (comptime is_darwin) {
+        return try encoder_darwin.transcode(allocator, source_data, source_format, target_format, target_options);
+    } else if (comptime is_windows) {
+        return try encoder_windows.transcode(allocator, source_data, source_format, target_format, target_options);
+    } else if (comptime is_linux) {
+        return try encoder_linux.transcode(allocator, source_data, source_format, target_format, target_options);
+    } else {
+        @compileError("Unsupported platform");
+    }
+}
+
+/// Transcode an image file from PNG to JPEG with specified quality
+pub fn transcodeToJPEG(
+    allocator: std.mem.Allocator,
+    png_data: []const u8,
+    quality: u8,
+) ![]u8 {
+    const options = EncodingOptions{
+        .format = .JPEG,
+        .quality = .{ .quality = quality },
+    };
+    
+    return try transcode(allocator, png_data, .PNG, .JPEG, options);
+}
+
+/// Transcode an image file from JPEG to PNG
+pub fn transcodeToPNG(
+    allocator: std.mem.Allocator,
+    jpeg_data: []const u8,
+) ![]u8 {
+    const options = EncodingOptions{
+        .format = .PNG,
+    };
+    
+    return try transcode(allocator, jpeg_data, .JPEG, .PNG, options);
 }

@@ -1,5 +1,3 @@
-const conv = std.builtin.CallingConvention.Unspecified;
-const S3File = @import("../webcore/S3File.zig");
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -7,7 +5,7 @@ const S3File = @import("../webcore/S3File.zig");
 /// - Update "@begin bunObjectTable" in BunObject.cpp
 ///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
 /// - Update "BunObject+exports.h"
-/// - Run "make dev"
+/// - Run `bun run build`
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
@@ -169,88 +167,6 @@ pub const BunObject = struct {
         // -- Callbacks --
     }
 };
-
-const Bun = @This();
-const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
-const uv = bun.windows.libuv;
-const Environment = bun.Environment;
-
-const Global = bun.Global;
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const MutableString = bun.MutableString;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const Fs = @import("../../fs.zig");
-const Resolver = @import("../../resolver/resolver.zig");
-const ast = @import("../../import_record.zig");
-
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
-const logger = bun.logger;
-const Api = @import("../../api/schema.zig").Api;
-const options = @import("../../options.zig");
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
-const js_printer = bun.js_printer;
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../../node_fallbacks.zig");
-const ImportKind = ast.ImportKind;
-const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../../runtime.zig");
-const Router = @import("./filesystem_router.zig");
-const ImportRecord = ast.ImportRecord;
-const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.transpiler.ParseResult;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
-const Fetch = WebCore.Fetch;
-const js = bun.JSC.C;
-const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
-
-const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
-const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = bun.JSC.JSValue;
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = bun.JSC.ConsoleObject;
-const Node = bun.JSC.Node;
-const ZigException = bun.JSC.ZigException;
-const ZigStackTrace = bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = bun.JSC.ResolvedSource;
-const JSPromise = bun.JSC.JSPromise;
-const JSInternalPromise = bun.JSC.JSInternalPromise;
-const JSModuleLoader = bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = bun.JSC.ErrorableZigString;
-const VM = bun.JSC.VM;
-const JSFunction = bun.JSC.JSFunction;
-const Config = @import("../config.zig");
-const URL = @import("../../url.zig").URL;
-const Transpiler = bun.JSC.API.JSTranspiler;
-const JSBundler = bun.JSC.API.JSBundler;
-const VirtualMachine = JSC.VirtualMachine;
-const IOTask = JSC.IOTask;
-const zlib = @import("../../zlib.zig");
-const Which = @import("../../which.zig");
-const ErrorableString = JSC.ErrorableString;
-
-const glob = @import("../../glob.zig");
-const Async = bun.Async;
-const SemverObject = bun.Semver.SemverObject;
-const Braces = @import("../../shell/braces.zig");
-const Shell = @import("../../shell/shell.zig");
 
 pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);
@@ -994,16 +910,6 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }
 
-extern fn dump_zone_malloc_stats() void;
-
-fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    globalObject.bunVM().arena.dumpStats();
-    if (bun.heap_breakdown.enabled) {
-        dump_zone_malloc_stats();
-    }
-    return .undefined;
-}
-
 pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
@@ -1313,143 +1219,6 @@ pub fn getHashObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
     return HashObject.create(globalThis);
 }
 
-const HashObject = struct {
-    pub const wyhash = hashWrap(std.hash.Wyhash);
-    pub const adler32 = hashWrap(std.hash.Adler32);
-    pub const crc32 = hashWrap(std.hash.Crc32);
-    pub const cityHash32 = hashWrap(std.hash.CityHash32);
-    pub const cityHash64 = hashWrap(std.hash.CityHash64);
-    pub const xxHash32 = hashWrap(struct {
-        pub fn hash(seed: u32, bytes: []const u8) u32 {
-            // sidestep .hash taking in anytype breaking ArgTuple
-            // downstream by forcing a type signature on the input
-            return std.hash.XxHash32.hash(seed, bytes);
-        }
-    });
-    pub const xxHash64 = hashWrap(struct {
-        pub fn hash(seed: u32, bytes: []const u8) u64 {
-            // sidestep .hash taking in anytype breaking ArgTuple
-            // downstream by forcing a type signature on the input
-            return std.hash.XxHash64.hash(seed, bytes);
-        }
-    });
-    pub const xxHash3 = hashWrap(struct {
-        pub fn hash(seed: u32, bytes: []const u8) u64 {
-            // sidestep .hash taking in anytype breaking ArgTuple
-            // downstream by forcing a type signature on the input
-            return std.hash.XxHash3.hash(seed, bytes);
-        }
-    });
-    pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
-    pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
-    pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
-
-    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const function = JSC.createCallback(globalThis, ZigString.static("hash"), 1, wyhash);
-        const fns = comptime .{
-            "wyhash",
-            "adler32",
-            "crc32",
-            "cityHash32",
-            "cityHash64",
-            "xxHash32",
-            "xxHash64",
-            "xxHash3",
-            "murmur32v2",
-            "murmur32v3",
-            "murmur64v2",
-        };
-        inline for (fns) |name| {
-            const value = JSC.createCallback(
-                globalThis,
-                ZigString.static(name),
-                1,
-                @field(HashObject, name),
-            );
-            function.put(globalThis, comptime ZigString.static(name), value);
-        }
-
-        return function;
-    }
-
-    fn hashWrap(comptime Hasher_: anytype) JSC.JSHostZigFunction {
-        return struct {
-            const Hasher = Hasher_;
-            pub fn hash(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-                const arguments = callframe.arguments_old(2).slice();
-                var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-                defer args.deinit();
-
-                var input: []const u8 = "";
-                var input_slice = ZigString.Slice.empty;
-                defer input_slice.deinit();
-                if (args.nextEat()) |arg| {
-                    if (arg.as(JSC.WebCore.Blob)) |blob| {
-                        // TODO: files
-                        input = blob.sharedView();
-                    } else {
-                        switch (arg.jsTypeLoose()) {
-                            .ArrayBuffer,
-                            .Int8Array,
-                            .Uint8Array,
-                            .Uint8ClampedArray,
-                            .Int16Array,
-                            .Uint16Array,
-                            .Int32Array,
-                            .Uint32Array,
-                            .Float16Array,
-                            .Float32Array,
-                            .Float64Array,
-                            .BigInt64Array,
-                            .BigUint64Array,
-                            .DataView,
-                            => {
-                                var array_buffer = arg.asArrayBuffer(globalThis) orelse {
-                                    return globalThis.throwInvalidArguments("ArrayBuffer conversion error", .{});
-                                };
-                                input = array_buffer.byteSlice();
-                            },
-                            else => {
-                                input_slice = try arg.toSlice(globalThis, bun.default_allocator);
-                                input = input_slice.slice();
-                            },
-                        }
-                    }
-                }
-
-                // std.hash has inconsistent interfaces
-                //
-                const Function = if (@hasDecl(Hasher, "hashWithSeed")) Hasher.hashWithSeed else Hasher.hash;
-                var function_args: std.meta.ArgsTuple(@TypeOf(Function)) = undefined;
-                if (comptime std.meta.fields(std.meta.ArgsTuple(@TypeOf(Function))).len == 1) {
-                    return JSC.JSValue.jsNumber(Function(input));
-                } else {
-                    var seed: u64 = 0;
-                    if (args.nextEat()) |arg| {
-                        if (arg.isNumber() or arg.isBigInt()) {
-                            seed = arg.toUInt64NoTruncate();
-                        }
-                    }
-                    if (comptime bun.trait.isNumber(@TypeOf(function_args[0]))) {
-                        function_args[0] = @as(@TypeOf(function_args[0]), @truncate(seed));
-                        function_args[1] = input;
-                    } else {
-                        function_args[0] = input;
-                        function_args[1] = @as(@TypeOf(function_args[1]), @truncate(seed));
-                    }
-
-                    const value = @call(.auto, Function, function_args);
-
-                    if (@TypeOf(value) == u32) {
-                        return JSC.JSValue.jsNumber(@as(u32, @bitCast(value)));
-                    }
-                    return JSC.JSValue.fromUInt64NoTruncate(globalThis, value);
-                }
-            }
-        }.hash;
-    }
-};
-
 pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return TOMLObject.create(globalThis);
 }
@@ -1504,130 +1273,9 @@ pub fn getUnsafe(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue 
     return UnsafeObject.create(globalThis);
 }
 
-const UnsafeObject = struct {
-    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const object = JSValue.createEmptyObject(globalThis, 3);
-        const fields = comptime .{
-            .gcAggressionLevel = gcAggressionLevel,
-            .arrayBufferToString = arrayBufferToString,
-            .mimallocDump = dump_mimalloc,
-        };
-        inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
-            object.put(
-                globalThis,
-                comptime ZigString.static(name),
-                JSC.createCallback(globalThis, comptime ZigString.static(name), 1, comptime @field(fields, name)),
-            );
-        }
-        return object;
-    }
-
-    pub fn gcAggressionLevel(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
-        const value = callframe.arguments_old(1).ptr[0];
-
-        if (!value.isEmptyOrUndefinedOrNull()) {
-            switch (value.coerce(i32, globalThis)) {
-                1 => globalThis.bunVM().aggressive_garbage_collection = .mild,
-                2 => globalThis.bunVM().aggressive_garbage_collection = .aggressive,
-                0 => globalThis.bunVM().aggressive_garbage_collection = .none,
-                else => {},
-            }
-        }
-        return ret;
-    }
-
-    pub fn arrayBufferToString(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments_old(2).slice();
-        if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArrayOrArrayBuffer()) {
-            return globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
-        }
-
-        const array_buffer = JSC.ArrayBuffer.fromTypedArray(globalThis, args[0]);
-        switch (array_buffer.typed_array_type) {
-            .Uint16Array, .Int16Array => {
-                var zig_str = ZigString.init("");
-                zig_str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(@alignCast(array_buffer.ptr)));
-                zig_str.len = array_buffer.len;
-                zig_str.markUTF16();
-                return zig_str.toJS(globalThis);
-            },
-            else => {
-                return ZigString.init(array_buffer.slice()).toJS(globalThis);
-            },
-        }
-    }
-};
-
-const TOMLObject = struct {
-    const TOMLParser = @import("../../toml/toml_parser.zig").TOML;
-
-    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const object = JSValue.createEmptyObject(globalThis, 1);
-        object.put(
-            globalThis,
-            ZigString.static("parse"),
-            JSC.createCallback(
-                globalThis,
-                ZigString.static("parse"),
-                1,
-                parse,
-            ),
-        );
-
-        return object;
-    }
-
-    pub fn parse(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        var arena = bun.ArenaAllocator.init(globalThis.allocator());
-        const allocator = arena.allocator();
-        defer arena.deinit();
-        var log = logger.Log.init(default_allocator);
-        const arguments = callframe.arguments_old(1).slice();
-        if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
-            return globalThis.throwInvalidArguments("Expected a string to parse", .{});
-        }
-
-        var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
-        defer input_slice.deinit();
-        var source = logger.Source.initPathString("input.toml", input_slice.slice());
-        const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
-        };
-
-        // for now...
-        const buffer_writer = js_printer.BufferWriter.init(allocator) catch {
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
-        };
-        var writer = js_printer.BufferPrinter.init(buffer_writer);
-        _ = js_printer.printJSON(
-            *js_printer.BufferPrinter,
-            &writer,
-            parse_result,
-            &source,
-            .{
-                .mangled_props = null,
-            },
-        ) catch {
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
-        };
-
-        const slice = writer.ctx.buffer.slice();
-        var out = bun.String.fromUTF8(slice);
-        defer out.deref();
-
-        return out.toJSByParseJSON(globalThis);
-    }
-};
+pub const HashObject = @import("./HashObject.zig");
+pub const UnsafeObject = @import("./UnsafeObject.zig");
+pub const TOMLObject = @import("./TOMLObject.zig");
 
 const Debugger = JSC.Debugger;
 
@@ -2050,3 +1698,84 @@ comptime {
 }
 
 const assert = bun.assert;
+
+const conv = std.builtin.CallingConvention.Unspecified;
+const S3File = @import("../webcore/S3File.zig");
+const Bun = @This();
+const default_allocator = bun.default_allocator;
+const bun = @import("root").bun;
+const uv = bun.windows.libuv;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const strings = bun.strings;
+const string = bun.string;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+const Fs = @import("../../fs.zig");
+const Resolver = @import("../../resolver/resolver.zig");
+const ast = @import("../../import_record.zig");
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const logger = bun.logger;
+const Api = @import("../../api/schema.zig").Api;
+const options = @import("../../options.zig");
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
+const NodeFallbackModules = @import("../../node_fallbacks.zig");
+const ImportKind = ast.ImportKind;
+const Analytics = @import("../../analytics/analytics_thread.zig");
+const ZigString = bun.JSC.ZigString;
+const Runtime = @import("../../runtime.zig");
+const Router = @import("./filesystem_router.zig");
+const ImportRecord = ast.ImportRecord;
+const DotEnv = @import("../../env_loader.zig");
+const ParseResult = bun.transpiler.ParseResult;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
+const WebCore = bun.JSC.WebCore;
+const Request = WebCore.Request;
+const Response = WebCore.Response;
+const Headers = WebCore.Headers;
+const Fetch = WebCore.Fetch;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
+const JSError = @import("../base.zig").JSError;
+
+const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
+const getAllocator = @import("../base.zig").getAllocator;
+const JSValue = bun.JSC.JSValue;
+
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
+const Config = @import("../config.zig");
+const URL = @import("../../url.zig").URL;
+const Transpiler = bun.JSC.API.JSTranspiler;
+const JSBundler = bun.JSC.API.JSBundler;
+const VirtualMachine = JSC.VirtualMachine;
+const IOTask = JSC.IOTask;
+const zlib = @import("../../zlib.zig");
+const Which = @import("../../which.zig");
+const ErrorableString = JSC.ErrorableString;
+const glob = @import("../../glob.zig");
+const Async = bun.Async;
+const SemverObject = bun.Semver.SemverObject;
+const Braces = @import("../../shell/braces.zig");
+const Shell = @import("../../shell/shell.zig");

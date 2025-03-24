@@ -622,6 +622,7 @@ const fields = .{
     .closeCallback = JSC.wrapStaticMethod(JSC.FFI, "closeCallback", false),
     .CString = JSC.wrapStaticMethod(Bun.FFIObject, "newCString", false),
 };
+const max_addressable_memory = std.math.maxInt(u56);
 
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
@@ -630,7 +631,7 @@ const JSC = bun.JSC;
 const bun = @import("root").bun;
 const FFIObject = @This();
 const Bun = JSC.API.Bun;
-const max_addressable_memory = bun.max_addressable_memory;
+
 const Environment = bun.Environment;
 const std = @import("std");
 const assert = bun.assert;

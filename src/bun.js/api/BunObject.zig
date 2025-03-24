@@ -245,7 +245,7 @@ const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
-const max_addressable_memory = std.math.maxInt(u56);
+
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = bun.Semver.SemverObject;

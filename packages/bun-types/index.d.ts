@@ -7,7 +7,6 @@
 /// <reference path="./globals.d.ts" />
 /// <reference path="./s3.d.ts" />
 /// <reference path="./fetch.d.ts" />
-/// <reference path="./sink.d.ts" />
 /// <reference path="./bun.d.ts" />
 /// <reference path="./extensions.d.ts" />
 /// <reference path="./devserver.d.ts" />

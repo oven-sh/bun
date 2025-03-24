@@ -7615,11 +7615,11 @@ declare module "bun" {
     toJSON(): [[name: string, value: string | ReturnType<Cookie["toJSON"]>]];
     readonly size: number;
 
-    entries(): IterableIterator<[string, Cookie]>;
+    entries(): IterableIterator<[string, string]>;
     keys(): IterableIterator<string>;
     values(): IterableIterator<Cookie>;
     forEach(callback: (value: Cookie, key: string, map: CookieMap) => void, thisArg?: any): void;
 
-    [Symbol.iterator](): IterableIterator<[string, Cookie]>;
+    [Symbol.iterator](): IterableIterator<[string, string]>;
   }
 }

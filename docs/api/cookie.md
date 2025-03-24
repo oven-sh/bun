@@ -19,7 +19,7 @@ const secureSessionCookie = new Bun.Cookie("session", "abc123", {
   expires: new Date(Date.now() + 86400000), // 1 day
   httpOnly: true,
   secure: true,
-  sameSite: "strict"
+  sameSite: "strict",
 });
 
 // Parse from a cookie string
@@ -30,7 +30,7 @@ const objCookie = new Bun.Cookie({
   name: "theme",
   value: "dark",
   maxAge: 3600,
-  secure: true
+  secure: true,
 });
 ```
 
@@ -53,16 +53,16 @@ new Bun.Cookie(options: CookieInit);
 ### Properties
 
 ```ts
-cookie.name        // string - Cookie name
-cookie.value       // string - Cookie value
-cookie.domain      // string | null - Domain scope (null if not specified)
-cookie.path        // string - URL path scope (defaults to "/")
-cookie.expires     // number | undefined - Expiration timestamp (ms since epoch)
-cookie.secure      // boolean - Require HTTPS
-cookie.sameSite    // "strict" | "lax" | "none" - SameSite setting
-cookie.partitioned // boolean - Whether the cookie is partitioned (CHIPS)
-cookie.maxAge      // number | undefined - Max age in seconds
-cookie.httpOnly    // boolean - Accessible only via HTTP (not JavaScript)
+cookie.name; // string - Cookie name
+cookie.value; // string - Cookie value
+cookie.domain; // string | null - Domain scope (null if not specified)
+cookie.path; // string - URL path scope (defaults to "/")
+cookie.expires; // number | undefined - Expiration timestamp (ms since epoch)
+cookie.secure; // boolean - Require HTTPS
+cookie.sameSite; // "strict" | "lax" | "none" - SameSite setting
+cookie.partitioned; // boolean - Whether the cookie is partitioned (CHIPS)
+cookie.maxAge; // number | undefined - Max age in seconds
+cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
 ```
 
 ### Methods
@@ -100,7 +100,7 @@ const cookie = new Bun.Cookie("session", "abc123", {
   expires: new Date(Date.now() + 86400000),
   secure: true,
   httpOnly: true,
-  sameSite: "strict"
+  sameSite: "strict",
 });
 
 console.log(cookie.toString());
@@ -118,14 +118,14 @@ const cookie = new Bun.Cookie("session", "abc123", {
 });
 
 const json = cookie.toJSON();
-// => { 
-//   name: "session", 
-//   value: "abc123", 
-//   path: "/", 
-//   secure: true, 
-//   httpOnly: true, 
-//   sameSite: "lax", 
-//   partitioned: false 
+// => {
+//   name: "session",
+//   value: "abc123",
+//   path: "/",
+//   secure: true,
+//   httpOnly: true,
+//   sameSite: "lax",
+//   partitioned: false
 // }
 
 // Works with JSON.stringify
@@ -156,7 +156,7 @@ Factory method to create a cookie.
 const cookie = Bun.Cookie.from("session", "abc123", {
   httpOnly: true,
   secure: true,
-  maxAge: 3600
+  maxAge: 3600,
 });
 ```
 
@@ -188,13 +188,13 @@ const cookies1 = new Bun.CookieMap("name=value; foo=bar");
 // From an object
 const cookies2 = new Bun.CookieMap({
   session: "abc123",
-  theme: "dark"
+  theme: "dark",
 });
 
 // From an array of name/value pairs
 const cookies3 = new Bun.CookieMap([
   ["session", "abc123"],
-  ["theme", "dark"]
+  ["theme", "dark"],
 ]);
 ```
 
@@ -208,7 +208,7 @@ const server = Bun.serve({
   fetch(req) {
     // Access request cookies
     const cookies = req.cookies;
-    
+
     // Get a specific cookie
     const sessionCookie = cookies.get("session");
     if (sessionCookie) {
@@ -216,25 +216,26 @@ const server = Bun.serve({
       console.log(sessionCookie.secure);
       console.log(sessionCookie.httpOnly);
     }
-    
+
     // Check if a cookie exists
     if (cookies.has("theme")) {
       // ...
     }
-    
+
     // Return a response with a Set-Cookie header
     return new Response("Hello", {
       headers: {
-        "Set-Cookie": new Bun.Cookie("visited", "true").toString()
-      }
+        "Set-Cookie": new Bun.Cookie("visited", "true").toString(),
+      },
     });
-  }
+  },
 });
 ```
 
 ### Methods
 
 #### `get(name: string): Cookie | null`
+
 #### `get(options: CookieStoreGetOptions): Cookie | null`
 
 Retrieves a cookie by name. Returns `null` if the cookie doesn't exist.
@@ -252,6 +253,7 @@ if (cookie) {
 ```
 
 #### `getAll(name: string): Cookie[]`
+
 #### `getAll(options: CookieStoreGetOptions): Cookie[]`
 
 Retrieves all cookies with the given name.
@@ -281,7 +283,9 @@ if (cookies.has("theme", "dark")) {
 ```
 
 #### `set(name: string, value: string): void`
+
 #### `set(options: CookieInit): void`
+
 #### `set(cookie: Cookie): void`
 
 Adds or updates a cookie in the map.
@@ -295,7 +299,7 @@ cookies.set({
   name: "theme",
   value: "dark",
   maxAge: 3600,
-  secure: true
+  secure: true,
 });
 
 // Set using Cookie instance
@@ -304,6 +308,7 @@ cookies.set(cookie);
 ```
 
 #### `delete(name: string): void`
+
 #### `delete(options: CookieStoreDeleteOptions): void`
 
 Removes a cookie from the map.
@@ -316,7 +321,7 @@ cookies.delete("session");
 cookies.delete({
   name: "session",
   domain: "example.com",
-  path: "/admin"
+  path: "/admin",
 });
 ```
 
@@ -457,7 +462,10 @@ class CookieMap implements Iterable<[string, Cookie]> {
   entries(): IterableIterator<[string, Cookie]>;
   keys(): IterableIterator<string>;
   values(): IterableIterator<Cookie>;
-  forEach(callback: (value: Cookie, key: string, map: CookieMap) => void, thisArg?: any): void;
+  forEach(
+    callback: (value: Cookie, key: string, map: CookieMap) => void,
+    thisArg?: any,
+  ): void;
 
   [Symbol.iterator](): IterableIterator<[string, Cookie]>;
 }

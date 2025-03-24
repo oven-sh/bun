@@ -2,176 +2,6 @@
 
 Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and `Bun.CookieMap`. These APIs offer fast, easy-to-use methods for parsing, generating, and manipulating cookies in HTTP requests and responses.
 
-## Cookie class
-
-`Bun.Cookie` represents an HTTP cookie with its name, value, and attributes.
-
-```ts
-import { Cookie } from "bun";
-
-// Create a basic cookie
-const cookie = new Bun.Cookie("name", "value");
-
-// Create a cookie with options
-const secureSessionCookie = new Bun.Cookie("session", "abc123", {
-  domain: "example.com",
-  path: "/admin",
-  expires: new Date(Date.now() + 86400000), // 1 day
-  httpOnly: true,
-  secure: true,
-  sameSite: "strict",
-});
-
-// Parse from a cookie string
-const parsedCookie = new Bun.Cookie("name=value; Path=/; HttpOnly");
-
-// Create from an options object
-const objCookie = new Bun.Cookie({
-  name: "theme",
-  value: "dark",
-  maxAge: 3600,
-  secure: true,
-});
-```
-
-### Constructors
-
-```ts
-// Basic constructor with name/value
-new Bun.Cookie(name: string, value: string);
-
-// Constructor with name, value, and options
-new Bun.Cookie(name: string, value: string, options: CookieInit);
-
-// Constructor from cookie string
-new Bun.Cookie(cookieString: string);
-
-// Constructor from cookie object
-new Bun.Cookie(options: CookieInit);
-```
-
-### Properties
-
-```ts
-cookie.name; // string - Cookie name
-cookie.value; // string - Cookie value
-cookie.domain; // string | null - Domain scope (null if not specified)
-cookie.path; // string - URL path scope (defaults to "/")
-cookie.expires; // number | undefined - Expiration timestamp (ms since epoch)
-cookie.secure; // boolean - Require HTTPS
-cookie.sameSite; // "strict" | "lax" | "none" - SameSite setting
-cookie.partitioned; // boolean - Whether the cookie is partitioned (CHIPS)
-cookie.maxAge; // number | undefined - Max age in seconds
-cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
-```
-
-### Methods
-
-#### `isExpired(): boolean`
-
-Checks if the cookie has expired.
-
-```ts
-// Expired cookie (Date in the past)
-const expiredCookie = new Bun.Cookie("name", "value", {
-  expires: new Date(Date.now() - 1000),
-});
-console.log(expiredCookie.isExpired()); // true
-
-// Valid cookie (Using maxAge instead of expires)
-const validCookie = new Bun.Cookie("name", "value", {
-  maxAge: 3600, // 1 hour in seconds
-});
-console.log(validCookie.isExpired()); // false
-
-// Session cookie (no expiration)
-const sessionCookie = new Bun.Cookie("name", "value");
-console.log(sessionCookie.isExpired()); // false
-```
-
-#### `toString(): string`
-
-Returns a string representation of the cookie suitable for a `Set-Cookie` header.
-
-```ts
-const cookie = new Bun.Cookie("session", "abc123", {
-  domain: "example.com",
-  path: "/admin",
-  expires: new Date(Date.now() + 86400000),
-  secure: true,
-  httpOnly: true,
-  sameSite: "strict",
-});
-
-console.log(cookie.toString());
-// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
-```
-
-#### `toJSON(): CookieInit`
-
-Converts the cookie to a plain object suitable for JSON serialization.
-
-```ts
-const cookie = new Bun.Cookie("session", "abc123", {
-  secure: true,
-  httpOnly: true,
-});
-
-const json = cookie.toJSON();
-// => {
-//   name: "session",
-//   value: "abc123",
-//   path: "/",
-//   secure: true,
-//   httpOnly: true,
-//   sameSite: "lax",
-//   partitioned: false
-// }
-
-// Works with JSON.stringify
-const jsonString = JSON.stringify(cookie);
-```
-
-### Static methods
-
-#### `Cookie.parse(cookieString: string): Cookie`
-
-Parses a cookie string into a `Cookie` instance.
-
-```ts
-const cookie = Bun.Cookie.parse("name=value; Path=/; Secure; SameSite=Lax");
-
-console.log(cookie.name); // "name"
-console.log(cookie.value); // "value"
-console.log(cookie.path); // "/"
-console.log(cookie.secure); // true
-console.log(cookie.sameSite); // "lax"
-```
-
-#### `Cookie.from(name: string, value: string, options?: CookieInit): Cookie`
-
-Factory method to create a cookie.
-
-```ts
-const cookie = Bun.Cookie.from("session", "abc123", {
-  httpOnly: true,
-  secure: true,
-  maxAge: 3600,
-});
-```
-
-#### `Cookie.serialize(...cookies: Cookie[]): string`
-
-Combines multiple cookies into a string suitable for a `Cookie` header.
-
-```ts
-const cookie1 = new Bun.Cookie("name", "value");
-const cookie2 = new Bun.Cookie("foo", "bar");
-
-const cookieStr = Bun.Cookie.serialize(cookie1, cookie2);
-// => "name=value; foo=bar"
-```
-
 ## CookieMap class
 
 `Bun.CookieMap` provides a Map-like interface for working with collections of cookies. It implements the `Iterable` interface, allowing you to use it with `for...of` loops and other iteration methods.
@@ -346,6 +176,176 @@ Returns the number of cookies in the map.
 
 ```ts
 console.log(cookies.size); // Number of cookies
+```
+
+## Cookie class
+
+`Bun.Cookie` represents an HTTP cookie with its name, value, and attributes.
+
+```ts
+import { Cookie } from "bun";
+
+// Create a basic cookie
+const cookie = new Bun.Cookie("name", "value");
+
+// Create a cookie with options
+const secureSessionCookie = new Bun.Cookie("session", "abc123", {
+  domain: "example.com",
+  path: "/admin",
+  expires: new Date(Date.now() + 86400000), // 1 day
+  httpOnly: true,
+  secure: true,
+  sameSite: "strict",
+});
+
+// Parse from a cookie string
+const parsedCookie = new Bun.Cookie("name=value; Path=/; HttpOnly");
+
+// Create from an options object
+const objCookie = new Bun.Cookie({
+  name: "theme",
+  value: "dark",
+  maxAge: 3600,
+  secure: true,
+});
+```
+
+### Constructors
+
+```ts
+// Basic constructor with name/value
+new Bun.Cookie(name: string, value: string);
+
+// Constructor with name, value, and options
+new Bun.Cookie(name: string, value: string, options: CookieInit);
+
+// Constructor from cookie string
+new Bun.Cookie(cookieString: string);
+
+// Constructor from cookie object
+new Bun.Cookie(options: CookieInit);
+```
+
+### Properties
+
+```ts
+cookie.name; // string - Cookie name
+cookie.value; // string - Cookie value
+cookie.domain; // string | null - Domain scope (null if not specified)
+cookie.path; // string - URL path scope (defaults to "/")
+cookie.expires; // number | undefined - Expiration timestamp (ms since epoch)
+cookie.secure; // boolean - Require HTTPS
+cookie.sameSite; // "strict" | "lax" | "none" - SameSite setting
+cookie.partitioned; // boolean - Whether the cookie is partitioned (CHIPS)
+cookie.maxAge; // number | undefined - Max age in seconds
+cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
+```
+
+### Methods
+
+#### `isExpired(): boolean`
+
+Checks if the cookie has expired.
+
+```ts
+// Expired cookie (Date in the past)
+const expiredCookie = new Bun.Cookie("name", "value", {
+  expires: new Date(Date.now() - 1000),
+});
+console.log(expiredCookie.isExpired()); // true
+
+// Valid cookie (Using maxAge instead of expires)
+const validCookie = new Bun.Cookie("name", "value", {
+  maxAge: 3600, // 1 hour in seconds
+});
+console.log(validCookie.isExpired()); // false
+
+// Session cookie (no expiration)
+const sessionCookie = new Bun.Cookie("name", "value");
+console.log(sessionCookie.isExpired()); // false
+```
+
+#### `toString(): string`
+
+Returns a string representation of the cookie suitable for a `Set-Cookie` header.
+
+```ts
+const cookie = new Bun.Cookie("session", "abc123", {
+  domain: "example.com",
+  path: "/admin",
+  expires: new Date(Date.now() + 86400000),
+  secure: true,
+  httpOnly: true,
+  sameSite: "strict",
+});
+
+console.log(cookie.toString());
+// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
+```
+
+#### `toJSON(): CookieInit`
+
+Converts the cookie to a plain object suitable for JSON serialization.
+
+```ts
+const cookie = new Bun.Cookie("session", "abc123", {
+  secure: true,
+  httpOnly: true,
+});
+
+const json = cookie.toJSON();
+// => {
+//   name: "session",
+//   value: "abc123",
+//   path: "/",
+//   secure: true,
+//   httpOnly: true,
+//   sameSite: "lax",
+//   partitioned: false
+// }
+
+// Works with JSON.stringify
+const jsonString = JSON.stringify(cookie);
+```
+
+### Static methods
+
+#### `Cookie.parse(cookieString: string): Cookie`
+
+Parses a cookie string into a `Cookie` instance.
+
+```ts
+const cookie = Bun.Cookie.parse("name=value; Path=/; Secure; SameSite=Lax");
+
+console.log(cookie.name); // "name"
+console.log(cookie.value); // "value"
+console.log(cookie.path); // "/"
+console.log(cookie.secure); // true
+console.log(cookie.sameSite); // "lax"
+```
+
+#### `Cookie.from(name: string, value: string, options?: CookieInit): Cookie`
+
+Factory method to create a cookie.
+
+```ts
+const cookie = Bun.Cookie.from("session", "abc123", {
+  httpOnly: true,
+  secure: true,
+  maxAge: 3600,
+});
+```
+
+#### `Cookie.serialize(...cookies: Cookie[]): string`
+
+Combines multiple cookies into a string suitable for a `Cookie` header.
+
+```ts
+const cookie1 = new Bun.Cookie("name", "value");
+const cookie2 = new Bun.Cookie("foo", "bar");
+
+const cookieStr = Bun.Cookie.serialize(cookie1, cookie2);
+// => "name=value; foo=bar"
 ```
 
 ## Types

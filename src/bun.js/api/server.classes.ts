@@ -100,9 +100,12 @@ export default [
         fn: "writeHead",
         length: 3,
       },
+      writeContinue: {
+        fn: "writeContinue",
+      },
       write: {
         fn: "write",
-        length: 2,
+        length: 3,
       },
       end: {
         fn: "end",
@@ -161,6 +164,13 @@ export default [
         getter: "getOnAbort",
         setter: "setOnAbort",
       },
+      hasCustomOnData: {
+        getter: "getHasCustomOnData",
+        setter: "setHasCustomOnData",
+      },
+      upgraded: {
+        getter: "getUpgraded",
+      },
       // ontimeout: {
       //   getter: "getOnTimeout",
       //   setter: "setOnTimeout",
@@ -173,6 +183,7 @@ export default [
     klass: {},
     finalize: true,
     noConstructor: true,
+    values: ["onAborted", "onWritable", "onData"],
   }),
 
   define({
@@ -289,6 +300,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
+    values: ["socket"],
   }),
 
   define({

@@ -24,7 +24,7 @@ public:
 
     static JSDiffieHellman* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::DHPointer&& dh)
     {
-        JSDiffieHellman* instance = new (NotNull, JSC::allocateCell<JSDiffieHellman>(vm)) JSDiffieHellman(vm, structure, std::move(dh));
+        JSDiffieHellman* instance = new (NotNull, JSC::allocateCell<JSDiffieHellman>(vm)) JSDiffieHellman(vm, structure, WTFMove(dh));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -48,7 +48,7 @@ public:
 private:
     JSDiffieHellman(JSC::VM& vm, JSC::Structure* structure, ncrypto::DHPointer&& dh)
         : Base(vm, structure)
-        , m_dh(std::move(dh))
+        , m_dh(WTFMove(dh))
     {
     }
 

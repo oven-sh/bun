@@ -28,8 +28,10 @@
 #include <wtf/text/WTFString.h>
 
 #include "BunClientData.h"
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "isBuiltinModule.h"
+
+#include "ImportMetaObject.h"
 
 namespace Zig {
 
@@ -481,7 +483,6 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
-extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -500,8 +501,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSC::JSString* specifierString = callframe->argument(0).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-
     WTF::String specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (specifier.isEmpty()) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a module and function"_s));
@@ -529,7 +530,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
             auto catchScope = DECLARE_CATCH_SCOPE(vm);
-            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true));
+            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
             if (catchScope.exception()) {
                 catchScope.clearException();
             }

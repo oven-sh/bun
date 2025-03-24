@@ -1,5 +1,5 @@
 import { readdir } from "fs/promises";
-import { join } from "path";
+import path from "path";
 
 // prettier-ignore
 const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
@@ -27,17 +27,18 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "alloc.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 249, regex: true },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 248, regex: true },
+  "usingnamespace": { reason: "This brings Bun away from incremental / faster compile times.", limit: 496 }, 
 };
 const words_keys = [...Object.keys(words)];
 
 let counts: Record<string, [number, string][]> = {};
-const files = await readdir(join(__dirname, "../../src"), { recursive: true, withFileTypes: true });
+const files = await readdir("src", { recursive: true, withFileTypes: true });
 for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;
-  if (file.parentPath.startsWith("src/deps")) continue;
-  const content = await Bun.file(file.parentPath + "/" + file.name).text();
+  if (file.parentPath.startsWith("src" + path.sep + "deps")) continue;
+  const content = await Bun.file(file.parentPath + path.sep + file.name).text();
   for (const word of words_keys) {
     let regex = words[word].regex ? new RegExp(word, "g") : undefined;
     const did_match = regex ? regex.test(content) : content.includes(word);
@@ -50,7 +51,7 @@ for (const file of files) {
         if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
         const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
         for (let count_i = 0; count_i < count; count_i++) {
-          counts[word].push([line_i + 1, file.parentPath + "/" + file.name]);
+          counts[word].push([line_i + 1, file.parentPath + path.sep + file.name]);
         }
       }
     }

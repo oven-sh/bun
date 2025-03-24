@@ -1051,7 +1051,7 @@ pub fn getLoaderAndVirtualSource(
     const dir = path.name.dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
-    const is_js_like = if (loader) |l| l.isJSLike() else true; 
+    const is_js_like = if (loader) |l| l.isJSLike() else true;
     const package_json: ?*const PackageJSON = if (is_js_like and std.fs.path.isAbsolute(dir))
         if (jsc_vm.transpiler.resolver.readDirInfo(dir) catch null) |dir_info|
             dir_info.package_json orelse dir_info.enclosing_package_json

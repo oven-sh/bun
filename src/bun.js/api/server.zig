@@ -1325,7 +1325,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try getRoutesObject(global, arg)) |static| {
-                if (!static.isObject()) {
+                const static_obj = static.getObject() orelse {
                     return global.throwInvalidArguments(
                         \\Bun.serve() expects 'routes' to be an object shaped like:
                         \\
@@ -1340,13 +1340,13 @@ pub const ServerConfig = struct {
                         \\
                         \\Learn more at https://bun.sh/docs/api/http
                     , .{});
-                }
+                };
                 args.had_routes_object = true;
 
                 var iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
-                }).init(global, static);
+                }).init(global, static_obj);
                 defer iter.deinit();
 
                 var init_ctx: ServerInitContext = .{

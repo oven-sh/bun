@@ -658,7 +658,7 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
 {
     // This does not cache anything because it is assumed nobody reads it more than once.
     VM& vm = global->vm();
-    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::moduleGetWrapperArrayProxyCodeGenerator(vm), global);
+    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::commonJSGetWrapperArrayProxyCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);
 
     JSC::MarkedArgumentBuffer args;

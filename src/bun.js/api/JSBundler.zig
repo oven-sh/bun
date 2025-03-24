@@ -426,10 +426,6 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
-                if (!define.isObject()) {
-                    return globalThis.throwInvalidArguments("define must be an object", .{});
-                }
-
                 var define_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,

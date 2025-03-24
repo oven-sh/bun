@@ -2509,7 +2509,7 @@ pub const DNSResolver = struct {
             return globalThis.throwNotEnoughArguments("resolve", 3, arguments.len);
         }
 
-        const record_type: RecordType = if (arguments.len == 1)
+        const record_type: RecordType = if (arguments.len <= 1)
             RecordType.default
         else brk: {
             const record_type_value = arguments.ptr[1];
@@ -2526,7 +2526,7 @@ pub const DNSResolver = struct {
             }
 
             break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), JSC.ZigString.eqlComptime) orelse {
-                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
+                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
             };
         };
 

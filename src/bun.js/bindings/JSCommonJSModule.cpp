@@ -67,7 +67,7 @@
 #include <JavaScriptCore/GetterSetter.h>
 #include "ZigSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -358,7 +358,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         globalObject,
-        moduleMainCodeGenerator(vm),
+        commonJSMainCodeGenerator(vm),
         globalObject->globalScope());
 
     this->putDirectAccessor(
@@ -593,7 +593,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
     return true;
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
     if (!moduleObject) {
@@ -655,7 +655,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 }
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
-    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
+    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionJSCommonJSModule_compile, 2 } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },

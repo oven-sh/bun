@@ -62,6 +62,8 @@ const {
   setFips,
   setEngine,
   getHashes,
+  scrypt,
+  scryptSync,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
@@ -130,39 +132,6 @@ var crypto_exports: any = {};
 
 crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
 crypto_exports.constants = $processBindingConstants.crypto;
-
-var scryptSync =
-    "scryptSync" in crypto
-      ? (password, salt, keylen, options) => {
-          let res = crypto.scryptSync(password, salt, keylen, options);
-          return new Buffer(res);
-        }
-      : void 0,
-  scrypt =
-    "scryptSync" in crypto
-      ? function (password, salt, keylen, options, callback) {
-          if (
-            (typeof options == "function" && ((callback = options), (options = void 0)), typeof callback != "function")
-          ) {
-            var err = new TypeError("callback must be a function");
-            throw ((err.code = "ERR_INVALID_CALLBACK"), err);
-          }
-          try {
-            let result = crypto.scryptSync(password, salt, keylen, options);
-            process.nextTick(callback, null, new Buffer(result));
-          } catch (err2) {
-            throw err2;
-          }
-        }
-      : void 0;
-scrypt &&
-  Object.defineProperty(scrypt, "name", {
-    value: "::bunternal::",
-  }),
-  scryptSync &&
-    Object.defineProperty(scryptSync, "name", {
-      value: "::bunternal::",
-    });
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it
@@ -516,8 +485,6 @@ crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
-crypto_exports.scrypt = scrypt;
-crypto_exports.scryptSync = scryptSync;
 crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
@@ -864,3 +831,6 @@ crypto_exports.createECDH = function createECDH(curve) {
   };
   crypto_exports.getCiphers = getCiphers;
 }
+
+crypto_exports.scrypt = scrypt;
+crypto_exports.scryptSync = scryptSync;

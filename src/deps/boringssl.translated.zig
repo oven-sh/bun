@@ -672,7 +672,7 @@ pub extern fn ERR_remove_thread_state(tid: [*c]const CRYPTO_THREADID) void;
 pub extern fn ERR_func_error_string(packed_error: u32) [*c]const u8;
 pub extern fn ERR_error_string(packed_error: u32, buf: [*c]u8) [*c]u8;
 pub extern fn ERR_clear_system_error() void;
-// pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: c_uint) void;
+pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: u32) void;
 pub extern fn ERR_add_error_data(count: c_uint, ...) void;
 pub extern fn ERR_add_error_dataf(format: [*c]const u8, ...) void;
 pub extern fn ERR_set_error_data(data: [*c]u8, flags: c_int) void;

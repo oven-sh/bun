@@ -28,7 +28,7 @@
 #include <wtf/text/WTFString.h>
 
 #include "BunClientData.h"
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "isBuiltinModule.h"
 
 #include "ImportMetaObject.h"

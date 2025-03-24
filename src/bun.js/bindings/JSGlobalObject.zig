@@ -12,6 +12,11 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
+    extern fn JSGlobalObject__createOutOfMemoryError(this: *JSGlobalObject) JSValue;
+    pub fn createOutOfMemoryError(this: *JSGlobalObject) JSValue {
+        return JSGlobalObject__createOutOfMemoryError(this);
+    }
+
     pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
         JSGlobalObject__throwOutOfMemoryError(this);
         return .zero;
@@ -112,6 +117,27 @@ pub const JSGlobalObject = opaque {
             return error.JSError;
         }
         return str;
+    }
+
+    pub fn throwIncompatibleOptionPair(
+        this: *JSGlobalObject,
+        opt1: []const u8,
+        opt2: []const u8,
+    ) JSError {
+        return this.ERR_INCOMPATIBLE_OPTION_PAIR("Option \"{s}\" cannot be used in combination with option \"{s}\"", .{ opt1, opt2 }).throw();
+    }
+
+    pub fn throwInvalidScryptParams(
+        this: *JSGlobalObject,
+    ) JSError {
+        const err = bun.BoringSSL.c.ERR_peek_last_error();
+        if (err != 0) {
+            var buf: [256]u8 = undefined;
+            const msg = bun.BoringSSL.c.ERR_error_string_n(err, &buf, buf.len);
+            return this.ERR_CRYPTO_INVALID_SCRYPT_PARAMS("Invalid scrypt params: {s}", .{msg}).throw();
+        }
+
+        return this.ERR_CRYPTO_INVALID_SCRYPT_PARAMS("Invalid scrypt params", .{}).throw();
     }
 
     /// "The {argname} argument must be of type {typename}. Received {value}"
@@ -372,6 +398,11 @@ pub const JSGlobalObject = opaque {
     pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
         this.vm().throwError(this, value);
         return error.JSError;
+    }
+
+    pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = this.createTypeErrorInstance(fmt, args);
+        return this.throwValue(instance);
     }
 
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {

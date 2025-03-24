@@ -4033,7 +4033,9 @@ pub const VirtualMachine = struct {
                 .observable = false,
                 .only_non_index_properties = true,
             });
-            var iterator = try Iterator.init(this.global, error_instance);
+            // SAFETY: error instances are always objects
+            const error_obj = error_instance.getObject().?;
+            var iterator = try Iterator.init(this.global, error_obj);
             defer iterator.deinit();
             const longest_name = @min(iterator.getLongestPropertyName(), 10);
             var is_first_property = true;

@@ -1706,7 +1706,7 @@ pub fn onClose(
         // as if the transfer had complete, browsers appear to ignore
         // a missing 0\r\n chunk
         if (client.state.isChunkedEncoding()) {
-            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+            if (!client.state.chunked_decoder.isInData()) {
                 const buf = client.state.getBodyBuffer();
                 if (buf.list.items.len > 0) {
                     client.state.flags.received_last_chunk = true;
@@ -2015,7 +2015,7 @@ pub const InternalState = struct {
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
-    chunked_decoder: picohttp.phr_chunked_decoder = .{},
+    chunked_decoder: picohttp.ChunkedDecoder = .{},
     decompressor: Decompressor = .{ .none = {} },
     stage: Stage = Stage.pending,
     /// This is owned by the user and should not be freed here
@@ -4135,54 +4135,44 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
 
     var bytes_decoded = incoming_data.len;
     // phr_decode_chunked mutates in-place
-    const pret = picohttp.phr_decode_chunked(
-        decoder,
+    const needs_more_data = try decoder.decodeChunked(
         buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
         &bytes_decoded,
     );
+
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
 
     buffer_ptr.* = buffer;
+    if (needs_more_data == null) {
+        if (this.progress_node) |progress| {
+            progress.activate();
+            progress.setCompletedItems(buffer.list.items.len);
+            progress.context.maybeRefresh();
+        }
+        // streaming chunks
+        if (this.signals.get(.body_streaming)) {
+            // If we're streaming, we cannot use the libdeflate fast path
+            this.state.flags.is_libdeflate_fast_path_disabled = true;
+            return try this.state.processBodyBuffer(buffer, false);
+        }
 
-    switch (pret) {
-        // Invalid HTTP response body
-        -1 => return error.InvalidHTTPResponse,
-        // Needs more data
-        -2 => {
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.list.items.len);
-                progress.context.maybeRefresh();
-            }
-            // streaming chunks
-            if (this.signals.get(.body_streaming)) {
-                // If we're streaming, we cannot use the libdeflate fast path
-                this.state.flags.is_libdeflate_fast_path_disabled = true;
-                return try this.state.processBodyBuffer(buffer, false);
-            }
-
-            return false;
-        },
-        // Done
-        else => {
-            this.state.flags.received_last_chunk = true;
-            _ = try this.state.processBodyBuffer(
-                buffer,
-                true,
-            );
-
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.list.items.len);
-                progress.context.maybeRefresh();
-            }
-
-            return true;
-        },
+        return false;
     }
 
-    unreachable;
+    this.state.flags.received_last_chunk = true;
+    _ = try this.state.processBodyBuffer(
+        buffer,
+        true,
+    );
+
+    if (this.progress_node) |progress| {
+        progress.activate();
+        progress.setCompletedItems(buffer.list.items.len);
+        progress.context.maybeRefresh();
+    }
+
+    return true;
 }
 
 // the first packet for Transfer-Encoding: chunked
@@ -4213,55 +4203,43 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
     var bytes_decoded = incoming_data.len;
     // phr_decode_chunked mutates in-place
-    const pret = picohttp.phr_decode_chunked(
-        decoder,
+    const needs_more_data = try decoder.decodeChunked(
         buffer.ptr + (buffer.len -| incoming_data.len),
         &bytes_decoded,
     );
     buffer.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
 
-    switch (pret) {
-        // Invalid HTTP response body
-        -1 => {
-            return error.InvalidHTTPResponse;
-        },
-        // Needs more data
-        -2 => {
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.len);
-                progress.context.maybeRefresh();
-            }
-            const body_buffer = this.state.getBodyBuffer();
-            try body_buffer.appendSliceExact(buffer);
+    if (needs_more_data == null) {
+        if (this.progress_node) |progress| {
+            progress.activate();
+            progress.setCompletedItems(buffer.len);
+            progress.context.maybeRefresh();
+        }
+        const body_buffer = this.state.getBodyBuffer();
+        try body_buffer.appendSliceExact(buffer);
 
-            // streaming chunks
-            if (this.signals.get(.body_streaming)) {
-                // If we're streaming, we cannot use the libdeflate fast path
-                this.state.flags.is_libdeflate_fast_path_disabled = true;
+        // streaming chunks
+        if (this.signals.get(.body_streaming)) {
+            // If we're streaming, we cannot use the libdeflate fast path
+            this.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                return try this.state.processBodyBuffer(body_buffer.*, true);
-            }
+            return try this.state.processBodyBuffer(body_buffer.*, true);
+        }
 
-            return false;
-        },
-        // Done
-        else => {
-            this.state.flags.received_last_chunk = true;
-            try this.handleResponseBodyFromSinglePacket(buffer);
-            assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.len);
-                progress.context.maybeRefresh();
-            }
-
-            return true;
-        },
+        return false;
     }
 
-    unreachable;
+    this.state.flags.received_last_chunk = true;
+    try this.handleResponseBodyFromSinglePacket(buffer);
+    assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
+    if (this.progress_node) |progress| {
+        progress.activate();
+        progress.setCompletedItems(buffer.len);
+        progress.context.maybeRefresh();
+    }
+
+    return true;
 }
 
 const ShouldContinue = enum {

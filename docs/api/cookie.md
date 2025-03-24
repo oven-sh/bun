@@ -41,10 +41,8 @@ const server = Bun.serve({
 
     // Get a specific cookie
     const sessionCookie = cookies.get("session");
-    if (sessionCookie) {
-      console.log(sessionCookie.value);
-      console.log(sessionCookie.secure);
-      console.log(sessionCookie.httpOnly);
+    if (sessionCookie != null) {
+      console.log(sessionCookie);
     }
 
     // Check if a cookie exists

@@ -84,7 +84,7 @@ describe("css tests", () => {
     );
   });
 
-  test("calc edge case", () => {
+  describe("calc edge case", () => {
     // https://github.com/oven-sh/bun/issues/18064
     minify_test(
       `.rounded-full {

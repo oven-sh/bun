@@ -97,8 +97,6 @@ pub extern fn WebCore__DOMFormData__createFromURLQuery(arg0: *bindings.JSGlobalO
 pub extern fn WebCore__DOMFormData__fromJS(JSValue0: JSC__JSValue) ?*bindings.DOMFormData;
 
 pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn JSC__JSCell__getObject(arg0: [*c]bindings.JSCell) [*c]bindings.JSObject;
-pub extern fn JSC__JSCell__getType(arg0: [*c]bindings.JSCell) u8;
 pub extern fn JSC__JSString__eql(arg0: [*c]const JSC__JSString, arg1: *bindings.JSGlobalObject, arg2: [*c]bindings.JSString) bool;
 pub extern fn JSC__JSString__is8Bit(arg0: [*c]const JSC__JSString) bool;
 pub extern fn JSC__JSString__iterator(arg0: [*c]bindings.JSString, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque) void;
@@ -166,7 +164,7 @@ pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt32(JSValue0: JSC__JSValue) bool;
-pub extern fn JSC__JSValue__isCallable(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
+pub extern fn JSC__JSValue__isCallable(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isClass(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isConstructor(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isCustomGetterSetter(JSValue0: JSC__JSValue) bool;

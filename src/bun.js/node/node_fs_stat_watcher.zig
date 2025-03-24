@@ -232,10 +232,9 @@ pub const StatWatcher = struct {
 
         global_this: JSC.C.JSContextRef,
 
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
-            const vm = ctx.vm();
-            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
-                return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
+        pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
+            const path = try PathLike.fromJSWithAllocator(global, arguments, bun.default_allocator) orelse {
+                return global.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
 
             var listener: JSC.JSValue = .zero;
@@ -247,28 +246,28 @@ pub const StatWatcher = struct {
                 // options
                 if (options_or_callable.isObject()) {
                     // default true
-                    persistent = (try options_or_callable.getBooleanStrict(ctx, "persistent")) orelse true;
+                    persistent = (try options_or_callable.getBooleanStrict(global, "persistent")) orelse true;
 
                     // default false
-                    bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
+                    bigint = (try options_or_callable.getBooleanStrict(global, "bigint")) orelse false;
 
-                    if (try options_or_callable.get(ctx, "interval")) |interval_| {
+                    if (try options_or_callable.get(global, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            return ctx.throwInvalidArguments("interval must be a number", .{});
+                            return global.throwInvalidArguments("interval must be a number", .{});
                         }
-                        interval = interval_.coerce(i32, ctx);
+                        interval = interval_.coerce(i32, global);
                     }
                 }
             }
 
             if (arguments.nextEat()) |listener_| {
-                if (listener_.isCallable(vm)) {
-                    listener = listener_.withAsyncContextIfNeeded(ctx);
+                if (listener_.isCallable()) {
+                    listener = listener_.withAsyncContextIfNeeded(global);
                 }
             }
 
             if (listener == .zero) {
-                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
+                return global.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
             return Arguments{
@@ -277,7 +276,7 @@ pub const StatWatcher = struct {
                 .persistent = persistent,
                 .bigint = bigint,
                 .interval = interval,
-                .global_this = ctx,
+                .global_this = global,
             };
         }
 

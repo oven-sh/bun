@@ -27,9 +27,9 @@ pub export fn NodeModuleModule__findPath(
     const found = if (paths_maybe) |paths| found: {
         var iter = paths.iterator(global);
         while (iter.next()) |path| {
-            const cur_path = bun.String.tryFromJS(path, global) orelse {
-                if (global.hasException()) return .zero;
-                continue;
+            const cur_path = bun.String.fromJS(path, global) catch |err| switch (err) {
+                error.JSError => return .zero,
+                error.OutOfMemory => return global.throwOutOfMemoryValue(),
             };
             defer cur_path.deref();
 
@@ -54,14 +54,22 @@ fn findPathInner(
     global: *JSGlobalObject,
 ) ?bun.String {
     var errorable: ErrorableString = undefined;
-    JSC.VirtualMachine.resolve(
+    JSC.VirtualMachine.resolveMaybeNeedsTrailingSlash(
         &errorable,
         global,
         request,
         cur_path,
         null,
         false,
-    );
+        true,
+        true,
+    ) catch |err| switch (err) {
+        error.JSError => {
+            global.clearException();
+            return null;
+        },
+        else => return null,
+    };
     return errorable.unwrap() catch null;
 }
 

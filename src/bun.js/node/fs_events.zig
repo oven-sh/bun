@@ -5,7 +5,6 @@ const Mutex = bun.Mutex;
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
-const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnion;
 const string = bun.string;
 
 const PathWatcher = @import("./path_watcher.zig").PathWatcher;
@@ -552,7 +551,7 @@ pub const FSEventsLoop = struct {
         this.sem.deinit();
 
         if (this.watcher_count > 0) {
-            while (this.watchers.popOrNull()) |watcher| {
+            while (this.watchers.pop()) |watcher| {
                 if (watcher) |w| {
                     // unlink watcher
                     w.loop = null;

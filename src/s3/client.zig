@@ -272,17 +272,11 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
 
     return .undefined;
 }
-pub const shim = JSC.Shimmer("Bun", "S3UploadStream", @This());
-
-pub const Export = shim.exportFunctions(.{
-    .onResolveRequestStream = onUploadStreamResolveRequestStream,
-    .onRejectRequestStream = onUploadStreamRejectRequestStream,
-});
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
-    @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+    @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
     const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
-    @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
 }
 
 /// consumes the readable stream and upload to s3

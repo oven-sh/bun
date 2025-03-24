@@ -90,7 +90,7 @@ Stream.prototype.pipe = function (dest, options) {
 };
 
 Stream.prototype.eventNames = function eventNames() {
-  const names = [];
+  const names: PropertyKey[] = [];
   for (const key of ReflectOwnKeys(this._events)) {
     if (typeof this._events[key] === "function" || (ArrayIsArray(this._events[key]) && this._events[key].length > 0)) {
       names.push(key);
@@ -113,4 +113,7 @@ function prependListener(emitter, event, fn) {
   else emitter._events[event] = [fn, emitter._events[event]];
 }
 
-export default { Stream, prependListener };
+export default { Stream, prependListener } as unknown as {
+  Stream: typeof import("node:stream").Stream;
+  prependListener: typeof prependListener;
+};

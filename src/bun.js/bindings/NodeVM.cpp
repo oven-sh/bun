@@ -40,6 +40,9 @@
 #include "JavaScriptCore/SourceCodeKey.h"
 #include "JavaScriptCore/UnlinkedFunctionExecutable.h"
 #include "NodeValidator.h"
+#include <JavaScriptCore/CodeCache.h>
+#include <JavaScriptCore/JSTypedArray.h>
+#include <JavaScriptCore/JSContextRef.h>
 
 #include "JavaScriptCore/JSCInlines.h"
 
@@ -52,7 +55,11 @@ using namespace WebCore;
 static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
 static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 
+static RefPtr<JSC::CachedBytecode> generateBytecodeFromSource(JSC::VM& vm, const JSC::SourceCode& sourceCode);
+
 NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox);
+
+static JSC::JSUint8Array* createUint8ArrayFromBytecode(JSC::JSGlobalObject* globalObject, const JSC::CachedBytecode& bytecode);
 
 /// For some reason Node has this error message with a grammar error and we have to match it so the tests pass:
 /// `The "<name>" argument must be an vm.Context`
@@ -87,6 +94,88 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptConstructor, JSC::InternalFunction);
 
+// This class provides cached bytecode to JavaScriptCore
+class NodeVMScriptSourceProvider final : public JSC::SourceProvider {
+public:
+    using Base = JSC::SourceProvider;
+
+    RefPtr<JSC::CachedBytecode> m_cachedBytecode;
+
+    static Ref<NodeVMScriptSourceProvider> create(const String& sourceString, String&& filename,
+        const TextPosition& startPosition,
+        JSC::JSValue cachedData)
+    {
+        return adoptRef(*new NodeVMScriptSourceProvider(sourceString, WTFMove(filename),
+            JSC::SourceTaintedOrigin::Untainted,
+            startPosition, cachedData));
+    }
+
+    StringView source() const override
+    {
+        return m_source;
+    }
+
+    unsigned hash() const override
+    {
+        return m_source.hash();
+    }
+
+    RefPtr<JSC::CachedBytecode> cachedBytecode() const override
+    {
+        return m_cachedBytecode;
+    }
+
+private:
+    NodeVMScriptSourceProvider(const String& sourceString, String&& sourceURL,
+        JSC::SourceTaintedOrigin taintedness,
+        const TextPosition& startPosition,
+        JSC::JSValue cachedData)
+        : Base(JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL)),
+              WTFMove(sourceURL), /* preRedirectURL */ String(), taintedness,
+              startPosition, JSC::SourceProviderSourceType::Program)
+        , m_source(sourceString)
+    {
+        // If we have cachedData, use it
+        if (!cachedData.isUndefined()) {
+            // Get the buffer data from the cachedData
+            uint8_t* data = nullptr;
+            size_t length = 0;
+
+            // Handle different types (Buffer, TypedArray, DataView)
+            if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(cachedData)) {
+                data = static_cast<uint8_t*>(arrayBuffer->impl()->data());
+                length = arrayBuffer->impl()->byteLength();
+            } else if (auto* arrayBufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(cachedData)) {
+                data = static_cast<uint8_t*>(arrayBufferView->vector());
+                length = arrayBufferView->byteLength();
+            }
+
+            if (data && length > 0) {
+                // Create a copy of the data since the original buffer might be modified
+                uint8_t* copyData = static_cast<uint8_t*>(malloc(length));
+                if (copyData) {
+                    memcpy(copyData, data, length);
+
+                    // Create a destructor function for the allocated memory
+                    auto destructor = [](const void* ptr) {
+                        free(const_cast<void*>(ptr));
+                    };
+
+                    // Create the CachedBytecode with the copied data
+                    m_cachedBytecode = JSC::CachedBytecode::create(
+                        std::span<uint8_t>(copyData, length),
+                        std::move(destructor),
+                        JSC::LeafExecutableMap());
+
+                    printf("Setting cached bytecode!\n");
+                }
+            }
+        }
+    }
+
+    StringView m_source;
+};
+
 class NodeVMScript final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -116,11 +205,20 @@ public:
 
     const JSC::SourceCode& source() const { return m_source; }
 
+    // Cache-related properties
+    void setCachedData(JSC::VM& vm, JSC::JSUint8Array value) { m_cachedData.set(vm, &value); }
+    JSC::JSUint8Array* cachedData() const { return m_cachedData.get(); }
+    std::optional<bool> m_cachedDataRejected = std::nullopt;
+    std::optional<bool> m_cachedDataProduced = false;
+
     DECLARE_VISIT_CHILDREN;
     mutable JSC::WriteBarrier<JSC::DirectEvalExecutable> m_cachedDirectExecutable;
 
 private:
     JSC::SourceCode m_source;
+    /// This is correspoonds to the `.cachedData` property on the `vm.Script` object.
+    /// The *actual* bytecode which is used to run the script is on `m_source.provider()->cachedBytecode()`
+    Strong<JSUint8Array> m_cachedData;
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source)
         : Base(vm, structure)
@@ -465,13 +563,13 @@ public:
         return false;
     }
 
-    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options)
+    JSC::JSValue validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options)
     {
         if (JSValue cachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
             if (!cachedDataOpt.isCell()) {
                 ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
-                return false;
+                return JSC::jsUndefined();
             }
 
             // If it's a cell, verify it's a Buffer, TypedArray, or DataView
@@ -488,15 +586,12 @@ public:
 
                 if (!isValidType) {
                     ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
-                    return false;
+                    return JSC::jsUndefined();
                 }
-                return true;
-
-                // TODO: actually use it
-                // this->cachedData = true;
+                return cachedDataOpt;
             }
         }
-        return false;
+        return JSC::jsUndefined();
     }
 
     bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>* outTimeout)
@@ -522,8 +617,10 @@ class ScriptOptions : public BaseOptions {
 public:
     bool importModuleDynamically = false;
     std::optional<int64_t> timeout = std::nullopt;
-    bool cachedData = false;
+    JSC::JSValue cachedData = JSC::jsUndefined();
     bool produceCachedData = false;
+    bool cachedDataRejected = false;
+    bool cachedDataProduced = false;
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
     {
@@ -560,11 +657,11 @@ public:
                 any = true;
             }
 
-            if (validateCachedData(globalObject, vm, scope, options)) {
-                RETURN_IF_EXCEPTION(scope, false);
+            JSC::JSValue cachedDataValue = validateCachedData(globalObject, vm, scope, options);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!cachedDataValue.isUndefined()) {
+                this->cachedData = cachedDataValue;
                 any = true;
-                // TODO: actually use it
-                this->cachedData = true;
             }
         }
 
@@ -734,11 +831,70 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         scope.release();
     }
 
-    SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
-        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
+    TextPosition startPosition(options.lineOffset, options.columnOffset);
+
+    String filename = options.filename;
+
+    // Create source code with the appropriate source provider
+    SourceCode source;
+
+    bool useCachedData = !options.cachedData.isUndefined() || options.produceCachedData;
+
+    // Either used the cached data or create it
+    if (useCachedData) {
+        // Use NodeVMScriptSourceProvider with cachedData
+        auto provider = NodeVMScriptSourceProvider::create(
+            sourceString,
+            WTFMove(filename),
+            startPosition,
+            options.cachedData);
+        source = SourceCode(provider, options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
+
+        // The provider will not have cached bytecode so we must create it
+        if (options.produceCachedData && options.cachedData.isUndefined()) {
+            bool produced = false;
+            bool rejected = false;
+            auto bytecode = generateBytecodeFromSource(vm, source);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!bytecode) {
+                rejected = true;
+            } else {
+                // set the cached bytecode on our NodeVMScriptSourceProvider
+                provider->m_cachedBytecode = bytecode;
+                produced = true;
+            }
+            NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
+
+            // If produceCachedData is true, we'll generate bytecode cache on first run
+            script->m_cachedDataProduced = produced;
+            script->m_cachedDataRejected = rejected;
+
+            auto cachedBytecode = script->source().provider()->cachedBytecode();
+            JSC::JSUint8Array* cachedData = createUint8ArrayFromBytecode(globalObject, *cachedBytecode);
+            RETURN_IF_EXCEPTION(scope, {});
+            ASSERT(!!cachedData);
+            script->setCachedData(vm, *cachedData);
+
+            return JSValue::encode(JSValue(script));
+        }
+
+        NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
+
+        return JSValue::encode(JSValue(script));
+    }
+
+    // Use standard StringSourceProvider
+    auto provider = JSC::StringSourceProvider::create(
+        sourceString,
+        JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)),
+        WTFMove(filename),
+        JSC::SourceTaintedOrigin::Untainted,
+        startPosition);
+    source = SourceCode(provider, options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
     RETURN_IF_EXCEPTION(scope, {});
+
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source);
+
     return JSValue::encode(JSValue(script));
 }
 
@@ -820,13 +976,112 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    return JSValue::encode(jsBoolean(true)); // TODO
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisVal = JSValue::decode(thisValue);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisVal);
+    if (UNLIKELY(!script)) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisVal, "must be a Script"_s);
+    }
+
+    if (script->m_cachedDataRejected.has_value()) {
+        return JSValue::encode(jsBoolean(script->m_cachedDataRejected.value()));
+    }
+
+    return JSValue::encode(jsUndefined());
 }
+
+JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisVal = JSValue::decode(thisValue);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisVal);
+    if (UNLIKELY(!script)) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisVal, "must be a Script"_s);
+    }
+
+    if (script->m_cachedDataProduced.has_value()) {
+        return JSValue::encode(jsBoolean(script->m_cachedDataProduced.value()));
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisVal = JSValue::decode(thisValue);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisVal);
+    if (UNLIKELY(!script)) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisVal, "must be a Script"_s);
+    }
+
+    if (auto cachedBytecode = script->source().provider()->cachedBytecode()) {
+        return JSValue::encode(createUint8ArrayFromBytecode(globalObject, *cachedBytecode));
+    }
+
+    return JSValue::encode(script->cachedData());
+}
+// Helper function to generate bytecode from a SourceCode
+static RefPtr<JSC::CachedBytecode> generateBytecodeFromSource(JSC::VM& vm, const JSC::SourceCode& sourceCode)
+{
+    JSC::JSLockHolder locker(vm);
+    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+    JSParserScriptMode scriptMode = JSParserScriptMode::Classic; // VM module uses Classic mode, not Module
+    EvalContextType evalContextType = EvalContextType::None;
+
+    ParserError parserError;
+    UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(
+        vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+
+    if (parserError.isValid() || !unlinkedCodeBlock)
+        return nullptr;
+
+    auto key = JSC::sourceCodeKeyForSerializedProgram(vm, sourceCode);
+    return JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
+}
+
+// Helper function to create a Uint8Array from bytecode data
+static JSC::JSUint8Array* createUint8ArrayFromBytecode(JSC::JSGlobalObject* globalObject, const JSC::CachedBytecode& bytecode)
+{
+    // Get the bytecode data
+    auto span = bytecode.span();
+
+    // Create a Uint8Array with the copied data
+    JSC::JSUint8Array* result = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeUint8, false), span.size());
+    if (!result)
+        return nullptr;
+
+    // Copy the data into the array buffer
+    memcpy(result->vector(), span.data(), span.size());
+
+    return result;
+}
+
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(globalObject, scope, "TODO: Script.createCachedData"_s);
+
+    // Get the script object (this)
+    JSValue thisValue = callFrame->thisValue();
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    if (UNLIKELY(!script)) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+    }
+
+    auto cachedBytecode = script->source().provider()->cachedBytecode();
+    JSC::JSUint8Array* cachedData = createUint8ArrayFromBytecode(globalObject, *cachedBytecode);
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(!!cachedData);
+
+    // Store the cached data in the script object
+    script->setCachedData(vm, *cachedData);
+    script->m_cachedDataProduced = true;
+
+    return JSValue::encode(cachedData);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1278,7 +1533,9 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, NodeVMScriptPrototype::Base);
 
 static const struct HashTableValue scriptPrototypeTableValues[] = {
+    { "cachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedData, nullptr } },
     { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
+    { "cachedDataProduced"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataProduced, nullptr } },
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 1 } },
     { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 2 } },
     { "runInNewContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInNewContext, 2 } },
@@ -1323,6 +1580,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedDirectExecutable);
+    thisObject->m_cachedData->visitChildren(thisObject, visitor);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)

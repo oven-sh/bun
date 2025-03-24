@@ -67,11 +67,11 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm clang19 lld
+$ sudo pacman -S llvm clang lld
 ```
 
 ```bash#Fedora
-$ sudo dnf install llvm19 clang19 lld19-devel
+$ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed

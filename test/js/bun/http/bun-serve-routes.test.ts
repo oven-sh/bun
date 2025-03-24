@@ -541,3 +541,36 @@ it("throws a validation error when routes object is undefined and fetch is not s
     Learn more at https://bun.sh/docs/api/http"
   `);
 });
+
+it("returns 405 when method is not implemented for a route", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/test": {
+        GET: () => new Response("bun"),
+        HEAD: () => new Response("bun"),
+      },
+    },
+  });
+
+  // Get should work
+  expect(await fetch(new URL("/test", server.url)).then(res => res.text())).toBe("bun");
+  
+  // Post should 405
+  const postResponse = await fetch(new URL("/test", server.url), {
+    method: "POST",
+  });
+  expect(postResponse.status).toBe(405);
+  expect(postResponse.headers.get("Allow")).toBe("GET, HEAD");
+  
+  // Put should also 405
+  const putResponse = await fetch(new URL("/test", server.url), {
+    method: "PUT",
+  });
+  expect(putResponse.status).toBe(405);
+  expect(putResponse.headers.get("Allow")).toBe("GET, HEAD");
+
+  // Non-existent path still returns 404
+  const notFoundResponse = await fetch(new URL("/nonexistent", server.url));
+  expect(notFoundResponse.status).toBe(404);
+});

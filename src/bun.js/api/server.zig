@@ -9401,27 +9401,62 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
             } else if (!has_dev_catch_all and this.config.onRequest == .zero and !@"has /*") {
-                app.any("/*", *ThisServer, this, on404);
+                app.any("/*", *ThisServer, this, onUnimplementedRequest);
             } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
-                app.post("/*", *ThisServer, this, on404);
-                app.put("/*", *ThisServer, this, on404);
-                app.patch("/*", *ThisServer, this, on404);
-                app.delete("/*", *ThisServer, this, on404);
-                app.options("/*", *ThisServer, this, on404);
-                app.trace("/*", *ThisServer, this, on404);
-                app.connect("/*", *ThisServer, this, on404);
+                app.post("/*", *ThisServer, this, onUnimplementedRequest);
+                app.put("/*", *ThisServer, this, onUnimplementedRequest);
+                app.patch("/*", *ThisServer, this, onUnimplementedRequest);
+                app.delete("/*", *ThisServer, this, onUnimplementedRequest);
+                app.options("/*", *ThisServer, this, onUnimplementedRequest);
+                app.trace("/*", *ThisServer, this, onUnimplementedRequest);
+                app.connect("/*", *ThisServer, this, onUnimplementedRequest);
             }
 
             return route_list_value;
         }
 
-        pub fn on404(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+        pub fn onUnimplementedRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            const method = req.method();
+            const path = req.url();
+
+            var found_path = false;
+            var allowed_methods = std.ArrayList(u8).init(bun.default_allocator);
+            defer allowed_methods.deinit();
+
+            for (this.user_routes.items) |route| {
+                if (std.mem.eql(u8, route.route.path, path)) {
+                    found_path = true;
+
+                    switch (route.route.method) {
+                        .any => {
+                            // TODO: Issue #18406 there's a problem upstream where this path isn't entered.
+                            resp.writeStatus("501 Method Not Allowed");
+                            resp.end("", false);
+                            return;
+                        },
+                        .specific => |specific_method| {
+                            if (allowed_methods.items.len > 0) {
+                                allowed_methods.appendSlice(", ") catch {};
+                            }
+                            allowed_methods.appendSlice(@tagName(specific_method)) catch {};
+                        },
+                    }
+                }
+            }
+            if (found_path) {
+                if (comptime Environment.enable_logs)
+                    httplog("{s} - {s} 405", .{ method, path });
+
+                resp.writeStatus("405 Method Not Allowed");
+                resp.writeHeader("Allow", allowed_methods.items);
+                resp.end("", false);
+                return;
+            }
+
             if (comptime Environment.enable_logs)
-                httplog("{s} - {s} 404", .{ req.method(), req.url() });
+                httplog("{s} - {s} 404", .{ method, path });
 
             resp.writeStatus("404 Not Found");
-
-            // Rely on browser default page for now.
             resp.end("", false);
         }
 

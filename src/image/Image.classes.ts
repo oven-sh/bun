@@ -1,55 +1,53 @@
 import { define } from "../codegen/class-definitions";
 
 export default [
+  // A *lazy* image.
   define({
     name: "Image",
     construct: true,
     finalize: true,
     configurable: false,
-    klass: {
-      // Static factory method
-      image: {
-        fn: "image",
-        length: 1,
-      },
-    },
+    klass: {},
     proto: {
       // Properties
       encoding: {
         getter: "getEncoding",
         cache: true,
       },
-      width: {
-        getter: "getWidth",
-        cache: true,
-      },
-      height: {
-        getter: "getHeight",
-        cache: true,
-      },
       name: {
         value: "Image",
       },
-      
+
       // Methods
-      size: {
+      //
+      dimensions: {
         fn: "size",
         length: 0,
       },
+
       resize: {
         fn: "resize",
         length: 2,
       },
+
+      // Promise<Uint8Array>
       bytes: {
-        fn: "bytes", 
+        fn: "bytes",
         length: 0,
       },
+      // Promise<Blob>
       blob: {
         fn: "blob",
         length: 0,
       },
-      
+      // Promise<ArrayBuffer>
+      arrayBuffer: {
+        fn: "arrayBuffer",
+        length: 0,
+      },
+
       // Format conversion methods
+      // Each of these return a Promise<Image>
       jpg: {
         fn: "toJPEG",
         length: 1,
@@ -73,16 +71,6 @@ export default [
       heic: {
         fn: "toHEIC",
         length: 1,
-      },
-
-      // Utility methods
-      ["toString"]: {
-        fn: "toString",
-        length: 0,
-      },
-      ["toJSON"]: {
-        fn: "toJSON",
-        length: 0,
       },
     },
   }),

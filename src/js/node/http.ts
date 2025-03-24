@@ -613,13 +613,16 @@ const Server = function Server(options, callback) {
   this._unref = false;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
+  this[tlsSymbol] = null;
 
   if (typeof options === "function") {
     callback = options;
     options = {};
-  } else if (options == null || typeof options === "object") {
+  } else if (options == null) {
+    options = {};
+  } else {
+    validateObject(options, "options");
     options = { ...options };
-    this[tlsSymbol] = null;
     let key = options.key;
     if (key) {
       if (!isValidTLSArray(key)) {
@@ -675,8 +678,6 @@ const Server = function Server(options, callback) {
     } else {
       this[tlsSymbol] = null;
     }
-  } else {
-    throw new Error("bun-http-polyfill: invalid arguments");
   }
 
   this[optionsSymbol] = options;

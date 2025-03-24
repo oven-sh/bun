@@ -113,13 +113,13 @@ cookies.set(cookie);
 
 #### `delete(options: CookieStoreDeleteOptions): void`
 
-Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past.
+Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past. A cookie will only delete succesfully on the browser if the domain and path is the same as it was when the cookie was created.
 
 ```ts
-// Delete by name
+// Delete by name using default domain and path.
 cookies.delete("session");
 
-// Delete with domain/path options
+// Delete with domain/path options.
 cookies.delete({
   name: "session",
   domain: "example.com",

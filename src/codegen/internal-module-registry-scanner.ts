@@ -45,6 +45,13 @@ export function createInternalModuleRegistry(basedir: string) {
     nativeModuleEnumToId[processedEnumValue] = processedNumericId;
   }
 
+  const nativeStartIndex = moduleList.length;
+
+  for (const [id] of Object.entries(nativeModuleIds)) {
+    moduleList.push(id);
+    internalRegistry.set(id, moduleList.length - 1);
+  }
+
   if (nextNativeModuleId === 0) {
     throw new Error(
       "Could not find BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
@@ -55,17 +62,9 @@ export function createInternalModuleRegistry(basedir: string) {
     return `(__intrinsic__getInternalField(__intrinsic__internalModuleRegistry, ${id}) || __intrinsic__createInternalModuleById(${id}))`;
   }
 
-  function codegenRequireNativeModule(id: string) {
-    return `(__intrinsic__requireNativeModule(${id.replace(/node:/, "")}))`;
-  }
-
   const requireTransformer = (specifier: string, from: string) => {
     const directMatch = internalRegistry.get(specifier);
     if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
-
-    if (specifier in nativeModuleIds) {
-      return codegenRequireNativeModule(JSON.stringify(specifier));
-    }
 
     const relativeMatch =
       resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) ?? resolveSyncOrNull(specifier, basedir);
@@ -93,5 +92,6 @@ export function createInternalModuleRegistry(basedir: string) {
     nativeModuleEnumToId,
     internalRegistry,
     moduleList,
+    nativeStartIndex,
   } as const;
 }

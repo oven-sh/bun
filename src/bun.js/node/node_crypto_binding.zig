@@ -16,21 +16,28 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSError = bun.JSError;
 const String = bun.String;
 const UUID = bun.UUID;
+const Async = bun.Async;
+const Node = JSC.Node;
+const OOM = bun.OOM;
 
-fn ExternCryptoJob(
-    comptime name: []const u8,
-    comptime externRunTask: fn (*anyopaque, *JSGlobalObject) callconv(.c) void,
-    comptime externRunFromJS: fn (*anyopaque, *JSGlobalObject) callconv(.c) void,
-    comptime externDeinit: fn (*anyopaque) callconv(.c) void,
-) type {
+fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {
         vm: *JSC.VirtualMachine,
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
+        poll: Async.KeepAlive = .{},
+        callback: JSC.Strong,
 
-        ctx: *anyopaque,
+        ctx: *Ctx,
 
-        pub fn create(global: *JSGlobalObject, ctx: *anyopaque) callconv(.c) *@This() {
+        const Ctx = opaque {
+            const ctx_name = name ++ "Ctx";
+            pub const runTask = @extern(*const fn (*Ctx, *JSGlobalObject) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runTask" }).*;
+            pub const runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+            pub const deinit = @extern(*const fn (*Ctx) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__deinit" }).*;
+        };
+
+        pub fn create(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) *@This() {
             const vm = global.bunVM();
             const job = bun.new(@This(), .{
                 .vm = vm,
@@ -39,13 +46,14 @@ fn ExternCryptoJob(
                 },
                 .any_task = undefined,
                 .ctx = ctx,
+                .callback = JSC.Strong.create(callback, global),
             });
             job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
             return job;
         }
 
-        pub fn createAndSchedule(global: *JSGlobalObject, ctx: *anyopaque) callconv(.c) void {
-            var job = create(global, ctx);
+        pub fn createAndSchedule(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) void {
+            var job = create(global, ctx, callback);
             job.schedule();
         }
 
@@ -54,7 +62,7 @@ fn ExternCryptoJob(
             var vm = job.vm;
             defer vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
 
-            externRunTask(job.ctx, vm.global);
+            job.ctx.runTask(vm.global);
         }
 
         pub fn runFromJS(this: *@This()) void {
@@ -65,15 +73,22 @@ fn ExternCryptoJob(
                 return;
             }
 
-            externRunFromJS(this.ctx, vm.global);
+            const callback = this.callback.trySwap() orelse {
+                return;
+            };
+
+            this.ctx.runFromJS(vm.global, callback);
         }
 
         fn deinit(this: *@This()) void {
-            externDeinit(this.ctx);
+            this.ctx.deinit();
+            this.poll.unref(this.vm);
+            this.callback.deinit();
             bun.destroy(this);
         }
 
         pub fn schedule(this: *@This()) callconv(.c) void {
+            this.poll.ref(this.vm);
             JSC.WorkPool.schedule(&this.task);
         }
 
@@ -85,34 +100,116 @@ fn ExternCryptoJob(
     };
 }
 
-extern fn Bun__CheckPrimeJobCtx__runTask(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__CheckPrimeJobCtx__runFromJS(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__CheckPrimeJobCtx__deinit(ctx: *anyopaque) void;
-
-const CheckPrimeJob = ExternCryptoJob(
-    "CheckPrimeJob",
-    Bun__CheckPrimeJobCtx__runTask,
-    Bun__CheckPrimeJobCtx__runFromJS,
-    Bun__CheckPrimeJobCtx__deinit,
-);
-
-extern fn Bun__GeneratePrimeJobCtx__runTask(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__GeneratePrimeJobCtx__runFromJS(ctx: *anyopaque, global: *JSGlobalObject) void;
-extern fn Bun__GeneratePrimeJobCtx__deinit(ctx: *anyopaque) void;
-
-const GeneratePrimeJob = ExternCryptoJob(
-    "GeneratePrimeJob",
-    Bun__GeneratePrimeJobCtx__runTask,
-    Bun__GeneratePrimeJobCtx__runFromJS,
-    Bun__GeneratePrimeJobCtx__deinit,
-);
+// Definitions for job structs created from c++
+pub const CheckPrimeJob = ExternCryptoJob("CheckPrimeJob");
+pub const GeneratePrimeJob = ExternCryptoJob("GeneratePrimeJob");
+pub const HkdfJob = ExternCryptoJob("HkdfJob");
 
 comptime {
     _ = CheckPrimeJob;
     _ = GeneratePrimeJob;
+    _ = HkdfJob;
+}
+
+fn CryptoJob(comptime Ctx: type) type {
+    return struct {
+        vm: *JSC.VirtualMachine,
+        task: JSC.WorkPoolTask,
+        any_task: JSC.AnyTask,
+        poll: Async.KeepAlive = .{},
+
+        callback: JSC.Strong,
+
+        ctx: Ctx,
+
+        pub fn init(global: *JSGlobalObject, callback: JSValue, ctx: *const Ctx) JSError!*@This() {
+            const vm = global.bunVM();
+            const job = bun.new(@This(), .{
+                .vm = vm,
+                .task = .{
+                    .callback = &runTask,
+                },
+                .any_task = undefined,
+                .ctx = ctx.*,
+                .callback = JSC.Strong.create(callback, global),
+            });
+            errdefer bun.destroy(job);
+            try job.ctx.init(global);
+            job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+            return job;
+        }
+
+        pub fn initAndSchedule(global: *JSGlobalObject, callback: JSValue, ctx: *const Ctx) JSError!void {
+            var job = try init(global, callback, ctx);
+            job.schedule();
+        }
+
+        pub fn runTask(task: *JSC.WorkPoolTask) void {
+            const job: *@This() = @fieldParentPtr("task", task);
+            var vm = job.vm;
+            defer vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+
+            job.ctx.runTask(job.ctx.result);
+        }
+
+        pub fn runFromJS(this: *@This()) void {
+            defer this.deinit();
+            const vm = this.vm;
+
+            if (vm.isShuttingDown()) {
+                return;
+            }
+
+            const callback = this.callback.trySwap() orelse {
+                return;
+            };
+
+            this.ctx.runFromJS(vm.global, callback);
+        }
+
+        fn deinit(this: *@This()) void {
+            this.ctx.deinit();
+            this.poll.unref(this.vm);
+            this.callback.deinit();
+            bun.destroy(this);
+        }
+
+        pub fn schedule(this: *@This()) callconv(.c) void {
+            this.poll.ref(this.vm);
+            JSC.WorkPool.schedule(&this.task);
+        }
+    };
 }
 
 const random = struct {
+    const JobCtx = struct {
+        value: JSValue,
+        bytes: [*]u8,
+        offset: u32,
+        length: usize,
+
+        result: void = {},
+
+        fn init(this: *JobCtx, _: *JSGlobalObject) JSError!void {
+            this.value.protect();
+        }
+
+        fn runTask(this: *JobCtx, _: void) void {
+            bun.csprng(this.bytes[this.offset..][0..this.length]);
+        }
+
+        fn runFromJS(this: *JobCtx, global: *JSGlobalObject, callback: JSValue) void {
+            const vm = global.bunVM();
+            vm.eventLoop().runCallback(callback, global, .undefined, &.{ .null, this.value });
+        }
+
+        fn deinit(this: *JobCtx) void {
+            this.value.unprotect();
+        }
+    };
+
+    const Job = CryptoJob(JobCtx);
+
     const max_possible_length = @min(JSC.ArrayBuffer.max_size, std.math.maxInt(i32));
     const max_range = 0xffff_ffff_ffff;
 
@@ -218,68 +315,6 @@ const random = struct {
         return @intFromFloat(size);
     }
 
-    pub const Job = struct {
-        vm: *JSC.VirtualMachine,
-        task: JSC.WorkPoolTask,
-        any_task: JSC.AnyTask,
-
-        callback: JSValue,
-        value: JSValue,
-        bytes: [*]u8,
-        offset: u32,
-        length: usize,
-
-        pub fn runTask(task: *JSC.WorkPoolTask) void {
-            const job: *Job = @fieldParentPtr("task", task);
-            defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
-
-            bun.csprng(job.bytes[job.offset..][0..job.length]);
-        }
-
-        pub fn runFromJS(this: *Job) void {
-            defer this.deinit();
-            const vm = this.vm;
-
-            if (vm.isShuttingDown()) {
-                return;
-            }
-
-            vm.eventLoop().runCallback(this.callback, vm.global, .undefined, &.{ .null, this.value });
-        }
-
-        pub fn create(global: *JSGlobalObject, value: JSValue, bytes: [*]u8, offset: u32, length: usize, callback: JSValue) *Job {
-            const vm = global.bunVM();
-
-            const job = bun.new(Job, .{
-                .vm = vm,
-                .task = .{
-                    .callback = &Job.runTask,
-                },
-                .any_task = undefined,
-
-                .callback = callback,
-                .value = value,
-                .bytes = bytes,
-                .offset = offset,
-                .length = length,
-            });
-            job.callback.protect();
-            job.value.protect();
-            job.any_task = JSC.AnyTask.New(Job, &Job.runFromJS).init(job);
-            return job;
-        }
-
-        fn schedule(this: *Job) void {
-            JSC.WorkPool.schedule(&this.task);
-        }
-
-        fn deinit(this: *Job) void {
-            this.value.unprotect();
-            this.callback.unprotect();
-            bun.destroy(this);
-        }
-    };
-
     fn randomBytes(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
         const size_value, const callback = callFrame.argumentsAsArray(2);
 
@@ -292,12 +327,19 @@ const random = struct {
         const result, const bytes = try JSC.ArrayBuffer.alloc(global, .ArrayBuffer, size);
 
         if (callback.isUndefined()) {
+            // sync
             bun.csprng(bytes);
             return result;
         }
 
-        const job = Job.create(global, result, bytes.ptr, 0, size, callback);
-        job.schedule();
+        const ctx: JobCtx = .{
+            .value = result,
+            .bytes = bytes.ptr,
+            .offset = 0,
+            .length = size,
+        };
+        try Job.initAndSchedule(global, callback, &ctx);
+
         return .undefined;
     }
 
@@ -365,25 +407,27 @@ const random = struct {
             return .undefined;
         }
 
-        const job = Job.create(global, buf_value, buf.slice().ptr, offset, size, callback);
-        job.schedule();
+        const ctx: JobCtx = .{
+            .value = buf_value,
+            .bytes = buf.slice().ptr,
+            .offset = offset,
+            .length = size,
+        };
+        try Job.initAndSchedule(global, callback, &ctx);
+
         return .undefined;
     }
 };
 
-fn pbkdf2(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(6);
-
-    const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
+fn pbkdf2(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const data = try PBKDF2.fromJS(globalThis, callFrame, true);
 
     const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
     return job.promise.value();
 }
 
-fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(5);
-
-    var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
+fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    var data = try PBKDF2.fromJS(globalThis, callFrame, false);
     defer data.deinit();
     var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
     if (out_arraybuffer == .zero or globalThis.hasException()) {
@@ -425,8 +469,316 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
     return JSC.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
 }
 
+pub fn secureHeapUsed(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return .undefined;
+}
+
+pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return JSValue.jsNumber(0);
+}
+
+pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return .undefined;
+}
+
+pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    return global.ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by BoringSSL", .{}).throw();
+}
+
+fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
+    const from = maybe_from orelse return;
+    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
+    hashes.put(bun.span(from), {}) catch bun.outOfMemory();
+}
+
+fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
+    var hashes: bun.CaseInsensitiveASCIIStringArrayHashMap(void) = .init(bun.default_allocator);
+    defer hashes.deinit();
+
+    // TODO(dylan-conway): cache the names
+    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
+
+    const array = JSValue.createEmptyArray(global, hashes.count());
+
+    for (hashes.keys(), 0..) |hash, i| {
+        const str = String.createUTF8ForJS(global, hash);
+        array.putIndex(global, @intCast(i), str);
+    }
+
+    return array;
+}
+
+const Scrypt = struct {
+    password: Node.StringOrBuffer,
+    salt: Node.StringOrBuffer,
+    N: u32,
+    r: u32,
+    p: u32,
+    maxmem: u64,
+    keylen: u32,
+
+    // used in async mode
+    buf: JSC.Strong = .empty,
+    result: []u8 = &.{},
+    err: ?u32 = null,
+
+    const Job = CryptoJob(Scrypt);
+
+    pub fn fromJS(global: *JSGlobalObject, callFrame: *JSC.CallFrame, comptime is_async: bool) JSError!if (is_async) struct { @This(), JSValue } else @This() {
+        const password_value, const salt_value, const keylen_value, var maybe_options_value: ?JSValue, var callback =
+            callFrame.argumentsAsArray(5);
+
+        if (is_async) {
+            if (callback == .undefined) {
+                callback = maybe_options_value.?;
+                maybe_options_value = null;
+            }
+        }
+
+        const password = try Node.StringOrBuffer.fromJSMaybeAsync(global, bun.default_allocator, password_value, is_async, true) orelse {
+            return global.throwInvalidArgumentTypeValue("password", "string, ArrayBuffer, Buffer, TypedArray, or DataView", password_value);
+        };
+        errdefer password.deinit();
+
+        const salt = try Node.StringOrBuffer.fromJSMaybeAsync(global, bun.default_allocator, salt_value, is_async, true) orelse {
+            return global.throwInvalidArgumentTypeValue("salt", "string, ArrayBuffer, Buffer, TypedArray, or DataView", salt_value);
+        };
+        errdefer salt.deinit();
+
+        const keylen = try validators.validateInt32(global, keylen_value, "keylen", .{}, 0, null);
+
+        var N: ?u32 = null;
+        var r: ?u32 = null;
+        var p: ?u32 = null;
+        var maxmem: ?i64 = null;
+
+        if (maybe_options_value) |options_value| {
+            if (options_value.getObject()) |options| {
+                if (try options.get(global, "N")) |N_value| {
+                    N = try validators.validateUint32(global, N_value, "N", .{}, false);
+                }
+
+                if (try options.get(global, "cost")) |cost_value| {
+                    if (N != null) {
+                        return global.throwIncompatibleOptionPair("N", "cost");
+                    }
+
+                    N = try validators.validateUint32(global, cost_value, "cost", .{}, false);
+                }
+
+                if (try options.get(global, "r")) |r_value| {
+                    r = try validators.validateUint32(global, r_value, "r", .{}, false);
+                }
+
+                if (try options.get(global, "blockSize")) |blocksize_value| {
+                    if (r != null) {
+                        return global.throwIncompatibleOptionPair("r", "blockSize");
+                    }
+
+                    r = try validators.validateUint32(global, blocksize_value, "blockSize", .{}, false);
+                }
+
+                if (try options.get(global, "p")) |p_value| {
+                    p = try validators.validateUint32(global, p_value, "p", .{}, false);
+                }
+
+                if (try options.get(global, "parallelization")) |parallelization_value| {
+                    if (p != null) {
+                        return global.throwIncompatibleOptionPair("p", "parallelization");
+                    }
+
+                    p = try validators.validateUint32(global, parallelization_value, "parallelization", .{}, false);
+                }
+
+                if (try options.get(global, "maxmem")) |maxmem_value| {
+                    maxmem = try validators.validateInteger(global, maxmem_value, "maxmem", 0, null);
+                }
+            }
+        }
+
+        const N_default: u32 = 16384;
+        const r_default: u32 = 8;
+        const p_default: u32 = 1;
+        const maxmem_default: i64 = 33554432;
+
+        if (N == null or N.? == 0) {
+            N = N_default;
+        }
+        if (r == null or r.? == 0) {
+            r = r_default;
+        }
+        if (p == null or p.? == 0) {
+            p = p_default;
+        }
+        if (maxmem == null or maxmem.? == 0) {
+            maxmem = maxmem_default;
+        }
+
+        const ctx: Scrypt = .{
+            .password = password,
+            .salt = salt,
+            .N = N.?,
+            .r = r.?,
+            .p = p.?,
+            .maxmem = @intCast(maxmem.?),
+            .keylen = @intCast(keylen),
+        };
+
+        if (is_async) {
+            _ = try validators.validateFunction(global, "callback", callback);
+        }
+
+        try ctx.checkScryptParams(global);
+
+        if (is_async) {
+            return .{ ctx, callback };
+        }
+
+        return ctx;
+    }
+
+    const scrypt_pr_max = 1 << 30 - 1;
+    const scrypt_max_mem = 1024 * 1024 * 65;
+    const block_t = extern struct { words: [16]u32 };
+
+    // Translated from boringssl:
+    //
+    //   if (r == 0 || p == 0 || p > SCRYPT_PR_MAX / r ||
+    //       // |N| must be a power of two.
+    //       N < 2 || (N & (N - 1)) ||
+    //       // We only support |N| <= 2^32 in |scryptROMix|.
+    //       N > UINT64_C(1) << 32 ||
+    //       // Check that |N| < 2^(128×r / 8).
+    //       (16 * r <= 63 && N >= UINT64_C(1) << (16 * r))) {
+    //     OPENSSL_PUT_ERROR(EVP, EVP_R_INVALID_PARAMETERS);
+    //     return 0
+    //
+    // and:
+    //
+    //   size_t max_scrypt_blocks = max_mem / (2 * r * sizeof(block_t));
+    //   if (max_scrypt_blocks < p + 1 || max_scrypt_blocks - p - 1 < N) {
+    //     OPENSSL_PUT_ERROR(EVP, EVP_R_MEMORY_LIMIT_EXCEEDED);
+    //     return 0;
+    //   }
+    fn checkScryptParams(this: *const Scrypt, global: *JSGlobalObject) JSError!void {
+        const N = this.N;
+        const r = this.r;
+        const p = this.p;
+
+        if (r == 0 or p == 0 or p > scrypt_pr_max / r) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_INVALID_PARAMETERS, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+
+        if (N < 2 or (N & (N - 1)) != 0 or N > @as(u64, 1) << 32) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_INVALID_PARAMETERS, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+
+        // Check that N < 2^(128×r / 8)
+        if (16 * r <= 63 and N >= (@as(u64, 1) << @as(u6, @intCast(16 * r)))) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_INVALID_PARAMETERS, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+
+        var maxmem = this.maxmem;
+        if (maxmem == 0) {
+            maxmem = scrypt_max_mem;
+        }
+
+        const max_scrypt_blocks = maxmem / (2 * r * @sizeOf(block_t));
+        if (max_scrypt_blocks < p + 1 or max_scrypt_blocks - p - 1 < N) {
+            const src = @src();
+            BoringSSL.ERR_put_error(BoringSSL.ERR_LIB_EVP, 0, BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED, src.file.ptr, src.line);
+            return global.throwInvalidScryptParams();
+        }
+    }
+
+    fn init(this: *Scrypt, global: *JSGlobalObject) JSError!void {
+        const buf, const bytes = try JSC.ArrayBuffer.alloc(global, .ArrayBuffer, this.keylen);
+
+        // to be filled in later
+        this.result = bytes;
+        this.buf = JSC.Strong.create(buf, global);
+    }
+
+    fn runTask(this: *Scrypt, key: []u8) void {
+        const password = this.password.slice();
+        const salt = this.salt.slice();
+
+        if (key.len == 0) {
+            // result will be an empty buffer
+            return;
+        }
+
+        if (password.len > std.math.maxInt(i32) or salt.len > std.math.maxInt(i32)) {
+            this.err = 0;
+            return;
+        }
+
+        const res = BoringSSL.EVP_PBE_scrypt(
+            password.ptr,
+            password.len,
+            salt.ptr,
+            salt.len,
+            this.N,
+            this.r,
+            this.p,
+            this.maxmem,
+            key.ptr,
+            key.len,
+        );
+
+        if (res == 0) {
+            this.err = BoringSSL.ERR_peek_last_error();
+            return;
+        }
+    }
+
+    fn runFromJS(this: *Scrypt, global: *JSGlobalObject, callback: JSValue) void {
+        const vm = global.bunVM();
+
+        if (this.err) |err| {
+            if (err != 0) {
+                var buf: [256]u8 = undefined;
+                const msg = BoringSSL.ERR_error_string_n(err, &buf, buf.len);
+                const exception = global.ERR_CRYPTO_OPERATION_FAILED("Scrypt failed: {s}", .{msg}).toJS();
+                vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
+                return;
+            }
+
+            const exception = global.ERR_CRYPTO_OPERATION_FAILED("Scrypt failed", .{}).toJS();
+            vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
+            return;
+        }
+
+        const buf = this.buf.swap();
+        vm.eventLoop().runCallback(callback, global, .undefined, &.{ .undefined, buf });
+    }
+
+    fn deinit(this: *Scrypt) void {
+        this.buf.deinit();
+    }
+};
+
+fn scrypt(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
+    const ctx, const callback = try Scrypt.fromJS(global, callFrame, true);
+    try Scrypt.Job.initAndSchedule(global, callback, &ctx);
+    return .undefined;
+}
+
+fn scryptSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
+    var ctx = try Scrypt.fromJS(global, callFrame, false);
+    const buf, const bytes = try JSC.ArrayBuffer.alloc(global, .ArrayBuffer, ctx.keylen);
+    ctx.runTask(bytes);
+    return buf;
+}
+
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
-    const crypto = JSC.JSValue.createEmptyObject(global, 8);
+    const crypto = JSC.JSValue.createEmptyObject(global, 15);
 
     crypto.put(global, String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
     crypto.put(global, String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
@@ -436,6 +788,16 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     crypto.put(global, String.init("randomUUID"), JSC.JSFunction.create(global, "randomUUID", random.randomUUID, 1, .{}));
     crypto.put(global, String.init("randomBytes"), JSC.JSFunction.create(global, "randomBytes", random.randomBytes, 2, .{}));
     crypto.put(global, String.init("timingSafeEqual"), JSC.JSFunction.create(global, "timingSafeEqual", timingSafeEqual, 2, .{}));
+
+    crypto.put(global, String.init("secureHeapUsed"), JSC.JSFunction.create(global, "secureHeapUsed", secureHeapUsed, 0, .{}));
+    crypto.put(global, String.init("getFips"), JSC.JSFunction.create(global, "getFips", getFips, 0, .{}));
+    crypto.put(global, String.init("setFips"), JSC.JSFunction.create(global, "setFips", setFips, 1, .{}));
+    crypto.put(global, String.init("setEngine"), JSC.JSFunction.create(global, "setEngine", setEngine, 2, .{}));
+
+    crypto.put(global, String.init("getHashes"), JSC.JSFunction.create(global, "getHashes", getHashes, 0, .{}));
+
+    crypto.put(global, String.init("scrypt"), JSC.JSFunction.create(global, "scrypt", scrypt, 5, .{}));
+    crypto.put(global, String.init("scryptSync"), JSC.JSFunction.create(global, "scryptSync", scryptSync, 4, .{}));
 
     return crypto;
 }

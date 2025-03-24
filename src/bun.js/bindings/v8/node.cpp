@@ -2,7 +2,7 @@
 #include "V8HandleScope.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 
 #include "node/node_version.h"
 

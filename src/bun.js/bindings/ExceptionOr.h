@@ -87,9 +87,6 @@ public:
 
 private:
     Expected<void, Exception> m_value;
-#if ASSERT_ENABLED
-    bool m_wasReleased { false };
-#endif
 };
 
 ExceptionOr<void> isolatedCopy(ExceptionOr<void>&&);

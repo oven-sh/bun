@@ -1788,7 +1788,7 @@ pub const Resolver = struct {
                             if (package_json.exports) |exports_map| {
 
                                 // The condition set is determined by the kind of import
-                                var module_type = options.ModuleType.unknown;
+                                var module_type = package_json.module_type;
                                 var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
@@ -1812,6 +1812,7 @@ pub const Resolver = struct {
                                     if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                         var result_copy = result;
                                         result_copy.is_node_module = true;
+                                        result_copy.module_type = module_type;
                                         return .{ .success = result_copy };
                                     }
                                 }

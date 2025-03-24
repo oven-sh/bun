@@ -653,6 +653,13 @@ pub const Loader = enum(u8) {
         return this == .css;
     }
 
+    pub fn isJSLike(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
+
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
             .html => .file,
@@ -972,6 +979,8 @@ const LoaderResult = struct {
     path: Fs.Path,
     is_main: bool,
     specifier: string,
+    /// NOTE: This is always `null` for non-js-like loaders since it's not
+    /// needed for them.
     package_json: ?*const PackageJSON,
 };
 
@@ -1041,7 +1050,9 @@ pub fn getLoaderAndVirtualSource(
 
     const dir = path.name.dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
-    const package_json: ?*const PackageJSON = if (std.fs.path.isAbsolute(dir))
+    // NOTE: assume we may need a package.json when no loader is specified
+    const is_js_like = if (loader) |l| l.isJSLike() else true; 
+    const package_json: ?*const PackageJSON = if (is_js_like and std.fs.path.isAbsolute(dir))
         if (jsc_vm.transpiler.resolver.readDirInfo(dir) catch null) |dir_info|
             dir_info.package_json orelse dir_info.enclosing_package_json
         else

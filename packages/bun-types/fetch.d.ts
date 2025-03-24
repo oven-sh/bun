@@ -1,3 +1,13 @@
+/*
+
+  This file does not declare any global types.
+
+  That should only happen in [./globals.d.ts](./globals.d.ts)
+  so that our documentation generator can pick it up, as it
+  expects all globals to be declared in one file.
+
+ */
+
 declare module "bun" {
   type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
   type BodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;

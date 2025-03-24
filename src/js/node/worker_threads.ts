@@ -232,7 +232,8 @@ class Worker extends EventEmitter {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }
-      throw e;
+      process.nextTick(() => this.emit("error", e));
+      return;
     }
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));

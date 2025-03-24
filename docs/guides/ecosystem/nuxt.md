@@ -53,4 +53,21 @@ To start developing your app, replace `<NuxtWelcome />` in `app.vue` with your o
 
 ---
 
+For production build, while the default preset is already compatible with Bun, you can also use [Bun preset](https://nitro.build/deploy/runtimes/bun) to generate better optimized builds.
+
+{% callout %}
+Some packages provides Bun-specific exports that Nitro will not bundle correctly using the default preset. In this case, you need to use Bun preset so that the packages will work correctly in production builds.
+{% /callout %}
+
+```ts
+// nuxt.config.ts
+export default defineNuxtConfig({
+  nitro: {
+    preset: 'bun'
+  }
+})
+```
+
+---
+
 Refer to the [Nuxt website](https://nuxt.com/docs) for complete documentation.

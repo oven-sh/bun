@@ -7617,8 +7617,8 @@ declare module "bun" {
 
     entries(): IterableIterator<[string, string]>;
     keys(): IterableIterator<string>;
-    values(): IterableIterator<Cookie>;
-    forEach(callback: (value: Cookie, key: string, map: CookieMap) => void, thisArg?: any): void;
+    values(): IterableIterator<string>;
+    forEach(callback: (value: string, key: string, map: CookieMap) => void, thisArg?: any): void;
 
     [Symbol.iterator](): IterableIterator<[string, string]>;
   }

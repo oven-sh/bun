@@ -222,21 +222,17 @@ const server = Bun.serve({
       // ...
     }
 
-    // Return a response with a Set-Cookie header
-    return new Response("Hello", {
-      headers: {
-        "Set-Cookie": new Bun.Cookie("visited", "true").toString(),
-      },
-    });
+    // Set a cookie, it will be automatically applied to the response
+    cookies.set("visited", "true");
+
+    return new Response("Hello");
   },
 });
 ```
 
 ### Methods
 
-#### `get(name: string): Cookie | null`
-
-#### `get(options: CookieStoreGetOptions): Cookie | null`
+#### `get(name: string): string | null`
 
 Retrieves a cookie by name. Returns `null` if the cookie doesn't exist.
 
@@ -244,41 +240,19 @@ Retrieves a cookie by name. Returns `null` if the cookie doesn't exist.
 // Get by name
 const cookie = cookies.get("session");
 
-// Get using options object
-const cookie2 = cookies.get({ name: "session" });
-
-if (cookie) {
-  console.log(cookie.value);
+if (cookie != null) {
+  console.log(cookie);
 }
 ```
 
-#### `getAll(name: string): Cookie[]`
+#### `has(name: string): boolean`
 
-#### `getAll(options: CookieStoreGetOptions): Cookie[]`
-
-Retrieves all cookies with the given name.
-
-```ts
-// Get all cookies with name "session"
-const sessionCookies = cookies.getAll("session");
-
-// Get all cookies using options
-const sessionCookies2 = cookies.getAll({ name: "session" });
-```
-
-#### `has(name: string, value?: string): boolean`
-
-Checks if a cookie with the given name exists and optionally if it has a specific value.
+Checks if a cookie with the given name exists.
 
 ```ts
 // Check if cookie exists
 if (cookies.has("session")) {
   // Cookie exists
-}
-
-// Check if cookie has specific value
-if (cookies.has("theme", "dark")) {
-  // Cookie exists with value "dark"
 }
 ```
 
@@ -311,7 +285,7 @@ cookies.set(cookie);
 
 #### `delete(options: CookieStoreDeleteOptions): void`
 
-Removes a cookie from the map.
+Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past.
 
 ```ts
 // Delete by name
@@ -325,16 +299,7 @@ cookies.delete({
 });
 ```
 
-#### `toString(): string`
-
-Converts all cookies to a string suitable for a `Cookie` header.
-
-```ts
-const cookieHeader = cookies.toString();
-// => "name=value; foo=bar"
-```
-
-#### `toJSON(): Array<[string, ReturnType<Cookie["toJSON"]>]>`
+#### `toJSON(): Array<[string, string | ReturnType<Cookie["toJSON"]>]>`
 
 Converts the cookie map to a serializable format.
 
@@ -348,13 +313,13 @@ const json = cookies.toJSON();
 
 ```ts
 // Iterate over [name, cookie] entries
-for (const [name, cookie] of cookies) {
-  console.log(`${name}: ${cookie.value}`);
+for (const [name, value] of cookies) {
+  console.log(`${name}: ${value}`);
 }
 
 // Using entries()
-for (const [name, cookie] of cookies.entries()) {
-  console.log(`${name}: ${cookie.value}`);
+for (const [name, value] of cookies.entries()) {
+  console.log(`${name}: ${value}`);
 }
 
 // Using keys()
@@ -363,13 +328,13 @@ for (const name of cookies.keys()) {
 }
 
 // Using values()
-for (const cookie of cookies.values()) {
-  console.log(cookie.value);
+for (const value of cookies.values()) {
+  console.log(value);
 }
 
 // Using forEach
-cookies.forEach((cookie, name) => {
-  console.log(`${name}: ${cookie.value}`);
+cookies.forEach((value, name) => {
+  console.log(`${name}: ${value}`);
 });
 ```
 

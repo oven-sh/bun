@@ -14,8 +14,8 @@ describe("request cookies", () => {
           const cookies = req.cookies;
           expect(cookies).toBeDefined();
           expect(cookies.size).toBe(2);
-          expect(cookies.get("name")?.value).toBe("value");
-          expect(cookies.get("foo")?.value).toBe("bar");
+          expect(cookies.get("name")).toBe("value");
+          expect(cookies.get("foo")).toBe("bar");
 
           // Verify headers are still accessible afterward
           expect(req.headers.get("cookie")).toBe("name=value; foo=bar");
@@ -31,8 +31,8 @@ describe("request cookies", () => {
           const cookies = req.cookies;
           expect(cookies).toBeDefined();
           expect(cookies.size).toBe(2);
-          expect(cookies.get("name")?.value).toBe("value");
-          expect(cookies.get("foo")?.value).toBe("bar");
+          expect(cookies.get("name")).toBe("value");
+          expect(cookies.get("foo")).toBe("bar");
 
           return new Response("ok");
         },
@@ -96,58 +96,6 @@ describe("request cookies", () => {
   });
 });
 
-describe("cookie attributes", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
-      port: 0,
-      routes: {
-        "/cookie-attributes": req => {
-          const cookie = req.cookies.get("complex");
-          expect(cookie).toBeDefined();
-
-          if (!cookie) {
-            return new Response("no cookie found", { status: 500 });
-          }
-
-          return new Response(
-            JSON.stringify({
-              name: cookie.name,
-              value: cookie.value,
-              path: cookie.path,
-              secure: cookie.secure,
-              sameSite: cookie.sameSite,
-            }),
-          );
-        },
-      },
-    });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
-  });
-
-  it("correctly parses cookie attributes", async () => {
-    const res = await fetch(`${server.url}cookie-attributes`, {
-      headers: {
-        "Cookie": "complex=value; simple=123",
-      },
-    });
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-
-    expect(data.name).toBe("complex");
-    expect(data.value).toBe("value");
-    expect(data.path).toBe("/");
-    expect(data.secure).toBe(false);
-    expect(data.sameSite).toBe("lax");
-  });
-});
-
 describe("instanceof and type checks", () => {
   let server: Server;
 
@@ -159,9 +107,8 @@ describe("instanceof and type checks", () => {
           // Check that cookies is an instance of Bun.CookieMap
           expect(req.cookies instanceof Bun.CookieMap).toBe(true);
 
-          // Check that cookie is an instance of Bun.Cookie
           const cookie = req.cookies.get("name");
-          expect(cookie instanceof Bun.Cookie).toBe(true);
+          expect(cookie).toBeTypeOf("string");
 
           return new Response("ok");
         },
@@ -170,7 +117,7 @@ describe("instanceof and type checks", () => {
           expect(req.cookies.constructor).toBe(Bun.CookieMap);
 
           const cookie = req.cookies.get("name");
-          expect(cookie?.constructor).toBe(Bun.Cookie);
+          expect(cookie).toBeTypeOf("string");
 
           return new Response("ok");
         },
@@ -250,11 +197,6 @@ describe("complex cookie parsing", () => {
 
           // Test size
           expect(cookies.size).toBe(2);
-
-          // Test toString() returns a valid cookie string
-          const cookieStr = cookies.toString();
-          expect(cookieStr).toInclude("name=value");
-          expect(cookieStr).toInclude("foo=bar");
 
           return new Response("ok");
         },

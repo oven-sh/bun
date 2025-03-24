@@ -66,7 +66,8 @@ ExceptionOr<Ref<CookieMap>> CookieMap::createFromCookieHeader(const StringView& 
 
     bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
     for (auto pair : pairs) {
-        CookieInit init {};
+        String name = ""_s;
+        String value = ""_s;
 
         auto equalsPos = pair.find('=');
         if (equalsPos == notFound) {
@@ -82,20 +83,21 @@ ExceptionOr<Ref<CookieMap>> CookieMap::createFromCookieHeader(const StringView& 
 
         if (hasAnyPercentEncoded) {
             Bun::UTF8View utf8View(nameView);
-            init.name = Bun::decodeURIComponentSIMD(utf8View.bytes());
+            name = Bun::decodeURIComponentSIMD(utf8View.bytes());
         } else {
-            init.name = nameView.toString();
+            name = nameView.toString();
         }
 
         if (hasAnyPercentEncoded) {
             Bun::UTF8View utf8View(valueView);
-            init.value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+            value = Bun::decodeURIComponentSIMD(utf8View.bytes());
         } else {
-            init.value = valueView.toString();
+            value = valueView.toString();
         }
 
-        auto cookie = Cookie::create(init);
-        cookies.set(cookie->name(), cookie->value());
+        if (!cookies.contains(name)) {
+            cookies.set(name, value);
+        }
     }
 
     return adoptRef(*new CookieMap(WTFMove(cookies)));

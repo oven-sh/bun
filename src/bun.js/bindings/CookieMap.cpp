@@ -95,9 +95,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::createFromCookieHeader(const StringView& 
             value = valueView.toString();
         }
 
-        if (!cookies.contains(name)) {
-            cookies.set(name, value);
-        }
+        cookies.add(name, value);
     }
 
     return adoptRef(*new CookieMap(WTFMove(cookies)));

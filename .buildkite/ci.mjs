@@ -493,7 +493,7 @@ function getBuildZigTestsStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
     // note: uses same target name. See `BuildBun.cmake` for details.
-    command: `bun run build:ci:test --target bun-zig --toolchain ${toolchain}`,
+    command: `bun run zig:test:ci --target bun-zig --toolchain ${toolchain}`,
     timeout_in_minutes: 35,
   };
 }
@@ -521,7 +521,7 @@ function getLinkBunStep(platform, options, zigTests = false) {
       BUN_LINK_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: `bun run ${zigTests ? "build:ci:test" : "build:ci"} --target bun`,
+    command: `bun run ${zigTests ? "zig:test:ci" : "build:ci"} --target bun`,
   };
 }
 

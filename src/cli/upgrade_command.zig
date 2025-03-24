@@ -117,7 +117,6 @@ pub const Version = struct {
         _ = Bun__githubURL;
     }
     test {
-        std.mem.doNotOptimizeAway(Bun__githubURL);
         _ = Bun__githubURL;
     }
 };

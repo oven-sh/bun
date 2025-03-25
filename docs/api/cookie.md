@@ -420,7 +420,7 @@ class Cookie {
   static from(name: string, value: string, options?: CookieInit): Cookie;
 }
 
-class CookieMap implements Iterable<[string, Cookie]> {
+class CookieMap implements Iterable<[string, string]> {
   constructor(init?: string[][] | Record<string, string> | string);
 
   get(name: string): string | null;

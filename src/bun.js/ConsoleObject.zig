@@ -2095,387 +2095,449 @@ pub const Formatter = struct {
         }
 
         switch (comptime Format) {
-            .StringPossiblyFormatted => {
-                var str = try value.toSlice(this.globalThis, bun.default_allocator);
-                defer str.deinit();
-                this.addForNewLine(str.len);
-                const slice = str.slice();
-                try this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
-            },
-            .String => {
-                // This is called from the '%s' formatter, so it can actually be any value
-                const str: bun.String = try bun.String.fromJS(value, this.globalThis);
-                defer str.deref();
-                this.addForNewLine(str.length());
+            .StringPossiblyFormatted => try formatters.StringPossiblyFormatted(this, Writer, writer_, value, enable_ansi_colors),
+            .String => try formatters.String(this, Writer, writer_, &writer, value, jsType, enable_ansi_colors),
+            .Integer => try formatters.Integer(this, Writer, &writer, value, enable_ansi_colors),
+            .BigInt => try formatters.BigInt(this, Writer, &writer, value, enable_ansi_colors),
+            .Double => try formatters.Double(this, Writer, &writer, value, enable_ansi_colors),
+            .Undefined => try formatters.Undefined(this, Writer, &writer, enable_ansi_colors),
+            .Null => try formatters.Null(this, Writer, &writer, enable_ansi_colors),
+            .CustomFormattedObject => try formatters.CustomFormattedObject(this, Writer, writer_, &writer, enable_ansi_colors),
+            .Symbol => try formatters.Symbol(this, Writer, &writer, value, enable_ansi_colors),
+            .Error => try formatters.Error(this, Writer, writer_, value, enable_ansi_colors),
+            .Class => try formatters.Class(this, this.globalThis, Writer, &writer, value, enable_ansi_colors),
+            .Function => try formatters.Function(this.globalThis, Writer, &writer, value, enable_ansi_colors),
+            .GetterSetter => try formatters.GetterSetter(Writer, &writer, value, enable_ansi_colors),
+            .CustomGetterSetter => try formatters.CustomGetterSetter(Writer, &writer, value, enable_ansi_colors),
+            .Array => try formatters.Array(this, Writer, writer_, &writer, value, jsType, enable_ansi_colors),
+            .Private => try formatters.Private(this, Writer, writer_, &writer, value, jsType, enable_ansi_colors),
+            .NativeCode => try formatters.NativeCode(this, Writer, &writer, value),
+            .Promise => try formatters.Promise(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .Boolean => try formatters.Boolean(this, Writer, &writer, value, enable_ansi_colors),
+            .GlobalObject => try formatters.GlobalObject(this, Writer, &writer, enable_ansi_colors),
+            .Map => try formatters.Map(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .MapIterator => try formatters.MapIterator(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .SetIterator => try formatters.SetIterator(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .Set => try formatters.Set(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .toJSON => try formatters.toJSON(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .JSON => try formatters.JSON(this, Writer, &writer, value, jsType, enable_ansi_colors),
+            .Event => try formatters.Event(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .JSX => try formatters.JSX(this, Writer, writer_, &writer, value, enable_ansi_colors),
+            .Object => try formatters.Object(this, Writer, writer_, &writer, value, jsType, enable_ansi_colors),
+            .TypedArray => try formatters.TypedArray(this, Writer, &writer, value, jsType, enable_ansi_colors),
+            .RevokedProxy => try formatters.RevokedProxy(this, Writer, &writer, enable_ansi_colors),
+            .Proxy => try formatters.Proxy(this, Writer, writer_, value, enable_ansi_colors),
+        }
+    }
 
-                if (this.quote_strings and jsType != .RegExpObject) {
-                    if (str.isEmpty()) {
-                        writer.writeAll("\"\"");
-                        return;
-                    }
+    const formatters = struct {
+        pub fn StringPossiblyFormatted(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, value: JSValue, comptime enable_ansi_colors: bool) !void {
+            var str = try value.toSlice(this.globalThis, bun.default_allocator);
+            defer str.deinit();
+            this.addForNewLine(str.len);
+            const slice = str.slice();
+            try this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
+        }
+        pub fn String(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, jsType: JSValue.JSType, comptime enable_ansi_colors: bool) !void {
 
-                    if (comptime enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r><green>", true));
-                    }
+            // This is called from the '%s' formatter, so it can actually be any value
+            const str: bun.String = try bun.String.fromJS(value, this.globalThis);
+            defer str.deref();
+            this.addForNewLine(str.length());
 
-                    defer if (comptime enable_ansi_colors)
-                        writer.writeAll(Output.prettyFmt("<r>", true));
-
-                    if (str.isUTF16()) {
-                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
-                        return;
-                    }
-
-                    JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
-
+            if (this.quote_strings and jsType != .RegExpObject) {
+                if (str.isEmpty()) {
+                    writer.writeAll("\"\"");
                     return;
                 }
 
-                if (jsType == .StringObject) {
-                    if (enable_ansi_colors) {
-                        writer.print(comptime Output.prettyFmt("<r><green>", enable_ansi_colors), .{});
-                    }
-                    defer if (comptime enable_ansi_colors)
-                        writer.writeAll(Output.prettyFmt("<r>", true));
-
-                    writer.print("[String: ", .{});
-
-                    if (str.isUTF16()) {
-                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
-                    } else {
-                        JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
-                    }
-
-                    writer.print("]", .{});
-                    return;
+                if (comptime enable_ansi_colors) {
+                    writer.writeAll(Output.prettyFmt("<r><green>", true));
                 }
 
-                if (jsType == .RegExpObject and enable_ansi_colors) {
-                    writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
-                }
+                defer if (comptime enable_ansi_colors)
+                    writer.writeAll(Output.prettyFmt("<r>", true));
 
                 if (str.isUTF16()) {
-                    // streaming print
-                    writer.print("{}", .{str});
-                } else if (str.asUTF8()) |slice| {
-                    // fast path
-                    writer.writeAll(slice);
-                } else if (!str.isEmpty()) {
-                    // slow path
-                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
-                    if (buf.len > 0) {
-                        defer bun.default_allocator.free(buf);
-                        writer.writeAll(buf);
-                    }
+                    try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
+                    return;
                 }
 
-                if (jsType == .RegExpObject and enable_ansi_colors) {
-                    writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
+                JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+
+                return;
+            }
+
+            if (jsType == .StringObject) {
+                if (enable_ansi_colors) {
+                    writer.print(comptime Output.prettyFmt("<r><green>", enable_ansi_colors), .{});
                 }
-            },
-            .Integer => {
-                const int = value.coerce(i64, this.globalThis);
-                if (int < std.math.maxInt(u32)) {
-                    var i = int;
-                    const is_negative = i < 0;
-                    if (is_negative) {
-                        i = -i;
-                    }
-                    const digits = if (i != 0)
-                        bun.fmt.fastDigitCount(@as(usize, @intCast(i))) + @as(usize, @intFromBool(is_negative))
-                    else
-                        1;
-                    this.addForNewLine(digits);
+                defer if (comptime enable_ansi_colors)
+                    writer.writeAll(Output.prettyFmt("<r>", true));
+
+                writer.print("[String: ", .{});
+
+                if (str.isUTF16()) {
+                    try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
                 } else {
-                    this.addForNewLine(std.fmt.count("{d}", .{int}));
+                    JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
                 }
-                writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
-            },
-            .BigInt => {
-                const out_str = (try value.getZigString(this.globalThis)).slice();
-                this.addForNewLine(out_str.len);
 
-                writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
-            },
-            .Double => {
-                if (value.isCell()) {
-                    var number_name = ZigString.Empty;
-                    value.getClassName(this.globalThis, &number_name);
+                writer.print("]", .{});
+                return;
+            }
 
-                    var number_value = ZigString.Empty;
-                    try value.toZigString(&number_value, this.globalThis);
+            if (jsType == .RegExpObject and enable_ansi_colors) {
+                writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
+            }
 
-                    if (!strings.eqlComptime(number_name.slice(), "Number")) {
-                        this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
-                        writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
-                            number_name,
-                            number_value,
-                        });
-                        return;
-                    }
+            if (str.isUTF16()) {
+                // streaming print
+                writer.print("{}", .{str});
+            } else if (str.asUTF8()) |slice| {
+                // fast path
+                writer.writeAll(slice);
+            } else if (!str.isEmpty()) {
+                // slow path
+                const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
+                if (buf.len > 0) {
+                    defer bun.default_allocator.free(buf);
+                    writer.writeAll(buf);
+                }
+            }
 
-                    this.addForNewLine(number_name.len + number_value.len + 4);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
+            if (jsType == .RegExpObject and enable_ansi_colors) {
+                writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
+            }
+        }
+        pub fn Integer(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const int = value.coerce(i64, this.globalThis);
+            if (int < std.math.maxInt(u32)) {
+                var i = int;
+                const is_negative = i < 0;
+                if (is_negative) {
+                    i = -i;
+                }
+                const digits = if (i != 0)
+                    bun.fmt.fastDigitCount(@as(usize, @intCast(i))) + @as(usize, @intFromBool(is_negative))
+                else
+                    1;
+                this.addForNewLine(digits);
+            } else {
+                this.addForNewLine(std.fmt.count("{d}", .{int}));
+            }
+            writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
+        }
+        pub fn BigInt(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const out_str = (try value.getZigString(this.globalThis)).slice();
+            this.addForNewLine(out_str.len);
+
+            writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
+        }
+        pub fn Double(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            if (value.isCell()) {
+                var number_name = ZigString.Empty;
+                value.getClassName(this.globalThis, &number_name);
+
+                var number_value = ZigString.Empty;
+                try value.toZigString(&number_value, this.globalThis);
+
+                if (!strings.eqlComptime(number_name.slice(), "Number")) {
+                    this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
+                    writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
                         number_name,
                         number_value,
                     });
                     return;
                 }
 
-                const num = value.asNumber();
+                this.addForNewLine(number_name.len + number_value.len + 4);
+                writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
+                    number_name,
+                    number_value,
+                });
+                return;
+            }
 
-                if (std.math.isPositiveInf(num)) {
-                    this.addForNewLine("Infinity".len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>Infinity<r>", enable_ansi_colors), .{});
-                } else if (std.math.isNegativeInf(num)) {
-                    this.addForNewLine("-Infinity".len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>-Infinity<r>", enable_ansi_colors), .{});
-                } else if (std.math.isNan(num)) {
-                    this.addForNewLine("NaN".len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
+            const num = value.asNumber();
+
+            if (std.math.isPositiveInf(num)) {
+                this.addForNewLine("Infinity".len);
+                writer.print(comptime Output.prettyFmt("<r><yellow>Infinity<r>", enable_ansi_colors), .{});
+            } else if (std.math.isNegativeInf(num)) {
+                this.addForNewLine("-Infinity".len);
+                writer.print(comptime Output.prettyFmt("<r><yellow>-Infinity<r>", enable_ansi_colors), .{});
+            } else if (std.math.isNan(num)) {
+                this.addForNewLine("NaN".len);
+                writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
+            } else {
+                var buf: [124]u8 = undefined;
+                const formatted = bun.fmt.FormatDouble.dtoaWithNegativeZero(&buf, num);
+                this.addForNewLine(formatted.len);
+                writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{formatted});
+            }
+        }
+        pub fn Undefined(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), comptime enable_ansi_colors: bool) !void {
+            this.addForNewLine(9);
+            writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
+        }
+        pub fn Null(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), comptime enable_ansi_colors: bool) !void {
+            this.addForNewLine(4);
+            writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
+        }
+        pub fn CustomFormattedObject(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), comptime enable_ansi_colors: bool) !void {
+            var is_exception = false;
+            // Call custom inspect function. Will return the error if there is one
+            // we'll need to pass the callback through to the "this" value in here
+            const result = JSC__JSValue__callCustomInspectFunction(
+                this.globalThis,
+                this.custom_formatted_object.function,
+                this.custom_formatted_object.this,
+                this.max_depth -| this.depth,
+                this.max_depth,
+                enable_ansi_colors,
+                &is_exception,
+            );
+            if (is_exception) {
+                return error.JSError;
+            }
+            // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
+            if (result.isString()) {
+                writer.print("{}", .{result.fmtString(this.globalThis)});
+            } else {
+                try this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+            }
+        }
+        pub fn Symbol(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const description = value.getDescription(this.globalThis);
+            this.addForNewLine("Symbol".len);
+
+            if (description.len > 0) {
+                this.addForNewLine(description.len + "()".len);
+                writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
+            } else {
+                writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
+            }
+        }
+        pub fn Error(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, value: JSValue, comptime enable_ansi_colors: bool) !void {
+            VirtualMachine.get().printErrorlikeObject(
+                value,
+                null,
+                null,
+                this,
+                Writer,
+                writer_,
+                enable_ansi_colors,
+                false,
+            );
+        }
+        pub fn Class(this: *ConsoleObject.Formatter, globalObject: *JSC.JSGlobalObject, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            var printable = ZigString.init(&name_buf);
+            value.getClassName(globalObject, &printable);
+            this.addForNewLine(printable.len);
+
+            const proto = value.getPrototype(globalObject);
+            var printable_proto = ZigString.init(&name_buf);
+            proto.getClassName(globalObject, &printable_proto);
+            this.addForNewLine(printable_proto.len);
+
+            if (printable.len == 0) {
+                if (printable_proto.isEmpty()) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
                 } else {
-                    var buf: [124]u8 = undefined;
-                    const formatted = bun.fmt.FormatDouble.dtoaWithNegativeZero(&buf, num);
-                    this.addForNewLine(formatted.len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{formatted});
+                    writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
                 }
-            },
-            .Undefined => {
-                this.addForNewLine(9);
-                writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
-            },
-            .Null => {
-                this.addForNewLine(4);
-                writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
-            },
-            .CustomFormattedObject => {
-                var is_exception = false;
-                // Call custom inspect function. Will return the error if there is one
-                // we'll need to pass the callback through to the "this" value in here
-                const result = JSC__JSValue__callCustomInspectFunction(
-                    this.globalThis,
-                    this.custom_formatted_object.function,
-                    this.custom_formatted_object.this,
-                    this.max_depth -| this.depth,
-                    this.max_depth,
-                    enable_ansi_colors,
-                    &is_exception,
-                );
-                if (is_exception) {
-                    return error.JSError;
-                }
-                // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
-                if (result.isString()) {
-                    writer.print("{}", .{result.fmtString(this.globalThis)});
+            } else {
+                if (printable_proto.isEmpty()) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
                 } else {
-                    try this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
                 }
-            },
-            .Symbol => {
-                const description = value.getDescription(this.globalThis);
-                this.addForNewLine("Symbol".len);
+            }
+        }
+        pub fn Function(globalObject: *JSC.JSGlobalObject, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            var printable = value.getName(globalObject);
+            defer printable.deref();
 
-                if (description.len > 0) {
-                    this.addForNewLine(description.len + "()".len);
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
+            const proto = value.getPrototype(globalObject);
+            const func_name = proto.getName(globalObject); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+            defer func_name.deref();
+
+            if (printable.isEmpty() or func_name.eql(printable)) {
+                if (func_name.isEmpty()) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                 } else {
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
+                    writer.print(comptime Output.prettyFmt("<cyan>[{}]<r>", enable_ansi_colors), .{func_name});
                 }
-            },
-            .Error => {
-                VirtualMachine.get().printErrorlikeObject(
-                    value,
-                    null,
-                    null,
-                    this,
-                    Writer,
-                    writer_,
-                    enable_ansi_colors,
-                    false,
-                );
-            },
-            .Class => {
-                var printable = ZigString.init(&name_buf);
-                value.getClassName(this.globalThis, &printable);
-                this.addForNewLine(printable.len);
+            } else {
+                if (func_name.isEmpty()) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                } else {
+                    writer.print(comptime Output.prettyFmt("<cyan>[{}: {}]<r>", enable_ansi_colors), .{ func_name, printable });
+                }
+            }
+        }
+        pub fn GetterSetter(comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const cell = value.asCell();
+            const getterSetter = cell.getGetterSetter();
+            const hasGetter = !getterSetter.isGetterNull();
+            const hasSetter = !getterSetter.isSetterNull();
+            if (hasGetter and hasSetter) {
+                writer.print(comptime Output.prettyFmt("<cyan>[Getter/Setter]<r>", enable_ansi_colors), .{});
+            } else if (hasGetter) {
+                writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
+            } else if (hasSetter) {
+                writer.print(comptime Output.prettyFmt("<cyan>[Setter]<r>", enable_ansi_colors), .{});
+            }
+        }
+        pub fn CustomGetterSetter(comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const cell = value.asCell();
+            const getterSetter = cell.getCustomGetterSetter();
+            const hasGetter = !getterSetter.isGetterNull();
+            const hasSetter = !getterSetter.isSetterNull();
+            if (hasGetter and hasSetter) {
+                writer.print(comptime Output.prettyFmt("<cyan>[Getter/Setter]<r>", enable_ansi_colors), .{});
+            } else if (hasGetter) {
+                writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
+            } else if (hasSetter) {
+                writer.print(comptime Output.prettyFmt("<cyan>[Setter]<r>", enable_ansi_colors), .{});
+            }
+        }
+        pub fn Array(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, jsType: JSValue.JSType, comptime enable_ansi_colors: bool) !void {
+            const len = value.getLength(this.globalThis);
 
-                const proto = value.getPrototype(this.globalThis);
-                var printable_proto = ZigString.init(&name_buf);
-                proto.getClassName(this.globalThis, &printable_proto);
-                this.addForNewLine(printable_proto.len);
+            // TODO: DerivedArray does not get passed along in JSType, and it's not clear why.
+            // if (jsType == .DerivedArray) {
+            //     var printable = value.className(this.globalThis);
 
-                if (printable.len == 0) {
-                    if (printable_proto.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+            //     if (!printable.isEmpty()) {
+            //         writer.print(comptime Output.prettyFmt("{}<r><d>(<r><yellow><r>{d}<r><d>)<r> ", enable_ansi_colors), .{ printable, len });
+            //     }
+            // }
+
+            if (len == 0) {
+                writer.writeAll("[]");
+                this.addForNewLine(2);
+                return;
+            }
+
+            var was_good_time = this.always_newline_scope or
+                // heuristic: more than 10, probably should have a newline before it
+                len > 10;
+            {
+                this.indent += 1;
+                this.depth += 1;
+                defer this.depth -|= 1;
+                defer this.indent -|= 1;
+
+                this.addForNewLine(2);
+
+                const prev_quote_strings = this.quote_strings;
+                this.quote_strings = true;
+                defer this.quote_strings = prev_quote_strings;
+                var empty_start: ?u32 = null;
+                first: {
+                    const element = value.getDirectIndex(this.globalThis, 0);
+
+                    const tag = Tag.getAdvanced(element, this.globalThis, .{
+                        .hide_global = true,
+                        .disable_inspect_custom = this.disable_inspect_custom,
+                    });
+
+                    was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
+
+                    if (!this.single_line and (this.ordered_properties or was_good_time)) {
+                        this.resetLine();
+                        writer.writeAll("[");
+                        writer.writeAll("\n");
+                        this.writeIndent(Writer, writer_) catch unreachable;
+                        this.addForNewLine(1);
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
+                        writer.writeAll("[ ");
+                        this.addForNewLine(2);
                     }
-                } else {
-                    if (printable_proto.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
-                    } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
+
+                    if (element == .zero) {
+                        empty_start = 0;
+                        break :first;
                     }
-                }
-            },
-            .Function => {
-                var printable = value.getName(this.globalThis);
-                defer printable.deref();
 
-                const proto = value.getPrototype(this.globalThis);
-                const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-                defer func_name.deref();
+                    try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
-                if (printable.isEmpty() or func_name.eql(printable)) {
-                    if (func_name.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
-                    } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[{}]<r>", enable_ansi_colors), .{func_name});
-                    }
-                } else {
-                    if (func_name.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
-                    } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[{}: {}]<r>", enable_ansi_colors), .{ func_name, printable });
-                    }
-                }
-            },
-            .GetterSetter => {
-                const cell = value.asCell();
-                const getterSetter = cell.getGetterSetter();
-                const hasGetter = !getterSetter.isGetterNull();
-                const hasSetter = !getterSetter.isSetterNull();
-                if (hasGetter and hasSetter) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Getter/Setter]<r>", enable_ansi_colors), .{});
-                } else if (hasGetter) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
-                } else if (hasSetter) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Setter]<r>", enable_ansi_colors), .{});
-                }
-            },
-            .CustomGetterSetter => {
-                const cell = value.asCell();
-                const getterSetter = cell.getCustomGetterSetter();
-                const hasGetter = !getterSetter.isGetterNull();
-                const hasSetter = !getterSetter.isSetterNull();
-                if (hasGetter and hasSetter) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Getter/Setter]<r>", enable_ansi_colors), .{});
-                } else if (hasGetter) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
-                } else if (hasSetter) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Setter]<r>", enable_ansi_colors), .{});
-                }
-            },
-            .Array => {
-                const len = value.getLength(this.globalThis);
-
-                // TODO: DerivedArray does not get passed along in JSType, and it's not clear why.
-                // if (jsType == .DerivedArray) {
-                //     var printable = value.className(this.globalThis);
-
-                //     if (!printable.isEmpty()) {
-                //         writer.print(comptime Output.prettyFmt("{}<r><d>(<r><yellow><r>{d}<r><d>)<r> ", enable_ansi_colors), .{ printable, len });
-                //     }
-                // }
-
-                if (len == 0) {
-                    writer.writeAll("[]");
-                    this.addForNewLine(2);
-                    return;
-                }
-
-                var was_good_time = this.always_newline_scope or
-                    // heuristic: more than 10, probably should have a newline before it
-                    len > 10;
-                {
-                    this.indent += 1;
-                    this.depth += 1;
-                    defer this.depth -|= 1;
-                    defer this.indent -|= 1;
-
-                    this.addForNewLine(2);
-
-                    const prev_quote_strings = this.quote_strings;
-                    this.quote_strings = true;
-                    defer this.quote_strings = prev_quote_strings;
-                    var empty_start: ?u32 = null;
-                    first: {
-                        const element = value.getDirectIndex(this.globalThis, 0);
-
-                        const tag = Tag.getAdvanced(element, this.globalThis, .{
-                            .hide_global = true,
-                            .disable_inspect_custom = this.disable_inspect_custom,
-                        });
-
-                        was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
-
-                        if (!this.single_line and (this.ordered_properties or was_good_time)) {
-                            this.resetLine();
-                            writer.writeAll("[");
-                            writer.writeAll("\n");
-                            this.writeIndent(Writer, writer_) catch unreachable;
-                            this.addForNewLine(1);
-                        } else {
-                            writer.writeAll("[ ");
-                            this.addForNewLine(2);
-                        }
-
-                        if (element == .zero) {
-                            empty_start = 0;
-                            break :first;
-                        }
-
-                        try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
-
-                        if (tag.cell.isStringLike()) {
-                            if (comptime enable_ansi_colors) {
-                                writer.writeAll(comptime Output.prettyFmt("<r>", true));
-                            }
+                    if (tag.cell.isStringLike()) {
+                        if (comptime enable_ansi_colors) {
+                            writer.writeAll(comptime Output.prettyFmt("<r>", true));
                         }
                     }
+                }
 
-                    var i: u32 = 1;
-                    var nonempty_count: u32 = 1;
+                var i: u32 = 1;
+                var nonempty_count: u32 = 1;
 
-                    while (i < len) : (i += 1) {
-                        const element = value.getDirectIndex(this.globalThis, i);
-                        if (element == .zero) {
-                            if (empty_start == null) {
-                                empty_start = i;
-                            }
-                            continue;
+                while (i < len) : (i += 1) {
+                    const element = value.getDirectIndex(this.globalThis, i);
+                    if (element == .zero) {
+                        if (empty_start == null) {
+                            empty_start = i;
                         }
-                        if (nonempty_count >= 100) {
+                        continue;
+                    }
+                    if (nonempty_count >= 100) {
+                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                        writer.writeAll("\n"); // we want the line break to be unconditional here
+                        this.estimated_line_length = 0;
+                        this.writeIndent(Writer, writer_) catch unreachable;
+                        writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
+                        break;
+                    }
+                    nonempty_count += 1;
+
+                    if (empty_start) |empty| {
+                        if (empty > 0) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            writer.writeAll("\n"); // we want the line break to be unconditional here
-                            this.estimated_line_length = 0;
-                            this.writeIndent(Writer, writer_) catch unreachable;
-                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
-                            break;
-                        }
-                        nonempty_count += 1;
-
-                        if (empty_start) |empty| {
-                            if (empty > 0) {
-                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                                if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
-                                    was_good_time = true;
-                                    writer.writeAll("\n");
-                                    this.writeIndent(Writer, writer_) catch unreachable;
-                                } else {
-                                    writer.space();
-                                }
-                            }
-                            const empty_count = i - empty;
-                            if (empty_count == 1) {
-                                writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
+                            if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
+                                was_good_time = true;
+                                writer.writeAll("\n");
+                                this.writeIndent(Writer, writer_) catch unreachable;
                             } else {
-                                this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
-                                writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
+                                writer.space();
                             }
-                            empty_start = null;
                         }
+                        const empty_count = i - empty;
+                        if (empty_count == 1) {
+                            writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
+                        } else {
+                            this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
+                            writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
+                        }
+                        empty_start = null;
+                    }
 
+                    this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                    if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
+                        writer.writeAll("\n");
+                        was_good_time = true;
+                        this.writeIndent(Writer, writer_) catch unreachable;
+                    } else {
+                        writer.space();
+                    }
+
+                    const tag = Tag.getAdvanced(element, this.globalThis, .{
+                        .hide_global = true,
+                        .disable_inspect_custom = this.disable_inspect_custom,
+                    });
+
+                    try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
+
+                    if (tag.cell.isStringLike()) {
+                        if (comptime enable_ansi_colors) {
+                            writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                        }
+                    }
+                }
+
+                if (empty_start) |empty| {
+                    if (empty > 0) {
                         this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                         if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
                             writer.writeAll("\n");
@@ -2484,975 +2546,949 @@ pub const Formatter = struct {
                         } else {
                             writer.space();
                         }
-
-                        const tag = Tag.getAdvanced(element, this.globalThis, .{
-                            .hide_global = true,
-                            .disable_inspect_custom = this.disable_inspect_custom,
-                        });
-
-                        try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
-
-                        if (tag.cell.isStringLike()) {
-                            if (comptime enable_ansi_colors) {
-                                writer.writeAll(comptime Output.prettyFmt("<r>", true));
-                            }
-                        }
                     }
 
-                    if (empty_start) |empty| {
-                        if (empty > 0) {
-                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
-                                writer.writeAll("\n");
-                                was_good_time = true;
-                                this.writeIndent(Writer, writer_) catch unreachable;
-                            } else {
-                                writer.space();
-                            }
-                        }
+                    empty_start = null;
 
-                        empty_start = null;
-
-                        const empty_count = len - empty;
-                        if (empty_count == 1) {
-                            writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
-                        } else {
-                            this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
-                            writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
-                        }
-                    }
-
-                    if (!jsType.isArguments()) {
-                        const Iterator = PropertyIterator(Writer, enable_ansi_colors);
-                        var iter = Iterator{
-                            .formatter = this,
-                            .writer = writer_,
-                            .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
-                            .single_line = this.single_line,
-                            .parent = value,
-                            .i = i,
-                        };
-                        value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
-                        if (this.globalThis.hasException()) {
-                            return error.JSError;
-                        }
-                        if (this.failed) return;
-                    }
-                }
-
-                if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {
-                    this.resetLine();
-                    writer.writeAll("\n");
-                    this.writeIndent(Writer, writer_) catch {};
-                    writer.writeAll("]");
-                    this.resetLine();
-                    this.addForNewLine(1);
-                } else {
-                    writer.writeAll(" ]");
-                    this.addForNewLine(2);
-                }
-            },
-            .Private => {
-                if (value.as(JSC.WebCore.Response)) |response| {
-                    response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (value.as(JSC.WebCore.Request)) |request| {
-                    request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (value.as(JSC.API.BuildArtifact)) |build| {
-                    build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (value.as(JSC.WebCore.Blob)) |blob| {
-                    blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
-                    s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (value.as(JSC.FetchHeaders) != null) {
-                    if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
-                        this.addForNewLine("Headers ".len);
-                        writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
-                        const prev_quote_keys = this.quote_keys;
-                        this.quote_keys = true;
-                        defer this.quote_keys = prev_quote_keys;
-
-                        return try this.printAs(
-                            .Object,
-                            Writer,
-                            writer_,
-                            toJSONFunction.call(this.globalThis, value, &.{}) catch |err|
-                                this.globalThis.takeException(err),
-                            .Object,
-                            enable_ansi_colors,
-                        );
-                    }
-                } else if (value.as(JSC.DOMFormData) != null) {
-                    if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
-                        const prev_quote_keys = this.quote_keys;
-                        this.quote_keys = true;
-                        defer this.quote_keys = prev_quote_keys;
-
-                        return try this.printAs(
-                            .Object,
-                            Writer,
-                            writer_,
-                            toJSONFunction.call(this.globalThis, value, &.{}) catch |err|
-                                this.globalThis.takeException(err),
-                            .Object,
-                            enable_ansi_colors,
-                        );
-                    }
-
-                    // this case should never happen
-                    return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
-                } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
-                    this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
-                    if (timer.internals.flags.kind == .setInterval) {
-                        this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
-                        writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
-                            timer.internals.id,
-                        });
+                    const empty_count = len - empty;
+                    if (empty_count == 1) {
+                        writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
-                            timer.internals.id,
-                        });
-                    }
-
-                    return;
-                } else if (value.as(JSC.API.Bun.Timer.ImmediateObject)) |immediate| {
-                    this.addForNewLine("Immediate(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(immediate.internals.id, 0)))));
-                    writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
-                        immediate.internals.id,
-                    });
-
-                    return;
-                } else if (value.as(JSC.BuildMessage)) |build_log| {
-                    build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
-                    resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                    return;
-                } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
-                    return;
-                } else if (jsType != .DOMWrapper) {
-                    if (value.isCallable()) {
-                        return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
-                    }
-
-                    return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
-                }
-                return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
-            },
-            .NativeCode => {
-                if (value.getClassInfoName()) |class_name| {
-                    this.addForNewLine("[native code: ]".len + class_name.len);
-                    writer.writeAll("[native code: ");
-                    writer.writeAll(class_name);
-                    writer.writeAll("]");
-                } else {
-                    this.addForNewLine("[native code]".len);
-                    writer.writeAll("[native code]");
-                }
-            },
-            .Promise => {
-                if (!this.single_line and this.goodTimeForANewLine()) {
-                    writer.writeAll("\n");
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-
-                writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
-
-                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
-                    .pending => writer.writeAll("<pending>"),
-                    .fulfilled => writer.writeAll("<resolved>"),
-                    .rejected => writer.writeAll("<rejected>"),
-                }
-
-                writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors) ++ " }");
-            },
-            .Boolean => {
-                if (value.isCell()) {
-                    var bool_name = ZigString.Empty;
-                    value.getClassName(this.globalThis, &bool_name);
-                    var bool_value = ZigString.Empty;
-                    try value.toZigString(&bool_value, this.globalThis);
-
-                    if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
-                        this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
-                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({s}): {s}]<r>", enable_ansi_colors), .{
-                            bool_name,
-                            bool_value,
-                        });
-                        return;
-                    }
-                    this.addForNewLine(bool_value.len + "[Boolean: ]".len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {s}]<r>", enable_ansi_colors), .{bool_value});
-                    return;
-                }
-                if (value.toBoolean()) {
-                    this.addForNewLine(4);
-                    writer.writeAll(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors));
-                } else {
-                    this.addForNewLine(5);
-                    writer.writeAll(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors));
-                }
-            },
-            .GlobalObject => {
-                const fmt = "[Global Object]";
-                this.addForNewLine(fmt.len);
-                writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
-            },
-            .Map => {
-                const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
-
-                const prev_quote_strings = this.quote_strings;
-                this.quote_strings = true;
-                defer this.quote_strings = prev_quote_strings;
-
-                const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
-
-                if (length == 0) {
-                    return writer.print("{s} {{}}", .{map_name});
-                }
-
-                switch (this.single_line) {
-                    inline else => |single_line| {
-                        writer.print("{s}({d}) {{" ++ (if (single_line) " " else "\n"), .{ map_name, length });
-                    },
-                }
-                {
-                    this.indent += 1;
-                    this.depth +|= 1;
-                    defer this.indent -|= 1;
-                    defer this.depth -|= 1;
-                    switch (this.single_line) {
-                        inline else => |single_line| {
-                            var iter = MapIterator(Writer, enable_ansi_colors, false, single_line){
-                                .formatter = this,
-                                .writer = writer_,
-                            };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
-                            if (this.failed) return;
-                            if (single_line and iter.count > 0) {
-                                writer.writeAll(" ");
-                            }
-                        },
+                        this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
+                        writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
                     }
                 }
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-                writer.writeAll("}");
-            },
-            .MapIterator => {
-                const prev_quote_strings = this.quote_strings;
-                this.quote_strings = true;
-                defer this.quote_strings = prev_quote_strings;
 
-                writer.print("MapIterator {{ ", .{});
-                {
-                    this.indent += 1;
-                    this.depth +|= 1;
-                    defer this.indent -|= 1;
-                    defer this.depth -|= 1;
-                    switch (this.single_line) {
-                        inline else => |single_line| {
-                            var iter = MapIterator(Writer, enable_ansi_colors, true, single_line){
-                                .formatter = this,
-                                .writer = writer_,
-                            };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
-                            if (this.failed) return;
-                            if (iter.count > 0) {
-                                if (single_line) {
-                                    writer.writeAll(" ");
-                                } else {
-                                    writer.writeAll("\n");
-                                }
-                            }
-                        },
-                    }
-                }
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-                writer.writeAll("}");
-            },
-            .SetIterator => {
-                const prev_quote_strings = this.quote_strings;
-                this.quote_strings = true;
-                defer this.quote_strings = prev_quote_strings;
-
-                writer.print("SetIterator {{ ", .{});
-                {
-                    this.indent += 1;
-                    this.depth +|= 1;
-                    defer this.indent -|= 1;
-                    defer this.depth -|= 1;
-                    switch (this.single_line) {
-                        inline else => |single_line| {
-                            var iter = MapIterator(Writer, enable_ansi_colors, true, single_line){
-                                .formatter = this,
-                                .writer = writer_,
-                            };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
-                            if (this.failed) return;
-                            if (iter.count > 0 and !single_line) {
-                                writer.writeAll("\n");
-                            }
-                        },
-                    }
-                }
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-                writer.writeAll("}");
-            },
-            .Set => {
-                const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
-
-                const prev_quote_strings = this.quote_strings;
-                this.quote_strings = true;
-                defer this.quote_strings = prev_quote_strings;
-
-                const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
-
-                if (length == 0) {
-                    return writer.print("{s} {{}}", .{set_name});
-                }
-
-                switch (this.single_line) {
-                    inline else => |single_line| {
-                        writer.print("{s}({d}) {{" ++ (if (single_line) " " else "\n"), .{ set_name, length });
-                    },
-                }
-                {
-                    this.indent += 1;
-                    this.depth +|= 1;
-                    defer this.indent -|= 1;
-                    defer this.depth -|= 1;
-                    switch (this.single_line) {
-                        inline else => |single_line| {
-                            var iter = SetIterator(Writer, enable_ansi_colors, single_line){
-                                .formatter = this,
-                                .writer = writer_,
-                            };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
-                            if (this.failed) return;
-                            if (single_line and !iter.is_first) {
-                                writer.writeAll(" ");
-                            }
-                        },
-                    }
-                }
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch {};
-                }
-                writer.writeAll("}");
-            },
-            .toJSON => {
-                if (value.get_unsafe(this.globalThis, "toJSON")) |func| brk: {
-                    const result = func.call(this.globalThis, value, &.{}) catch {
-                        this.globalThis.clearException();
-                        break :brk;
+                if (!jsType.isArguments()) {
+                    const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                    var iter = Iterator{
+                        .formatter = this,
+                        .writer = writer_,
+                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                        .single_line = this.single_line,
+                        .parent = value,
+                        .i = i,
                     };
+                    value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    if (this.globalThis.hasException()) {
+                        return error.JSError;
+                    }
+                    if (this.failed) return;
+                }
+            }
+
+            if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {
+                this.resetLine();
+                writer.writeAll("\n");
+                this.writeIndent(Writer, writer_) catch {};
+                writer.writeAll("]");
+                this.resetLine();
+                this.addForNewLine(1);
+            } else {
+                writer.writeAll(" ]");
+                this.addForNewLine(2);
+            }
+        }
+        pub fn Private(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, jsType: JSValue.JSType, comptime enable_ansi_colors: bool) !void {
+            if (value.as(JSC.WebCore.Response)) |response| {
+                response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (value.as(JSC.WebCore.Request)) |request| {
+                request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (value.as(JSC.API.BuildArtifact)) |build| {
+                build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (value.as(JSC.WebCore.Blob)) |blob| {
+                blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
+                s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (value.as(JSC.FetchHeaders) != null) {
+                if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
+                    this.addForNewLine("Headers ".len);
+                    writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
                     const prev_quote_keys = this.quote_keys;
                     this.quote_keys = true;
                     defer this.quote_keys = prev_quote_keys;
-                    try this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
-                    return;
+
+                    return try this.printAs(
+                        .Object,
+                        Writer,
+                        writer_,
+                        toJSONFunction.call(this.globalThis, value, &.{}) catch |err|
+                            this.globalThis.takeException(err),
+                        .Object,
+                        enable_ansi_colors,
+                    );
+                }
+            } else if (value.as(JSC.DOMFormData) != null) {
+                if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
+                    const prev_quote_keys = this.quote_keys;
+                    this.quote_keys = true;
+                    defer this.quote_keys = prev_quote_keys;
+
+                    return try this.printAs(
+                        .Object,
+                        Writer,
+                        writer_,
+                        toJSONFunction.call(this.globalThis, value, &.{}) catch |err|
+                            this.globalThis.takeException(err),
+                        .Object,
+                        enable_ansi_colors,
+                    );
                 }
 
-                writer.writeAll("{}");
-            },
-            .JSON => {
-                var str = bun.String.empty;
-                defer str.deref();
-
-                value.jsonStringify(this.globalThis, this.indent, &str);
-                this.addForNewLine(str.length());
-                if (jsType == JSValue.JSType.JSDate) {
-                    // in the code for printing dates, it never exceeds this amount
-                    var iso_string_buf: [36]u8 = undefined;
-                    var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
-
-                    if (strings.eql(out_buf, "null")) {
-                        out_buf = "Invalid Date";
-                    } else if (out_buf.len > 2) {
-                        // trim the quotes
-                        out_buf = out_buf[1 .. out_buf.len - 1];
-                    }
-
-                    writer.print(comptime Output.prettyFmt("<r><magenta>{s}<r>", enable_ansi_colors), .{out_buf});
-                    return;
+                // this case should never happen
+                return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
+            } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
+                this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
+                if (timer.internals.flags.kind == .setInterval) {
+                    this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
+                    writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
+                        timer.internals.id,
+                    });
+                } else {
+                    writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                        timer.internals.id,
+                    });
                 }
 
-                writer.print("{}", .{str});
-            },
-            .Event => {
-                const event_type_value = brk: {
-                    const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk JSValue.undefined;
-                    if (value_.isString()) {
-                        break :brk value_;
+                return;
+            } else if (value.as(JSC.API.Bun.Timer.ImmediateObject)) |immediate| {
+                this.addForNewLine("Immediate(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(immediate.internals.id, 0)))));
+                writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                    immediate.internals.id,
+                });
+
+                return;
+            } else if (value.as(JSC.BuildMessage)) |build_log| {
+                build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
+                resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                return;
+            } else if (JestPrettyFormat.printAsymmetricMatcher(this, writer, writer_, &name_buf, value, enable_ansi_colors)) {
+                return;
+            } else if (jsType != .DOMWrapper) {
+                if (value.isCallable()) {
+                    return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
+                }
+
+                return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
+            }
+            return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+        }
+        pub fn NativeCode(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue) !void {
+            if (value.getClassInfoName()) |class_name| {
+                this.addForNewLine("[native code: ]".len + class_name.len);
+                writer.writeAll("[native code: ");
+                writer.writeAll(class_name);
+                writer.writeAll("]");
+            } else {
+                this.addForNewLine("[native code]".len);
+                writer.writeAll("[native code]");
+            }
+        }
+        pub fn Promise(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            if (!this.single_line and this.goodTimeForANewLine()) {
+                writer.writeAll("\n");
+                this.writeIndent(Writer, writer_) catch {};
+            }
+
+            writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
+
+            switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
+                .pending => writer.writeAll("<pending>"),
+                .fulfilled => writer.writeAll("<resolved>"),
+                .rejected => writer.writeAll("<rejected>"),
+            }
+
+            writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors) ++ " }");
+        }
+        pub fn Boolean(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            if (value.isCell()) {
+                var bool_name = ZigString.Empty;
+                value.getClassName(this.globalThis, &bool_name);
+                var bool_value = ZigString.Empty;
+                try value.toZigString(&bool_value, this.globalThis);
+
+                if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
+                    this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
+                    writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({s}): {s}]<r>", enable_ansi_colors), .{
+                        bool_name,
+                        bool_value,
+                    });
+                    return;
+                }
+                this.addForNewLine(bool_value.len + "[Boolean: ]".len);
+                writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {s}]<r>", enable_ansi_colors), .{bool_value});
+                return;
+            }
+            if (value.toBoolean()) {
+                this.addForNewLine(4);
+                writer.writeAll(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors));
+            } else {
+                this.addForNewLine(5);
+                writer.writeAll(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors));
+            }
+        }
+        pub fn GlobalObject(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), comptime enable_ansi_colors: bool) !void {
+            const fmt = "[Global Object]";
+            this.addForNewLine(fmt.len);
+            writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
+        }
+        pub fn Map(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+            const length = length_value.toInt32();
+
+            const prev_quote_strings = this.quote_strings;
+            this.quote_strings = true;
+            defer this.quote_strings = prev_quote_strings;
+
+            const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
+
+            if (length == 0) {
+                return writer.print("{s} {{}}", .{map_name});
+            }
+
+            switch (this.single_line) {
+                inline else => |single_line| {
+                    writer.print("{s}({d}) {{" ++ (if (single_line) " " else "\n"), .{ map_name, length });
+                },
+            }
+            {
+                this.indent += 1;
+                this.depth +|= 1;
+                defer this.indent -|= 1;
+                defer this.depth -|= 1;
+                switch (this.single_line) {
+                    inline else => |single_line| {
+                        var iter = Formatter.MapIterator(Writer, enable_ansi_colors, false, single_line){
+                            .formatter = this,
+                            .writer = writer_,
+                        };
+                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        if (this.failed) return;
+                        if (single_line and iter.count > 0) {
+                            writer.writeAll(" ");
+                        }
+                    },
+                }
+            }
+            if (!this.single_line) {
+                this.writeIndent(Writer, writer_) catch {};
+            }
+            writer.writeAll("}");
+        }
+        pub fn MapIterator(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const prev_quote_strings = this.quote_strings;
+            this.quote_strings = true;
+            defer this.quote_strings = prev_quote_strings;
+
+            writer.print("MapIterator {{ ", .{});
+            {
+                this.indent += 1;
+                this.depth +|= 1;
+                defer this.indent -|= 1;
+                defer this.depth -|= 1;
+                switch (this.single_line) {
+                    inline else => |single_line| {
+                        var iter = Formatter.MapIterator(Writer, enable_ansi_colors, true, single_line){
+                            .formatter = this,
+                            .writer = writer_,
+                        };
+                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        if (this.failed) return;
+                        if (iter.count > 0) {
+                            if (single_line) {
+                                writer.writeAll(" ");
+                            } else {
+                                writer.writeAll("\n");
+                            }
+                        }
+                    },
+                }
+            }
+            if (!this.single_line) {
+                this.writeIndent(Writer, writer_) catch {};
+            }
+            writer.writeAll("}");
+        }
+        pub fn SetIterator(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const prev_quote_strings = this.quote_strings;
+            this.quote_strings = true;
+            defer this.quote_strings = prev_quote_strings;
+
+            writer.print("SetIterator {{ ", .{});
+            {
+                this.indent += 1;
+                this.depth +|= 1;
+                defer this.indent -|= 1;
+                defer this.depth -|= 1;
+                switch (this.single_line) {
+                    inline else => |single_line| {
+                        var iter = Formatter.SetIterator(Writer, enable_ansi_colors, single_line){
+                            .formatter = this,
+                            .writer = writer_,
+                        };
+                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        if (this.failed) return;
+                        if (!iter.is_first and !single_line) {
+                            writer.writeAll("\n");
+                        }
+                    },
+                }
+            }
+            if (!this.single_line) {
+                this.writeIndent(Writer, writer_) catch {};
+            }
+            writer.writeAll("}");
+        }
+        pub fn Set(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+            const length = length_value.toInt32();
+
+            const prev_quote_strings = this.quote_strings;
+            this.quote_strings = true;
+            defer this.quote_strings = prev_quote_strings;
+
+            const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
+
+            if (length == 0) {
+                return writer.print("{s} {{}}", .{set_name});
+            }
+
+            switch (this.single_line) {
+                inline else => |single_line| {
+                    writer.print("{s}({d}) {{" ++ (if (single_line) " " else "\n"), .{ set_name, length });
+                },
+            }
+            {
+                this.indent += 1;
+                this.depth +|= 1;
+                defer this.indent -|= 1;
+                defer this.depth -|= 1;
+                switch (this.single_line) {
+                    inline else => |single_line| {
+                        var iter = Formatter.SetIterator(Writer, enable_ansi_colors, single_line){
+                            .formatter = this,
+                            .writer = writer_,
+                        };
+                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        if (this.failed) return;
+                        if (single_line and !iter.is_first) {
+                            writer.writeAll(" ");
+                        }
+                    },
+                }
+            }
+            if (!this.single_line) {
+                this.writeIndent(Writer, writer_) catch {};
+            }
+            writer.writeAll("}");
+        }
+        pub fn toJSON(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            if (value.get_unsafe(this.globalThis, "toJSON")) |func| brk: {
+                const result = func.call(this.globalThis, value, &.{}) catch {
+                    this.globalThis.clearException();
+                    break :brk;
+                };
+                const prev_quote_keys = this.quote_keys;
+                this.quote_keys = true;
+                defer this.quote_keys = prev_quote_keys;
+                try this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                return;
+            }
+
+            writer.writeAll("{}");
+        }
+        pub fn JSON(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, jsType: JSValue.JSType, comptime enable_ansi_colors: bool) !void {
+            var str = bun.String.empty;
+            defer str.deref();
+
+            value.jsonStringify(this.globalThis, this.indent, &str);
+            this.addForNewLine(str.length());
+            if (jsType == JSValue.JSType.JSDate) {
+                // in the code for printing dates, it never exceeds this amount
+                var iso_string_buf: [36]u8 = undefined;
+                var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
+
+                if (strings.eql(out_buf, "null")) {
+                    out_buf = "Invalid Date";
+                } else if (out_buf.len > 2) {
+                    // trim the quotes
+                    out_buf = out_buf[1 .. out_buf.len - 1];
+                }
+
+                writer.print(comptime Output.prettyFmt("<r><magenta>{s}<r>", enable_ansi_colors), .{out_buf});
+                return;
+            }
+
+            writer.print("{}", .{str});
+        }
+        pub fn Event(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const event_type_value = brk: {
+                const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                if (value_.isString()) {
+                    break :brk value_;
+                }
+
+                break :brk JSValue.undefined;
+            };
+
+            const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                .MessageEvent, .ErrorEvent => |evt| evt,
+                else => {
+                    return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                },
+            };
+
+            writer.print(
+                comptime Output.prettyFmt("<r><cyan>{s}<r> {{\n", enable_ansi_colors),
+                .{
+                    @tagName(event_type),
+                },
+            );
+            {
+                this.indent += 1;
+                this.depth +|= 1;
+                defer this.indent -|= 1;
+                defer this.depth -|= 1;
+                const old_quote_strings = this.quote_strings;
+                this.quote_strings = true;
+                defer this.quote_strings = old_quote_strings;
+                this.writeIndent(Writer, writer_) catch unreachable;
+
+                switch (this.single_line) {
+                    inline else => |single_line| {
+                        writer.print(
+                            comptime Output.prettyFmt("<r>type: <green>\"{s}\"<r><d>,<r>" ++ (if (single_line) " " else "\n"), enable_ansi_colors),
+                            .{
+                                event_type.label(),
+                            },
+                        );
+                    },
+                }
+
+                if (value.fastGet(this.globalThis, .message)) |message_value| {
+                    if (message_value.isString()) {
+                        if (!this.single_line) {
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                        }
+
+                        writer.print(
+                            comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                            .{},
+                        );
+
+                        const tag = Tag.getAdvanced(message_value, this.globalThis, .{
+                            .hide_global = true,
+                            .disable_inspect_custom = this.disable_inspect_custom,
+                        });
+                        try this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                        if (this.failed) return;
+                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                        if (!this.single_line) {
+                            writer.writeAll("\n");
+                        }
                     }
+                }
 
-                    break :brk JSValue.undefined;
-                };
+                switch (event_type) {
+                    .MessageEvent => {
+                        if (!this.single_line) {
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                        }
 
-                const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
-                    .MessageEvent, .ErrorEvent => |evt| evt,
-                    else => {
-                        return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                        writer.print(
+                            comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
+                            .{},
+                        );
+                        const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
+                        const tag = Tag.getAdvanced(data, this.globalThis, .{
+                            .hide_global = true,
+                            .disable_inspect_custom = this.disable_inspect_custom,
+                        });
+                        try this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                        if (this.failed) return;
+                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                        if (!this.single_line) {
+                            writer.writeAll("\n");
+                        }
                     },
-                };
+                    .ErrorEvent => {
+                        if (value.fastGet(this.globalThis, .@"error")) |error_value| {
+                            if (!this.single_line) {
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                            }
 
-                writer.print(
-                    comptime Output.prettyFmt("<r><cyan>{s}<r> {{\n", enable_ansi_colors),
-                    .{
-                        @tagName(event_type),
+                            writer.print(
+                                comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
+                                .{},
+                            );
+
+                            const tag = Tag.getAdvanced(error_value, this.globalThis, .{
+                                .hide_global = true,
+                                .disable_inspect_custom = this.disable_inspect_custom,
+                            });
+                            try this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                            if (this.failed) return;
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            if (!this.single_line) {
+                                writer.writeAll("\n");
+                            }
+                        }
                     },
-                );
-                {
-                    this.indent += 1;
-                    this.depth +|= 1;
-                    defer this.indent -|= 1;
-                    defer this.depth -|= 1;
+                    else => unreachable,
+                }
+            }
+
+            if (!this.single_line) {
+                this.writeIndent(Writer, writer_) catch unreachable;
+            }
+            writer.writeAll("}");
+        }
+        pub fn JSX(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, comptime enable_ansi_colors: bool) !void {
+            writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+
+            writer.writeAll("<");
+
+            var needs_space = false;
+            var tag_name_str = ZigString.init("");
+
+            var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+            var is_tag_kind_primitive = false;
+
+            defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
+
+            if (value.get_unsafe(this.globalThis, "type")) |type_value| {
+                const _tag = Tag.getAdvanced(type_value, this.globalThis, .{
+                    .hide_global = true,
+                    .disable_inspect_custom = this.disable_inspect_custom,
+                });
+
+                if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
+                    try type_value.toZigString(&tag_name_str, this.globalThis);
+                    is_tag_kind_primitive = true;
+                } else if (_tag.cell.isObject() or type_value.isCallable()) {
+                    type_value.getNameProperty(this.globalThis, &tag_name_str);
+                    if (tag_name_str.len == 0) {
+                        tag_name_str = ZigString.init("NoName");
+                    }
+                } else {
+                    try type_value.toZigString(&tag_name_str, this.globalThis);
+                }
+
+                tag_name_slice = tag_name_str.toSlice(default_allocator);
+                needs_space = true;
+            } else {
+                tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+
+                needs_space = true;
+            }
+
+            if (!is_tag_kind_primitive)
+                writer.writeAll(comptime Output.prettyFmt("<cyan>", enable_ansi_colors))
+            else
+                writer.writeAll(comptime Output.prettyFmt("<green>", enable_ansi_colors));
+            writer.writeAll(tag_name_slice.slice());
+            if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+
+            if (value.get_unsafe(this.globalThis, "key")) |key_value| {
+                if (!key_value.isUndefinedOrNull()) {
+                    if (needs_space)
+                        writer.writeAll(" key=")
+                    else
+                        writer.writeAll("key=");
+
                     const old_quote_strings = this.quote_strings;
                     this.quote_strings = true;
                     defer this.quote_strings = old_quote_strings;
-                    this.writeIndent(Writer, writer_) catch unreachable;
 
-                    switch (this.single_line) {
-                        inline else => |single_line| {
-                            writer.print(
-                                comptime Output.prettyFmt("<r>type: <green>\"{s}\"<r><d>,<r>" ++ (if (single_line) " " else "\n"), enable_ansi_colors),
-                                .{
-                                    event_type.label(),
-                                },
-                            );
-                        },
-                    }
-
-                    if (value.fastGet(this.globalThis, .message)) |message_value| {
-                        if (message_value.isString()) {
-                            if (!this.single_line) {
-                                this.writeIndent(Writer, writer_) catch unreachable;
-                            }
-
-                            writer.print(
-                                comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
-                                .{},
-                            );
-
-                            const tag = Tag.getAdvanced(message_value, this.globalThis, .{
-                                .hide_global = true,
-                                .disable_inspect_custom = this.disable_inspect_custom,
-                            });
-                            try this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
-                            if (this.failed) return;
-                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (!this.single_line) {
-                                writer.writeAll("\n");
-                            }
-                        }
-                    }
-
-                    switch (event_type) {
-                        .MessageEvent => {
-                            if (!this.single_line) {
-                                this.writeIndent(Writer, writer_) catch unreachable;
-                            }
-
-                            writer.print(
-                                comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
-                                .{},
-                            );
-                            const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
-                            const tag = Tag.getAdvanced(data, this.globalThis, .{
-                                .hide_global = true,
-                                .disable_inspect_custom = this.disable_inspect_custom,
-                            });
-                            try this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
-                            if (this.failed) return;
-                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (!this.single_line) {
-                                writer.writeAll("\n");
-                            }
-                        },
-                        .ErrorEvent => {
-                            if (value.fastGet(this.globalThis, .@"error")) |error_value| {
-                                if (!this.single_line) {
-                                    this.writeIndent(Writer, writer_) catch unreachable;
-                                }
-
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
-                                    .{},
-                                );
-
-                                const tag = Tag.getAdvanced(error_value, this.globalThis, .{
-                                    .hide_global = true,
-                                    .disable_inspect_custom = this.disable_inspect_custom,
-                                });
-                                try this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
-                                if (this.failed) return;
-                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                                if (!this.single_line) {
-                                    writer.writeAll("\n");
-                                }
-                            }
-                        },
-                        else => unreachable,
-                    }
-                }
-
-                if (!this.single_line) {
-                    this.writeIndent(Writer, writer_) catch unreachable;
-                }
-                writer.writeAll("}");
-            },
-            .JSX => {
-                writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
-
-                writer.writeAll("<");
-
-                var needs_space = false;
-                var tag_name_str = ZigString.init("");
-
-                var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
-                var is_tag_kind_primitive = false;
-
-                defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
-
-                if (value.get_unsafe(this.globalThis, "type")) |type_value| {
-                    const _tag = Tag.getAdvanced(type_value, this.globalThis, .{
+                    try this.format(Tag.getAdvanced(key_value, this.globalThis, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.disable_inspect_custom,
-                    });
-
-                    if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                        try type_value.toZigString(&tag_name_str, this.globalThis);
-                        is_tag_kind_primitive = true;
-                    } else if (_tag.cell.isObject() or type_value.isCallable()) {
-                        type_value.getNameProperty(this.globalThis, &tag_name_str);
-                        if (tag_name_str.len == 0) {
-                            tag_name_str = ZigString.init("NoName");
-                        }
-                    } else {
-                        try type_value.toZigString(&tag_name_str, this.globalThis);
-                    }
-
-                    tag_name_slice = tag_name_str.toSlice(default_allocator);
-                    needs_space = true;
-                } else {
-                    tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+                    }), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
 
                     needs_space = true;
                 }
+            }
 
-                if (!is_tag_kind_primitive)
-                    writer.writeAll(comptime Output.prettyFmt("<cyan>", enable_ansi_colors))
-                else
-                    writer.writeAll(comptime Output.prettyFmt("<green>", enable_ansi_colors));
-                writer.writeAll(tag_name_slice.slice());
-                if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+            if (value.get_unsafe(this.globalThis, "props")) |props| {
+                const prev_quote_strings = this.quote_strings;
+                defer this.quote_strings = prev_quote_strings;
+                this.quote_strings = true;
 
-                if (value.get_unsafe(this.globalThis, "key")) |key_value| {
-                    if (!key_value.isUndefinedOrNull()) {
-                        if (needs_space)
-                            writer.writeAll(" key=")
-                        else
-                            writer.writeAll("key=");
+                // SAFETY: JSX props are always objects
+                const props_obj = props.getObject().?;
+                var props_iter = try JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(this.globalThis, props_obj);
+                defer props_iter.deinit();
 
-                        const old_quote_strings = this.quote_strings;
-                        this.quote_strings = true;
-                        defer this.quote_strings = old_quote_strings;
+                const children_prop = props.get_unsafe(this.globalThis, "children");
+                if (props_iter.len > 0) {
+                    {
+                        this.indent += 1;
+                        defer this.indent -|= 1;
+                        const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
-                        try this.format(Tag.getAdvanced(key_value, this.globalThis, .{
-                            .hide_global = true,
-                            .disable_inspect_custom = this.disable_inspect_custom,
-                        }), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
+                        while (try props_iter.next()) |prop| {
+                            if (prop.eqlComptime("children"))
+                                continue;
 
-                        needs_space = true;
-                    }
-                }
+                            const property_value = props_iter.value;
+                            const tag = Tag.getAdvanced(property_value, this.globalThis, .{
+                                .hide_global = true,
+                                .disable_inspect_custom = this.disable_inspect_custom,
+                            });
 
-                if (value.get_unsafe(this.globalThis, "props")) |props| {
-                    const prev_quote_strings = this.quote_strings;
-                    defer this.quote_strings = prev_quote_strings;
-                    this.quote_strings = true;
+                            if (tag.cell.isHidden()) continue;
 
-                    // SAFETY: JSX props are always objects
-                    const props_obj = props.getObject().?;
-                    var props_iter = try JSC.JSPropertyIterator(.{
-                        .skip_empty_name = true,
-                        .include_value = true,
-                    }).init(this.globalThis, props_obj);
-                    defer props_iter.deinit();
+                            if (needs_space) writer.space();
+                            needs_space = false;
 
-                    const children_prop = props.get_unsafe(this.globalThis, "children");
-                    if (props_iter.len > 0) {
-                        {
-                            this.indent += 1;
-                            defer this.indent -|= 1;
-                            const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
+                            writer.print(
+                                comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
+                                .{prop.trunc(128)},
+                            );
 
-                            while (try props_iter.next()) |prop| {
-                                if (prop.eqlComptime("children"))
-                                    continue;
-
-                                const property_value = props_iter.value;
-                                const tag = Tag.getAdvanced(property_value, this.globalThis, .{
-                                    .hide_global = true,
-                                    .disable_inspect_custom = this.disable_inspect_custom,
-                                });
-
-                                if (tag.cell.isHidden()) continue;
-
-                                if (needs_space) writer.space();
-                                needs_space = false;
-
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
-                                    .{prop.trunc(128)},
-                                );
-
-                                if (tag.cell.isStringLike()) {
-                                    if (comptime enable_ansi_colors) {
-                                        writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
-                                    }
-                                }
-
-                                try this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
-
-                                if (tag.cell.isStringLike()) {
-                                    if (comptime enable_ansi_colors) {
-                                        writer.writeAll(comptime Output.prettyFmt("<r>", true));
-                                    }
-                                }
-
-                                if (!this.single_line and (
-                                    // count_without_children is necessary to prevent printing an extra newline
-                                    // if there are children and one prop and the child prop is the last prop
-                                    props_iter.i + 1 < count_without_children and
-                                        // 3 is arbitrary but basically
-                                        //  <input type="text" value="foo" />
-                                        //  ^ should be one line
-                                        // <input type="text" value="foo" bar="true" baz={false} />
-                                        //  ^ should be multiple lines
-                                        props_iter.i > 3))
-                                {
-                                    writer.writeAll("\n");
-                                    this.writeIndent(Writer, writer_) catch unreachable;
-                                } else if (props_iter.i + 1 < count_without_children) {
-                                    writer.space();
+                            if (tag.cell.isStringLike()) {
+                                if (comptime enable_ansi_colors) {
+                                    writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                                 }
                             }
+
+                            try this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
+
+                            if (tag.cell.isStringLike()) {
+                                if (comptime enable_ansi_colors) {
+                                    writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                }
+                            }
+
+                            if (!this.single_line and (
+                                // count_without_children is necessary to prevent printing an extra newline
+                                // if there are children and one prop and the child prop is the last prop
+                                props_iter.i + 1 < count_without_children and
+                                    // 3 is arbitrary but basically
+                                    //  <input type="text" value="foo" />
+                                    //  ^ should be one line
+                                    // <input type="text" value="foo" bar="true" baz={false} />
+                                    //  ^ should be multiple lines
+                                    props_iter.i > 3))
+                            {
+                                writer.writeAll("\n");
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                            } else if (props_iter.i + 1 < count_without_children) {
+                                writer.space();
+                            }
                         }
+                    }
 
-                        if (children_prop) |children| {
-                            const tag = Tag.get(children, this.globalThis);
+                    if (children_prop) |children| {
+                        const tag = Tag.get(children, this.globalThis);
 
-                            const print_children = switch (tag.tag) {
-                                .String, .JSX, .Array => true,
-                                else => false,
-                            };
+                        const print_children = switch (tag.tag) {
+                            .String, .JSX, .Array => true,
+                            else => false,
+                        };
 
-                            if (print_children and !this.single_line) {
-                                print_children: {
-                                    switch (tag.tag) {
-                                        .String => {
-                                            const children_string = try children.getZigString(this.globalThis);
-                                            if (children_string.len == 0) break :print_children;
-                                            if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                        if (print_children and !this.single_line) {
+                            print_children: {
+                                switch (tag.tag) {
+                                    .String => {
+                                        const children_string = try children.getZigString(this.globalThis);
+                                        if (children_string.len == 0) break :print_children;
+                                        if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
-                                            writer.writeAll(">");
-                                            if (children_string.len < 128) {
-                                                writer.writeString(children_string);
-                                            } else {
-                                                this.indent += 1;
-                                                writer.writeAll("\n");
-                                                this.writeIndent(Writer, writer_) catch unreachable;
-                                                this.indent -|= 1;
-                                                writer.writeString(children_string);
-                                                writer.writeAll("\n");
-                                                this.writeIndent(Writer, writer_) catch unreachable;
-                                            }
-                                        },
-                                        .JSX => {
-                                            writer.writeAll(">\n");
-
-                                            {
-                                                this.indent += 1;
-                                                this.writeIndent(Writer, writer_) catch unreachable;
-                                                defer this.indent -|= 1;
-                                                try this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
-                                            }
-
+                                        writer.writeAll(">");
+                                        if (children_string.len < 128) {
+                                            writer.writeString(children_string);
+                                        } else {
+                                            this.indent += 1;
                                             writer.writeAll("\n");
                                             this.writeIndent(Writer, writer_) catch unreachable;
-                                        },
-                                        .Array => {
-                                            const length = children.getLength(this.globalThis);
-                                            if (length == 0) break :print_children;
-                                            writer.writeAll(">\n");
+                                            this.indent -|= 1;
+                                            writer.writeString(children_string);
+                                            writer.writeAll("\n");
+                                            this.writeIndent(Writer, writer_) catch unreachable;
+                                        }
+                                    },
+                                    .JSX => {
+                                        writer.writeAll(">\n");
 
-                                            {
-                                                this.indent += 1;
-                                                this.writeIndent(Writer, writer_) catch unreachable;
-                                                const _prev_quote_strings = this.quote_strings;
-                                                this.quote_strings = false;
-                                                defer this.quote_strings = _prev_quote_strings;
+                                        {
+                                            this.indent += 1;
+                                            this.writeIndent(Writer, writer_) catch unreachable;
+                                            defer this.indent -|= 1;
+                                            try this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
+                                        }
 
-                                                defer this.indent -|= 1;
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch unreachable;
+                                    },
+                                    .Array => {
+                                        const length = children.getLength(this.globalThis);
+                                        if (length == 0) break :print_children;
+                                        writer.writeAll(">\n");
 
-                                                var j: usize = 0;
-                                                while (j < length) : (j += 1) {
-                                                    const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
-                                                    try this.format(Tag.getAdvanced(child, this.globalThis, .{
-                                                        .hide_global = true,
-                                                        .disable_inspect_custom = this.disable_inspect_custom,
-                                                    }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
-                                                    if (j + 1 < length) {
-                                                        writer.writeAll("\n");
-                                                        this.writeIndent(Writer, writer_) catch unreachable;
-                                                    }
+                                        {
+                                            this.indent += 1;
+                                            this.writeIndent(Writer, writer_) catch unreachable;
+                                            const _prev_quote_strings = this.quote_strings;
+                                            this.quote_strings = false;
+                                            defer this.quote_strings = _prev_quote_strings;
+
+                                            defer this.indent -|= 1;
+
+                                            var j: usize = 0;
+                                            while (j < length) : (j += 1) {
+                                                const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
+                                                try this.format(Tag.getAdvanced(child, this.globalThis, .{
+                                                    .hide_global = true,
+                                                    .disable_inspect_custom = this.disable_inspect_custom,
+                                                }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
+                                                if (j + 1 < length) {
+                                                    writer.writeAll("\n");
+                                                    this.writeIndent(Writer, writer_) catch unreachable;
                                                 }
                                             }
+                                        }
 
-                                            writer.writeAll("\n");
-                                            this.writeIndent(Writer, writer_) catch unreachable;
-                                        },
-                                        else => unreachable,
-                                    }
-
-                                    writer.writeAll("</");
-                                    if (!is_tag_kind_primitive)
-                                        writer.writeAll(comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors))
-                                    else
-                                        writer.writeAll(comptime Output.prettyFmt("<r><green>", enable_ansi_colors));
-                                    writer.writeAll(tag_name_slice.slice());
-                                    if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
-                                    writer.writeAll(">");
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch unreachable;
+                                    },
+                                    else => unreachable,
                                 }
 
-                                return;
+                                writer.writeAll("</");
+                                if (!is_tag_kind_primitive)
+                                    writer.writeAll(comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors))
+                                else
+                                    writer.writeAll(comptime Output.prettyFmt("<r><green>", enable_ansi_colors));
+                                writer.writeAll(tag_name_slice.slice());
+                                if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+                                writer.writeAll(">");
                             }
+
+                            return;
                         }
                     }
                 }
+            }
 
-                writer.writeAll(" />");
-            },
-            .Object => {
-                bun.assert(value.isCell());
-                const prev_quote_strings = this.quote_strings;
-                this.quote_strings = true;
-                defer this.quote_strings = prev_quote_strings;
-
-                const Iterator = PropertyIterator(Writer, enable_ansi_colors);
-
-                // We want to figure out if we should print this object
-                // on one line or multiple lines
-                //
-                // The 100% correct way would be to print everything to
-                // a temporary buffer and then check how long each line was
-                //
-                // But it's important that console.log() is fast. So we
-                // do a small compromise to avoid multiple passes over input
-                //
-                // We say:
-                //
-                //   If the object has at least 2 properties and ANY of the following conditions are met:
-                //      - total length of all the property names is more than
-                //        14 characters
-                //     - the parent object is printing each property on a new line
-                //     - The first property is a DOM object, ESM namespace, Map, Set, or Blob
-                //
-                //   Then, we print it each property on a new line, recursively.
-                //
-                const prev_always_newline_scope = this.always_newline_scope;
-                defer this.always_newline_scope = prev_always_newline_scope;
-                var iter = Iterator{
-                    .formatter = this,
-                    .writer = writer_,
-                    .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
-                    .single_line = this.single_line,
-                    .parent = value,
-                };
-
-                if (this.depth > this.max_depth) {
-                    if (this.single_line) {
-                        writer.writeAll(" ");
-                    } else if (this.always_newline_scope or this.goodTimeForANewLine()) {
-                        writer.writeAll("\n");
-                        this.writeIndent(Writer, writer_) catch {};
-                        this.resetLine();
-                    }
-
-                    var display_name = value.getName(this.globalThis);
-                    if (display_name.isEmpty()) {
-                        display_name = String.static("Object");
-                    }
-                    writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
-                        display_name,
-                    });
-                    return;
-                } else if (this.ordered_properties) {
-                    value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
-                } else {
-                    value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
-                }
-
-                if (this.globalThis.hasException()) {
-                    return error.JSError;
-                }
-                if (this.failed) return;
-
-                if (iter.i == 0) {
-                    if (value.isClass(this.globalThis))
-                        try this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
-                    else if (value.isCallable())
-                        try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
-                    else {
-                        if (getObjectName(this.globalThis, value)) |name_str| {
-                            writer.print("{} ", .{name_str});
-                        }
-                        writer.writeAll("{}");
-                    }
-                } else {
-                    this.depth -= 1;
-
-                    if (iter.always_newline) {
-                        this.indent -|= 1;
-                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                        writer.writeAll("\n");
-                        this.writeIndent(Writer, writer_) catch {};
-                        writer.writeAll("}");
-                        this.estimated_line_length += 1;
-                    } else {
-                        this.estimated_line_length += 2;
-                        writer.writeAll(" }");
-                    }
-                }
-            },
-            .TypedArray => {
-                const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
-                const slice = arrayBuffer.byteSlice();
-
-                writer.writeAll(
-                    if (arrayBuffer.typed_array_type == .Uint8Array and
-                        arrayBuffer.value.isBuffer(this.globalThis))
-                        "Buffer"
-                    else
-                        bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
-                );
-                if (slice.len == 0) {
-                    writer.print("({d}) []", .{arrayBuffer.len});
-                    return;
-                }
-                writer.print("({d}) [ ", .{arrayBuffer.len});
-
-                switch (jsType) {
-                    .Int8Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        i8,
-                        @alignCast(std.mem.bytesAsSlice(i8, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Int16Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        i16,
-                        @alignCast(std.mem.bytesAsSlice(i16, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Uint16Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        u16,
-                        @alignCast(std.mem.bytesAsSlice(u16, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Int32Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        i32,
-                        @alignCast(std.mem.bytesAsSlice(i32, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Uint32Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        u32,
-                        @alignCast(std.mem.bytesAsSlice(u32, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Float16Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        f16,
-                        @alignCast(std.mem.bytesAsSlice(f16, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Float32Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        f32,
-                        @alignCast(std.mem.bytesAsSlice(f32, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .Float64Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        f64,
-                        @alignCast(std.mem.bytesAsSlice(f64, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .BigInt64Array => this.writeTypedArray(
-                        *@TypeOf(writer),
-                        &writer,
-                        i64,
-                        @alignCast(std.mem.bytesAsSlice(i64, slice)),
-                        enable_ansi_colors,
-                    ),
-                    .BigUint64Array => {
-                        this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u64,
-                            @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
-                            enable_ansi_colors,
-                        );
-                    },
-
-                    // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                    else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
-                }
-
-                writer.writeAll(" ]");
-            },
-            .RevokedProxy => {
-                this.addForNewLine("<Revoked Proxy>".len);
-                writer.print(comptime Output.prettyFmt("<r><cyan>\\<Revoked Proxy\\><r>", enable_ansi_colors), .{});
-            },
-            .Proxy => {
-                const target = value.getProxyInternalField(.target);
-                if (Environment.allow_assert) {
-                    // Proxy does not allow non-objects here.
-                    bun.assert(target.isCell());
-                }
-                // TODO: if (options.showProxy), print like `Proxy { target: ..., handlers: ... }`
-                // this is default off so it is not used.
-                try this.format(ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
-            },
+            writer.writeAll(" />");
         }
-    }
+        pub fn Object(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, writer: *WrappedWriter(Writer), value: JSValue, jsType: JSValue.JSType, comptime enable_ansi_colors: bool) !void {
+            bun.assert(value.isCell());
+            const prev_quote_strings = this.quote_strings;
+            this.quote_strings = true;
+            defer this.quote_strings = prev_quote_strings;
 
-    fn writeTypedArray(this: *ConsoleObject.Formatter, comptime WriterWrapped: type, writer: WriterWrapped, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
+            const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+
+            // We want to figure out if we should print this object
+            // on one line or multiple lines
+            //
+            // The 100% correct way would be to print everything to
+            // a temporary buffer and then check how long each line was
+            //
+            // But it's important that console.log() is fast. So we
+            // do a small compromise to avoid multiple passes over input
+            //
+            // We say:
+            //
+            //   If the object has at least 2 properties and ANY of the following conditions are met:
+            //      - total length of all the property names is more than
+            //        14 characters
+            //     - the parent object is printing each property on a new line
+            //     - The first property is a DOM object, ESM namespace, Map, Set, or Blob
+            //
+            //   Then, we print it each property on a new line, recursively.
+            //
+            const prev_always_newline_scope = this.always_newline_scope;
+            defer this.always_newline_scope = prev_always_newline_scope;
+            var iter = Iterator{
+                .formatter = this,
+                .writer = writer_,
+                .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                .single_line = this.single_line,
+                .parent = value,
+            };
+
+            if (this.depth > this.max_depth) {
+                if (this.single_line) {
+                    writer.writeAll(" ");
+                } else if (this.always_newline_scope or this.goodTimeForANewLine()) {
+                    writer.writeAll("\n");
+                    this.writeIndent(Writer, writer_) catch {};
+                    this.resetLine();
+                }
+
+                var display_name = value.getName(this.globalThis);
+                if (display_name.isEmpty()) {
+                    display_name = bun.String.static("Object");
+                }
+                writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
+                    display_name,
+                });
+                return;
+            } else if (this.ordered_properties) {
+                value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
+            } else {
+                value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
+            }
+
+            if (this.globalThis.hasException()) {
+                return error.JSError;
+            }
+            if (this.failed) return;
+
+            if (iter.i == 0) {
+                if (value.isClass(this.globalThis))
+                    try this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
+                else if (value.isCallable())
+                    try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
+                else {
+                    if (getObjectName(this.globalThis, value)) |name_str| {
+                        writer.print("{} ", .{name_str});
+                    }
+                    writer.writeAll("{}");
+                }
+            } else {
+                this.depth -= 1;
+
+                if (iter.always_newline) {
+                    this.indent -|= 1;
+                    this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                    writer.writeAll("\n");
+                    this.writeIndent(Writer, writer_) catch {};
+                    writer.writeAll("}");
+                    this.estimated_line_length += 1;
+                } else {
+                    this.estimated_line_length += 2;
+                    writer.writeAll(" }");
+                }
+            }
+        }
+        pub fn TypedArray(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), value: JSValue, jsType: JSValue.JSType, comptime enable_ansi_colors: bool) !void {
+            const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
+            const slice = arrayBuffer.byteSlice();
+
+            writer.writeAll(
+                if (arrayBuffer.typed_array_type == .Uint8Array and
+                    arrayBuffer.value.isBuffer(this.globalThis))
+                    "Buffer"
+                else
+                    bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
+            );
+            if (slice.len == 0) {
+                writer.print("({d}) []", .{arrayBuffer.len});
+                return;
+            }
+            writer.print("({d}) [ ", .{arrayBuffer.len});
+
+            switch (jsType) {
+                .Int8Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    i8,
+                    @alignCast(std.mem.bytesAsSlice(i8, slice)),
+                    enable_ansi_colors,
+                ),
+                .Int16Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    i16,
+                    @alignCast(std.mem.bytesAsSlice(i16, slice)),
+                    enable_ansi_colors,
+                ),
+                .Uint16Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    u16,
+                    @alignCast(std.mem.bytesAsSlice(u16, slice)),
+                    enable_ansi_colors,
+                ),
+                .Int32Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    i32,
+                    @alignCast(std.mem.bytesAsSlice(i32, slice)),
+                    enable_ansi_colors,
+                ),
+                .Uint32Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    u32,
+                    @alignCast(std.mem.bytesAsSlice(u32, slice)),
+                    enable_ansi_colors,
+                ),
+                .Float16Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    f16,
+                    @alignCast(std.mem.bytesAsSlice(f16, slice)),
+                    enable_ansi_colors,
+                ),
+                .Float32Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    f32,
+                    @alignCast(std.mem.bytesAsSlice(f32, slice)),
+                    enable_ansi_colors,
+                ),
+                .Float64Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    f64,
+                    @alignCast(std.mem.bytesAsSlice(f64, slice)),
+                    enable_ansi_colors,
+                ),
+                .BigInt64Array => this.writeTypedArray(
+                    Writer,
+                    writer,
+                    i64,
+                    @alignCast(std.mem.bytesAsSlice(i64, slice)),
+                    enable_ansi_colors,
+                ),
+                .BigUint64Array => {
+                    this.writeTypedArray(
+                        Writer,
+                        writer,
+                        u64,
+                        @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
+                        enable_ansi_colors,
+                    );
+                },
+
+                // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                else => this.writeTypedArray(Writer, writer, u8, slice, enable_ansi_colors),
+            }
+
+            writer.writeAll(" ]");
+        }
+        pub fn RevokedProxy(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), comptime enable_ansi_colors: bool) !void {
+            this.addForNewLine("<Revoked Proxy>".len);
+            writer.print(comptime Output.prettyFmt("<r><cyan>\\<Revoked Proxy\\><r>", enable_ansi_colors), .{});
+        }
+        pub fn Proxy(this: *ConsoleObject.Formatter, comptime Writer: type, writer_: Writer, value: JSValue, comptime enable_ansi_colors: bool) !void {
+            const target = value.getProxyInternalField(.target);
+            if (Environment.allow_assert) {
+                // Proxy does not allow non-objects here.
+                bun.assert(target.isCell());
+            }
+            // TODO: if (options.showProxy), print like `Proxy { target: ..., handlers: ... }`
+            // this is default off so it is not used.
+            try this.format(ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
+        }
+    };
+
+    fn writeTypedArray(this: *ConsoleObject.Formatter, comptime Writer: type, writer: *WrappedWriter(Writer), comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
         const fmt_ = if (Number == i64 or Number == u64)
             "<r><yellow>{d}n<r>"
         else
@@ -3487,16 +3523,42 @@ pub const Formatter = struct {
         defer this.globalThis = prevGlobalThis;
         this.globalThis = globalThis;
 
+        if (comptime Writer == std.io.AnyWriter) {
+            // This looks incredibly redundant. We make the ConsoleObject.Formatter.Tag a
+            // comptime var so we have to repeat it here. The rationale there is
+            // it _should_ limit the stack usage because each version of the
+            // function will be relatively small
+            switch (result.tag.tag()) {
+                inline else => |tag| try this.printAs(tag, std.io.AnyWriter, writer, value, result.cell, enable_ansi_colors),
+
+                .CustomFormattedObject => {
+                    this.custom_formatted_object = result.tag.CustomFormattedObject;
+                    try this.printAs(.CustomFormattedObject, std.io.AnyWriter, writer, value, result.cell, enable_ansi_colors);
+                },
+            }
+            return;
+        }
+
+        const generic_writer = std.io.AnyWriter{
+            .context = &writer,
+            .writeFn = &struct {
+                fn write(context: *const anyopaque, bytes: []const u8) anyerror!usize {
+                    var writer_: *Writer = @constCast(@alignCast(@ptrCast(context)));
+                    return try writer_.write(bytes);
+                }
+            }.write,
+        };
+
         // This looks incredibly redundant. We make the ConsoleObject.Formatter.Tag a
         // comptime var so we have to repeat it here. The rationale there is
         // it _should_ limit the stack usage because each version of the
         // function will be relatively small
         switch (result.tag.tag()) {
-            inline else => |tag| try this.printAs(tag, Writer, writer, value, result.cell, enable_ansi_colors),
+            inline else => |tag| try this.printAs(tag, std.io.AnyWriter, generic_writer, value, result.cell, enable_ansi_colors),
 
             .CustomFormattedObject => {
                 this.custom_formatted_object = result.tag.CustomFormattedObject;
-                try this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
+                try this.printAs(.CustomFormattedObject, std.io.AnyWriter, generic_writer, value, result.cell, enable_ansi_colors);
             },
         }
     }

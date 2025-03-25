@@ -588,11 +588,11 @@ pub const RunCommand = struct {
                                 const is_probably_trying_to_run_a_pkg_script =
                                     original_script_for_bun_run != null and
                                     ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
-                                    (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
-                                    "install",
-                                    "kill",
-                                    "link",
-                                }) and ctx.positionals.len == 1));
+                                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                                            "install",
+                                            "kill",
+                                            "link",
+                                        }) and ctx.positionals.len == 1));
 
                                 if (is_probably_trying_to_run_a_pkg_script) {
                                     // if you run something like `bun run test`, you get a confusing message because
@@ -1077,9 +1077,7 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 const slice = path_buf[0 .. dir_slice.len + base.len :0];
-                                if (Environment.isWindows) {
-                                    @panic("TODO");
-                                }
+
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(base), base) catch continue);

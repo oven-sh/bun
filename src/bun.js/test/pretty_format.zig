@@ -1302,7 +1302,7 @@ pub const JestPrettyFormat = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
+                    } else if (printAsymmetricMatcher(this, &writer, writer_, &name_buf, value, enable_ansi_colors)) {
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable()) {
@@ -2041,18 +2041,15 @@ pub const JestPrettyFormat = struct {
     pub fn printAsymmetricMatcher(
         // the Formatter instance
         this: anytype,
-        comptime Format: anytype,
         /// The WrappedWriter
         writer: anytype,
         /// The raw writer
         writer_: anytype,
         /// Buf used to print strings
-        name_buf: [512]u8,
+        name_buf: *[512]u8,
         value: JSValue,
         comptime enable_ansi_colors: bool,
     ) bool {
-        _ = Format;
-
         if (value.as(expect.ExpectAnything)) |matcher| {
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
@@ -2074,7 +2071,7 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("Any<");
             }
 
-            var class_name = ZigString.init(&name_buf);
+            var class_name = ZigString.init(name_buf);
             constructor_value.getClassName(this.globalThis, &class_name);
             this.addForNewLine(class_name.len);
             writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});

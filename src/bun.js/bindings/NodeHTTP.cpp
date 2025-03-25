@@ -710,7 +710,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
         if (LIKELY(array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) {
             EncodedJSValue* data = arrayValues.data();
             for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
-                array->initializeIndexWithoutBarrier(initializationScope, i, JSValue::decode(data[i]));
+                array->initializeIndex(initializationScope, i, JSValue::decode(data[i]));
             }
         } else {
             array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);

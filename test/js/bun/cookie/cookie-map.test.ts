@@ -55,7 +55,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(str).toInclude("Secure");
     expect(str).toInclude("HttpOnly");
     expect(str).toInclude("Partitioned");
-    expect(str).toInclude("SameSite=strict");
+    expect(str).toInclude("SameSite=Strict");
+    expect(str).toMatchInlineSnapshot(`"name=value; Domain=example.com; Path=/foo; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Strict"`);
   });
 
   test("can set Cookie expires as Date", () => {

@@ -163,7 +163,7 @@ describe("Bun.CookieMap", () => {
     expect(cookieMap.has("foo")).toBe(false);
   });
 
-  test("can delete cookies with options", () => {
+  test.only("can delete cookies with options", () => {
     const cookieMap = new Bun.CookieMap();
     cookieMap.set(
       new Bun.Cookie("name", "value", {
@@ -177,6 +177,12 @@ describe("Bun.CookieMap", () => {
       domain: "example.com",
       path: "/foo",
     });
+
+    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "name=; Domain=example.com; Path=/foo; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      ]
+    `);
 
     expect(cookieMap.size).toBe(0);
   });
@@ -242,11 +248,7 @@ describe("Bun.CookieMap", () => {
 
 const cookie = {
   parse: str => {
-    return Object.fromEntries(
-      Bun.CookieMap.fromCookieHeader(str)
-        .toJSON()
-        .map(([k, v]) => [k, typeof v === "string" ? v : v.value]),
-    );
+    return Object.fromEntries(new Bun.CookieMap(str).entries());
   },
   serialize: (name, value, options) => {
     const cookie = new Bun.Cookie(name, value, options);

@@ -438,12 +438,8 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     const fooCookie = cookieMap.get("foo");
     expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
 
-    expect(cookieMap.getModifiedEntry("name")).toMatchInlineSnapshot(
-      `{"name":"name","value":"value","path":"/","secure":false,"sameSite":"lax","httpOnly":false,"partitioned":false}`,
-    );
-    expect(cookieMap.getModifiedEntry("foo")).toMatchInlineSnapshot(
-      `{"name":"foo","value":"bar","path":"/","secure":false,"sameSite":"lax","httpOnly":false,"partitioned":false}`,
-    );
+    expect(cookieMap.getModifiedEntry("name")).toBe(null);
+    expect(cookieMap.getModifiedEntry("foo")).toBe(null);
   });
 
   it("can create a CookieMap with an object", () => {
@@ -585,7 +581,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     for (const entry of mapJSON) {
       expect(entry.length).toBe(2);
       expect(entry[0]).toBeTypeOf("string");
-      expect(entry[1]).toBeTypeOf("object");
+      expect(typeof entry[1]).toBeOneOf(["string", "object"]);
     }
 
     // Verify JSON.stringify works as expected

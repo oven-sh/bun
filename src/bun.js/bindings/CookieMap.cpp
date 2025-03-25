@@ -235,6 +235,8 @@ void CookieMap::remove(const String& name)
 
 void CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
+    removeInternal(options.name);
+
     String name = options.name;
     String domain = options.domain;
     String path = options.path;

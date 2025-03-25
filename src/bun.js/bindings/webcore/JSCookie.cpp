@@ -214,7 +214,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionParse);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionFrom);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionSerialize);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_name);
-static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_name);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_value);
 static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_value);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_domain);
@@ -388,7 +387,7 @@ template<> void JSCookieDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 
 static const HashTableValue JSCookiePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieConstructor, 0 } },
-    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_name, jsCookiePrototypeSetter_name } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_name, 0 } },
     { "value"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_value, jsCookiePrototypeSetter_value } },
     { "domain"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_domain, jsCookiePrototypeSetter_domain } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_path, jsCookiePrototypeSetter_path } },
@@ -594,20 +593,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_name, (JSGlobalObject * lexical
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "name"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.name()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_name, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
-        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "name"_s);
-    auto& impl = thisObject->wrapped();
-    auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
-    RETURN_IF_EXCEPTION(throwScope, false);
-    impl.setName(value);
-    return true;
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_value, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

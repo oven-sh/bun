@@ -7561,7 +7561,7 @@ declare module "bun" {
     constructor(cookieString: string);
     constructor(cookieObject?: CookieInit);
 
-    name: string;
+    readonly name: string;
     value: string;
     domain?: string;
     path: string;

@@ -7574,12 +7574,12 @@ declare module "bun" {
 
     isExpired(): boolean;
 
+    serialize(): string;
     toString(): string;
     toJSON(): CookieInit;
 
     static parse(cookieString: string): Cookie;
     static from(name: string, value: string, options?: CookieInit): Cookie;
-    static serialize(...cookies: Cookie[]): string;
   }
 
   /**

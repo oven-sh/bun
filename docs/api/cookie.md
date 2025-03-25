@@ -289,6 +289,8 @@ const sessionCookie = new Bun.Cookie("name", "value");
 console.log(sessionCookie.isExpired()); // false
 ```
 
+#### `serialize(): string`
+
 #### `toString(): string`
 
 Returns a string representation of the cookie suitable for a `Set-Cookie` header.
@@ -303,6 +305,8 @@ const cookie = new Bun.Cookie("session", "abc123", {
   sameSite: "strict",
 });
 
+console.log(cookie.serialize());
+// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
 console.log(cookie.toString());
 // => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
 ```
@@ -358,18 +362,6 @@ const cookie = Bun.Cookie.from("session", "abc123", {
   secure: true,
   maxAge: 3600,
 });
-```
-
-#### `Cookie.serialize(...cookies: Cookie[]): string`
-
-Combines multiple cookies into a string suitable for a `Cookie` header.
-
-```ts
-const cookie1 = new Bun.Cookie("name", "value");
-const cookie2 = new Bun.Cookie("foo", "bar");
-
-const cookieStr = Bun.Cookie.serialize(cookie1, cookie2);
-// => "name=value; foo=bar"
 ```
 
 ## Types

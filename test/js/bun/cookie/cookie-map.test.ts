@@ -108,9 +108,10 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     const cookie1 = new Bun.Cookie("foo", "bar");
     const cookie2 = new Bun.Cookie("baz", "qux");
 
-    const cookieStr = Bun.Cookie.serialize(cookie1, cookie2);
-
-    expect(cookieStr).toMatchInlineSnapshot(`"foo=bar; baz=qux"`);
+    expect(cookie1.serialize() + "\n" + cookie2.serialize()).toMatchInlineSnapshot(`
+      "foo=bar; SameSite=Lax
+      baz=qux; SameSite=Lax"
+    `);
   });
 
   // Basic CookieMap tests

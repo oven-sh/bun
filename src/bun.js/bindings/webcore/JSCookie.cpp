@@ -209,6 +209,7 @@ std::optional<CookieInit> CookieInit::fromJS(JSC::VM& vm, JSGlobalObject* lexica
 }
 
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_serialize);
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionParse);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionFrom);
@@ -380,9 +381,6 @@ template<> void JSCookieDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 
     JSC::JSFunction* fromFunction = JSC::JSFunction::create(vm, &globalObject, 3, "from"_s, jsCookieStaticFunctionFrom, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);
     putDirect(vm, Identifier::fromString(vm, "from"_s), fromFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete));
-
-    JSC::JSFunction* serializeFunction = JSC::JSFunction::create(vm, &globalObject, 1, "serialize"_s, jsCookieStaticFunctionSerialize, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);
-    putDirect(vm, Identifier::fromString(vm, "serialize"_s), serializeFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete));
 }
 
 static const HashTableValue JSCookiePrototypeTableValues[] = {
@@ -400,6 +398,7 @@ static const HashTableValue JSCookiePrototypeTableValues[] = {
     { "isExpired"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_isExpired, 0 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_toString, 0 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_toJSON, 0 } },
+    { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_serialize, 0 } },
 };
 
 const ClassInfo JSCookiePrototype::s_info = { "Cookie"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookiePrototype) };
@@ -471,6 +470,11 @@ static inline JSC::EncodedJSValue jsCookiePrototypeFunction_toStringBody(JSC::JS
 JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSCookie>::call<jsCookiePrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_serialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSCookie>::call<jsCookiePrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "serialize");
 }
 
 // Implementation of the toJSON method

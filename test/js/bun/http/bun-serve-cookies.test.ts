@@ -574,14 +574,13 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     const cookieMap = new Bun.CookieMap("a=1; b=2; c=3");
 
     const mapJSON = cookieMap.toJSON();
-    expect(mapJSON).toBeInstanceOf(Array);
-    expect(mapJSON.length).toBe(3);
+    expect(mapJSON).toBeInstanceOf(Object);
+    expect([...Object.keys(mapJSON)].length).toBe(3);
 
-    // Each entry should be [name, value]
-    for (const entry of mapJSON) {
+    for (const entry of Object.entries(mapJSON)) {
       expect(entry.length).toBe(2);
       expect(entry[0]).toBeTypeOf("string");
-      expect(typeof entry[1]).toBeOneOf(["string", "object"]);
+      expect(entry[1]).toBeTypeOf("string");
     }
 
     // Verify JSON.stringify works as expected

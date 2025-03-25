@@ -236,39 +236,28 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Create an array of cookie entries
-    auto* array = JSC::constructEmptyArray(globalObject, nullptr, size());
+    // Create an object to hold cookie key-value pairs
+    auto* object = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, JSC::jsNull());
 
-    unsigned index = 0;
+    // Add modified cookies to the object
     for (const auto& cookie : m_modifiedCookies) {
-        // For each cookie, create a [name, cookie JSON] entry
-        auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie->name()));
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        entryArray->putDirectIndex(globalObject, 1, cookie->toJSON(vm, globalObject));
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        array->putDirectIndex(globalObject, index++, entryArray);
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+        if (!cookie->value().isEmpty()) {
+            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
+            RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+        }
     }
+
+    // Add original cookies to the object
     for (const auto& cookie : m_originalCookies) {
-        auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie.key));
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        entryArray->putDirectIndex(globalObject, 1, JSC::jsString(vm, cookie.value));
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        array->putDirectIndex(globalObject, index++, entryArray);
+        // Skip if this cookie name was already added from modified cookies
+        if (!object->hasProperty(globalObject, JSC::Identifier::fromString(vm, cookie.key))) {
+            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
+            RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+        }
     }
 
-    return array;
+    return object;
 }
 
 size_t CookieMap::memoryCost() const

@@ -7654,11 +7654,26 @@ declare module "bun" {
     delete(name: string): void;
 
     /**
+     * Removes a cookie from the map.
+     *
+     * @param options - The options for the cookie to delete
+     */
+    delete(options: CookieStoreDeleteOptions): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param name - The name of the cookie to delete
+     * @param options - The options for the cookie to delete
+     */
+    delete(name: string, options: Omit<CookieStoreDeleteOptions, "name">): void;
+
+    /**
      * Converts the cookie map to a serializable format.
      *
      * @returns An array of name/value pairs
      */
-    toJSON(): [[name: string, value: string | ReturnType<Cookie["toJSON"]>]];
+    toJSON(): Record<string, string>;
 
     /**
      * The number of cookies in the map.

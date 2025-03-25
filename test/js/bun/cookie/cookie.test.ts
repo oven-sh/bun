@@ -116,11 +116,17 @@ describe("Bun.serve() cookies", () => {
               req.cookies.set(key, value, options);
             }
           }
-          return new Response(JSON.stringify(req.cookies), {
-            headers: {
-              "Content-Type": "application/json",
+          return new Response(
+            JSON.stringify({
+              cookies: req.cookies,
+              changes: req.cookies.getAllChanges(),
+            }),
+            {
+              headers: {
+                "Content-Type": "application/json",
+              },
             },
-          });
+          );
         },
       },
     },
@@ -134,9 +140,8 @@ describe("Bun.serve() cookies", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
-      [
-        [
-          "test",
+      {
+        "changes": [
           {
             "httpOnly": false,
             "name": "test",
@@ -147,7 +152,10 @@ describe("Bun.serve() cookies", () => {
             "value": "test",
           },
         ],
-      ]
+        "cookies": {
+          "test": "test",
+        },
+      }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
@@ -166,9 +174,8 @@ describe("Bun.serve() cookies", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
-      [
-        [
-          "test",
+      {
+        "changes": [
           {
             "httpOnly": false,
             "name": "test",
@@ -178,9 +185,6 @@ describe("Bun.serve() cookies", () => {
             "secure": false,
             "value": "test",
           },
-        ],
-        [
-          "test2",
           {
             "httpOnly": false,
             "name": "test2",
@@ -191,7 +195,11 @@ describe("Bun.serve() cookies", () => {
             "value": "test2",
           },
         ],
-      ]
+        "cookies": {
+          "test": "test",
+          "test2": "test2",
+        },
+      }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
@@ -208,9 +216,8 @@ describe("Bun.serve() cookies", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
-      [
-        [
-          "test",
+      {
+        "changes": [
           {
             "expires": "1970-01-01T00:00:00.001Z",
             "httpOnly": false,
@@ -222,7 +229,8 @@ describe("Bun.serve() cookies", () => {
             "value": "",
           },
         ],
-      ]
+        "cookies": {},
+      }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
@@ -244,9 +252,8 @@ describe("Bun.serve() cookies", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
-      [
-        [
-          "do_modify",
+      {
+        "changes": [
           {
             "httpOnly": false,
             "name": "do_modify",
@@ -256,9 +263,6 @@ describe("Bun.serve() cookies", () => {
             "secure": false,
             "value": "c",
           },
-        ],
-        [
-          "add_cookie",
           {
             "httpOnly": false,
             "name": "add_cookie",
@@ -269,11 +273,12 @@ describe("Bun.serve() cookies", () => {
             "value": "d",
           },
         ],
-        [
-          "dont_modify",
-          "a",
-        ],
-      ]
+        "cookies": {
+          "add_cookie": "d",
+          "do_modify": "c",
+          "dont_modify": "a",
+        },
+      }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
@@ -294,37 +299,10 @@ describe("Bun.serve() cookies", () => {
       ]
     `);
     expect(map.toJSON()).toMatchInlineSnapshot(`
-      [
-        [
-          "do_delete",
-          {
-            "expires": 1970-01-01T00:00:00.001Z,
-            "httpOnly": false,
-            "name": "do_delete",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "",
-          },
-        ],
-        [
-          "do_modify",
-          {
-            "httpOnly": false,
-            "name": "do_modify",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "FIVE",
-          },
-        ],
-        [
-          "dont_modify",
-          "ONE",
-        ],
-      ]
+      {
+        "do_modify": "FIVE",
+        "dont_modify": "ONE",
+      }
     `);
   });
 });

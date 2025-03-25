@@ -239,16 +239,10 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
   test("CookieMap.toJSON() formats properly", () => {
     const map = new Bun.CookieMap("a=1; b=2");
     expect(map.toJSON()).toMatchInlineSnapshot(`
-      [
-        [
-          "a",
-          "1",
-        ],
-        [
-          "b",
-          "2",
-        ],
-      ]
+      {
+        "a": "1",
+        "b": "2",
+      }
     `);
   });
 

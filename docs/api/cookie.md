@@ -127,7 +127,7 @@ cookies.delete({
 });
 ```
 
-#### `toJSON(): Array<[string, string | ReturnType<Cookie["toJSON"]>]>`
+#### `toJSON(): Record<string, string>`
 
 Converts the cookie map to a serializable format.
 
@@ -432,7 +432,9 @@ class CookieMap implements Iterable<[string, Cookie]> {
   set(name: string, value: string, options?: CookieInit): void;
   set(options: CookieInit): void;
   delete(name: string): void;
-  toJSON(): [[name: string, value: string | ReturnType<Cookie["toJSON"]>]];
+  delete(options: CookieStoreDeleteOptions): void;
+  delete(name: string, options: Omit<CookieStoreDeleteOptions, "name">): void;
+  toJSON(): Record<string, string>;
 
   readonly size: number;
 

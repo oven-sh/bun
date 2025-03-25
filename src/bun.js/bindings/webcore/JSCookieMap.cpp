@@ -449,25 +449,29 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
 
     JSValue arg0 = callFrame->uncheckedArgument(0);
     auto& names = builtinNames(vm);
+
+    JSValue nameArg = jsUndefined();
+    JSValue optionsArg = jsUndefined();
     if (arg0.isObject()) {
-        // Handle as options object (CookieStoreDeleteOptions)
-        auto* options = arg0.getObject();
-        CookieStoreDeleteOptions deleteOptions;
-
-        // Extract required name
-        if (auto nameValue = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(vm.propertyNames->name))) {
-            RETURN_IF_EXCEPTION(throwScope, {});
-
-            if (!nameValue.isUndefined() && !nameValue.isNull()) {
-                deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+        optionsArg = arg0;
+    } else {
+        nameArg = arg0;
+        if (callFrame->argumentCount() >= 2) {
+            optionsArg = callFrame->uncheckedArgument(1);
+            if (!optionsArg.isObject()) {
+                return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Options must be an object"_s));
             }
-
-            RETURN_IF_EXCEPTION(throwScope, {});
         }
+    }
 
-        if (deleteOptions.name.isEmpty()) {
-            return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
-        }
+    CookieStoreDeleteOptions deleteOptions;
+    deleteOptions.path = "/"_s;
+    JSValue nameValue = nameArg;
+    if (optionsArg.isObject()) {
+        auto* options = optionsArg.getObject();
+
+        // Extract name
+        if (nameValue.isUndefined()) nameValue = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
 
         // Extract optional domain
         if (auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName())) {
@@ -486,23 +490,23 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
             if (!pathValue.isUndefined() && !pathValue.isNull()) {
                 deleteOptions.path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
-            } else {
-                deleteOptions.path = "/"_s;
             }
         }
+    }
 
-        impl.remove(deleteOptions);
-    } else {
-        // Handle single string argument (name)
-        auto name = convert<IDLUSVString>(*lexicalGlobalObject, arg0);
+    if (nameValue.isString()) {
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        CookieStoreDeleteOptions deleteOptions;
-        deleteOptions.name = name;
-        deleteOptions.domain = String();
-        deleteOptions.path = "/"_s;
-        impl.remove(deleteOptions);
+        if (!nameValue.isUndefined() && !nameValue.isNull()) {
+            deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+        }
+
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else {
+        return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
     }
+
+    impl.remove(deleteOptions);
 
     return JSValue::encode(jsUndefined());
 }

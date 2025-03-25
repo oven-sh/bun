@@ -1092,11 +1092,11 @@ describe("Response", () => {
           "content-type": "potato",
           "x-hello": "world",
         },
-        status: 408,
+        status: 301,
       });
 
       expect(response.headers.get("x-hello")).toBe("world");
-      expect(response.status).toBe(408);
+      expect(response.status).toBe(301);
     });
   });
   describe("Response.redirect", () => {
@@ -1121,7 +1121,7 @@ describe("Response", () => {
           "x-hello": "world",
           Location: "https://wrong.com",
         },
-        status: 408,
+        status: 302,
       });
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.headers.get("Location")).toBe("https://example.com");

@@ -61,6 +61,7 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+const kCloseCallback = Symbol("closeCallback");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -750,7 +751,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
-    if (typeof optionalCallback === "function") this.once("close", optionalCallback);
+    if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     server.stop();
   },
 
@@ -970,7 +971,7 @@ const ServerPrototype = {
             resolveFunction && resolveFunction();
           }
 
-          http_res.once("close", onClose);
+          setCloseCallback(http_res, onClose);
           if (reachedRequestsLimit) {
             server.emit("dropRequest", http_req, socket);
             http_res.writeHead(503);
@@ -993,14 +994,14 @@ const ServerPrototype = {
 
           if (capturedError) {
             handle = undefined;
-            http_res.removeListener("close", onClose);
+            http_res[kCloseCallback] = undefined;
             http_res.detachSocket(socket);
             throw capturedError;
           }
 
           if (handle.finished || didFinish) {
             handle = undefined;
-            http_res.removeListener("close", onClose);
+            http_res[kCloseCallback] = undefined;
             http_res.detachSocket(socket);
             return;
           }
@@ -1822,6 +1823,7 @@ function emitCloseNT(self) {
   if (!self._closed) {
     self.destroyed = true;
     self._closed = true;
+    callCloseCallback(self);
     self.emit("close");
   }
 }
@@ -1829,6 +1831,7 @@ function emitCloseNT(self) {
 function emitCloseNTAndComplete(self) {
   if (!self._closed) {
     self._closed = true;
+    callCloseCallback(self);
     self.emit("close");
   }
 
@@ -1836,6 +1839,7 @@ function emitCloseNTAndComplete(self) {
 }
 
 function emitRequestCloseNT(self) {
+  callCloseCallback(self);
   self.emit("close");
 }
 
@@ -2218,7 +2222,7 @@ const ServerResponsePrototype = {
       throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
     }
     socket._httpMessage = this;
-    socket.once("close", onServerResponseClose);
+    setCloseCallback(socket, onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);
   },
@@ -2619,6 +2623,7 @@ function ClientRequest(input, options, cb) {
       }
       if (!this._closed) {
         this._closed = true;
+        callCloseCallback(this);
         this.emit("close");
       }
       if (!res.aborted && res.readable) {
@@ -3622,6 +3627,23 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
 
 function emitAbortNextTick(self) {
   self.emit("abort");
+}
+
+function callCloseCallback(self) {
+  if (self[kCloseCallback]) {
+    self[kCloseCallback]();
+    self[kCloseCallback] = undefined;
+  }
+}
+
+function setCloseCallback(self, callback) {
+  if (callback === self[kCloseCallback]) {
+    return;
+  }
+  if (self[kCloseCallback]) {
+    throw new Error("Close callback already set");
+  }
+  self[kCloseCallback] = callback;
 }
 
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);

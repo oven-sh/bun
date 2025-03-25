@@ -138,7 +138,7 @@ describe("Bun.CookieMap", () => {
     expect(cookieMap.size).toBe(1);
     expect(cookieMap.has("name")).toBe(true);
 
-    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "name=value; Domain=example.com; Path=/foo; Secure; SameSite=Lax",
       ]
@@ -176,7 +176,7 @@ describe("Bun.CookieMap", () => {
       path: "/foo",
     });
 
-    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "name=; Domain=example.com; Path=/foo; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
       ]

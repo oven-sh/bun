@@ -34,7 +34,7 @@ describe("CookieMap leaks", () => {
           cookieMap.delete("session");
           
           // Get all changes
-          const changes = cookieMap.getAllChanges();
+          const changes = cookieMap.toSetCookieHeaders();
           
           // Iterate over entries
           for (const [key, value] of cookieMap.entries()) {
@@ -83,7 +83,7 @@ describe("CookieMap leaks", () => {
           cookieMap.delete("foo");
           
           // Get all changes and convert to JSON
-          const changes = cookieMap.getAllChanges();
+          const changes = cookieMap.toSetCookieHeaders();
           const json = cookieMap.toJSON();
           
           // Force cookie expiration checks

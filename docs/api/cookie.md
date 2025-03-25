@@ -135,9 +135,9 @@ Converts the cookie map to a serializable format.
 const json = cookies.toJSON();
 ```
 
-#### `getAllChanges(): Cookie[]`
+#### `toSetCookieHeaders(): string[]`
 
-Gets Cookie objects for all cookies that were set or deleted on the cookie map. When using Bun.serve(), the request cookie map has changes automatically applied, so this function is not necessary.
+When using Bun.serve(), the request cookie map has changes automatically applied, so this function is not necessary. Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
 
 ```js
 import { createServer } from "node:http";
@@ -152,7 +152,7 @@ const server = createServer((req, res) => {
 
   res.writeHead(200, {
     "Content-Type": "text/plain",
-    "Set-Cookie": cookies.getAllChanges().map(cookie => cookie.toString()),
+    "Set-Cookie": cookies.toSetCookieHeaders(),
   });
   res.end(`Found ${cookies.size} cookies`);
 });
@@ -425,7 +425,7 @@ class CookieMap implements Iterable<[string, Cookie]> {
 
   get(name: string): string | null;
 
-  getAllChanges(): Cookie[];
+  toSetCookieHeaders(): string[];
 
   has(name: string): boolean;
   set(name: string, value: string, options?: CookieInit): void;

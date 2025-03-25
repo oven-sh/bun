@@ -116,17 +116,11 @@ describe("Bun.serve() cookies", () => {
               req.cookies.set(key, value, options);
             }
           }
-          return new Response(
-            JSON.stringify({
-              cookies: req.cookies,
-              changes: req.cookies.getAllChanges(),
-            }),
-            {
-              headers: {
-                "Content-Type": "application/json",
-              },
+          return new Response(JSON.stringify(req.cookies), {
+            headers: {
+              "Content-Type": "application/json",
             },
-          );
+          });
         },
       },
     },
@@ -141,20 +135,7 @@ describe("Bun.serve() cookies", () => {
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
       {
-        "changes": [
-          {
-            "httpOnly": false,
-            "name": "test",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "test",
-          },
-        ],
-        "cookies": {
-          "test": "test",
-        },
+        "test": "test",
       }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
@@ -175,30 +156,8 @@ describe("Bun.serve() cookies", () => {
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
       {
-        "changes": [
-          {
-            "httpOnly": false,
-            "name": "test",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "test",
-          },
-          {
-            "httpOnly": false,
-            "name": "test2",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "test2",
-          },
-        ],
-        "cookies": {
-          "test": "test",
-          "test2": "test2",
-        },
+        "test": "test",
+        "test2": "test2",
       }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
@@ -215,23 +174,7 @@ describe("Bun.serve() cookies", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toMatchInlineSnapshot(`
-      {
-        "changes": [
-          {
-            "expires": "1970-01-01T00:00:00.001Z",
-            "httpOnly": false,
-            "name": "test",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "",
-          },
-        ],
-        "cookies": {},
-      }
-    `);
+    expect(body).toMatchInlineSnapshot(`{}`);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
         "test=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
@@ -253,31 +196,9 @@ describe("Bun.serve() cookies", () => {
     const body = await res.json();
     expect(body).toMatchInlineSnapshot(`
       {
-        "changes": [
-          {
-            "httpOnly": false,
-            "name": "do_modify",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "c",
-          },
-          {
-            "httpOnly": false,
-            "name": "add_cookie",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "d",
-          },
-        ],
-        "cookies": {
-          "add_cookie": "d",
-          "do_modify": "c",
-          "dont_modify": "a",
-        },
+        "add_cookie": "d",
+        "do_modify": "c",
+        "dont_modify": "a",
       }
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
@@ -287,12 +208,31 @@ describe("Bun.serve() cookies", () => {
       ]
     `);
   });
+  test("request that doesn't modify cookies doesn't set cookies", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([]),
+      headers: {
+        "Cookie": "dont_modify=a;another_cookie=b",
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      {
+        "another_cookie": "b",
+        "dont_modify": "a",
+      }
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`[]`);
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
   test("getAllChanges", () => {
     const map = new Bun.CookieMap("dont_modify=ONE; do_modify=TWO; do_delete=THREE");
     map.set("do_modify", "FOUR");
     map.delete("do_delete");
     map.set("do_modify", "FIVE");
-    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "do_delete=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
         "do_modify=FIVE; SameSite=Lax",

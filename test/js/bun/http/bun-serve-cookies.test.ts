@@ -438,7 +438,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     const fooCookie = cookieMap.get("foo");
     expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
 
-    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`[]`);
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   it("can create a CookieMap with an object", () => {
@@ -493,7 +493,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
 
     const fooCookie = cookieMap.get("foo");
     expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
-    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "name=value; SameSite=Lax",
         "foo=bar; Path=/path; Secure; SameSite=Lax",

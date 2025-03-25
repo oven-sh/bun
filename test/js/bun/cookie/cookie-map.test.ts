@@ -121,7 +121,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
   test("can create an empty CookieMap", () => {
     const map = new Bun.CookieMap();
     expect(map.size).toBe(0);
-    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`[]`);
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from string", () => {
@@ -136,7 +136,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie2).toBeDefined();
     expect(cookie2).toBe("bar");
 
-    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`[]`);
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from object", () => {
@@ -148,7 +148,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.size).toBe(2);
     expect(map.get("name")).toBe("value");
     expect(map.get("foo")).toBe("bar");
-    expect(map.getAllChanges()).toEqual([]);
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from array pairs", () => {
@@ -160,7 +160,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.size).toBe(2);
     expect(map.get("name")).toBe("value");
     expect(map.get("foo")).toBe("bar");
-    expect(map.getAllChanges()).toEqual([]);
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("CookieMap methods work", () => {
@@ -181,7 +181,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     );
     expect(map.size).toBe(2);
     expect(map.has("foo")).toBe(true);
-    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "name=value; SameSite=Lax",
         "foo=bar; Secure; HttpOnly; Partitioned; SameSite=Lax",
@@ -195,7 +195,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.get("name")).toBe(null);
 
     // Get changes
-    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "foo=bar; Secure; HttpOnly; Partitioned; SameSite=Lax",
         "name=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
@@ -250,7 +250,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
 
     expect(map.get("session")).toBe("abc123");
-    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "session=abc123; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Lax",
       ]
@@ -273,7 +273,7 @@ describe("Cookie name field is immutable", () => {
     expect(cookieMap.get("name")).toBe("value");
     cookie.value = "value2";
     expect(cookieMap.get("name")).toBe("value2");
-    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "name=value2; SameSite=Lax",
       ]

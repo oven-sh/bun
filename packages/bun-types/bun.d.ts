@@ -7334,12 +7334,11 @@ declare module "bun" {
     get(name: string): string | null;
 
     /**
-     * Gets all cookies that have been set or deleted in the map. Deleted cookies have an empty string value
-     * and an expiry date in the past.
+     * Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
      *
-     * @returns An array of Cookie objects representing all changes
+     * @returns An array of values for Set-Cookie headers
      */
-    getAllChanges(): Cookie[];
+    toSetCookieHeaders(): string[];
 
     /**
      * Checks if a cookie with the given name exists.

@@ -228,6 +228,13 @@ for await (const chunk of Bun.stdin.stream()) {
   console.log(`Chunk: ${chunkText}`);
 }
 
+const myAsyncGenerator = async function* () {
+  yield new Uint8Array([1, 2, 3]);
+  yield new Uint8Array([4, 5, 6]);
+};
+
+new Response(myAsyncGenerator());
+
 const statuses = [200, 400, 401, 403, 404, 500, 501, 502, 503, 504];
 
 const r = new Request("", {

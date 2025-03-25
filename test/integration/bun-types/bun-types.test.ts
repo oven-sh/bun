@@ -98,6 +98,7 @@ describe("@types/bun integration test", () => {
     `;
 
     const importantLines = [
+      `error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.`,
       "error TS2769: No overload matches this call.",
       "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
       `Type '"direct"' is not assignable to type '"bytes"'`,

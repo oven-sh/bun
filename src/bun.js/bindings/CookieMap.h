@@ -28,8 +28,7 @@ public:
 
     // Define a simple struct to hold the key-value pair
 
-    static ExceptionOr<Ref<CookieMap>> createFromSetCookieHeaders(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
-    static ExceptionOr<Ref<CookieMap>> createFromCookieHeader(const StringView& forCookieHeader);
+    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
     RefPtr<Cookie> getModifiedEntry(const String& name) const;

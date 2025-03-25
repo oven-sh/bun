@@ -61,40 +61,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_forEach);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookieMapPrototypeGetter_size);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookieMapConstructor);
 
-JSC_DEFINE_HOST_FUNCTION(jsCookieMapConstructorFromCookieHeader, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isString()) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Expected a string"_s);
-        return {};
-    }
-
-    auto cookieHeaderString = arg0.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto view = cookieHeaderString->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    if (view->isEmpty()) {
-        return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), CookieMap::createFromCookieHeader(String()).releaseReturnValue()));
-    }
-
-    if (!WebCore::isValidHTTPHeaderValue(view)) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Invalid cookie header"_s);
-        return {};
-    }
-
-    auto cookieMap = CookieMap::createFromCookieHeader(view);
-    if (cookieMap.hasException()) {
-        WebCore::propagateException(*lexicalGlobalObject, throwScope, cookieMap.releaseException());
-        return {};
-    }
-
-    return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), cookieMap.releaseReturnValue()));
-}
-
 class JSCookieMapPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -208,7 +174,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         return {};
     }
 
-    auto result = CookieMap::createFromSetCookieHeaders(WTFMove(init));
+    auto result = CookieMap::create(WTFMove(init));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), result.releaseReturnValue())));
@@ -230,7 +196,6 @@ template<> void JSCookieMapDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSCookieMap::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    putDirectNativeFunction(vm, &globalObject, Identifier::fromString(vm, "fromCookieHeader"_s), 1, jsCookieMapConstructorFromCookieHeader, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | 0);
 }
 
 static const HashTableValue JSCookieMapPrototypeTableValues[] = {

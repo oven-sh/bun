@@ -290,8 +290,40 @@ describe("Bun.serve() cookies", () => {
     expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
       [
         "do_modify=FIVE; SameSite=Lax",
-        "dont_modify=ONE; SameSite=Lax",
         "do_delete=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      ]
+    `);
+    expect(map.toJSON()).toMatchInlineSnapshot(`
+      [
+        [
+          "do_delete",
+          {
+            "expires": 1970-01-01T00:00:00.001Z,
+            "httpOnly": false,
+            "name": "do_delete",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "",
+          },
+        ],
+        [
+          "do_modify",
+          {
+            "httpOnly": false,
+            "name": "do_modify",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "FIVE",
+          },
+        ],
+        [
+          "dont_modify",
+          "ONE",
+        ],
       ]
     `);
   });

@@ -55,53 +55,7 @@ CookieMap::CookieMap(HashMap<String, String>&& cookies)
 {
 }
 
-ExceptionOr<Ref<CookieMap>> CookieMap::createFromCookieHeader(const StringView& forCookieHeader)
-{
-    if (forCookieHeader.isEmpty()) {
-        return adoptRef(*new CookieMap());
-    }
-
-    auto pairs = forCookieHeader.split(';');
-    HashMap<String, String> cookies;
-
-    bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
-    for (auto pair : pairs) {
-        String name = ""_s;
-        String value = ""_s;
-
-        auto equalsPos = pair.find('=');
-        if (equalsPos == notFound) {
-            continue;
-        }
-
-        auto nameView = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
-        auto valueView = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
-
-        if (nameView.isEmpty()) {
-            continue;
-        }
-
-        if (hasAnyPercentEncoded) {
-            Bun::UTF8View utf8View(nameView);
-            name = Bun::decodeURIComponentSIMD(utf8View.bytes());
-        } else {
-            name = nameView.toString();
-        }
-
-        if (hasAnyPercentEncoded) {
-            Bun::UTF8View utf8View(valueView);
-            value = Bun::decodeURIComponentSIMD(utf8View.bytes());
-        } else {
-            value = valueView.toString();
-        }
-
-        cookies.add(name, value);
-    }
-
-    return adoptRef(*new CookieMap(WTFMove(cookies)));
-}
-
-ExceptionOr<Ref<CookieMap>> CookieMap::createFromSetCookieHeaders(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
+ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
 {
     auto visitor = WTF::makeVisitor(
         [&](const Vector<Vector<String>>& pairs) -> ExceptionOr<Ref<CookieMap>> {
@@ -141,21 +95,46 @@ ExceptionOr<Ref<CookieMap>> CookieMap::createFromSetCookieHeaders(std::variant<V
             return adoptRef(*new CookieMap(WTFMove(cookies)));
         },
         [&](const String& cookieString) -> ExceptionOr<Ref<CookieMap>> {
-            if (cookieString.isEmpty())
+            StringView forCookieHeader = cookieString;
+            if (forCookieHeader.isEmpty()) {
                 return adoptRef(*new CookieMap());
+            }
 
-            Vector<Ref<Cookie>> cookies;
-            auto iter = cookieString.split(';');
-            for (auto pair : iter) {
-                auto cookie = Cookie::parse(pair);
-                if (cookie.hasException()) {
-                    if (throwOnInvalidCookieString) {
-                        return cookie.releaseException();
-                    } else {
-                        continue;
-                    }
+            auto pairs = forCookieHeader.split(';');
+            HashMap<String, String> cookies;
+
+            bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
+            for (auto pair : pairs) {
+                String name = ""_s;
+                String value = ""_s;
+
+                auto equalsPos = pair.find('=');
+                if (equalsPos == notFound) {
+                    continue;
                 }
-                cookies.append(cookie.releaseReturnValue());
+
+                auto nameView = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
+                auto valueView = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
+
+                if (nameView.isEmpty()) {
+                    continue;
+                }
+
+                if (hasAnyPercentEncoded) {
+                    Bun::UTF8View utf8View(nameView);
+                    name = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                } else {
+                    name = nameView.toString();
+                }
+
+                if (hasAnyPercentEncoded) {
+                    Bun::UTF8View utf8View(valueView);
+                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                } else {
+                    value = valueView.toString();
+                }
+
+                cookies.add(name, value);
             }
 
             return adoptRef(*new CookieMap(WTFMove(cookies)));

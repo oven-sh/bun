@@ -184,7 +184,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         auto cookieHeader = fetchHeaders.internalHeaders().get(HTTPHeaderName::Cookie);
 
         // Create a CookieMap from the cookie header
-        auto cookieMapResult = WebCore::CookieMap::createFromCookieHeader(cookieHeader);
+        auto cookieMapResult = WebCore::CookieMap::create(cookieHeader);
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         if (cookieMapResult.hasException()) {
             WebCore::propagateException(*globalObject, throwScope, cookieMapResult.releaseException());

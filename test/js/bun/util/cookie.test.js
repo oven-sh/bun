@@ -224,7 +224,7 @@ describe("Bun.CookieMap", () => {
   });
 
   test("toJSON", () => {
-    const cookieMap = Bun.CookieMap.fromCookieHeader("name=value; foo=bar");
+    const cookieMap = new Bun.CookieMap("name=value; foo=bar");
     expect(JSON.stringify(cookieMap, null, 2)).toMatchInlineSnapshot(`
       "[
         [

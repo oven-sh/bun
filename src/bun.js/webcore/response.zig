@@ -481,6 +481,11 @@ pub const Response = struct {
         did_succeed = true;
         return bun.new(Response, response).toJS(globalThis);
     }
+
+    fn isValidRedirectStatus(status: u16) bool {
+        return status == 301 or status == 302 or status == 303 or status == 307 or status == 308;
+    }
+
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -505,9 +510,15 @@ pub const Response = struct {
             const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
             var url_string = ZigString.init("");
 
-            if (@intFromEnum(url_string_value) != 0) {
-                url_string = try url_string_value.getZigString(globalThis);
+            if (url_string_value.isEmptyOrUndefinedOrNull() or url_string_value.isNumber()) {
+                return globalThis.throwInvalidArgumentTypeValue("url", "string", url_string_value);
             }
+
+            if (url_string_value.isObject() and !url_string_value.isString() and !url_string_value.implementsToString(globalThis)) {
+                return globalThis.throwInvalidArgumentTypeValue("url", "string", url_string_value);
+            }
+
+            url_string = try url_string_value.getZigString(globalThis);
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
             defer {
@@ -519,13 +530,21 @@ pub const Response = struct {
 
             if (args.nextEat()) |init| {
                 if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                    response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                    const status_code = init.toInt32();
+                    const status = @as(u16, @intCast(@min(@max(0, status_code), std.math.maxInt(u16))));
+                    if (isValidRedirectStatus(status)) {
+                        response.init.status_code = status;
+                    } else {
+                        return globalThis.throwTypeError("Invalid redirect status code: {d}. Must be one of 301, 302, 303, 307, or 308", .{status});
+                    }
                 } else {
                     if (Response.Init.init(globalThis, init) catch |err|
                         if (err == error.JSError) return .zero else null) |_init|
                     {
+                        if (!isValidRedirectStatus(_init.status_code)) {
+                            return globalThis.throwTypeError("Invalid redirect status code: {d}. Must be one of 301, 302, 303, 307, or 308", .{_init.status_code});
+                        }
                         response.init = _init;
-                        response.init.status_code = 302;
                     }
                 }
             }

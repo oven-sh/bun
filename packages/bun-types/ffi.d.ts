@@ -626,9 +626,9 @@ declare module "bun:ffi" {
    * JavaScript:
    * ```js
    * import { cc } from "bun:ffi";
-   * import hello from "./hello.c" with {type: "file"};
+   * import source from "./hello.c" with {type: "file"};
    * const {symbols: {hello}} = cc({
-   *   source: hello,
+   *   source,
    *   symbols: {
    *     hello: {
    *       returns: "cstring",
@@ -681,8 +681,9 @@ declare module "bun:ffi" {
      * @example
      * ```js
      * import { cc } from "bun:ffi";
+     * import source from "./hello.c" with {type: "file"};
      * const {symbols: {hello}} = cc({
-     *   source: hello,
+     *   source,
      *   define: {
      *     "NDEBUG": "1",
      *   },
@@ -707,8 +708,9 @@ declare module "bun:ffi" {
      * @example
      * ```js
      * import { cc } from "bun:ffi";
+     * import source from "./hello.c" with {type: "file"};
      * const {symbols: {hello}} = cc({
-     *   source: hello,
+     *   source,
      *   flags: ["-framework CoreFoundation", "-framework Security"],
      *   symbols: {
      *     hello: {

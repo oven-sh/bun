@@ -543,14 +543,6 @@ declare module "bun:ffi" {
 
   type Symbols = Readonly<Record<string, FFIFunction>>;
 
-  // /**
-  //  * Compile a callback function
-  //  *
-  //  * Returns a function pointer
-  //  *
-  //  */
-  // export function callback(ffi: FFIFunction, cb: Function): number;
-
   interface Library<Fns extends Symbols> {
     symbols: ConvertFns<Fns>;
 

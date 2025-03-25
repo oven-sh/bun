@@ -652,14 +652,11 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
 
     JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
     RETURN_IF_EXCEPTION(scope, void());
-    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, size * 2);
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
+    MarkedArgumentBuffer arrayValues;
 
     args.append(headersObject);
-    args.append(array);
-
-    unsigned i = 0;
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -693,18 +690,34 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
                 headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            array->putDirectIndex(globalObject, i++, setCookiesHeaderString);
-            array->putDirectIndex(globalObject, i++, jsValue);
+            arrayValues.append(setCookiesHeaderString);
+            arrayValues.append(jsValue);
             setCookiesHeaderArray->push(globalObject, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
             headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
-            array->putDirectIndex(globalObject, i++, nameString);
-            array->putDirectIndex(globalObject, i++, jsValue);
+            arrayValues.append(nameString);
+            arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+
+    JSC::JSArray* array;
+    {
+
+        ObjectInitializationScope initializationScope(vm);
+        if (LIKELY(array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) {
+            EncodedJSValue* data = arrayValues.data();
+            for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
+                array->initializeIndexWithoutBarrier(initializationScope, i, JSValue::decode(data[i]));
+            }
+        } else {
+            array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
+        }
+    }
+
+    args.append(array);
 }
 
 // This is an 8% speedup.

@@ -168,18 +168,6 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`
       [
         [
-          "test2",
-          {
-            "httpOnly": false,
-            "name": "test2",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "test2",
-          },
-        ],
-        [
           "test",
           {
             "httpOnly": false,
@@ -191,12 +179,24 @@ describe("Bun.serve() cookies", () => {
             "value": "test",
           },
         ],
+        [
+          "test2",
+          {
+            "httpOnly": false,
+            "name": "test2",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "test2",
+          },
+        ],
       ]
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test2=test2; SameSite=Lax",
         "test=test; SameSite=Lax",
+        "test2=test2; SameSite=Lax",
       ]
     `);
   });
@@ -246,18 +246,6 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`
       [
         [
-          "add_cookie",
-          {
-            "httpOnly": false,
-            "name": "add_cookie",
-            "partitioned": false,
-            "path": "/",
-            "sameSite": "lax",
-            "secure": false,
-            "value": "d",
-          },
-        ],
-        [
           "do_modify",
           {
             "httpOnly": false,
@@ -270,6 +258,18 @@ describe("Bun.serve() cookies", () => {
           },
         ],
         [
+          "add_cookie",
+          {
+            "httpOnly": false,
+            "name": "add_cookie",
+            "partitioned": false,
+            "path": "/",
+            "sameSite": "lax",
+            "secure": false,
+            "value": "d",
+          },
+        ],
+        [
           "dont_modify",
           "a",
         ],
@@ -277,8 +277,8 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "add_cookie=d; SameSite=Lax",
         "do_modify=c; SameSite=Lax",
+        "add_cookie=d; SameSite=Lax",
       ]
     `);
   });
@@ -289,8 +289,8 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
       [
-        "do_modify=FIVE; SameSite=Lax",
         "do_delete=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "do_modify=FIVE; SameSite=Lax",
       ]
     `);
     expect(map.toJSON()).toMatchInlineSnapshot(`

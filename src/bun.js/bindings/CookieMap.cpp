@@ -13,8 +13,8 @@ template<bool isSSL>
 void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, uWS::HttpResponse<isSSL>* res)
 {
     // Loop over modified cookies and write Set-Cookie headers to the response
-    for (auto& cookie : cookie_map->getAllModifiedItems()) {
-        auto utf8 = cookie.value->toString(global_this->vm()).utf8();
+    for (auto& cookie : cookie_map->getAllChanges()) {
+        auto utf8 = cookie->toString(global_this->vm()).utf8();
         res->writeHeader("Set-Cookie", utf8.data());
     }
 }
@@ -43,14 +43,12 @@ CookieMap::CookieMap()
 {
 }
 
-CookieMap::CookieMap(WTF::Vector<Ref<Cookie>>&& cookies)
+CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
+    : m_modifiedCookies(WTFMove(cookies))
 {
-    for (auto& cookie : cookies) {
-        m_modifiedCookies.set(cookie->name(), WTFMove(cookie));
-    }
 }
 
-CookieMap::CookieMap(HashMap<String, String>&& cookies)
+CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
     : m_originalCookies(WTFMove(cookies))
 {
 }
@@ -101,7 +99,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
             }
 
             auto pairs = forCookieHeader.split(';');
-            HashMap<String, String> cookies;
+            Vector<KeyValuePair<String, String>> cookies;
 
             bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
             for (auto pair : pairs) {
@@ -134,7 +132,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     value = valueView.toString();
                 }
 
-                cookies.add(name, value);
+                cookies.append(KeyValuePair<String, String>(name, value));
             }
 
             return adoptRef(*new CookieMap(WTFMove(cookies)));
@@ -145,40 +143,45 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
 
 std::optional<String> CookieMap::get(const String& name) const
 {
-    auto modifiedCookie = m_modifiedCookies.find(name);
-    if (modifiedCookie != m_modifiedCookies.end()) {
+    auto modifiedCookieIndex = m_modifiedCookies.findIf([&](auto& cookie) {
+        return cookie->name() == name;
+    });
+    if (modifiedCookieIndex != notFound) {
         // a set cookie with an empty value is treated as not existing, because that is what delete() sets
-        if (modifiedCookie->value->value().isEmpty()) {
+        if (m_modifiedCookies[modifiedCookieIndex]->value().isEmpty()) {
             return std::nullopt;
         }
-        return std::optional<String>(modifiedCookie->value->value());
+        return std::optional<String>(m_modifiedCookies[modifiedCookieIndex]->value());
     }
-    auto originalCookie = m_originalCookies.find(name);
-    if (originalCookie != m_originalCookies.end()) {
-        return std::optional<String>(originalCookie->value);
+    auto originalCookieIndex = m_originalCookies.findIf([&](auto& cookie) {
+        return cookie.key == name;
+    });
+    if (originalCookieIndex != notFound) {
+        return std::optional<String>(m_originalCookies[originalCookieIndex].value);
     }
     return std::nullopt;
 }
 
-RefPtr<Cookie> CookieMap::getModifiedEntry(const String& name) const
+std::optional<Ref<Cookie>> CookieMap::getModifiedEntry(const String& name) const
 {
-    auto modifiedCookie = m_modifiedCookies.find(name);
-    if (modifiedCookie != m_modifiedCookies.end()) {
-        return RefPtr<Cookie>(modifiedCookie->value.ptr());
+    auto modifiedCookieIndex = m_modifiedCookies.findIf([&](auto& cookie) {
+        return cookie->name() == name;
+    });
+    if (modifiedCookieIndex != notFound) {
+        return m_modifiedCookies[modifiedCookieIndex];
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 Vector<KeyValuePair<String, String>> CookieMap::getAll() const
 {
     Vector<KeyValuePair<String, String>> all;
     for (const auto& cookie : m_modifiedCookies) {
-        all.append(KeyValuePair<String, String>(cookie.key, cookie.value->value()));
+        if (cookie->value().isEmpty()) continue;
+        all.append(KeyValuePair<String, String>(cookie->name(), cookie->value()));
     }
     for (const auto& cookie : m_originalCookies) {
-        if (m_modifiedCookies.find(cookie.key) == m_modifiedCookies.end()) {
-            all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
-        }
+        all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
     }
     return all;
 }
@@ -188,32 +191,48 @@ bool CookieMap::has(const String& name) const
     return get(name).has_value();
 }
 
+void CookieMap::removeInternal(const String& name)
+{
+    // Remove any existing matching cookies
+    m_originalCookies.removeAllMatching([&](auto& cookie) {
+        return cookie.key == name;
+    });
+    m_modifiedCookies.removeAllMatching([&](auto& cookie) {
+        return cookie->name() == name;
+    });
+}
+
 void CookieMap::set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge)
 {
+    removeInternal(name);
+
     // Add the new cookie with proper settings
     auto cookie = Cookie::create(name, value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Strict,
         httpOnly, maxAge, partitioned);
-    m_modifiedCookies.set(cookie->name(), WTFMove(cookie));
+    m_modifiedCookies.append(WTFMove(cookie));
 }
 
 void CookieMap::set(const String& name, const String& value)
 {
     // Add the new cookie
     auto cookie = Cookie::create(name, value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Strict, false, std::numeric_limits<double>::quiet_NaN(), false);
-    m_modifiedCookies.set(cookie->name(), WTFMove(cookie));
+    m_modifiedCookies.append(WTFMove(cookie));
 }
 
 void CookieMap::set(Ref<Cookie> cookie)
 {
+    removeInternal(cookie->name());
     // Add the new cookie
-    m_modifiedCookies.set(cookie->name(), WTFMove(cookie));
+    m_modifiedCookies.append(WTFMove(cookie));
 }
 
 void CookieMap::remove(const String& name)
 {
+    removeInternal(name);
+
     // Add the new cookie
     auto cookie = Cookie::create(name, ""_s, String(), "/"_s, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
-    m_modifiedCookies.set(name, WTFMove(cookie));
+    m_modifiedCookies.append(WTFMove(cookie));
 }
 
 void CookieMap::remove(const CookieStoreDeleteOptions& options)
@@ -224,26 +243,17 @@ void CookieMap::remove(const CookieStoreDeleteOptions& options)
 
     // Add the new cookie
     auto cookie = Cookie::create(name, ""_s, domain, path, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
-    m_modifiedCookies.set(name, WTFMove(cookie));
+    m_modifiedCookies.append(WTFMove(cookie));
 }
 
 size_t CookieMap::size() const
 {
     size_t size = 0;
-    for (auto& cookie : m_modifiedCookies) {
-        // modified cookies with empty values are deleted
-        if (cookie.value->value().isEmpty()) {
-            continue;
-        }
+    for (const auto& cookie : m_modifiedCookies) {
+        if (cookie->value().isEmpty()) continue;
         size += 1;
     }
-    for (auto& cookie : m_originalCookies) {
-        // if there is a modified cookie for this cookie, then don't count it
-        if (m_modifiedCookies.find(cookie.key) != m_modifiedCookies.end()) {
-            continue;
-        }
-        size += 1;
-    }
+    size += m_originalCookies.size();
     return size;
 }
 
@@ -262,19 +272,16 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
         auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
 
-        entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie.value->name()));
+        entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie->name()));
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
 
-        entryArray->putDirectIndex(globalObject, 1, cookie.value->toJSON(vm, globalObject));
+        entryArray->putDirectIndex(globalObject, 1, cookie->toJSON(vm, globalObject));
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
 
         array->putDirectIndex(globalObject, index++, entryArray);
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
     }
     for (const auto& cookie : m_originalCookies) {
-        if (m_modifiedCookies.find(cookie.key) != m_modifiedCookies.end()) {
-            continue;
-        }
         auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
 
@@ -298,8 +305,8 @@ size_t CookieMap::memoryCost() const
         cost += cookie.value.sizeInBytes();
     }
     for (auto& cookie : m_modifiedCookies) {
-        cost += cookie.key.sizeInBytes();
-        cost += cookie.value->memoryCost();
+        cost += cookie->name().sizeInBytes();
+        cost += cookie->value().sizeInBytes();
     }
     return cost;
 }

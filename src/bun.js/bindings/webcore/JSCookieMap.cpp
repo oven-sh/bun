@@ -325,7 +325,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getModifiedEntryB
     if (!cookie)
         return JSValue::encode(jsNull());
 
-    return JSValue::encode(toJS(lexicalGlobalObject, castedThis->globalObject(), *cookie));
+    return JSValue::encode(toJS(lexicalGlobalObject, castedThis->globalObject(), cookie.value()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getModifiedEntry, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -339,12 +339,12 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getAllChangesBody
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
 
-    auto cookies = impl.getAllModifiedItems();
+    auto cookies = impl.getAllChanges();
     JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, cookies.size());
     RETURN_IF_EXCEPTION(throwScope, {});
     size_t i = 0;
     for (auto& item : cookies) {
-        resultArray->putDirectIndex(lexicalGlobalObject, i, toJS(lexicalGlobalObject, castedThis->globalObject(), item.value));
+        resultArray->putDirectIndex(lexicalGlobalObject, i, toJS(lexicalGlobalObject, castedThis->globalObject(), item));
         RETURN_IF_EXCEPTION(throwScope, {});
         i += 1;
     }

@@ -31,9 +31,9 @@ public:
     static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
-    RefPtr<Cookie> getModifiedEntry(const String& name) const;
+    std::optional<Ref<Cookie>> getModifiedEntry(const String& name) const;
     Vector<KeyValuePair<String, String>> getAll() const;
-    HashMap<String, Ref<Cookie>> getAllModifiedItems() const { return m_modifiedCookies; }
+    Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
 
     bool has(const String& name) const;
 
@@ -65,11 +65,13 @@ public:
 
 private:
     CookieMap();
-    CookieMap(WTF::Vector<Ref<Cookie>>&& cookies);
-    CookieMap(HashMap<String, String>&& cookies);
+    CookieMap(Vector<Ref<Cookie>>&& cookies);
+    CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
-    HashMap<String, String> m_originalCookies;
-    HashMap<String, Ref<Cookie>> m_modifiedCookies;
+    void removeInternal(const String& name);
+
+    Vector<KeyValuePair<String, String>> m_originalCookies;
+    Vector<Ref<Cookie>> m_modifiedCookies;
 };
 
 } // namespace WebCore

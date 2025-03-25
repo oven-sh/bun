@@ -137,7 +137,9 @@ const json = cookies.toJSON();
 
 #### `toSetCookieHeaders(): string[]`
 
-When using Bun.serve(), the request cookie map has changes automatically applied, so this function is not necessary. Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
+Returns an array of values for Set-Cookie headers that can be used to apply all cookie changes.
+
+When using `Bun.serve()`, you don't need to call this method explicitly. Any changes made to the `req.cookies` map are automatically applied to the response headers. This method is primarily useful when working with other HTTP server implementations.
 
 ```js
 import { createServer } from "node:http";

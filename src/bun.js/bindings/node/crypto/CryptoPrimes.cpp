@@ -21,11 +21,9 @@ extern "C" void Bun__CheckPrimeJobCtx__runTask(CheckPrimeJobCtx* ctx, JSGlobalOb
 }
 void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    auto res = m_candidate.isPrime(m_checks, [globalObject](int32_t a, int32_t b) -> bool {
-        // TODO(dylan-conway): needs to be thread safe!!!!!!!!
-        return globalObject && !globalObject->isShuttingDown();
+    auto res = m_candidate.isPrime(m_checks, [](int32_t a, int32_t b) -> bool {
+        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
+        return true;
     });
 
     m_result = res != 0;
@@ -108,10 +106,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
         return JSValue::encode({});
     }
 
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    auto res = candidate.isPrime(checks, [globalObject](int32_t a, int32_t b) -> bool {
-        return globalObject && !globalObject->isShuttingDown();
+    auto res = candidate.isPrime(checks, [](int32_t a, int32_t b) -> bool {
+        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
+        return true;
     });
 
     return JSValue::encode(jsBoolean(res != 0));
@@ -191,11 +188,9 @@ extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGl
 }
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, [globalObject](int32_t a, int32_t b) -> bool {
-        // TODO(dylan-conway): needs to be thread safe!!!!!!!!
-        return globalObject && !globalObject->isShuttingDown();
+    m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, [](int32_t a, int32_t b) -> bool {
+        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
+        return true;
     });
 }
 
@@ -477,8 +472,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [globalObject](int32_t a, int32_t b) -> bool {
-        return globalObject && !globalObject->isShuttingDown();
+    prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [](int32_t a, int32_t b) -> bool {
+        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
+        return true;
     });
 
     if (bigint) {

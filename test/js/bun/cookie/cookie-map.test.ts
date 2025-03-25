@@ -56,7 +56,9 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(str).toInclude("HttpOnly");
     expect(str).toInclude("Partitioned");
     expect(str).toInclude("SameSite=Strict");
-    expect(str).toMatchInlineSnapshot(`"name=value; Domain=example.com; Path=/foo; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Strict"`);
+    expect(str).toMatchInlineSnapshot(
+      `"name=value; Domain=example.com; Path=/foo; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Strict"`,
+    );
   });
 
   test("can set Cookie expires as Date", () => {
@@ -269,5 +271,28 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie?.partitioned).toBe(true);
     expect(cookie?.maxAge).toBe(3600);
     expect(cookie?.value).toBe("abc123");
+  });
+});
+
+describe("Cookie name field is immutable", () => {
+  test("can create a Cookie", () => {
+    const cookie = new Bun.Cookie("name", "value");
+    expect(cookie.name).toBe("name");
+    // @ts-expect-error
+    cookie.name = "foo";
+    expect(cookie.name).toBe("name");
+  });
+  test("mutate cookie in map", () => {
+    const cookieMap = new Bun.CookieMap();
+    const cookie = new Bun.Cookie("name", "value");
+    cookieMap.set(cookie);
+    expect(cookieMap.get("name")).toBe("value");
+    cookie.value = "value2";
+    expect(cookieMap.get("name")).toBe("value2");
+    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "name=value2; SameSite=Lax",
+      ]
+    `);
   });
 });

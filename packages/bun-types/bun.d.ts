@@ -7334,15 +7334,6 @@ declare module "bun" {
     get(name: string): string | null;
 
     /**
-     * Gets the Cookie object of a cookie that has been set or deleted in the map. Deleted cookies have an
-     * empty string value and an expiry date in the past.
-     *
-     * @param name - The name of the cookie to retrieve
-     * @returns The Cookie object, or null if the cookie doesn't exist.
-     */
-    getModifiedEntry(name: string): Cookie | null;
-
-    /**
      * Gets all cookies that have been set or deleted in the map. Deleted cookies have an empty string value
      * and an expiry date in the past.
      *

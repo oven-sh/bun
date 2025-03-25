@@ -7,7 +7,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.name).toBe("name");
     expect(cookie.value).toBe("value");
     expect(cookie.path).toBe("/");
-    expect(cookie.domain).toBe(null);
+    expect(cookie.domain).toBeNull();
     expect(cookie.secure).toBe(false);
     expect(cookie.httpOnly).toBe(false);
     expect(cookie.partitioned).toBe(false);
@@ -160,8 +160,6 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.size).toBe(2);
     expect(map.get("name")).toBe("value");
     expect(map.get("foo")).toBe("bar");
-    expect(map.getModifiedEntry("name")).toBe(null);
-    expect(map.getModifiedEntry("foo")).toBe(null);
     expect(map.getAllChanges()).toEqual([]);
   });
 
@@ -183,9 +181,6 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     );
     expect(map.size).toBe(2);
     expect(map.has("foo")).toBe(true);
-    expect(map.getModifiedEntry("foo")?.secure).toBe(true);
-    expect(map.getModifiedEntry("foo")?.httpOnly).toBe(true);
-    expect(map.getModifiedEntry("foo")?.partitioned).toBe(true);
     expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
       [
         "name=value; SameSite=Lax",
@@ -198,9 +193,6 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.size).toBe(1);
     expect(map.has("name")).toBe(false);
     expect(map.get("name")).toBe(null);
-    expect(map.getModifiedEntry("name")?.toString()).toMatchInlineSnapshot(
-      `"name=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax"`,
-    );
 
     // Get changes
     expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
@@ -258,13 +250,11 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
 
     expect(map.get("session")).toBe("abc123");
-    const cookie = map.getModifiedEntry("session");
-    expect(cookie).toBeDefined();
-    expect(cookie?.httpOnly).toBe(true);
-    expect(cookie?.secure).toBe(true);
-    expect(cookie?.partitioned).toBe(true);
-    expect(cookie?.maxAge).toBe(3600);
-    expect(cookie?.value).toBe("abc123");
+    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "session=abc123; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Lax",
+      ]
+    `);
   });
 });
 

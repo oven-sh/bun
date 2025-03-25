@@ -31,7 +31,6 @@ public:
     static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
-    std::optional<Ref<Cookie>> getModifiedEntry(const String& name) const;
     Vector<KeyValuePair<String, String>> getAll() const;
     Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
 

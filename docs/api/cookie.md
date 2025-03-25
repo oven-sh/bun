@@ -425,7 +425,6 @@ class CookieMap implements Iterable<[string, Cookie]> {
 
   get(name: string): string | null;
 
-  getModifiedEntry(name: string): Cookie | null;
   getAllChanges(): Cookie[];
 
   has(name: string): boolean;

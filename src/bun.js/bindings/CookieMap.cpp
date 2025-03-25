@@ -160,17 +160,6 @@ std::optional<String> CookieMap::get(const String& name) const
     return std::nullopt;
 }
 
-std::optional<Ref<Cookie>> CookieMap::getModifiedEntry(const String& name) const
-{
-    auto modifiedCookieIndex = m_modifiedCookies.findIf([&](auto& cookie) {
-        return cookie->name() == name;
-    });
-    if (modifiedCookieIndex != notFound) {
-        return m_modifiedCookies[modifiedCookieIndex];
-    }
-    return std::nullopt;
-}
-
 Vector<KeyValuePair<String, String>> CookieMap::getAll() const
 {
     Vector<KeyValuePair<String, String>> all;

@@ -138,13 +138,11 @@ describe("Bun.CookieMap", () => {
     expect(cookieMap.size).toBe(1);
     expect(cookieMap.has("name")).toBe(true);
 
-    const retrievedCookie = cookieMap.getModifiedEntry("name");
-    expect(retrievedCookie.name).toBe("name");
-    expect(retrievedCookie.value).toBe("value");
-    expect(retrievedCookie.domain).toBe("example.com");
-    expect(retrievedCookie.path).toBe("/foo");
-    expect(retrievedCookie.secure).toBe(true);
-    expect(retrievedCookie.sameSite).toBe("lax");
+    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "name=value; Domain=example.com; Path=/foo; Secure; SameSite=Lax",
+      ]
+    `);
 
     expect(cookieMap.get("name")).toBe("value");
   });
@@ -163,7 +161,7 @@ describe("Bun.CookieMap", () => {
     expect(cookieMap.has("foo")).toBe(false);
   });
 
-  test.only("can delete cookies with options", () => {
+  test("can delete cookies with options", () => {
     const cookieMap = new Bun.CookieMap();
     cookieMap.set(
       new Bun.Cookie("name", "value", {
@@ -232,16 +230,10 @@ describe("Bun.CookieMap", () => {
   test("toJSON", () => {
     const cookieMap = new Bun.CookieMap("name=value; foo=bar");
     expect(JSON.stringify(cookieMap, null, 2)).toMatchInlineSnapshot(`
-      "[
-        [
-          "name",
-          "value"
-        ],
-        [
-          "foo",
-          "bar"
-        ]
-      ]"
+      "{
+        "name": "value",
+        "foo": "bar"
+      }"
     `);
   });
 });
@@ -327,7 +319,7 @@ describe("cookie.parse(str)", function () {
     expect(cookie.parse("foo=%1;bar=bar")).toEqual({ foo: "%1", bar: "bar" });
   });
 
-  it.failing("should ignore cookies without value", function () {
+  it("should ignore cookies without value", function () {
     expect(cookie.parse("foo=bar;fizz  ;  buzz")).toEqual({ foo: "bar" });
     expect(cookie.parse("  fizz; foo=  bar")).toEqual({ foo: "bar" });
   });

@@ -438,8 +438,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     const fooCookie = cookieMap.get("foo");
     expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
 
-    expect(cookieMap.getModifiedEntry("name")).toBe(null);
-    expect(cookieMap.getModifiedEntry("foo")).toBe(null);
+    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`[]`);
   });
 
   it("can create a CookieMap with an object", () => {
@@ -494,9 +493,12 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
 
     const fooCookie = cookieMap.get("foo");
     expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
-    expect(cookieMap.getModifiedEntry("foo")).toMatchInlineSnapshot(
-      `{"name":"foo","value":"bar","path":"/path","secure":true,"sameSite":"lax","httpOnly":false,"partitioned":false}`,
-    );
+    expect(cookieMap.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "name=value; SameSite=Lax",
+        "foo=bar; Path=/path; Secure; SameSite=Lax",
+      ]
+    `);
   });
 
   it("can use Cookie.parse to parse cookie strings", () => {

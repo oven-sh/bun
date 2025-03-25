@@ -341,6 +341,12 @@ await new Blob().arrayBuffer();
 await new Blob().bytes();
 await new Blob().formData();
 
+await new File(["code"], "name.ts").text();
+await new File(["code"], "name.ts").json();
+await new File(["code"], "name.ts").arrayBuffer();
+await new File(["code"], "name.ts").bytes();
+await new File(["code"], "name.ts").formData();
+
 await Bun.file("test").text();
 await Bun.file("test").json();
 await Bun.file("test").arrayBuffer();

@@ -7314,7 +7314,7 @@ declare module "bun" {
    * A Map-like interface for working with collections of cookies.
    * Implements the `Iterable` interface, allowing use with `for...of` loops.
    */
-  class CookieMap implements Iterable<[string, Cookie]> {
+  class CookieMap implements Iterable<[string, string]> {
     /**
      * Creates a new CookieMap instance.
      *

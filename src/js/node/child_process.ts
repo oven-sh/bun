@@ -1193,7 +1193,7 @@ class ChildProcess extends EventEmitter {
             if (!NetModule) NetModule = require("node:net");
             const fd = handle && handle.stdio[i];
             if (!fd) return null;
-            return new NetModule.connect({ fd });
+            return NetModule.connect({ fd });
         }
         return null;
     }

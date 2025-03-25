@@ -273,6 +273,7 @@ function idToEnumName(id: string) {
 }
 
 function idToPublicSpecifierOrEnumName(id: string) {
+  if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
   id = id.replace(/\.[mc]?[tj]s$/, "");
   if (id.startsWith("node/")) {
     return "node:" + id.slice(5).replaceAll(".", "/");
@@ -477,7 +478,7 @@ declare module "module" {
 
     namespace NodeJS {
       interface Require {
-        
+
 `;
 
     for (let i = 0; i < nativeStartIndex; i++) {
@@ -489,8 +490,7 @@ declare module "module" {
       let internalName = idToPublicSpecifierOrEnumName(id);
       if (internalName.startsWith("internal:")) internalName = internalName.replace(":", "/");
 
-      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;
-`;
+      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;\n`;
     }
 
     dts += `

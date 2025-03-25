@@ -6049,10 +6049,18 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
+    readonly remoteFamily: "IPv4" | "IPv6";
+
     /**
      * Remote IP address connected to the socket
      */
     readonly remoteAddress: string;
+
+    readonly remotePort: number;
+
+    readonly localFamily: "IPv4" | "IPv6";
+
+    readonly localAddress: string;
 
     /**
      * local port connected to the socket
@@ -6378,6 +6386,8 @@ declare module "bun" {
     tls?: boolean;
     exclusive?: boolean;
     allowHalfOpen?: boolean;
+    reusePort?: boolean;
+    ipv6Only?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {

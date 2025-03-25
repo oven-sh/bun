@@ -1699,7 +1699,7 @@ pub const Error = enum(i32) {
         pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
             const system_error = JSC.SystemError{
                 .errno = @intFromEnum(this.errno),
-                .code = bun.String.static(this.errno.code()),
+                .code = bun.String.static(this.errno.code()[4..]),
                 .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory() else bun.String.empty,
                 .syscall = bun.String.createUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
@@ -1750,7 +1750,7 @@ pub const Error = enum(i32) {
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;
@@ -1759,7 +1759,7 @@ pub const Error = enum(i32) {
     pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
             .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
@@ -1769,7 +1769,7 @@ pub const Error = enum(i32) {
     pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
             .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
             .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
             .hostname = bun.String.createUTF8(hostname),

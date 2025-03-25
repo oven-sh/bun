@@ -1431,7 +1431,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto str2 = arg2.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message));
+        auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
+        err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
+        return JSC::JSValue::encode(err);
     }
 
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
@@ -1983,6 +1986,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_AMBIGUOUS_ARGUMENT, message));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_FD_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unsupported fd type: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_FD_TYPE, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2089,6 +2100,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
+    case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT, "Socket connection timeout"_s));
+    case ErrorCode::ERR_INVALID_HANDLE_TYPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent"_s));
 
     default: {
         break;

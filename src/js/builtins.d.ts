@@ -22,7 +22,11 @@ declare function $debug(...args: any[]): void;
 declare function $assert(check: any, ...message: any[]): asserts check;
 
 /** Asserts the input is a promise. Returns `true` if the promise is resolved */
-declare function $isPromiseResolved(promise: Promise<any>): boolean;
+declare function $isPromiseFulfilled(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is rejected */
+declare function $isPromiseRejected(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is pending */
+declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
 
@@ -92,6 +96,7 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
 ): Fields[N];
 declare function $fulfillPromise(...args: any[]): TODO;
+declare function $rejectPromise(...args: any[]): TODO;
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
@@ -488,7 +493,7 @@ declare function $createCommonJSModule(
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
-  sourceModule: JSCommonJSModule
+  sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
@@ -648,6 +653,7 @@ declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
 declare function $ERR_ASYNC_TYPE(name): TypeError;
 declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
+declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -701,6 +707,8 @@ declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
+declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
+declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
 
 /**
  * Convert a function to a class-like object.

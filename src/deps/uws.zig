@@ -1651,6 +1651,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn close(this: ThisSocket, code: Socket.CloseCode) void {
             return this.socket.close(comptime is_ssl, code);
         }
+
         pub fn localPort(this: ThisSocket) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.localPort(is_ssl),
@@ -1665,6 +1666,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     bun.Output.panic("Failed to get socket's remote address: {s}", .{@errorName(e)});
                 },
                 .pipe, .upgradedDuplex, .connecting, .detached => null,
+            };
+        }
+
+        pub fn remotePort(this: ThisSocket) i32 {
+            return switch (this.socket) {
+                .connected => |socket| socket.remotePort(is_ssl),
+                .pipe, .upgradedDuplex, .connecting, .detached => 0,
             };
         }
 

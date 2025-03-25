@@ -5950,16 +5950,14 @@ extern "C" JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* 
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
-extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0)
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* abortSignal)
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->ref();
-    return arg0;
+    return abortSignal;
 }
 
-extern "C" void WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
+extern "C" void WebCore__AbortSignal__unref(WebCore__AbortSignal* abortSignal)
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
 }
 

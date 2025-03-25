@@ -210,8 +210,8 @@ const Handlers = struct {
         const onError = this.onError;
 
         if (onError == .zero) {
-            if (err.len > 0)
-                _ = vm.uncaughtException(globalObject, err[0], false);
+            if (err.len == 2)
+                _ = vm.uncaughtException(globalObject, err[1], false);
 
             return false;
         }
@@ -1595,15 +1595,12 @@ fn NewSocket(comptime ssl: bool) type {
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
+            const errno_ = bun.C.SystemErrno.ECONNREFUSED;
             const err = JSC.SystemError{
-                .errno = errno,
+                .errno = -@as(c_int, @intFromEnum(errno_)),
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
-                // For some reason errno is 0 which causes this to be success.
-                // Unix socket emits ENOENT
-                .code = if (errno == @intFromEnum(bun.C.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
-                // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
+                .code = bun.String.static(@tagName(errno_)),
             };
             vm.eventLoop().enter();
             defer {
@@ -2088,10 +2085,40 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getLocalPort(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getLocalFamily(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            const address_bytes: []const u8 = this.socket.localAddress(&buf) orelse return JSValue.jsUndefined();
+            return switch (address_bytes.len) {
+                4 => bun.String.static("IPv4").toJS(globalThis),
+                16 => bun.String.static("IPv6").toJS(globalThis),
+                else => return JSValue.jsUndefined(),
+            };
+        }
+
+        pub fn getLocalAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            var text_buf: [512]u8 = undefined;
+
+            const address_bytes: []const u8 = this.socket.localAddress(&buf) orelse return JSValue.jsUndefined();
+            const address: std.net.Address = switch (address_bytes.len) {
+                4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+                16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+                else => return JSValue.jsUndefined(),
+            };
+
+            const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
+            return ZigString.init(text).toJS(globalThis);
+        }
+
+        pub fn getLocalPort(this: *This, _: *JSC.JSGlobalObject) JSValue {
             if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
@@ -2099,10 +2126,21 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.localPort());
         }
 
-        pub fn getRemoteAddress(
-            this: *This,
-            globalThis: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getRemoteFamily(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return JSValue.jsUndefined();
+            return switch (address_bytes.len) {
+                4 => bun.String.static("IPv4").toJS(globalThis),
+                16 => bun.String.static("IPv6").toJS(globalThis),
+                else => return JSValue.jsUndefined(),
+            };
+        }
+
+        pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
             if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
@@ -2119,6 +2157,14 @@ fn NewSocket(comptime ssl: bool) type {
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
             return ZigString.init(text).toJS(globalThis);
+        }
+
+        pub fn getRemotePort(this: *This, _: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            return JSValue.jsNumber(this.socket.remotePort());
         }
 
         pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
@@ -2481,31 +2527,20 @@ fn NewSocket(comptime ssl: bool) type {
                 this.markInactive();
             }
         }
-        pub fn flush(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn flush(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             this.internalFlush();
             return JSValue.jsUndefined();
         }
 
-        pub fn terminate(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn terminate(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             this.closeAndDetach(.failure);
             return JSValue.jsUndefined();
         }
 
-        pub fn shutdown(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn shutdown(this: *This, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments_old(1);
             if (args.len > 0 and args.ptr[0].toBoolean()) {
@@ -2517,11 +2552,14 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn end(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn close(this: *This, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+            JSC.markBinding(@src());
+            _ = callframe;
+            this.socket.close(.normal);
+            return .jsUndefined();
+        }
+
+        pub fn end(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             var args = callframe.argumentsUndef(5);

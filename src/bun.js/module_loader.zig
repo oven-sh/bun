@@ -2406,7 +2406,7 @@ pub const ModuleLoader = struct {
                     if (!is_allowed_to_use_internal_testing_apis)
                         return null;
                 }
-                return jsSyntheticModule(.InternalForTesting, specifier);
+                return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
             },
             .@"bun:wrap" => .{
                 .allocator = null,

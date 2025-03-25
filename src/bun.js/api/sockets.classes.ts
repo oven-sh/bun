@@ -116,7 +116,6 @@ function generate(ssl) {
         length: 0,
       },
 
-      //   },
       listener: {
         getter: "getListener",
       },
@@ -140,6 +139,10 @@ function generate(ssl) {
         fn: "shutdown",
         length: 1,
       },
+      close: {
+        fn: "close",
+        length: 0,
+      },
 
       ref: {
         fn: "jsRef",
@@ -149,10 +152,19 @@ function generate(ssl) {
         fn: "jsUnref",
         length: 0,
       },
-
+      localFamily: {
+        getter: "getLocalFamily",
+        cache: true,
+      },
+      localAddress: {
+        getter: "getLocalAddress",
+        cache: true,
+      },
       localPort: {
         getter: "getLocalPort",
+        cache: true,
       },
+
       //   cork: {
       //     fn: "cork",
       //     length: 1,
@@ -170,8 +182,16 @@ function generate(ssl) {
       //   getter: "getTopics",
       // },
 
+      remoteFamily: {
+        getter: "getRemoteFamily",
+        cache: true,
+      },
       remoteAddress: {
         getter: "getRemoteAddress",
+        cache: true,
+      },
+      remotePort: {
+        getter: "getRemotePort",
         cache: true,
       },
 
@@ -261,7 +281,6 @@ export default [
         getter: "getHostname",
         cache: true,
       },
-
       data: {
         getter: "getData",
         setter: "setData",

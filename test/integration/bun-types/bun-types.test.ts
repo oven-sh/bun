@@ -49,7 +49,6 @@ beforeAll(async () => {
       mv package.json.backup package.json
 
       cd ${FIXTURE_DIR}
-      cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
       bun uninstall @types/bun || true
       bun add @types/bun@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
@@ -67,6 +66,8 @@ beforeEach(async () => {
   await $`
     cd ${FIXTURE_DIR}
     cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
+    sed -i 's/"skipLibCheck": true/"skipLibCheck": false/' tsconfig.json
+    cat tsconfig.json
   `;
 });
 

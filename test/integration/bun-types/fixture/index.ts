@@ -386,6 +386,14 @@ Bun.fetch("", {
   },
 });
 
+new HTMLRewriter()
+  .on("script", {
+    element(element) {
+      console.log(element.getAttribute("src"));
+    },
+  })
+  .transform(new Blob(['<script src="/main.js"></script>']));
+
 Buffer.from("foo").equals(Buffer.from("bar"));
 
 const myHeaders: Headers = new Headers();

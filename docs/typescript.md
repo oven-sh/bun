@@ -33,7 +33,7 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 
     // Best practices
     "strict": true,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
 

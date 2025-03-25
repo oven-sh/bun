@@ -31,7 +31,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 
     // Best practices
     "strict": true,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
 

@@ -88,14 +88,16 @@ describe("@types/bun integration test", () => {
 
   test("checks with lib.dom.d.ts", async () => {
     const tsconfig = Bun.file(join(FIXTURE_DIR, "tsconfig.json"));
-    await tsconfig.write((await tsconfig.text()).replace(/"lib": \["ESNext"\]/, '"lib": ["ESNext", "DOM"]'));
+    await tsconfig.write(
+      (await tsconfig.text()).replace(/"lib": \["ESNext"\]/, '"lib": ["ESNext", "DOM", "DOM.AsyncIterable"]'),
+    );
 
     const p = await $` 
       cd ${FIXTURE_DIR}
       bun run check
     `;
 
-    const expectedOutput = [
+    const importantLines = [
       "error TS2769: No overload matches this call.",
       "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
       `Type '"direct"' is not assignable to type '"bytes"'`,
@@ -105,11 +107,12 @@ describe("@types/bun integration test", () => {
 
     const fullOutput = p.stdout.toString() + p.stderr.toString();
 
-    // this makes sure there are no more errors than expected
-    expect(fullOutput.match(/error/g)?.length ?? 0).toBe(expectedOutput.filter(e => e.includes("error")).length);
+    const expectedErrorCount = importantLines.filter(e => e.includes("error")).length;
+    const actualErrorCount = fullOutput.match(/error/g)?.length ?? 0;
+    expect(actualErrorCount).toBe(expectedErrorCount);
 
-    for (const expected of expectedOutput) {
-      expect(fullOutput).toContain(expected);
+    for (const line of importantLines) {
+      expect(fullOutput).toContain(line);
     }
 
     expect(p.exitCode).toBe(2);

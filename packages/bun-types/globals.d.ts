@@ -846,10 +846,12 @@ declare class BuildMessage {
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 
-// Declare "static" methods in Error
 interface ErrorConstructor {
-  /** Create .stack property on a target object */
+  isError(value: unknown): value is Error;
 
+  /**
+   * Create .stack property on a target object
+   */
   captureStackTrace(targetObject: object, constructorOpt?: Function): void;
 
   /**
@@ -859,6 +861,9 @@ interface ErrorConstructor {
    */
   prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
 
+  /**
+   * The maximum number of stack frames to capture.
+   */
   stackTraceLimit: number;
 }
 
@@ -1536,10 +1541,6 @@ declare var MessagePort: Bun.__internal.UseLibDomIfAvailable<
     new (): MessagePort;
   }
 >;
-
-interface ErrorConstructor {
-  isError(value: unknown): value is Error;
-}
 
 //#region Fetch
 interface RequestInit extends Bun.__internal.LibOrFallbackRequestInit {}

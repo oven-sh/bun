@@ -386,6 +386,8 @@ Bun.fetch("", {
   },
 });
 
+Buffer.from("foo").equals(Buffer.from("bar"));
+
 const myHeaders: Headers = new Headers();
 myHeaders.append("x-bun", "is cool");
 myHeaders.get("x-bun");

@@ -4233,7 +4233,7 @@ declare module "bun" {
   /**
    * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
    */
-  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
+  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
     | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
         fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
@@ -4243,7 +4243,9 @@ declare module "bun" {
         fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
     | (Omit<WebSocketServeOptions<T>, "fetch"> & {
-        routes: R;
+        routes: {
+          [K in keyof R]: RouterTypes.RouteValueWithWebSocketUpgrade<Extract<K, string>>;
+        };
         fetch?: (
           this: Server,
           request: Request,

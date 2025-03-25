@@ -2468,10 +2468,8 @@ pub const Interpreter = struct {
                     }
 
                     if (vm.worker) |worker| {
-                        if (worker.argv) |argv| {
-                            if (int >= argv.len) return "";
-                            return this.base.interpreter.getVmArgsUtf8(argv, int);
-                        }
+                        if (int >= worker.argv.len) return "";
+                        return this.base.interpreter.getVmArgsUtf8(worker.argv, int);
                     }
                     const argv = vm.argv;
                     if (int >= argv.len) return "";

@@ -1972,7 +1972,7 @@ pub const Process = struct {
 
         var args_count: usize = vm.argv.len;
         if (vm.worker) |worker| {
-            args_count = if (worker.argv) |argv| argv.len else 0;
+            args_count = worker.argv.len;
         }
 
         const args = allocator.alloc(
@@ -2007,10 +2007,8 @@ pub const Process = struct {
         defer allocator.free(args);
 
         if (vm.worker) |worker| {
-            if (worker.argv) |argv| {
-                for (argv) |arg| {
-                    args_list.appendAssumeCapacity(bun.String.init(arg));
-                }
+            for (worker.argv) |arg| {
+                args_list.appendAssumeCapacity(bun.String.init(arg));
             }
         } else {
             for (vm.argv) |arg| {

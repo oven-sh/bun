@@ -35,7 +35,8 @@ pub const WebWorker = struct {
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
 
-    argv: ?[]const WTFStringImpl,
+    // kept alive by C++ Worker object
+    argv: []const WTFStringImpl,
     execArgv: ?[]const WTFStringImpl,
 
     pub const Status = enum(u8) {
@@ -179,11 +180,12 @@ pub const WebWorker = struct {
         mini: bool,
         default_unref: bool,
         argv_ptr: ?[*]WTFStringImpl,
-        argv_len: u32,
+        argv_len: usize,
+        inherit_execArgv: bool,
         execArgv_ptr: ?[*]WTFStringImpl,
-        execArgv_len: u32,
+        execArgv_len: usize,
         preload_modules_ptr: ?[*]bun.String,
-        preload_modules_len: u32,
+        preload_modules_len: usize,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
@@ -195,10 +197,7 @@ pub const WebWorker = struct {
         defer parent.transpiler.setLog(prev_log);
         defer temp_log.deinit();
 
-        const preload_modules = if (preload_modules_ptr) |ptr|
-            ptr[0..preload_modules_len]
-        else
-            &.{};
+        const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
         const path = resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) orelse {
             return null;
@@ -238,8 +237,8 @@ pub const WebWorker = struct {
             },
             .user_keep_alive = !default_unref,
             .worker_event_loop_running = true,
-            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
-            .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
+            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
+            .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
             .preloads = preloads.items,
         };
 

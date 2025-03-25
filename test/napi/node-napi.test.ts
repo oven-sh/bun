@@ -112,7 +112,7 @@ beforeAll(async () => {
   }
 
   const parallelism = Math.min(8, os.cpus().length, 1 /* TODO(@heimskr): remove */);
-  const jobs = [];
+  const jobs: Promise<void>[] = [];
   for (let i = 0; i < parallelism; i++) {
     jobs.push(worker());
   }

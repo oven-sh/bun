@@ -7582,44 +7582,115 @@ declare module "bun" {
     static serialize(...cookies: Cookie[]): string;
   }
 
+  /**
+   * A Map-like interface for working with collections of cookies.
+   * Implements the `Iterable` interface, allowing use with `for...of` loops.
+   */
   class CookieMap implements Iterable<[string, Cookie]> {
+    /**
+     * Creates a new CookieMap instance.
+     *
+     * @param init - Optional initial data for the cookie map:
+     *   - string: A cookie header string (e.g., "name=value; foo=bar")
+     *   - string[][]: An array of name/value pairs (e.g., [["name", "value"], ["foo", "bar"]])
+     *   - Record<string, string>: An object with cookie names as keys (e.g., { name: "value", foo: "bar" })
+     */
     constructor(init?: string[][] | Record<string, string> | string);
 
     /**
-     * The `Cookie` header is a string of cookies separated by `; `.
-     * This method parses a `Cookie` header and returns a `CookieMap`.
+     * Gets the value of a cookie with the specified name.
      *
-     * @param value - a valid `Cookie` header string. Invalid `Cookie` headers throws.
-     *
-     * Unlike the `Set-Cookie` header, the `Cookie` header doesn't have per-cookie attributes.
-     *
-     * @example
-     * ```js
-     * const cookieMap = CookieMap.fromCookieHeader("name=value; name2=value2");
-     * ```
-     *
+     * @param name - The name of the cookie to retrieve
+     * @returns The cookie value as a string, or null if the cookie doesn't exist
      */
-    static fromCookieHeader(value: string): CookieMap;
-
     get(name: string): string | null;
     getModifiedEntry(name: string): Cookie | null;
 
+    /**
+     * Gets all cookies that have been set or deleted in the map. Deleted cookies have an empty string value
+     * and an expiry date in the past.
+     *
+     * @returns An array of Cookie objects representing all changes
+     */
+    getAllChanges(): Cookie[];
+
+    /**
+     * Checks if a cookie with the given name exists.
+     *
+     * @param name - The name of the cookie to check
+     * @returns true if the cookie exists, false otherwise
+     */
     has(name: string): boolean;
 
+    /**
+     * Adds or updates a cookie in the map.
+     *
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
     set(name: string, value: string, options?: CookieInit): void;
+
+    /**
+     * Adds or updates a cookie in the map using a cookie options object.
+     *
+     * @param options - Cookie options including name and value
+     */
     set(options: CookieInit): void;
 
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param name - The name of the cookie to delete
+     */
     delete(name: string): void;
-    delete(options: CookieStoreDeleteOptions): void;
 
+    /**
+     * Converts the cookie map to a serializable format.
+     *
+     * @returns An array of name/value pairs
+     */
     toJSON(): [[name: string, value: string | ReturnType<Cookie["toJSON"]>]];
+
+    /**
+     * The number of cookies in the map.
+     */
     readonly size: number;
 
+    /**
+     * Returns an iterator of [name, value] pairs for every cookie in the map.
+     *
+     * @returns An iterator for the entries in the map
+     */
     entries(): IterableIterator<[string, string]>;
-    keys(): IterableIterator<string>;
-    values(): IterableIterator<string>;
-    forEach(callback: (value: string, key: string, map: CookieMap) => void, thisArg?: any): void;
 
+    /**
+     * Returns an iterator of all cookie names in the map.
+     *
+     * @returns An iterator for the cookie names
+     */
+    keys(): IterableIterator<string>;
+
+    /**
+     * Returns an iterator of all cookie values in the map.
+     *
+     * @returns An iterator for the cookie values
+     */
+    values(): IterableIterator<string>;
+
+    /**
+     * Executes a provided function once for each cookie in the map.
+     *
+     * @param callback - Function to execute for each entry
+     */
+    forEach(callback: (value: string, key: string, map: CookieMap) => void): void;
+
+    /**
+     * Returns the default iterator for the CookieMap.
+     * Used by for...of loops to iterate over all entries.
+     *
+     * @returns An iterator for the entries in the map
+     */
     [Symbol.iterator](): IterableIterator<[string, string]>;
   }
 }

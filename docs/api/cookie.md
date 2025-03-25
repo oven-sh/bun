@@ -135,6 +135,32 @@ Converts the cookie map to a serializable format.
 const json = cookies.toJSON();
 ```
 
+#### `getAllChanges(): Cookie[]`
+
+Adds Set-Cookie headers to the response. When using Bun.serve(), the request cookie map is automatically applied, so this function is not needed.
+
+```js
+import { createServer } from "node:http";
+import { CookieMap } from "bun";
+
+const server = createServer((req, res) => {
+  const cookieHeader = req.headers.cookie || "";
+  const cookies = CookieMap.fromCookieHeader(cookieHeader);
+
+  cookies.set("view-count", Number(cookies.get("view-count") || "0") + 1);
+
+  res.writeHead(200, {
+    "Content-Type": "text/plain",
+    "Set-Cookie": cookies.getAllChanges().map(cookie => cookie.toString()),
+  });
+  res.end(`Found ${cookies.size} cookies`);
+});
+
+server.listen(3000, () => {
+  console.log("Server running at http://localhost:3000/");
+});
+```
+
 ### Iteration
 
 `CookieMap` provides several methods for iteration:

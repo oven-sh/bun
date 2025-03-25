@@ -1209,6 +1209,16 @@ interface PromiseConstructor {
     resolve: (value?: T | PromiseLike<T>) => void;
     reject: (reason?: any) => void;
   };
+
+  /**
+   * Try to run a function and return the result.
+   * If the function throws, return the result of the `catch` function.
+   *
+   * @param fn - The function to run
+   * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
+   * @returns The result of the function or the result of the `catch` function
+   */
+  try<T, A extends any[] = []>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
 }
 
 interface Navigator {

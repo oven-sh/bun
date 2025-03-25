@@ -204,6 +204,18 @@ new Map();
 new Set();
 new WeakMap();
 
+Promise.try(() => {
+  return 1;
+});
+
+Promise.try(() => {
+  throw new Error("test");
+});
+
+Promise.try((message: string) => {
+  throw new Error(message);
+}, "Bun");
+
 const statuses = [200, 400, 401, 403, 404, 500, 501, 502, 503, 504];
 
 const r = new Request("", {

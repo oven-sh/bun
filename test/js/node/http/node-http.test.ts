@@ -23,6 +23,7 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import type { AddressInfo } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -2251,4 +2252,30 @@ it("should support localAddress", async () => {
       http.request(`http://[::1]:${server.address().port}`).end();
     });
   });
+});
+
+it("should handle backpressure", async () => {
+  await using server = http.createServer((req, res) => {
+    // Set headers
+    res.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Transfer-Encoding": "chunked",
+    });
+
+    // Send 3 chunks of 1MB each
+    const payload = Buffer.alloc(1024 * 1024, "a");
+
+    res.write(payload, () => {
+      res.write(payload, () => {
+        res.write(payload, () => {
+          res.end();
+        });
+      });
+    });
+  });
+  await once(server.listen(0), "listening");
+
+  const PORT = (server.address() as AddressInfo).port;
+  const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.bytes());
+  expect(bytes.length).toBe(1024 * 1024 * 3);
 });

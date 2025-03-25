@@ -224,13 +224,6 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
     return { BunStringTag::WTFStringImpl, { .wtf = impl } };
 }
 
-BunString toStringNonRef(WTF::String& wtfString)
-{
-    if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
-}
 BunString toStringNonRef(const WTF::String& wtfString)
 {
     if (wtfString.isEmpty())
@@ -246,14 +239,6 @@ BunString toStringNonRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString toStringRef(WTF::String& wtfString)
-{
-    if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
-
-    wtfString.impl()->ref();
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
-}
 BunString toStringRef(const WTF::String& wtfString)
 {
     if (wtfString.isEmpty())

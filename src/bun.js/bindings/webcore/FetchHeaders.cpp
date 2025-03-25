@@ -87,7 +87,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             }
         }
 
-        auto canWriteResult = canWriteHeader<false>(headerName, normalizedValue, combinedValue, guard);
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, combinedValue, guard);
 
         if (canWriteResult.hasException())
             return canWriteResult.releaseException();
@@ -107,7 +107,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (index.isValid()) {
         combinedValue = makeString(headers.getIndex(index), ", "_s, normalizedValue);
     }
-    auto canWriteResult = canWriteHeader<false>(name, normalizedValue, combinedValue, guard);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -125,7 +125,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     String normalizedValue = header.value.trim(isHTTPSpace);
-    auto canWriteResult = canWriteHeader<false>(header.key, normalizedValue, header.value, guard);
+    auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -252,7 +252,7 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)
 {
     String normalizedValue = value.trim(isHTTPSpace);
-    auto canWriteResult = canWriteHeader<false>(name, normalizedValue, normalizedValue, m_guard);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -267,11 +267,10 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
     return {};
 }
 
-template<bool isStrict>
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
     String normalizedValue = value.trim(isHTTPSpace);
-    auto canWriteResult = canWriteHeader<isStrict>(name, normalizedValue, normalizedValue, m_guard);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -290,7 +289,7 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
 {
     for (auto& header : headers) {
         String normalizedValue = header.value.trim(isHTTPSpace);
-        auto canWriteResult = canWriteHeader<false>(header.key, normalizedValue, header.value, guard);
+        auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
         if (canWriteResult.hasException())
             continue;
         if (!canWriteResult.releaseReturnValue())

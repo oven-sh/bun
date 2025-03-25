@@ -2080,12 +2080,13 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) noreturn {
+    // TODO(@190n) this may need to be noreturn
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
             vm.exit_handler.exit_code = code;
             worker.requestTerminate();
-            unreachable; // TODO(@190n)
+            return;
         }
 
         vm.exit_handler.exit_code = code;

@@ -174,6 +174,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
             if (!urlObject.isValid()) {
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
             }
+            // We need to replace the string inside preloadModuleStrings (this line replaces because
+            // we are iterating by-ref). Otherwise, the string returned by fileSystemPath() will be
+            // freed in this block, before it is used by Zig code.
             str = urlObject.fileSystemPath();
         }
 

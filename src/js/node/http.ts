@@ -749,6 +749,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    this.listening = false;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
     server.stop();
   },

@@ -123,6 +123,11 @@ interface BunFetchRequestInit extends RequestInit {
    * Override the default TLS options
    */
   tls?: BunFetchRequestInitTLS;
+  
+  /**
+   * The unix socket to connect to
+   */
+  unix?: string;
 }
 
 var fetch: {

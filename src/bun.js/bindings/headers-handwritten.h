@@ -293,12 +293,18 @@ extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
-BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);
-BunString toString(WTF::String& wtfString);
-BunString toString(const WTF::String& wtfString);
-BunString toString(WTF::StringImpl* wtfString);
 
+// These functions do not touch the reference count on their argument. The resulting BunString has
+// the same lifetime as the argument. Be very careful that the BunString is not used after the
+// WTF::String has gone out of scope.
+BunString toStringNonRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+BunString toStringNonRef(WTF::String& wtfString);
+BunString toStringNonRef(const WTF::String& wtfString);
+BunString toStringNonRef(WTF::StringImpl* wtfString);
+
+// These functions increment the reference count on their argument. `deref` must be called later
+// on the return value to avoid a leak.
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toStringRef(WTF::String& wtfString);
 BunString toStringRef(const WTF::String& wtfString);

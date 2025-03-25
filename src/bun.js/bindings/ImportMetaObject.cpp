@@ -82,7 +82,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
                 }
             }
 
-            BunString from = Bun::toString(fromStr);
+            BunString from = Bun::toStringNonRef(fromStr);
             auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false, true);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -319,7 +319,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     args.append(moduleName);
                     args.append(parentModuleObject);
                     auto parentIdStr = parentID.toWTFString(globalObject);
-                    auto bunStr = Bun::toString(parentIdStr);
+                    auto bunStr = Bun::toStringNonRef(parentIdStr);
                     args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 
                     JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
@@ -442,8 +442,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 
     // Run it through the module resolver, errors at this point are actual errors.
-    auto a = Bun::toString(specifier);
-    auto b = Bun::toString(fromWTFString);
+    auto a = Bun::toStringNonRef(specifier);
+    auto b = Bun::toStringNonRef(fromWTFString);
     auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
     RETURN_IF_EXCEPTION(scope, {});
 

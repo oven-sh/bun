@@ -426,7 +426,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
-        BunString bunStr = Bun::toString(filename);
+        BunString bunStr = Bun::toStringNonRef(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.toWTFString(BunString::ZeroCopy);
         }
@@ -3459,7 +3459,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * gl
 
     String idWtfStr = id.toWTFString(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    BunString idStr = Bun::toString(idWtfStr);
+    BunString idStr = Bun::toStringNonRef(idWtfStr);
 
     JSValue fetchResult = Bun::resolveAndFetchBuiltinModule(zigGlobalObject, &idStr);
     if (fetchResult) {

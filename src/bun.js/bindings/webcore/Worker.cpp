@@ -157,9 +157,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
         }
     }
-    BunString urlStr = Bun::toString(url);
+    BunString urlStr = Bun::toStringNonRef(url);
     BunString errorMessage = BunStringEmpty;
-    BunString nameStr = Bun::toString(worker->m_options.name);
+    BunString nameStr = Bun::toStringNonRef(worker->m_options.name);
 
     bool miniMode = worker->m_options.bun.mini;
     bool unrefByDefault = worker->m_options.bun.unref;
@@ -178,7 +178,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
             str = urlObject.fileSystemPath();
         }
 
-        preloadModules.append(Bun::toString(str));
+        preloadModules.append(Bun::toStringNonRef(str));
     }
 
     void* impl = WebWorker__create(

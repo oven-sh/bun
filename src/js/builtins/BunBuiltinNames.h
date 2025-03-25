@@ -98,7 +98,6 @@ using namespace JSC;
     macro(dirname) \
     macro(disturbed) \
     macro(document) \
-    macro(domain) \
     macro(encode) \
     macro(encoding) \
     macro(end) \
@@ -107,7 +106,6 @@ using namespace JSC;
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
     macro(execArgv) \
-    macro(expires) \
     macro(exports) \
     macro(extname) \
     macro(failureKind) \
@@ -133,7 +131,6 @@ using namespace JSC;
     macro(host) \
     macro(hostname) \
     macro(href) \
-    macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
     macro(inFlightCloseRequest) \
@@ -154,14 +151,13 @@ using namespace JSC;
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
     macro(lineText) \
-    macro(loadCJS2ESM) \
+    macro(loadEsmIntoCjs) \
     macro(localStreams) \
     macro(main) \
     macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
-    macro(maxAge) \
     macro(method) \
     macro(mockedFunction) \
     macro(mode) \
@@ -179,7 +175,6 @@ using namespace JSC;
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
-    macro(partitioned) \
     macro(password) \
     macro(patch) \
     macro(path) \
@@ -223,8 +218,6 @@ using namespace JSC;
     macro(requireNativeModule) \
     macro(resolveSync) \
     macro(resume) \
-    macro(sameSite) \
-    macro(secure) \
     macro(self) \
     macro(sep) \
     macro(setBody) \

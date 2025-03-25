@@ -360,7 +360,7 @@ pub const TablePrinter = struct {
             return;
         }
 
-        if (row_value.isObject()) {
+        if (row_value.getObject()) |obj| {
             // object ->
             //  - if "properties" arg was provided: iterate the already-created columns (except for the 0-th which is the index)
             //  - otherwise: iterate the object properties, and create the columns on-demand
@@ -374,7 +374,7 @@ pub const TablePrinter = struct {
                 var cols_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(this.globalObject, row_value);
+                }).init(this.globalObject, obj);
                 defer cols_iter.deinit();
 
                 while (try cols_iter.next()) |col_key| {
@@ -554,10 +554,11 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
+                const tabular_obj = try this.tabular_data.toObject(globalObject);
                 var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data);
+                }).init(globalObject, tabular_obj);
                 defer rows_iter.deinit();
 
                 while (try rows_iter.next()) |row_key| {
@@ -627,10 +628,13 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
+                const cell = this.tabular_data.toCell() orelse {
+                    return globalObject.throwTypeError("tabular_data must be an object or array", .{});
+                };
                 var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data);
+                }).init(globalObject, cell.toObject(globalObject));
                 defer rows_iter.deinit();
 
                 while (try rows_iter.next()) |row_key| {
@@ -3077,14 +3081,15 @@ pub const Formatter = struct {
 
                 if (value.get_unsafe(this.globalThis, "props")) |props| {
                     const prev_quote_strings = this.quote_strings;
-                    this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
+                    this.quote_strings = true;
 
+                    // SAFETY: JSX props are always objects
+                    const props_obj = props.getObject().?;
                     var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = true,
-
                         .include_value = true,
-                    }).init(this.globalThis, props);
+                    }).init(this.globalThis, props_obj);
                     defer props_iter.deinit();
 
                     const children_prop = props.get_unsafe(this.globalThis, "children");

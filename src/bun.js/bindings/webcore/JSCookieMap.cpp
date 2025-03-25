@@ -497,7 +497,11 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         auto name = convert<IDLUSVString>(*lexicalGlobalObject, arg0);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        impl.remove(name);
+        CookieStoreDeleteOptions deleteOptions;
+        deleteOptions.name = name;
+        deleteOptions.domain = String();
+        deleteOptions.path = "/"_s;
+        impl.remove(deleteOptions);
     }
 
     return JSValue::encode(jsUndefined());

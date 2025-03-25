@@ -207,15 +207,6 @@ void CookieMap::set(Ref<Cookie> cookie)
     m_modifiedCookies.append(WTFMove(cookie));
 }
 
-void CookieMap::remove(const String& name)
-{
-    removeInternal(name);
-
-    // Add the new cookie
-    auto cookie = Cookie::create(name, ""_s, String(), "/"_s, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
-    m_modifiedCookies.append(WTFMove(cookie));
-}
-
 void CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
     removeInternal(options.name);

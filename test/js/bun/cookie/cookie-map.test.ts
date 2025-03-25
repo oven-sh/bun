@@ -117,7 +117,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
   test("can create an empty CookieMap", () => {
     const map = new Bun.CookieMap();
     expect(map.size).toBe(0);
-    expect(map.toString()).toBe("");
+    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from string", () => {
@@ -126,15 +126,13 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
 
     const cookie1 = map.get("name");
     expect(cookie1).toBeDefined();
-    expect(cookie1?.name).toBe("name");
-    expect(cookie1?.value).toBe("value");
+    expect(cookie1).toBe("value");
 
     const cookie2 = map.get("foo");
     expect(cookie2).toBeDefined();
-    expect(cookie2?.name).toBe("foo");
-    expect(cookie2?.value).toBe("bar");
+    expect(cookie2).toBe("bar");
 
-    expect(map.toString()).toMatchInlineSnapshot(`"name=value; foo=bar"`);
+    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from object", () => {
@@ -144,8 +142,9 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
 
     expect(map.size).toBe(2);
-    expect(map.get("name")?.value).toBe("value");
-    expect(map.get("foo")?.value).toBe("bar");
+    expect(map.get("name")).toBe("value");
+    expect(map.get("foo")).toBe("bar");
+    expect(map.getAllChanges()).toEqual([]);
   });
 
   test("can create CookieMap from array pairs", () => {
@@ -155,8 +154,11 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     ]);
 
     expect(map.size).toBe(2);
-    expect(map.get("name")?.value).toBe("value");
-    expect(map.get("foo")?.value).toBe("bar");
+    expect(map.get("name")).toBe("value");
+    expect(map.get("foo")).toBe("bar");
+    expect(map.getModifiedEntry("name")).toBe(null);
+    expect(map.getModifiedEntry("foo")).toBe(null);
+    expect(map.getAllChanges()).toEqual([]);
   });
 
   test("CookieMap methods work", () => {
@@ -177,20 +179,32 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     );
     expect(map.size).toBe(2);
     expect(map.has("foo")).toBe(true);
-    expect(map.get("foo")?.secure).toBe(true);
-    expect(map.get("foo")?.httpOnly).toBe(true);
-    expect(map.get("foo")?.partitioned).toBe(true);
-    expect(map.toString()).toMatchInlineSnapshot(`"name=value; foo=bar; Secure; HttpOnly; Partitioned"`);
+    expect(map.getModifiedEntry("foo")?.secure).toBe(true);
+    expect(map.getModifiedEntry("foo")?.httpOnly).toBe(true);
+    expect(map.getModifiedEntry("foo")?.partitioned).toBe(true);
+    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "name=value; SameSite=Lax",
+        "foo=bar; Secure; HttpOnly; Partitioned; SameSite=Lax",
+      ]
+    `);
 
     // Delete a cookie
     map.delete("name");
     expect(map.size).toBe(1);
     expect(map.has("name")).toBe(false);
+    expect(map.get("name")).toBe(null);
+    expect(map.getModifiedEntry("name")?.toString()).toMatchInlineSnapshot(
+      `"name=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax"`,
+    );
 
-    // Get all (only one remains)
-    const all = map.getAll("foo");
-    expect(all.length).toBe(1);
-    expect(all[0].value).toBe("bar");
+    // Get changes
+    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "foo=bar; Secure; HttpOnly; Partitioned; SameSite=Lax",
+        "name=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      ]
+    `);
   });
 
   test("CookieMap supports iteration", () => {
@@ -202,28 +216,36 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
 
     // Test entries()
     let count = 0;
-    for (const [key, cookie] of map.entries()) {
+    for (const [key, value] of map.entries()) {
       count++;
       expect(typeof key).toBe("string");
-      expect(typeof cookie).toBe("object");
-      expect(cookie instanceof Bun.Cookie).toBe(true);
-      expect(["1", "2", "3"]).toContain(cookie.value);
+      expect(typeof value).toBe("string");
+      expect(["1", "2", "3"]).toContain(value);
     }
     expect(count).toBe(3);
 
     // Test forEach
     const collected: string[] = [];
-    map.forEach((cookie, key) => {
-      collected.push(`${key}=${cookie.value}`);
+    map.forEach((value, key) => {
+      collected.push(`${key}=${value}`);
     });
     expect(collected.sort()).toEqual(["a=1", "b=2", "c=3"]);
   });
 
-  test("CookieMap.toString() formats properly", () => {
+  test("CookieMap.toJSON() formats properly", () => {
     const map = new Bun.CookieMap("a=1; b=2");
-    const str = map.toString();
-    expect(str).toInclude("a=1");
-    expect(str).toInclude("b=2");
+    expect(map.toJSON()).toMatchInlineSnapshot(`
+      [
+        [
+          "a",
+          "1",
+        ],
+        [
+          "b",
+          "2",
+        ],
+      ]
+    `);
   });
 
   test("CookieMap works with cookies with advanced attributes", () => {
@@ -237,7 +259,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
       maxAge: 3600,
     });
 
-    const cookie = map.get("session");
+    expect(map.get("session")).toBe("abc123");
+    const cookie = map.getModifiedEntry("session");
     expect(cookie).toBeDefined();
     expect(cookie?.httpOnly).toBe(true);
     expect(cookie?.secure).toBe(true);

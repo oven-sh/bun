@@ -71,6 +71,10 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
         RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
         auto nullTerminatedSpan = expiresStr.utf8();
         if (auto parsed = WTF::parseDate(std::span<const LChar>(reinterpret_cast<const LChar*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()))) {
+            if (std::isnan(parsed)) {
+                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
+                return Cookie::emptyExpiresAtValue;
+            }
             return static_cast<int64_t>(parsed);
         } else {
             throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));

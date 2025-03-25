@@ -76,20 +76,22 @@ describe("Bun.Cookie expires validation", () => {
       }).toThrow();
     });
 
-    test("invalid strings become epoch", () => {
-      expect(new Bun.Cookie("name", "value", { expires: "tomorrow" }).expires).toEqual(new Date(0));
+    test("invalid strings throw", () => {
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: "tomorrow" });
+      }).toThrowErrorMatchingInlineSnapshot(`"Invalid cookie expiration date"`);
     });
 
     test("throws for arrays", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: [2023, 11, 25] });
-      }).toThrow();
+      }).toThrowErrorMatchingInlineSnapshot(`"The argument 'expires' Invalid expires value. Must be a Date or a number. Received [ 2023, 11, 25 ]"`);
     });
 
     test("throws for booleans", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: true });
-      }).toThrow();
+      }).toThrowErrorMatchingInlineSnapshot(`"The argument 'expires' Invalid expires value. Must be a Date or a number. Received true"`);
     });
   });
 

@@ -137,7 +137,7 @@ const json = cookies.toJSON();
 
 #### `getAllChanges(): Cookie[]`
 
-Adds Set-Cookie headers to the response. When using Bun.serve(), the request cookie map is automatically applied, so this function is not needed.
+Gets Cookie objects for all cookies that were set or deleted on the cookie map. When using Bun.serve(), the request cookie map has changes automatically applied, so this function is not necessary.
 
 ```js
 import { createServer } from "node:http";
@@ -145,9 +145,10 @@ import { CookieMap } from "bun";
 
 const server = createServer((req, res) => {
   const cookieHeader = req.headers.cookie || "";
-  const cookies = CookieMap.fromCookieHeader(cookieHeader);
+  const cookies = new CookieMap(cookieHeader);
 
   cookies.set("view-count", Number(cookies.get("view-count") || "0") + 1);
+  cookies.delete("session");
 
   res.writeHead(200, {
     "Content-Type": "text/plain",

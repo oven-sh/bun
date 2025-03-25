@@ -4,6 +4,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
 pub const JSObject = opaque {
     extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
@@ -76,6 +77,10 @@ pub const JSObject = opaque {
         return obj;
     }
 
+    pub fn get(obj: *JSObject, global: *JSGlobalObject, prop: anytype) JSError!?JSValue {
+        return obj.toJS().get(global, prop);
+    }
+
     pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
         obj.toJS().put(global, key, value);
     }
@@ -84,6 +89,12 @@ pub const JSObject = opaque {
         inline for (comptime std.meta.fieldNames(@TypeOf(properties))) |field| {
             try obj.put(global, field, @field(properties, field));
         }
+    }
+
+    /// When the GC sees a JSValue referenced in the stack, it knows not to free it
+    /// This mimics the implementation in JavaScriptCore's C++
+    pub inline fn ensureStillAlive(this: *JSObject) void {
+        std.mem.doNotOptimizeAway(this);
     }
 
     pub const ExternColumnIdentifier = extern struct {
@@ -106,6 +117,7 @@ pub const JSObject = opaque {
             }
         }
     };
+
     pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         JSC.markBinding(@src());
         return JSC__createStructure(global, owner.asCell(), length, names);

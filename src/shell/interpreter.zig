@@ -654,7 +654,7 @@ pub const ParsedShellScript = struct {
         const str_js = arguments.nextEat() orelse {
             return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
-        const str = bun.String.fromJS(str_js, globalThis);
+        const str = try bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }
@@ -666,10 +666,9 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const value1 = callframe.argument(0);
-        if (!value1.isObject()) {
+        const value1 = callframe.argument(0).getObject() orelse {
             return globalThis.throwInvalidArguments("env must be an object", .{});
-        }
+        };
 
         var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
@@ -1699,7 +1698,7 @@ pub const Interpreter = struct {
 
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value = callframe.argument(0);
-        const str = bun.String.fromJS(value, globalThis);
+        const str = try bun.String.fromJS(value, globalThis);
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();

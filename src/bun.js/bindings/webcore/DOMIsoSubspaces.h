@@ -36,7 +36,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
-    std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
@@ -937,6 +937,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
 };
 } // namespace WebCore
 

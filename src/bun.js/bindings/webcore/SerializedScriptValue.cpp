@@ -62,7 +62,6 @@
 // #include "JSWebCodecsEncodedVideoChunk.h"
 // #include "JSWebCodecsVideoFrame.h"
 #include "ScriptExecutionContext.h"
-#include "SharedBuffer.h"
 // #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/APICast.h>

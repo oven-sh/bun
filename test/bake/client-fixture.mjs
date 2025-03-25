@@ -24,9 +24,13 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
-let updatingTimer = null;
+let isUpdating = null;
 
 function reset() {
+  if (isUpdating !== null) {
+    clearImmediate(isUpdating);
+    isUpdating = null;
+  }
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -57,21 +61,6 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  let hasReadyEventListener = false;
-  window["bun do not use this outside of internal testing or else i'll cry"] = ({ onEvent }) => {
-    onEvent("bun:afterUpdate", () => {
-      setTimeout(() => {
-        process.send({ type: "received-hmr-event", args: [] });
-      }, 50);
-    });
-    hasReadyEventListener = true;
-    onEvent("bun:ready", () => {
-      setTimeout(() => {
-        process.send({ type: "received-hmr-event", args: [] });
-      }, 50);
-    });
-  };
-
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
@@ -87,14 +76,11 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "e".charCodeAt(0)) {
-          if (updatingTimer) {
-            clearTimeout(updatingTimer);
-          }
-          updatingTimer = setTimeout(() => {
+        if (data[0] === "u".charCodeAt(0) || data[0] === "e".charCodeAt(0)) {
+          isUpdating = setImmediate(() => {
             process.send({ type: "received-hmr-event", args: [] });
-            updatingTimer = null;
-          }, 250);
+            isUpdating = null;
+          });
         }
         if (!allowWebSocketMessages) {
           const allowedTypes = ["n", "r"];
@@ -134,11 +120,75 @@ function createWindow(windowUrl) {
     info: (...args) => {
       if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
         // Wait for all CSS assets to be fully loaded before emitting the event
-        if (!hasReadyEventListener) {
-          setTimeout(() => {
-            process.send({ type: "received-hmr-event", args: [] });
-          }, 50);
-        }
+        let checkAttempts = 0;
+        const MAX_CHECK_ATTEMPTS = 20; // Prevent infinite waiting
+
+        const checkCSSLoaded = () => {
+          checkAttempts++;
+
+          // Get all link elements with rel="stylesheet"
+          const styleLinks = window.document.querySelectorAll('link[rel="stylesheet"]');
+          // Get all style elements
+          const styleTags = window.document.querySelectorAll("style");
+          // Check for adoptedStyleSheets
+          const adoptedSheets = window.document.adoptedStyleSheets || [];
+
+          // If no stylesheets of any kind, just emit the event
+          if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
+            process.nextTick(() => {
+              process.send({ type: "received-hmr-event", args: [] });
+            });
+            return;
+          }
+
+          // Check if all stylesheets are loaded
+          let allLoaded = true;
+          let pendingCount = 0;
+
+          // Check link elements
+          for (const link of styleLinks) {
+            // If the stylesheet is not loaded yet
+            if (!link.sheet) {
+              allLoaded = false;
+              pendingCount++;
+            }
+          }
+
+          // Check style elements - these should be loaded immediately
+          for (const style of styleTags) {
+            if (!style.sheet) {
+              allLoaded = false;
+              pendingCount++;
+            }
+          }
+
+          // Check adoptedStyleSheets - these should be loaded immediately
+          for (const sheet of adoptedSheets) {
+            if (!sheet.cssRules) {
+              allLoaded = false;
+              pendingCount++;
+            }
+          }
+
+          if (allLoaded || checkAttempts >= MAX_CHECK_ATTEMPTS) {
+            // All CSS is loaded or we've reached max attempts, emit the event
+            if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
+              console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
+            }
+            process.nextTick(() => {
+              process.send({ type: "received-hmr-event", args: [] });
+            });
+          } else {
+            // Wait a bit and check again
+            console.info(
+              `[I] Waiting for ${pendingCount} CSS assets to load (attempt ${checkAttempts}/${MAX_CHECK_ATTEMPTS})...`,
+            );
+            setTimeout(checkCSSLoaded, 50);
+          }
+        };
+
+        // Start checking for CSS loaded state
+        checkCSSLoaded();
       }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;
@@ -154,10 +204,6 @@ function createWindow(windowUrl) {
   };
 
   window.location.reload = async () => {
-    if (updatingTimer) {
-      clearTimeout(updatingTimer);
-    }
-    console.info("[I] location.reload()");
     reset();
     if (expectingReload) {
       // Permission already granted, proceed with reload

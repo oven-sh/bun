@@ -13,10 +13,22 @@ declare module "bun" {
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeUtilTextEncoder = import("util").TextEncoder;
     type NodeUtilTextDecoder = import("util").TextDecoder;
+
+    type LibEmptyOrNodeReadableStream<T = any> = LibDomIsLoaded extends true
+      ? {}
+      : import("stream/web").ReadableStream<T>;
+
+    type LibEmptyOrNodeWritableStream<T = any> = LibDomIsLoaded extends true
+      ? {}
+      : import("stream/web").WritableStream<T>;
+
+    type LibEmptyOrNodeTransformStream<I = any, O = any> = LibDomIsLoaded extends true
+      ? {}
+      : import("stream/web").TransformStream<I, O>;
   }
 }
 
-interface ReadableStream<R = any> {}
+interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
@@ -26,7 +38,7 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface WritableStream<W = any> {}
+interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream {}
 declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   "WritableStream",
   {
@@ -1270,10 +1282,16 @@ interface Blob {
    * Returns a promise that resolves to the contents of the blob as an ArrayBuffer
    */
   arrayBuffer(): Promise<ArrayBuffer>;
+
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
    */
   bytes(): Promise<Uint8Array>;
+
+  /**
+   * Returns a readable stream of the blob's contents
+   */
+  stream(): ReadableStream;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<

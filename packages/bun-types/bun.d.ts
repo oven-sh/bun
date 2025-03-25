@@ -66,7 +66,7 @@ declare module "bun" {
      */
     type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
       // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
-      typeof globalThis extends { onabort: any }
+      LibDomIsLoaded extends true
         ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
           ? T
           : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition

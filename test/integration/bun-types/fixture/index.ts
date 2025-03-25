@@ -216,6 +216,18 @@ Promise.try((message: string) => {
   throw new Error(message);
 }, "Bun");
 
+declare const myReadableStream: ReadableStream<string>;
+for await (const chunk of myReadableStream) {
+  console.log(chunk);
+}
+
+for await (const chunk of Bun.stdin.stream()) {
+  // chunk is Uint8Array
+  // this converts it to text (assumes ASCII encoding)
+  const chunkText = Buffer.from(chunk).toString();
+  console.log(`Chunk: ${chunkText}`);
+}
+
 const statuses = [200, 400, 401, 403, 404, 500, 501, 502, 503, 504];
 
 const r = new Request("", {

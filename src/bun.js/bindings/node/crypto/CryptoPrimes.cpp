@@ -25,7 +25,7 @@ void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 
     auto res = m_candidate.isPrime(m_checks, [globalObject](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): needs to be thread safe!!!!!!!!
-        return !globalObject->isShuttingDown();
+        return !globalObject || !globalObject->isShuttingDown();
     });
 
     m_result = res != 0;
@@ -111,7 +111,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto res = candidate.isPrime(checks, [globalObject](int32_t a, int32_t b) -> bool {
-        return !globalObject->isShuttingDown();
+        return !globalObject || !globalObject->isShuttingDown();
     });
 
     return JSValue::encode(jsBoolean(res != 0));

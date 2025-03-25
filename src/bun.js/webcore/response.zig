@@ -730,21 +730,13 @@ pub const Response = struct {
             }
 
             if (response_init.fastGet(globalThis, .statusText)) |status_text| {
-                result.status_text = bun.String.fromJS(status_text, globalThis);
-            }
-
-            if (globalThis.hasException()) {
-                return error.JSError;
+                result.status_text = try bun.String.fromJS(status_text, globalThis);
             }
 
             if (response_init.fastGet(globalThis, .method)) |method_value| {
-                if (Method.fromJS(globalThis, method_value)) |method| {
+                if (try Method.fromJS(globalThis, method_value)) |method| {
                     result.method = method;
                 }
-            }
-
-            if (globalThis.hasException()) {
-                return error.JSError;
             }
 
             return result;
@@ -1171,17 +1163,11 @@ pub const Fetch = struct {
             this.abortListener(err);
             return JSValue.jsUndefined();
         }
-        pub const shim = JSC.Shimmer("Bun", "FetchTasklet", @This());
-
-        pub const Export = shim.exportFunctions(.{
-            .onResolveRequestStream = onResolveRequestStream,
-            .onRejectRequestStream = onRejectRequestStream,
-        });
         comptime {
             const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
-            @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveRequestStream, .{ .name = "Bun__FetchTasklet__onResolveRequestStream" });
             const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
-            @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectRequestStream, .{ .name = "Bun__FetchTasklet__onRejectRequestStream" });
         }
 
         pub fn startRequestStream(this: *FetchTasklet) void {
@@ -1676,7 +1662,10 @@ pub const Fetch = struct {
                 bun.String.empty;
 
             const fetch_error = JSC.SystemError{
-                .code = bun.String.static(@errorName(this.result.fail.?)),
+                .code = bun.String.static(switch (this.result.fail.?) {
+                    error.ConnectionClosed => "ECONNRESET",
+                    else => |e| @errorName(e),
+                }),
                 .message = switch (this.result.fail.?) {
                     error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
@@ -2305,7 +2294,7 @@ pub const Fetch = struct {
     const StringOrURL = struct {
         pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
             if (value.isString()) {
-                return try bun.String.fromJS2(value, globalThis);
+                return try bun.String.fromJS(value, globalThis);
             }
 
             const out = try JSC.URL.hrefFromJS(value, globalThis);
@@ -2470,7 +2459,7 @@ pub const Fetch = struct {
             if (request_init_object) |request_init| {
                 if (request_init.fastGet(globalThis, .url)) |url_| {
                     if (!url_.isUndefined()) {
-                        break :extract_url try bun.String.fromJS2(url_, globalThis);
+                        break :extract_url try bun.String.fromJS(url_, globalThis);
                     }
                 }
             }
@@ -2538,12 +2527,7 @@ pub const Fetch = struct {
         method = extract_method: {
             if (options_object) |options| {
                 if (try options.getTruthyComptime(globalThis, "method")) |method_| {
-                    break :extract_method Method.fromJS(globalThis, method_);
-                }
-
-                if (globalThis.hasException()) {
-                    is_error = true;
-                    return .zero;
+                    break :extract_method try Method.fromJS(globalThis, method_);
                 }
             }
 
@@ -2553,22 +2537,12 @@ pub const Fetch = struct {
 
             if (request_init_object) |req| {
                 if (try req.getTruthyComptime(globalThis, "method")) |method_| {
-                    break :extract_method Method.fromJS(globalThis, method_);
-                }
-
-                if (globalThis.hasException()) {
-                    is_error = true;
-                    return .zero;
+                    break :extract_method try Method.fromJS(globalThis, method_);
                 }
             }
 
             break :extract_method null;
         } orelse .GET;
-
-        if (globalThis.hasException()) {
-            is_error = true;
-            return .zero;
-        }
 
         // "decompress: boolean"
         disable_decompression = extract_disable_decompression: {
@@ -2627,7 +2601,7 @@ pub const Fetch = struct {
                             }
 
                             if (try tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
-                                if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                if (checkServerIdentity.isCell() and checkServerIdentity.isCallable()) {
                                     check_server_identity = checkServerIdentity;
                                 }
                             }

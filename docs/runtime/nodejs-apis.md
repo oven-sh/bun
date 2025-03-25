@@ -118,7 +118,7 @@ Some methods are not optimized yet.
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
+🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
@@ -174,7 +174,7 @@ Some methods are not optimized yet.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 
-🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
+🟡 Partly implemented. Missing mocks, snapshots, timers. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 

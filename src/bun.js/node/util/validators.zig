@@ -5,6 +5,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
 pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
     var js_type = value.jsType();
@@ -61,16 +62,16 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
         return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
     }
 
-    const num = value.asNumber();
-
-    if (!value.isAnyInt()) {
-        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
+    if (!value.isInteger()) {
+        return globalThis.throwRangeError(value.asNumber(), .{ .field_name = name, .msg = "an integer" });
     }
 
-    const int = value.asInt52();
+    const int: i64 = @intFromFloat(value.asNumber());
+
     if (int < min or int > max) {
         return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
     }
+
     return int;
 }
 

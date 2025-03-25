@@ -89,4 +89,6 @@ jobs:
 
             Updates libarchive to version ${{ steps.check-version.outputs.tag }}
 
+            Compare: https://github.com/libarchive/libarchive/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-libarchive.yml)

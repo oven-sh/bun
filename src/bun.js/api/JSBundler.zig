@@ -426,10 +426,6 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
-                if (!define.isObject()) {
-                    return globalThis.throwInvalidArguments("define must be an object", .{});
-                }
-
                 var define_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
@@ -856,9 +852,17 @@ pub const JSBundler = struct {
                 }
             } else {
                 const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
-                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(this.bv2.plugins.?.globalObject(), source_code_value, bun.default_allocator) catch
-                // TODO:
+                const global = this.bv2.plugins.?.globalObject();
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, source_code_value, bun.default_allocator) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => {
+                            bun.outOfMemory();
+                        },
+                        error.JSError => {},
+                    }
+
                     @panic("Unexpected: source_code is not a string");
+                };
                 this.value = .{
                     .success = .{
                         .loader = options.Loader.fromAPI(loader),

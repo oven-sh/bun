@@ -81,7 +81,7 @@ struct AsyncSocketData {
 
     }
 
-    /* Or emppty */
+    /* Or empty */
     AsyncSocketData() = default;
 };
 

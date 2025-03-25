@@ -375,7 +375,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         const server_render_func = brk: {
             const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
                 break :brk null;
-            if (!raw.isCallable(vm.jsc)) {
+            if (!raw.isCallable()) {
                 break :brk null;
             }
             break :brk raw;
@@ -391,7 +391,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             brk: {
                 const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
                     break :brk null;
-                if (!raw.isCallable(vm.jsc)) {
+                if (!raw.isCallable()) {
                     break :brk null;
                 }
                 break :brk raw;
@@ -633,7 +633,7 @@ export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specif
     const specifier = specifier_str.toUTF8(alloc);
     defer specifier.deinit();
 
-    if (JSC.HardcodedModule.Aliases.get(specifier.slice(), .bun)) |alias| {
+    if (JSC.HardcodedModule.Alias.get(specifier.slice(), .bun)) |alias| {
         return bun.String.static(alias.path);
     }
 

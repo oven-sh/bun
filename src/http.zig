@@ -583,7 +583,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = .empty,
+        pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
+
+        pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();
@@ -950,7 +952,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
-            var iter = this.pending_sockets.available.iterator(.{ .kind = .unset });
+            var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
 
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
@@ -1202,9 +1204,11 @@ pub const HTTPThread = struct {
             .loop = undefined,
             .http_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
             },
             .https_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
             },
             .timer = std.time.Timer.start() catch unreachable,
         };
@@ -2333,6 +2337,10 @@ pub fn hashHeaderConst(comptime name: string) u64 {
 
     return hasher.final();
 }
+// for each request we need this hashs, putting on top of the file to avoid exceeding comptime quota limit
+const authorization_header_hash = hashHeaderConst("Authorization");
+const proxy_authorization_header_hash = hashHeaderConst("Proxy-Authorization");
+const cookie_header_hash = hashHeaderConst("Cookie");
 
 pub const Encoding = enum {
     identity,
@@ -4574,20 +4582,36 @@ pub fn handleResponseMetadata(
                     // locationURL’s origin, then for each headerName of CORS
                     // non-wildcard request-header name, delete headerName from
                     // request’s header list.
+                    // var authorization_removed = false;
+                    // var proxy_authorization_removed = false;
+                    // var cookie_removed = false;
+                    // References:
+                    // https://github.com/nodejs/undici/commit/6805746680d27a5369d7fb67bc05f95a28247d75#diff-ea7696549c3a0b60a4a7e07cc79b6d4e950c7cb1068d47e368a510967d77e7e5R206
+                    // https://github.com/denoland/deno/commit/7456255cd10286d71363fc024e51b2662790448a#diff-6e35f325f0a4e1ae3214fde20c9108e9b3531df5d284ba3c93becb99bbfc48d5R70
                     if (!is_same_origin and this.header_entries.len > 0) {
-                        const authorization_header_hash = comptime hashHeaderConst("Authorization");
-                        for (this.header_entries.items(.name), 0..) |name_ptr, i| {
-                            const name = this.headerStr(name_ptr);
-                            if (name.len == "Authorization".len) {
-                                const hash = hashHeaderName(name);
-                                if (hash == authorization_header_hash) {
-                                    this.header_entries.orderedRemove(i);
-                                    break;
+                        const headers_to_remove: []const struct {
+                            name: []const u8,
+                            hash: u64,
+                        } = &.{
+                            .{ .name = "Authorization", .hash = authorization_header_hash },
+                            .{ .name = "Proxy-Authorization", .hash = proxy_authorization_header_hash },
+                            .{ .name = "Cookie", .hash = cookie_header_hash },
+                        };
+                        inline for (headers_to_remove) |header| {
+                            const names = this.header_entries.items(.name);
+
+                            for (names, 0..) |name_ptr, i| {
+                                const name = this.headerStr(name_ptr);
+                                if (name.len == header.name.len) {
+                                    const hash = hashHeaderName(name);
+                                    if (hash == header.hash) {
+                                        this.header_entries.orderedRemove(i);
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
-
                     this.state.flags.is_redirect_pending = true;
                     if (this.method.hasRequestBody()) {
                         this.state.flags.resend_request_body_on_redirect = true;

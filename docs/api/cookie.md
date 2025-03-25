@@ -373,9 +373,9 @@ interface CookieInit {
   value?: string;
   domain?: string;
   path?: string;
-  expires?: number | Date;
+  expires?: number | Date | string;
   secure?: boolean;
-  sameSite?: "strict" | "lax" | "none";
+  sameSite?: CookieSameSite;
   httpOnly?: boolean;
   partitioned?: boolean;
   maxAge?: number;
@@ -399,11 +399,11 @@ class Cookie {
   constructor(cookieString: string);
   constructor(cookieObject?: CookieInit);
 
-  name: string;
+  readonly name: string;
   value: string;
   domain?: string;
   path: string;
-  expires?: number;
+  expires?: Date;
   secure: boolean;
   sameSite: CookieSameSite;
   partitioned: boolean;
@@ -411,44 +411,35 @@ class Cookie {
   httpOnly: boolean;
 
   isExpired(): boolean;
+
+  serialize(): string;
   toString(): string;
   toJSON(): CookieInit;
 
   static parse(cookieString: string): Cookie;
   static from(name: string, value: string, options?: CookieInit): Cookie;
-  static serialize(...cookies: Cookie[]): string;
 }
 
 class CookieMap implements Iterable<[string, Cookie]> {
   constructor(init?: string[][] | Record<string, string> | string);
 
-  get(name: string): Cookie | null;
-  get(options?: CookieStoreGetOptions): Cookie | null;
+  get(name: string): string | null;
 
-  getAll(name: string): Cookie[];
-  getAll(options?: CookieStoreGetOptions): Cookie[];
+  getModifiedEntry(name: string): Cookie | null;
+  getAllChanges(): Cookie[];
 
-  has(name: string, value?: string): boolean;
-
-  set(name: string, value: string): void;
+  has(name: string): boolean;
+  set(name: string, value: string, options?: CookieInit): void;
   set(options: CookieInit): void;
-  set(cookie: Cookie): void;
-
   delete(name: string): void;
-  delete(options: CookieStoreDeleteOptions): void;
+  toJSON(): [[name: string, value: string | ReturnType<Cookie["toJSON"]>]];
 
-  toString(): string;
-  toJSON(): Array<[string, Cookie]>;
   readonly size: number;
 
-  entries(): IterableIterator<[string, Cookie]>;
+  entries(): IterableIterator<[string, string]>;
   keys(): IterableIterator<string>;
-  values(): IterableIterator<Cookie>;
-  forEach(
-    callback: (value: Cookie, key: string, map: CookieMap) => void,
-    thisArg?: any,
-  ): void;
-
-  [Symbol.iterator](): IterableIterator<[string, Cookie]>;
+  values(): IterableIterator<string>;
+  forEach(callback: (value: string, key: string, map: CookieMap) => void): void;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
 }
 ```

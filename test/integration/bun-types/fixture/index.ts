@@ -268,6 +268,10 @@ const req1 = new Request("", {
   body: "",
 });
 
+for (const header of new Headers()) {
+  console.log(header);
+}
+
 fetch("", {
   tls: {
     rejectUnauthorized: false,

@@ -90,7 +90,10 @@ describe("@types/bun integration test", () => {
   test("checks with lib.dom.d.ts", async () => {
     const tsconfig = Bun.file(join(FIXTURE_DIR, "tsconfig.json"));
     await tsconfig.write(
-      (await tsconfig.text()).replace(/"lib": \["ESNext"\]/, '"lib": ["ESNext", "DOM", "DOM.AsyncIterable"]'),
+      (await tsconfig.text()).replace(
+        /"lib": \["ESNext"\]/,
+        '"lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"]',
+      ),
     );
 
     const p = await $` 

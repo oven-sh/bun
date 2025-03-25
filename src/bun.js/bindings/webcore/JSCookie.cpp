@@ -823,7 +823,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_maxAge, (JSGlobalObject * lexic
     if (UNLIKELY(!thisObject))
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
     auto& impl = thisObject->wrapped();
-    return JSValue::encode(toJS<IDLNullable<IDLDouble>>(*lexicalGlobalObject, throwScope, impl.maxAge()));
+    double maxAge = impl.maxAge();
+    if (std::isnan(maxAge))
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(toJS<IDLNullable<IDLDouble>>(*lexicalGlobalObject, throwScope, maxAge));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
@@ -834,6 +837,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge, (JSGlobalObject * lexic
     if (UNLIKELY(!thisObject))
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
     auto& impl = thisObject->wrapped();
+    if (JSValue::decode(encodedValue).isUndefinedOrNull()) {
+        impl.setMaxAge(std::numeric_limits<double>::quiet_NaN());
+        return true;
+    }
     auto value = convert<IDLDouble>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
     impl.setMaxAge(value);

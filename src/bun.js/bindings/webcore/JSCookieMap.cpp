@@ -49,6 +49,7 @@ CookieMap* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exc
 
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_get);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getModifiedEntry);
+static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getAllChanges);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_has);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_set);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_delete);
@@ -236,6 +237,7 @@ static const HashTableValue JSCookieMapPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieMapConstructor, 0 } },
     { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_get, 1 } },
     { "getModifiedEntry"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_getModifiedEntry, 1 } },
+    { "getAllChanges"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_getAllChanges, 0 } },
     { "has"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_has, 1 } },
     { "set"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_set, 2 } },
     { "delete"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_delete, 1 } },
@@ -364,6 +366,30 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getModifiedEntryB
 JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getModifiedEntry, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_getModifiedEntryBody>(*lexicalGlobalObject, *callFrame, "getModifiedEntry");
+}
+
+static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getAllChangesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSCookieMap>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+
+    auto cookies = impl.getAllModifiedItems();
+    JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, cookies.size());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    size_t i = 0;
+    for (auto& item : cookies) {
+        resultArray->putDirectIndex(lexicalGlobalObject, i, toJS(lexicalGlobalObject, castedThis->globalObject(), item.value));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        i += 1;
+    }
+
+    return JSValue::encode(resultArray);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getAllChanges, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_getAllChangesBody>(*lexicalGlobalObject, *callFrame, "getAllChanges");
 }
 
 // Implementation of the has method

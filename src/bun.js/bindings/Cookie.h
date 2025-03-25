@@ -25,7 +25,7 @@ struct CookieInit {
     bool secure = false;
     CookieSameSite sameSite = CookieSameSite::Lax;
     bool httpOnly = false;
-    double maxAge = 0;
+    double maxAge = std::numeric_limits<double>::quiet_NaN();
     bool partitioned = false;
     static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
 

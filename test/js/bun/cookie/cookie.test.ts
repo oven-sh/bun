@@ -282,4 +282,17 @@ describe("Bun.serve() cookies", () => {
       ]
     `);
   });
+  test("getAllChanges", () => {
+    const map = new Bun.CookieMap("dont_modify=ONE; do_modify=TWO; do_delete=THREE");
+    map.set("do_modify", "FOUR");
+    map.delete("do_delete");
+    map.set("do_modify", "FIVE");
+    expect(map.getAllChanges().map(c => c.toString())).toMatchInlineSnapshot(`
+      [
+        "do_modify=FIVE; SameSite=Lax",
+        "dont_modify=ONE; SameSite=Lax",
+        "do_delete=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      ]
+    `);
+  });
 });

@@ -1644,7 +1644,7 @@ declare module "bun" {
    *   user: 'dbuser',
    *   password: 'secretpass',
    *   database: 'myapp',
-   *   idleTimeout: 30,
+   *   idleTimeout: 30000,
    *   max: 20,
    *   onconnect: (client) => {
    *     console.log('Connected to database');
@@ -3426,13 +3426,26 @@ declare module "bun" {
 
     type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
 
+    type RouteHandlerWithWebSocketUpgrade<T extends string> = (
+      req: BunRequest<T>,
+      server: Server,
+    ) => Response | undefined | void | Promise<Response | undefined | void>;
+
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
     type RouteHandlerObject<T extends string> = {
       [K in HTTPMethod]?: RouteHandler<T>;
     };
 
+    type RouteHandlerWithWebSocketUpgradeObject<T extends string> = {
+      [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
+    };
+
     type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValueWithWebSocketUpgrade<T extends string> =
+      | RouteValue<T>
+      | RouteHandlerWithWebSocketUpgrade<T>
+      | RouteHandlerWithWebSocketUpgradeObject<T>;
   }
 
   interface BunRequest<T extends string = string> extends Request {

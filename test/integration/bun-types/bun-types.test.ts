@@ -96,12 +96,20 @@ describe("@types/bun integration test", () => {
     `;
 
     const expectedOutput = [
+      "error TS2769: No overload matches this call.",
+      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
+      `Type '"direct"' is not assignable to type '"bytes"'`,
       "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",
     ];
 
+    const fullOutput = p.stdout.toString() + p.stderr.toString();
+
+    // this makes sure there are no more errors than expected
+    expect(fullOutput.match(/error/g)?.length ?? 0).toBe(expectedOutput.filter(e => e.includes("error")).length);
+
     for (const expected of expectedOutput) {
-      expect(p.stdout.toString() + p.stderr.toString()).toContain(expected);
+      expect(fullOutput).toContain(expected);
     }
 
     expect(p.exitCode).toBe(2);

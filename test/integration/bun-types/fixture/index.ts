@@ -137,13 +137,13 @@ Bun.serve({
   },
 
   fetch: (req, server) => {
-    return new Response("upgraded");
+    return new Response("cool");
   },
 });
 
 Bun.serve({
   fetch: (req, server) => {
-    return new Response("upgraded");
+    return new Response("cool");
   },
 });
 
@@ -160,6 +160,38 @@ Bun.serve({
   websocket: {
     message: ws => {
       //
+    },
+  },
+});
+
+Bun.serve({
+  websocket: {
+    message: () => {
+      //
+    },
+  },
+  fetch: (req, server) => {
+    if (server.upgrade(req)) {
+      return;
+    }
+
+    return new Response("not upgraded");
+  },
+});
+
+Bun.serve({
+  websocket: {
+    message: () => {
+      //
+    },
+  },
+  routes: {
+    "/ws": (req, server) => {
+      if (server.upgrade(req)) {
+        return;
+      }
+
+      return new Response("not upgraded");
     },
   },
 });

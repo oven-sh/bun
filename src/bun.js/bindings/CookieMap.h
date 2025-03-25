@@ -56,7 +56,6 @@ public:
 
     private:
         Ref<CookieMap> m_target;
-        Vector<KeyValuePair<String, String>> m_items;
         size_t m_index { 0 };
     };
 

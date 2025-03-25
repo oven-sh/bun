@@ -100,7 +100,9 @@ beforeAll(async () => {
     await child.exited;
     if (child.exitCode !== 0) {
       const stderr = await new Response(child.stderr).text();
-      throw new Error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
+      console.error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
+      console.error("bailing out!");
+      process.exit(1);
     }
   }
 

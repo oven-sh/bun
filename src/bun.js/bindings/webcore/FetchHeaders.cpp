@@ -47,7 +47,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { InvalidHTTPTokenError, makeString("Invalid value \""_s, value, "\" for header \""_s, name, "\""_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -55,11 +55,14 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
+    // TODO: consolidate error messages with ErrorCode.cpp
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return Exception { InvalidHTTPTokenError, makeString("Header name must be a valid HTTP token [\""_s, name, "\"]"_s) };
+
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { InvalidHTTPTokenError, makeString("Invalid value \""_s, value, "\" for header \""_s, name, "\""_s) };
+    // return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -84,7 +87,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             }
         }
 
-        auto canWriteResult = canWriteHeader(headerName, normalizedValue, combinedValue, guard);
+        auto canWriteResult = canWriteHeader<false>(headerName, normalizedValue, combinedValue, guard);
 
         if (canWriteResult.hasException())
             return canWriteResult.releaseException();
@@ -104,7 +107,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (index.isValid()) {
         combinedValue = makeString(headers.getIndex(index), ", "_s, normalizedValue);
     }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
+    auto canWriteResult = canWriteHeader<false>(name, normalizedValue, combinedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -122,7 +125,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     String normalizedValue = header.value.trim(isHTTPSpace);
-    auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
+    auto canWriteResult = canWriteHeader<false>(header.key, normalizedValue, header.value, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -249,7 +252,7 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)
 {
     String normalizedValue = value.trim(isHTTPSpace);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    auto canWriteResult = canWriteHeader<false>(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -264,10 +267,11 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
     return {};
 }
 
+template<bool isStrict>
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
     String normalizedValue = value.trim(isHTTPSpace);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    auto canWriteResult = canWriteHeader<isStrict>(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -286,7 +290,7 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
 {
     for (auto& header : headers) {
         String normalizedValue = header.value.trim(isHTTPSpace);
-        auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
+        auto canWriteResult = canWriteHeader<false>(header.key, normalizedValue, header.value, guard);
         if (canWriteResult.hasException())
             continue;
         if (!canWriteResult.releaseReturnValue())

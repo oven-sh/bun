@@ -303,7 +303,7 @@ describe.todoIf(isBroken && isIntelMacOS)(
   },
 );
 
-[200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
+[200, 200n, 303, 418, 599, 599n, 999, 999n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
@@ -320,7 +320,7 @@ describe.todoIf(isBroken && isIntelMacOS)(
   });
 });
 
-[-200, 42, 100, 102, 12345, Math.PI, 999, 600, 199, 199n, 600n, 100n, 102n].forEach(statusCode => {
+[-200, 42, 100, 102, 12345, Math.PI, 199, 199n, 100n, 102n].forEach(statusCode => {
   it(`should error on invalid HTTP status code (${statusCode})`, async () => {
     await runTest(
       {

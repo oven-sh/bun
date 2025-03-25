@@ -2631,6 +2631,7 @@ function ClientRequest(input, options, cb) {
       }
     } else if (!this._closed) {
       this._closed = true;
+      callCloseCallback(this);
       this.emit("close");
     }
   };
@@ -3575,6 +3576,7 @@ function request(url, options, cb) {
 }
 
 function emitCloseServer(self: Server) {
+  callCloseCallback(self);
   self.emit("close");
 }
 function emitCloseNTServer(this: Server) {

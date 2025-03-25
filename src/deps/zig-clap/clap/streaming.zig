@@ -25,6 +25,12 @@ pub fn Arg(comptime Id: type) type {
     };
 }
 
+pub const ArgError = error{
+    DoesntTakeValue,
+    MissingValue,
+    InvalidArgument,
+};
+
 /// A command line argument parser which, given an ArgIterator, will parse arguments according
 /// to the params. StreamingClap parses in an iterating manner, so you have to use a loop together with
 /// StreamingClap.next to parse all the arguments of your program.
@@ -41,19 +47,18 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             };
         };
 
-        const ArgError = error{ DoesntTakeValue, MissingValue, InvalidArgument };
-
         params: []const clap.Param(Id),
         iter: *ArgIterator,
         state: State = .normal,
         positional: ?*const clap.Param(Id) = null,
         diagnostic: ?*clap.Diagnostic = null,
+        assignment_separators: []const u8 = clap.default_assignment_separators,
 
         /// Get the next Arg that matches a Param.
         pub fn next(parser: *@This()) ArgError!?Arg(Id) {
             switch (parser.state) {
                 .normal => return try parser.normal(),
-                .chaining => |state| return try parser.chainging(state),
+                .chaining => |state| return try parser.chaining(state),
                 .rest_are_positional => {
                     const param = parser.positionalParam() orelse unreachable;
                     const value = parser.iter.next() orelse return null;
@@ -118,7 +123,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     }
                     return null;
                 },
-                .short => return try parser.chainging(.{
+                .short => return try parser.chaining(.{
                     .arg = arg,
                     .index = 0,
                 }),
@@ -140,7 +145,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             }
         }
 
-        fn chainging(parser: *@This(), state: State.Chaining) ArgError!?Arg(Id) {
+        fn chaining(parser: *@This(), state: State.Chaining) ArgError!?Arg(Id) {
             const arg = state.arg;
             const index = state.index;
             const next_index = index + 1;
@@ -164,9 +169,13 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     }
                 }
 
-                const next_is_eql = if (next_index < arg.len) arg[next_index] == '=' else false;
-                if (param.takes_value == .none or param.takes_value == .one_optional) {
-                    if (next_is_eql and param.takes_value == .none)
+                const next_is_separator = if (next_index < arg.len)
+                    std.mem.indexOfScalar(u8, parser.assignment_separators, arg[next_index]) != null
+                else
+                    false;
+
+                if (param.takes_value == .none) {
+                    if (next_is_separator)
                         return parser.err(arg, .{ .short = short }, error.DoesntTakeValue);
                     return Arg(Id){ .param = param };
                 }
@@ -178,13 +187,20 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     return Arg(Id){ .param = param, .value = value };
                 }
 
-                if (next_is_eql)
+                if (next_is_separator)
                     return Arg(Id){ .param = param, .value = arg[next_index + 1 ..] };
 
                 return Arg(Id){ .param = param, .value = arg[next_index..] };
             }
 
-            return parser.err(arg, .{ .short = arg[index] }, error.InvalidArgument);
+            if (warn_on_unrecognized_flag) {
+                Output.warn("unrecognized bun flag: -{c}, continuing to parse and evaluate flag downstream...\n", .{arg[index]});
+                Output.flush();
+            }
+
+            // Continue parsing after unrecognized flag
+            parser.state = .normal;
+            return parser.next();
         }
 
         fn positionalParam(parser: *@This()) ?*const clap.Param(Id) {

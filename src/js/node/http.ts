@@ -873,6 +873,8 @@ const ServerPrototype = {
     {
       const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
       const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+      const canUseInternalAssignSocket =
+        ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
       let isHTTPS = false;
       let server = this;
 
@@ -965,7 +967,13 @@ const ServerPrototype = {
 
           socket[kRequest] = http_req;
 
-          http_res.assignSocket(socket);
+          if (canUseInternalAssignSocket) {
+            // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+            assignSocketInternal(http_res, socket);
+          } else {
+            http_res.assignSocket(socket);
+          }
+
           function onClose() {
             didFinish = true;
             resolveFunction && resolveFunction();
@@ -2158,6 +2166,7 @@ const ServerResponsePrototype = {
 
   detachSocket(socket) {
     if (socket._httpMessage === this) {
+      socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
       socket.removeListener("close", onServerResponseClose);
       socket._httpMessage = null;
     }
@@ -2222,7 +2231,7 @@ const ServerResponsePrototype = {
       throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
     }
     socket._httpMessage = this;
-    setCloseCallback(socket, onServerResponseClose);
+    socket.once("close", onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);
   },
@@ -2259,6 +2268,13 @@ const ServerResponsePrototype = {
       handle.abort();
     }
     return this;
+  },
+
+  emit(event) {
+    if (event === "close") {
+      callCloseCallback(this);
+    }
+    return Stream.prototype.emit.$apply(this, arguments);
   },
 
   flushHeaders() {
@@ -2825,8 +2841,8 @@ function ClientRequest(input, options, cb) {
             this.emit("error", err);
           })
           .finally(() => {
-            fetching = false;
             if (!keepOpen) {
+              fetching = false;
               this[kFetchRequest] = null;
               this[kClearTimeout]();
             }
@@ -3646,6 +3662,16 @@ function setCloseCallback(self, callback) {
     throw new Error("Close callback already set");
   }
   self[kCloseCallback] = callback;
+}
+
+function assignSocketInternal(self, socket) {
+  if (socket._httpMessage) {
+    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+  }
+  socket._httpMessage = self;
+  setCloseCallback(socket, onServerResponseClose);
+  self.socket = socket;
+  self.emit("socket", socket);
 }
 
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);

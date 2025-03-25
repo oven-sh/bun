@@ -1,6 +1,6 @@
 import { spawnSync, spawn, Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isCI, isMusl } from "harness";
+import { bunEnv, bunExe, isCI, isIntelMacOS, isMusl } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
@@ -11,11 +11,17 @@ const jsNativeApiTests = Array.from(new Glob("**/*.js").scanSync(jsNativeApiRoot
 const nodeApiTests = Array.from(new Glob("**/*.js").scanSync(nodeApiRoot));
 
 // These js-native-api tests are known to fail and will be fixed in later PRs
-let failingJsNativeApiTests = [
+let failingJsNativeApiTests: string[] = [
   // We skip certain parts of test_string/test.js because we don't support creating empty external
   // strings. We don't skip the entire thing because the other tests are useful to check.
   // "test_string/test.js",
 ];
+
+if (isCI && isIntelMacOS) {
+  // TODO(@190n)
+  // these are flaky on Intel Mac
+  failingJsNativeApiTests.push("test_reference_by_node_api_version/test.js", "test_reference/test.js");
+}
 
 // These are the tests from node-api that failed as of commit 83f536f4d, except for those that
 // passed in Bun v1.1.34. It'll take some time to get all these to work, as we've been focusing more

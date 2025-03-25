@@ -1213,6 +1213,30 @@ JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGloba
     return {};
 }
 
+static JSC::JSObject* CREATE_HTTP_INVALID_HEADER_VALUE(JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::StringView& value)
+{
+    auto message = makeString("Invalid value \""_s, value, "\" for header \""_s, name, "\""_s);
+    return createError(globalObject, ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, message);
+}
+
+JSC::EncodedJSValue HTTP_INVALID_HEADER_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::StringView& value)
+{
+    throwScope.throwException(globalObject, JSValue(CREATE_HTTP_INVALID_HEADER_VALUE(globalObject, name, value)));
+    return {};
+}
+
+static JSC::JSObject* CREATE_HTTP_INVALID_TOKEN(JSC::JSGlobalObject* globalObject, const ASCIILiteral label, const WTF::StringView& token)
+{
+    auto message = makeString(label, " must be a valid HTTP token [\""_s, token, "\"]"_s);
+    return createError(globalObject, ErrorCode::ERR_INVALID_HTTP_TOKEN, message);
+}
+
+JSC::EncodedJSValue HTTP_INVALID_TOKEN(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral label, const WTF::StringView& token)
+{
+    throwScope.throwException(globalObject, JSValue(CREATE_HTTP_INVALID_TOKEN(globalObject, label, token)));
+    return {};
+}
+
 } // namespace ERR
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
@@ -1882,13 +1906,12 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     case Bun::ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE: {
         auto arg0 = callFrame->argument(1);
-        auto str0 = arg0.toWTFString(globalObject);
+        auto value = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto arg1 = callFrame->argument(2);
-        auto str1 = arg1.toWTFString(globalObject);
+        auto headerName = arg1.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto message = makeString("Invalid value \""_s, str0, "\" for header \""_s, str1, "\""_s);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, message));
+        return JSC::JSValue::encode(ERR::CREATE_HTTP_INVALID_HEADER_VALUE(globalObject, headerName, StringView(value)));
     }
 
     case Bun::ErrorCode::ERR_HTTP_HEADERS_SENT: {

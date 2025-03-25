@@ -67,7 +67,7 @@ const kEmptyObject = Object.freeze(Object.create(null));
 
 const { kDeprecatedReplySymbol } = require("internal/http");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
+const { isTypedArray, isArrayBuffer, isUint8Array } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
@@ -119,6 +119,7 @@ function isAbortError(err) {
 }
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectEntries = Object.entries;
 
 const GlobalPromise = globalThis.Promise;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
@@ -143,7 +144,7 @@ const validateHeaderValue = (name, value) => {
     throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
   }
   if (checkInvalidHeaderChar(value)) {
-    throw $ERR_INVALID_CHAR("header content", name);
+    throw $ERR_INVALID_CHAR("Header content", name);
   }
 };
 
@@ -1635,6 +1636,16 @@ const OutgoingMessagePrototype = {
       encoding = undefined;
     }
     hasServerResponseFinished(this, chunk, callback);
+    if (chunk === null) {
+      throw $ERR_STREAM_NULL_VALUES();
+    } else if (typeof chunk !== "string" && !isUint8Array(chunk)) {
+      throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+    }
+
+    if (!this._header) {
+      this._implicitHeader();
+    }
+
     if (chunk) {
       const len = Buffer.byteLength(chunk, encoding || (typeof chunk === "string" ? "utf8" : "buffer"));
       if (len > 0) {
@@ -1642,6 +1653,7 @@ const OutgoingMessagePrototype = {
         this.outputData.push(chunk);
       }
     }
+
     return this.writableHighWaterMark >= this.outputSize;
   },
 
@@ -1672,10 +1684,14 @@ const OutgoingMessagePrototype = {
     headers.delete(name);
   },
 
-  setHeader(name, value) {
-    validateHeaderName(name);
+  setHeader(name: string, value: unknown) {
+    if (this._header) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    // validateHeaderName(name);
     const headers = (this[headersSymbol] ??= new Headers());
-    setHeader(headers, name, value);
+    setHeader(headers, name, value as any);
     return this;
   },
 
@@ -1695,6 +1711,17 @@ const OutgoingMessagePrototype = {
   },
 
   addTrailers(headers) {
+    if (!$isObject(headers)) {
+      throw $ERR_INVALID_ARG_TYPE("headers", "Object", headers);
+    }
+    for (const [key, value] of ObjectEntries(headers)) {
+      if (checkInvalidHeaderChar(key)) {
+        throw $ERR_INVALID_HTTP_TOKEN("Trailer name", key);
+      }
+      if (checkInvalidHeaderChar(value)) {
+        throw $ERR_INVALID_CHAR("trailer content", key);
+      }
+    }
     throw new Error("not implemented");
   },
 

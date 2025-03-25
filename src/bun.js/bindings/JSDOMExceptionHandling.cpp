@@ -182,6 +182,15 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::InvalidURLError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_URL, message.isEmpty() ? "Invalid URL"_s : message);
 
+    case ExceptionCode::InvalidHTTPTokenError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_HTTP_TOKEN, message);
+
+    case ExceptionCode::InvalidHTTPHeaderValueError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, message);
+
+    case ExceptionCode::InvalidCharError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_CHAR, message);
+
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
         // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:

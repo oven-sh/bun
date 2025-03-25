@@ -137,7 +137,7 @@ bool isValidHTTPHeaderValue(const String& value)
         }
     } else {
         for (unsigned i = 0; i < value.length(); ++i) {
-            c = value[i];
+            c = value.characterAt(i);
             if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0x7F)
                 return false;
         }

@@ -21,6 +21,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
+#include "ErrorCode.h"
 
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -1360,47 +1361,58 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
     JSValue nameValue = callFrame->argument(1);
     JSValue valueValue = callFrame->argument(2);
 
-    if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
+    auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue);
+    if (UNLIKELY(!headers)) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "headers"_s, "FetchHeaders"_s, headersValue);
+    }
 
-        if (nameValue.isString()) {
-            String name = nameValue.toWTFString(globalObject);
-            FetchHeaders* impl = &headers->wrapped();
+    if (!nameValue.isString()) {
+        auto* nameString = nameValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return Bun::ERR::HTTP_INVALID_TOKEN(scope, globalObject, "Header name"_s, nameString->view(globalObject));
+    }
 
-            if (valueValue.isUndefined())
+    // SAFETY: will not throw b/c we already checked it's a string, meaning it's just static cast
+    String name = nameValue.toWTFString(globalObject);
+    FetchHeaders* impl = &headers->wrapped();
+
+    // NOTE: null is valid
+    if (valueValue.isUndefined()) {
+        return Bun::ERR::HTTP_INVALID_HEADER_VALUE(scope, globalObject, name, StringView("undefined"_s));
+    }
+
+    if (isArray(globalObject, valueValue)) {
+        auto* array = jsCast<JSArray*>(valueValue);
+        unsigned length = array->length();
+        if (length > 0) {
+            JSValue item = array->getIndex(globalObject, 0);
+            if (UNLIKELY(scope.exception()))
                 return JSValue::encode(jsUndefined());
 
-            if (isArray(globalObject, valueValue)) {
-                auto* array = jsCast<JSArray*>(valueValue);
-                unsigned length = array->length();
-                if (length > 0) {
-                    JSValue item = array->getIndex(globalObject, 0);
-                    if (UNLIKELY(scope.exception()))
-                        return JSValue::encode(jsUndefined());
-
-                    auto value = item.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-                for (unsigned i = 1; i < length; ++i) {
-                    JSValue value = array->getIndex(globalObject, i);
-                    if (UNLIKELY(scope.exception()))
-                        return JSValue::encode(jsUndefined());
-                    auto string = value.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    impl->append(name, string);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-                RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-                return JSValue::encode(jsUndefined());
-            }
-
-            auto value = valueValue.toWTFString(globalObject);
+            auto value = item.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             impl->set(name, value);
             RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(jsUndefined());
         }
+        for (unsigned i = 1; i < length; ++i) {
+            JSValue value = array->getIndex(globalObject, i);
+            if (UNLIKELY(scope.exception()))
+                return JSValue::encode(jsUndefined());
+            auto string = value.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            impl->append(name, string);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto value = valueValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = impl->set(name, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (result.hasException()) {
+        scope.throwException(globalObject, WebCore::createDOMException(*globalObject, result.releaseException()));
     }
 
     return JSValue::encode(jsUndefined());

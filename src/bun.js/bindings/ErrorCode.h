@@ -116,6 +116,11 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEYLEN(JSC::ThrowScope&, JSC::JSGlobalObject*
 JSC::EncodedJSValue CRYPTO_INVALID_STATE(JSC::ThrowScope&, JSC::JSGlobalObject*, WTF::ASCIILiteral message);
 JSC::EncodedJSValue CRYPTO_INVALID_MESSAGELEN(JSC::ThrowScope&, JSC::JSGlobalObject*);
 
+// HTTP
+
+JSC::EncodedJSValue HTTP_INVALID_HEADER_VALUE(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::String& name, const WTF::StringView& value);
+// Code is `INVALID_HTTP_TOKEN`.
+JSC::EncodedJSValue HTTP_INVALID_TOKEN(JSC::ThrowScope&, JSC::JSGlobalObject*, const ASCIILiteral label, const WTF::StringView& token);
 // URL
 
 /// `URL must be of scheme {expectedScheme}`

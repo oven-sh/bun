@@ -61,8 +61,7 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
 
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { InvalidHTTPTokenError, makeString("Invalid value \""_s, value, "\" for header \""_s, name, "\""_s) };
-    // return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { InvalidCharError, makeString("Invalid character in header content [\""_s, name, "\"]"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -115,9 +114,6 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
     if (!headers.setIndex(index, combinedValue))
         headers.set(name, combinedValue);
-
-    // if (guard == FetchHeaders::Guard::RequestNoCors)
-    //     removePrivilegedNoCORSRequestHeaders(headers);
 
     return {};
 }

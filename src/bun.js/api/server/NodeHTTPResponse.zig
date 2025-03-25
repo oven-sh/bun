@@ -729,20 +729,18 @@ pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
 
 fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool {
     log("onDrain({d})", .{offset});
+    // always return true so we always drain the socket buffer
     this.ref();
     defer this.deref();
     response.clearOnWritable();
     if (this.aborted or this.finished) {
-        return false;
+        return true;
     }
     const on_writable = this.onWritableCallback.trySwap() orelse return false;
     const globalThis = JSC.VirtualMachine.get().global;
     const vm = globalThis.bunVM();
 
     response.corked(JSC.EventLoop.runCallback, .{ vm.eventLoop(), on_writable, globalThis, .undefined, &.{JSC.JSValue.jsNumberFromUint64(offset)} });
-    if (this.aborted or this.finished) {
-        return false;
-    }
 
     return true;
 }

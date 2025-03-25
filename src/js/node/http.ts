@@ -1920,6 +1920,10 @@ function callWriteHeadIfObservable(self, headerState) {
   }
 }
 
+function allowWritesToContinue() {
+  this._callPendingCallbacks();
+  this.emit("drain");
+}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -2117,11 +2121,10 @@ const ServerResponsePrototype = {
         // If handle.writeHead throws, we don't want headersSent to be set to true.
         // So we set it here.
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-        result = handle.write(chunk, encoding);
+        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
       });
     } else {
-      result = handle.write(chunk, encoding);
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
     }
 
     if (result < 0) {

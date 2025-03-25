@@ -37,8 +37,6 @@ public:
 
     bool has(const String& name) const;
 
-    void set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge);
-    void set(const String& name, const String& value);
     void set(Ref<Cookie>);
 
     void remove(const String& name);

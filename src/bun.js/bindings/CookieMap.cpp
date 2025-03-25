@@ -200,23 +200,6 @@ void CookieMap::removeInternal(const String& name)
     });
 }
 
-void CookieMap::set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge)
-{
-    removeInternal(name);
-
-    // Add the new cookie with proper settings
-    auto cookie = Cookie::create(name, value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Strict,
-        httpOnly, maxAge, partitioned);
-    m_modifiedCookies.append(WTFMove(cookie));
-}
-
-void CookieMap::set(const String& name, const String& value)
-{
-    // Add the new cookie
-    auto cookie = Cookie::create(name, value, String(), "/"_s, Cookie::emptyExpiresAtValue, false, CookieSameSite::Strict, false, std::numeric_limits<double>::quiet_NaN(), false);
-    m_modifiedCookies.append(WTFMove(cookie));
-}
-
 void CookieMap::set(Ref<Cookie> cookie)
 {
     removeInternal(cookie->name());

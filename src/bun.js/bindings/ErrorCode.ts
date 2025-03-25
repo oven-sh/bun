@@ -1,18 +1,49 @@
 // used by generate-node-errors.ts
-type ErrorCodeMapping = Array<
-  [
-    /** error.code  */
-    code: string,
-    /** Constructor **/
-    ctor: typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError,
-    /** error.name. Defaults to `Constructor.name` (that is, mapping[1].name  */
-    name?: string,
-    (typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError)?,
-    (typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError)?,
-  ]
->;
 
-const errors: ErrorCodeMapping = [
+type ErrorConstructor = typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError;
+type SimpleMapping = [
+  /** error.code  */
+  code: string,
+  /** Constructor **/
+  ctor: ErrorConstructor,
+  /** error.name. Defaults to `Constructor.name` (that is, mapping[1].name  */
+  name?: string,
+  /**
+   * Other error classes this error can derive from. Separate factories will be generated for each.
+   */
+  ...extraCtors: ErrorConstructor[],
+];
+type CompleteMapping = [
+  /** `error.code`  */
+  code: string,
+  {
+    /**
+     * Message template. When not provided, this error will need a hand-written factory.
+     * @default undefined
+     */
+    message?: string;
+
+    /**
+     * @default Error
+     */
+    ctor?: ErrorConstructor;
+
+    /**
+     * Other error classes this error can derive from. Separate factories will be generated for each.
+     */
+    extraCtors?: ErrorConstructor[];
+
+    /**
+     * `error.name`.
+     * @default ctor.name
+     */
+    name?: string;
+  },
+];
+
+type ErrorCodeMapping = SimpleMapping | CompleteMapping;
+
+const errors: ErrorCodeMapping[] = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_ACCESS_DENIED", Error],
   ["ERR_AMBIGUOUS_ARGUMENT", TypeError],
@@ -131,7 +162,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_PROTOCOL", TypeError],
   ["ERR_INVALID_RETURN_VALUE", TypeError],
   ["ERR_INVALID_STATE", Error, undefined, TypeError, RangeError],
-  ["ERR_INVALID_THIS", TypeError],
+  ["ERR_INVALID_THIS", { ctor: TypeError, message: 'Value of \\"this\\" must be of type {type}' }],
   ["ERR_INVALID_URI", URIError],
   ["ERR_INVALID_URL_SCHEME", TypeError],
   ["ERR_INVALID_URL", TypeError],
@@ -246,4 +277,6 @@ const errors: ErrorCodeMapping = [
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
 ];
+
+export type { ErrorCodeMapping, ErrorConstructor, SimpleMapping, CompleteMapping };
 export default errors;

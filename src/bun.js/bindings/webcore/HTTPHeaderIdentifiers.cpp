@@ -4,8 +4,6 @@
 
 namespace WebCore {
 
-HTTPHeaderIdentifiers::HTTPHeaderIdentifiers() = default;
-
 #define HTTP_HEADERS_LAZY_PROPERTY_DEFINITION(literal, name)                                 \
     m_##name##String.initLater(                                                              \
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString>::Initializer& init) { \
@@ -14,13 +12,13 @@ HTTPHeaderIdentifiers::HTTPHeaderIdentifiers() = default;
             init.set(jsOwnedString(init.vm, id.string()));                                   \
         });
 
-void HTTPHeaderIdentifiers::initialize() {
+HTTPHeaderIdentifiers::HTTPHeaderIdentifiers() {
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_LAZY_PROPERTY_DEFINITION)
 }
 
 #undef HTTP_HEADERS_LAZY_PROPERTY_DEFINITION
 
-#define HTTP_HEADER_ACCESSOR_DEFINITIONS(literal, name)                                   \
+#define HTTP_HEADERS_ACCESSOR_DEFINITIONS(literal, name)                                  \
     JSC::Identifier& HTTPHeaderIdentifiers::name##Identifier(JSC::VM& vm)                 \
     {                                                                                     \
         if (m_##name##Identifier.isEmpty())                                               \
@@ -32,8 +30,55 @@ void HTTPHeaderIdentifiers::initialize() {
         return m_##name##String.getInitializedOnMainThread(globalObject);                 \
     }
 
-HTTP_HEADERS_EACH_NAME(HTTP_HEADER_ACCESSOR_DEFINITIONS)
+HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
 
-#undef HTTP_HEADER_ACCESSOR_DEFINITIONS
+#undef HTTP_HEADERS_ACCESSOR_DEFINITIONS
+
+#define HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES(literal, name) \
+    &HTTPHeaderIdentifiers::name##Identifier,
+
+    using IdentifierGetter
+    = JSC::Identifier & (HTTPHeaderIdentifiers::*)(JSC::VM&);
+
+static IdentifierGetter headerIdentifierFields[]
+    = {
+          HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES)
+      };
+
+JSC::Identifier& HTTPHeaderIdentifiers::identifierFor(JSC::VM& vm, HTTPHeaderName name)
+{
+    return (this->*headerIdentifierFields[static_cast<size_t>(name)])(vm);
+}
+
+#undef HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES
+
+#define HTTP_HEADERS_STRING_ARRAY_ENTRIES(literal, name) \
+    &HTTPHeaderIdentifiers::name##String,
+
+using StringGetter
+    = JSC::JSString* (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObject*);
+
+static StringGetter headerStringFields[]
+    = {
+          HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_STRING_ARRAY_ENTRIES)
+      };
+
+JSC::JSString* HTTPHeaderIdentifiers::stringFor(JSC::JSGlobalObject* globalObject, HTTPHeaderName name)
+{
+    return (this->*headerStringFields[static_cast<size_t>(name)])(globalObject);
+}
+
+#undef HTTP_HEADERS_STRING_ARRAY_ENTRIES
+
+#define HTTP_HEADERS_LAZY_PROPERTY_VISITOR(literal, name) m_##name##String.visit(visitor);
+
+template<typename Visitor>
+void HTTPHeaderIdentifiers::visit(Visitor& visitor)
+{
+    HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_LAZY_PROPERTY_VISITOR)
+}
+
+template void HTTPHeaderIdentifiers::visit(JSC::AbstractSlotVisitor&);
+template void HTTPHeaderIdentifiers::visit(JSC::SlotVisitor&);
 
 } // namespace WebCore

@@ -670,24 +670,27 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
             memcpy(data.data(), pair.second.data(), pair.second.length());
 
         HTTPHeaderName name;
-        WTF::String nameString;
-        WTF::String lowercasedNameString;
-
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
-            nameString = WTF::httpHeaderNameStringImpl(name);
-            lowercasedNameString = nameString;
-        } else {
-            nameString = nameView.toString();
-            lowercasedNameString = nameString.convertToASCIILowercase();
-        }
 
         JSString* jsValue = jsString(vm, value);
+
+        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
+        Identifier nameIdentifier;
+        JSString* nameString = nullptr;
+
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            nameString = identifiers.stringFor(globalObject, name);
+            nameIdentifier = identifiers.identifierFor(vm, name);
+        } else {
+            WTF::String wtfString = nameView.toString();
+            nameString = jsString(vm, wtfString);
+            nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
+        }
 
         if (name == WebCore::HTTPHeaderName::SetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
-                setCookiesHeaderString = jsString(vm, nameString);
-                headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), setCookiesHeaderArray, 0);
+                setCookiesHeaderString = nameString;
+                headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
             array->putDirectIndex(globalObject, i++, setCookiesHeaderString);
@@ -696,8 +699,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
-            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
-            array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
+            headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
+            array->putDirectIndex(globalObject, i++, nameString);
             array->putDirectIndex(globalObject, i++, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
         }

@@ -1,9 +1,9 @@
 #pragma once
 
 #include <wtf/Forward.h>
+#include "HTTPHeaderNames.h"
 
 namespace WebCore {
-
 // clang-format off
 #define HTTP_HEADERS_EACH_NAME(macro)                                                       \
     macro("Accept", Accept)                                                                \
@@ -115,7 +115,11 @@ public:
 
     HTTPHeaderIdentifiers();
 
-    void initialize();
+    JSC::Identifier& identifierFor(JSC::VM&, HTTPHeaderName);
+    JSC::JSString* stringFor(JSC::JSGlobalObject*, HTTPHeaderName);
+
+    template<typename Visitor>
+    void visit(Visitor& visitor);
 
 private:
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_PROPERTY_DECLARATIONS)

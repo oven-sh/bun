@@ -1,15 +1,15 @@
 #pragma once
 
 #include "root.h"
+#include <stdint.h>
+#include <stdio.h>
+
+void __bun_throw_not_implemented(const char* symbol_name);
 
 #if OS(LINUX) || OS(DARWIN)
 
-typedef int uv_pid_t;
+#define UV_EXTERN BUN_EXPORT
 
-// Returns the current process ID.
-extern "C" BUN_EXPORT uv_pid_t uv_os_getpid();
-
-// Returns the parent process ID.
-extern "C" BUN_EXPORT uv_pid_t uv_os_getppid();
+#include <uv.h>
 
 #endif

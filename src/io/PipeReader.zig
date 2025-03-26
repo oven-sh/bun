@@ -8,250 +8,6 @@ const FileType = @import("./pipes.zig").FileType;
 
 const PollOrFd = @import("./pipes.zig").PollOrFd;
 
-pub fn WindowsPipeReader(
-    comptime This: type,
-) type {
-    return struct {
-        fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
-            var this = bun.cast(*This, handle.data);
-            const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
-            buf.* = uv.uv_buf_t.init(result);
-        }
-
-        fn onStreamRead(stream: *uv.uv_stream_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
-            var this = bun.cast(*This, stream.data);
-
-            const nread_int = nread.int();
-
-            bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
-
-            // NOTE: pipes/tty need to call stopReading on errors (yeah)
-            switch (nread_int) {
-                0 => {
-                    // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-                    return this.onRead(.{ .result = 0 }, "", .drained);
-                },
-                uv.UV_EOF => {
-                    _ = this.stopReading();
-                    // EOF (buf is not safe to access here)
-                    return this.onRead(.{ .result = 0 }, "", .eof);
-                },
-                else => {
-                    if (nread.toError(.recv)) |err| {
-                        _ = this.stopReading();
-                        // ERROR (buf is not safe to access here)
-                        this.onRead(.{ .err = err }, "", .progress);
-                        return;
-                    }
-                    // we got some data we can slice the buffer!
-                    const len: usize = @intCast(nread_int);
-                    var slice = buf.slice();
-                    this.onRead(.{ .result = len }, slice[0..len], .progress);
-                },
-            }
-        }
-
-        fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
-            const result = fs.result;
-            const nread_int = result.int();
-            bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
-            if (nread_int == uv.UV_ECANCELED) {
-                fs.deinit();
-                return;
-            }
-            var this: *This = bun.cast(*This, fs.data);
-            fs.deinit();
-            if (this.flags.is_done) return;
-
-            switch (nread_int) {
-                // 0 actually means EOF too
-                0, uv.UV_EOF => {
-                    this.flags.is_paused = true;
-                    this.onRead(.{ .result = 0 }, "", .eof);
-                },
-                // UV_ECANCELED needs to be on the top so we avoid UAF
-                uv.UV_ECANCELED => unreachable,
-                else => {
-                    if (result.toError(.read)) |err| {
-                        this.flags.is_paused = true;
-                        this.onRead(.{ .err = err }, "", .progress);
-                        return;
-                    }
-                    defer {
-                        // if we are not paused we keep reading until EOF or err
-                        if (!this.flags.is_paused) {
-                            if (this.source) |source| {
-                                if (source == .file) {
-                                    const file = source.file;
-                                    source.setData(this);
-                                    const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
-                                    file.iov = uv.uv_buf_t.init(buf);
-                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
-                                        this.flags.is_paused = true;
-                                        // we should inform the error if we are unable to keep reading
-                                        this.onRead(.{ .err = err }, "", .progress);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    const len: usize = @intCast(nread_int);
-                    this._offset += len;
-                    // we got some data lets get the current iov
-                    if (this.source) |source| {
-                        if (source == .file) {
-                            var buf = source.file.iov.slice();
-                            return this.onRead(.{ .result = len }, buf[0..len], .progress);
-                        }
-                    }
-                    // ops we should not hit this lets fail with EPIPE
-                    bun.assert(false);
-                    return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .read) }, "", .progress);
-                },
-            }
-        }
-
-        pub fn startReading(this: *This) bun.JSC.Maybe(void) {
-            if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
-            this.flags.is_paused = false;
-            const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
-            bun.assert(!source.isClosed());
-
-            switch (source) {
-                .file => |file| {
-                    file.fs.deinit();
-                    source.setData(this);
-                    const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
-                    file.iov = uv.uv_buf_t.init(buf);
-                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
-                        return .{ .err = err };
-                    }
-                },
-                else => {
-                    if (uv.uv_read_start(source.toStream(), &onStreamAlloc, @ptrCast(&onStreamRead)).toError(.open)) |err| {
-                        bun.windows.libuv.log("uv_read_start() = {s}", .{err.name()});
-                        return .{ .err = err };
-                    }
-                },
-            }
-
-            return .{ .result = {} };
-        }
-
-        pub fn stopReading(this: *This) bun.JSC.Maybe(void) {
-            if (this.flags.is_done or this.flags.is_paused) return .{ .result = {} };
-            this.flags.is_paused = true;
-            const source = this.source orelse return .{ .result = {} };
-            switch (source) {
-                .file => |file| {
-                    file.fs.cancel();
-                },
-                else => {
-                    source.toStream().readStop();
-                },
-            }
-            return .{ .result = {} };
-        }
-
-        pub fn closeImpl(this: *This, comptime callDone: bool) void {
-            if (this.source) |source| {
-                switch (source) {
-                    .sync_file, .file => |file| {
-                        if (!this.flags.is_paused) {
-                            // always cancel the current one
-                            file.fs.cancel();
-                            this.flags.is_paused = true;
-                        }
-                        // always use close_fs here because we can have a operation in progress
-                        file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
-                    },
-                    .pipe => |pipe| {
-                        pipe.data = pipe;
-                        pipe.close(onPipeClose);
-                    },
-                    .tty => |tty| {
-                        if (tty == &Source.stdin_tty) {
-                            Source.stdin_tty = undefined;
-                            Source.stdin_tty_init = false;
-                        }
-
-                        tty.data = tty;
-                        tty.close(onTTYClose);
-                    },
-                }
-                this.source = null;
-                if (comptime callDone) this.done();
-            }
-        }
-
-        pub fn close(this: *This) void {
-            _ = this.stopReading();
-            this.closeImpl(true);
-        }
-
-        fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
-            const file = bun.cast(*Source.File, handle.data);
-            handle.deinit();
-            bun.default_allocator.destroy(file);
-        }
-
-        fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
-            const this = bun.cast(*uv.Pipe, handle.data);
-            bun.default_allocator.destroy(this);
-        }
-
-        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
-            const this = bun.cast(*uv.uv_tty_t, handle.data);
-            bun.default_allocator.destroy(this);
-        }
-
-        pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
-            if (amount == .err) {
-                this.onError(amount.err);
-                return;
-            }
-
-            switch (hasMore) {
-                .eof => {
-                    // we call report EOF and close
-                    _ = this._onReadChunk(slice, hasMore);
-                    close(this);
-                },
-                .drained => {
-                    // we call drained so we know if we should stop here
-                    _ = this._onReadChunk(slice, hasMore);
-                },
-                else => {
-                    var buf = this.buffer();
-                    if (comptime bun.Environment.allow_assert) {
-                        if (slice.len > 0 and !bun.isSliceInBuffer(slice, buf.allocatedSlice())) {
-                            @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
-                        }
-                    }
-                    // move cursor foward
-                    buf.items.len += amount.result;
-                    _ = this._onReadChunk(slice, hasMore);
-                },
-            }
-        }
-
-        pub fn pause(this: *This) void {
-            _ = this.stopReading();
-        }
-
-        pub fn unpause(this: *This) void {
-            _ = this.startReading();
-        }
-
-        pub fn read(this: *This) void {
-            // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
-            this.unpause();
-        }
-    };
-}
-
 const Async = bun.Async;
 
 // This is a runtime type instead of comptime due to bugs in Zig.
@@ -1007,8 +763,6 @@ pub const WindowsBufferedReader = struct {
         this.updateRef(false);
     }
 
-    pub usingnamespace WindowsPipeReader(@This());
-
     pub fn takeBuffer(this: *WindowsOutputReader) std.ArrayList(u8) {
         const out = this._buffer;
         this._buffer = std.ArrayList(u8).init(out.allocator);
@@ -1113,6 +867,245 @@ pub const WindowsBufferedReader = struct {
             },
         };
         return source.setRawMode(value);
+    }
+
+    const This = @This();
+    fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
+        var this = bun.cast(*This, handle.data);
+        const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
+        buf.* = uv.uv_buf_t.init(result);
+    }
+
+    fn onStreamRead(stream: *uv.uv_stream_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
+        var this = bun.cast(*This, stream.data);
+
+        const nread_int = nread.int();
+
+        bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
+
+        // NOTE: pipes/tty need to call stopReading on errors (yeah)
+        switch (nread_int) {
+            0 => {
+                // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
+                return this.onRead(.{ .result = 0 }, "", .drained);
+            },
+            uv.UV_EOF => {
+                _ = this.stopReading();
+                // EOF (buf is not safe to access here)
+                return this.onRead(.{ .result = 0 }, "", .eof);
+            },
+            else => {
+                if (nread.toError(.recv)) |err| {
+                    _ = this.stopReading();
+                    // ERROR (buf is not safe to access here)
+                    this.onRead(.{ .err = err }, "", .progress);
+                    return;
+                }
+                // we got some data we can slice the buffer!
+                const len: usize = @intCast(nread_int);
+                var slice = buf.slice();
+                this.onRead(.{ .result = len }, slice[0..len], .progress);
+            },
+        }
+    }
+
+    fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
+        const result = fs.result;
+        const nread_int = result.int();
+        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
+        if (nread_int == uv.UV_ECANCELED) {
+            fs.deinit();
+            return;
+        }
+        var this: *This = bun.cast(*This, fs.data);
+        fs.deinit();
+        if (this.flags.is_done) return;
+
+        switch (nread_int) {
+            // 0 actually means EOF too
+            0, uv.UV_EOF => {
+                this.flags.is_paused = true;
+                this.onRead(.{ .result = 0 }, "", .eof);
+            },
+            // UV_ECANCELED needs to be on the top so we avoid UAF
+            uv.UV_ECANCELED => unreachable,
+            else => {
+                if (result.toError(.read)) |err| {
+                    this.flags.is_paused = true;
+                    this.onRead(.{ .err = err }, "", .progress);
+                    return;
+                }
+                defer {
+                    // if we are not paused we keep reading until EOF or err
+                    if (!this.flags.is_paused) {
+                        if (this.source) |source| {
+                            if (source == .file) {
+                                const file = source.file;
+                                source.setData(this);
+                                const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
+                                file.iov = uv.uv_buf_t.init(buf);
+                                if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
+                                    this.flags.is_paused = true;
+                                    // we should inform the error if we are unable to keep reading
+                                    this.onRead(.{ .err = err }, "", .progress);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const len: usize = @intCast(nread_int);
+                this._offset += len;
+                // we got some data lets get the current iov
+                if (this.source) |source| {
+                    if (source == .file) {
+                        var buf = source.file.iov.slice();
+                        return this.onRead(.{ .result = len }, buf[0..len], .progress);
+                    }
+                }
+                // ops we should not hit this lets fail with EPIPE
+                bun.assert(false);
+                return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .read) }, "", .progress);
+            },
+        }
+    }
+
+    pub fn startReading(this: *This) bun.JSC.Maybe(void) {
+        if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
+        this.flags.is_paused = false;
+        const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
+        bun.assert(!source.isClosed());
+
+        switch (source) {
+            .file => |file| {
+                file.fs.deinit();
+                source.setData(this);
+                const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
+                file.iov = uv.uv_buf_t.init(buf);
+                if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
+                    return .{ .err = err };
+                }
+            },
+            else => {
+                if (uv.uv_read_start(source.toStream(), &onStreamAlloc, @ptrCast(&onStreamRead)).toError(.open)) |err| {
+                    bun.windows.libuv.log("uv_read_start() = {s}", .{err.name()});
+                    return .{ .err = err };
+                }
+            },
+        }
+
+        return .{ .result = {} };
+    }
+
+    pub fn stopReading(this: *This) bun.JSC.Maybe(void) {
+        if (this.flags.is_done or this.flags.is_paused) return .{ .result = {} };
+        this.flags.is_paused = true;
+        const source = this.source orelse return .{ .result = {} };
+        switch (source) {
+            .file => |file| {
+                file.fs.cancel();
+            },
+            else => {
+                source.toStream().readStop();
+            },
+        }
+        return .{ .result = {} };
+    }
+
+    pub fn closeImpl(this: *This, comptime callDone: bool) void {
+        if (this.source) |source| {
+            switch (source) {
+                .sync_file, .file => |file| {
+                    if (!this.flags.is_paused) {
+                        // always cancel the current one
+                        file.fs.cancel();
+                        this.flags.is_paused = true;
+                    }
+                    // always use close_fs here because we can have a operation in progress
+                    file.close_fs.data = file;
+                    _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                },
+                .pipe => |pipe| {
+                    pipe.data = pipe;
+                    pipe.close(onPipeClose);
+                },
+                .tty => |tty| {
+                    if (tty == &Source.stdin_tty) {
+                        Source.stdin_tty = undefined;
+                        Source.stdin_tty_init = false;
+                    }
+
+                    tty.data = tty;
+                    tty.close(onTTYClose);
+                },
+            }
+            this.source = null;
+            if (comptime callDone) this.done();
+        }
+    }
+
+    pub fn close(this: *This) void {
+        _ = this.stopReading();
+        this.closeImpl(true);
+    }
+
+    fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
+        const file = bun.cast(*Source.File, handle.data);
+        handle.deinit();
+        bun.default_allocator.destroy(file);
+    }
+
+    fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
+        const this = bun.cast(*uv.Pipe, handle.data);
+        bun.default_allocator.destroy(this);
+    }
+
+    fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
+        const this = bun.cast(*uv.uv_tty_t, handle.data);
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
+        if (amount == .err) {
+            this.onError(amount.err);
+            return;
+        }
+
+        switch (hasMore) {
+            .eof => {
+                // we call report EOF and close
+                _ = this._onReadChunk(slice, hasMore);
+                close(this);
+            },
+            .drained => {
+                // we call drained so we know if we should stop here
+                _ = this._onReadChunk(slice, hasMore);
+            },
+            else => {
+                var buf = this.buffer();
+                if (comptime bun.Environment.allow_assert) {
+                    if (slice.len > 0 and !bun.isSliceInBuffer(slice, buf.allocatedSlice())) {
+                        @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
+                    }
+                }
+                // move cursor foward
+                buf.items.len += amount.result;
+                _ = this._onReadChunk(slice, hasMore);
+            },
+        }
+    }
+
+    pub fn pause(this: *This) void {
+        _ = this.stopReading();
+    }
+
+    pub fn unpause(this: *This) void {
+        _ = this.startReading();
+    }
+
+    pub fn read(this: *This) void {
+        // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
+        this.unpause();
     }
 
     comptime {

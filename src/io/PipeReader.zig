@@ -15,29 +15,29 @@ pub fn PosixPipeReader(
         const vtable2 = This;
 
         pub fn read(this: *This) void {
-            const buffer = vtable2.buffer(this);
+            const buf = vtable2.buffer(this);
             const fd = vtable2.getFd(this);
 
             switch (vtable2.getFileType(this)) {
                 .nonblocking_pipe => {
-                    readPipe(this, buffer, fd, 0, false);
+                    readPipe(this, buf, fd, 0, false);
                     return;
                 },
                 .file => {
-                    readFile(this, buffer, fd, 0, false);
+                    readFile(this, buf, fd, 0, false);
                     return;
                 },
                 .socket => {
-                    readSocket(this, buffer, fd, 0, false);
+                    readSocket(this, buf, fd, 0, false);
                     return;
                 },
                 .pipe => {
                     switch (bun.isReadable(fd)) {
                         .ready => {
-                            readFromBlockingPipeWithoutBlocking(this, buffer, fd, 0, false);
+                            readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, false);
                         },
                         .hup => {
-                            readFromBlockingPipeWithoutBlocking(this, buffer, fd, 0, true);
+                            readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, true);
                         },
                         .not_ready => {
                             vtable2.registerPoll(this);
@@ -82,17 +82,17 @@ pub fn PosixPipeReader(
 
         fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize) {
             return struct {
-                pub fn call(fd: bun.FileDescriptor, buffer: []u8, offset: usize) JSC.Maybe(usize) {
+                pub fn call(fd: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
                     _ = offset;
-                    return func(fd, buffer);
+                    return func(fd, buf);
                 }
             }.call;
         }
 
         fn readFile(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
             const preadFn = struct {
-                pub fn call(fd1: bun.FileDescriptor, buffer: []u8, offset: usize) JSC.Maybe(usize) {
-                    return bun.sys.pread(fd1, buffer, @intCast(offset));
+                pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
+                    return bun.sys.pread(fd1, buf, @intCast(offset));
                 }
             }.call;
             if (parent.flags.use_pread) {
@@ -126,16 +126,16 @@ pub fn PosixPipeReader(
                     const stack_buffer_cutoff = stack_buffer.len / 2;
                     var stack_buffer_head = stack_buffer;
                     while (stack_buffer_head.len > 16 * 1024) {
-                        var buffer = stack_buffer_head;
+                        var buf = stack_buffer_head;
 
                         switch (sys_fn(
                             fd,
-                            buffer,
+                            buf,
                             parent._offset,
                         )) {
                             .result => |bytes_read| {
                                 parent._offset += bytes_read;
-                                buffer = stack_buffer_head[0..bytes_read];
+                                buf = stack_buffer_head[0..bytes_read];
                                 stack_buffer_head = stack_buffer_head[bytes_read..];
 
                                 if (bytes_read == 0) {
@@ -222,12 +222,12 @@ pub fn PosixPipeReader(
 
             while (true) {
                 resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
-                var buffer: []u8 = resizable_buffer.unusedCapacitySlice();
+                var buf: []u8 = resizable_buffer.unusedCapacitySlice();
 
-                switch (sys_fn(fd, buffer, parent._offset)) {
+                switch (sys_fn(fd, buf, parent._offset)) {
                     .result => |bytes_read| {
                         parent._offset += bytes_read;
-                        buffer = buffer[0..bytes_read];
+                        buf = buf[0..bytes_read];
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {

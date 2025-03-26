@@ -1,6 +1,6 @@
 import { spawnSync, spawn, Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isCI, isIntelMacOS, isMusl } from "harness";
+import { bunEnv, bunExe, isBroken, isCI, isIntelMacOS, isMusl, isWindows } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
@@ -16,12 +16,6 @@ let failingJsNativeApiTests: string[] = [
   // strings. We don't skip the entire thing because the other tests are useful to check.
   // "test_string/test.js",
 ];
-
-if (isBroken && isIntelMacOS) {
-  // TODO(@190n)
-  // these are flaky on Intel Mac
-  failingJsNativeApiTests.push("test_reference_by_node_api_version/test.js", "test_reference/test.js");
-}
 
 // These are the tests from node-api that failed as of commit 83f536f4d, except for those that
 // passed in Bun v1.1.34. It'll take some time to get all these to work, as we've been focusing more
@@ -56,8 +50,17 @@ let failingNodeApiTests = [
   "test_worker_terminate/test.js",
 ];
 
-if (process.platform == "win32") {
-  failingNodeApiTests.push("test_callback_scope/test.js"); // TODO: remove once #12827 is fixed
+if (isBroken && isIntelMacOS) {
+  // TODO(@190n)
+  // these are flaky on Intel Mac
+  failingJsNativeApiTests.push("test_reference/test.js");
+  failingNodeApiTests.push("test_reference_by_node_api_version/test.js");
+}
+
+if (isWindows) {
+  if (isBroken) {
+    failingNodeApiTests.push("test_callback_scope/test.js"); // TODO: remove once #12827 is fixed
+  }
 
   for (const i in failingJsNativeApiTests) {
     failingJsNativeApiTests[i] = failingJsNativeApiTests[i].replaceAll("/", "\\");
@@ -70,6 +73,19 @@ if (process.platform == "win32") {
 if (isMusl) {
   failingNodeApiTests = nodeApiTests;
   failingJsNativeApiTests = jsNativeApiTests;
+}
+
+for (const t of failingJsNativeApiTests) {
+  if (!jsNativeApiTests.includes(t)) {
+    console.error(`attempt to skip ${t} which is not a real js-native-api test`);
+    process.exit(1);
+  }
+}
+for (const t of failingNodeApiTests) {
+  if (!nodeApiTests.includes(t)) {
+    console.error(`attempt to skip ${t} which is not a real node-api test`);
+    process.exit(1);
+  }
 }
 
 beforeAll(async () => {

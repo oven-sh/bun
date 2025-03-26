@@ -28,7 +28,6 @@
 
 #include <cstring>
 #include <iostream>
-#include <stdbool.h>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -257,10 +256,11 @@ public:
                 asyncSocketData->buffer.erase((unsigned int) written);
                 
                 /* If we wrote less than we attempted, the socket buffer is likely full
-                * LIKELY macro is used as an optimization hint to the compiler
+                * likely is used as an optimization hint to the compiler
                 * since written < buffer_len is very likely to be true
                 */
-                if(LIKELY(written < max_flush_len)) {
+                if(written < max_flush_len) {
+                     [[likely]]
                     /* Cannot write more at this time, return what we've written so far */
                     return total_written;
                 }

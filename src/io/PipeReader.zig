@@ -9,23 +9,24 @@ const FileType = @import("./pipes.zig").FileType;
 /// Read a blocking pipe without blocking the current thread.
 pub fn PosixPipeReader(
     comptime This: type,
-    comptime vtable: struct {
-        getFd: *const fn (*This) bun.FileDescriptor,
-        getBuffer: *const fn (*This) *std.ArrayList(u8),
-        getFileType: *const fn (*This) FileType,
-        onReadChunk: ?*const fn (*This, chunk: []u8, state: ReadState) void = null,
-        registerPoll: ?*const fn (*This) void = null,
-        done: *const fn (*This) void,
-        close: *const fn (*This) void,
-        onError: *const fn (*This, bun.sys.Error) void,
-    },
 ) type {
     return struct {
-        pub fn read(this: *This) void {
-            const buffer = vtable.getBuffer(this);
-            const fd = vtable.getFd(this);
+        // const This = @This();
+        const vtable2 = struct {
+            const getFd = This.getFd;
+            const getBuffer = This.buffer;
+            const registerPoll = This.registerPoll;
+            const done = This.done;
+            const close = This.closeWithoutReporting;
+            const onError = This.onError;
+            const getFileType = This.getFileType;
+        };
 
-            switch (vtable.getFileType(this)) {
+        pub fn read(this: *This) void {
+            const buffer = vtable2.getBuffer(this);
+            const fd = vtable2.getFd(this);
+
+            switch (vtable2.getFileType(this)) {
                 .nonblocking_pipe => {
                     readPipe(this, buffer, fd, 0, false);
                     return;
@@ -47,9 +48,7 @@ pub fn PosixPipeReader(
                             readFromBlockingPipeWithoutBlocking(this, buffer, fd, 0, true);
                         },
                         .not_ready => {
-                            if (comptime vtable.registerPoll) |register| {
-                                register(this);
-                            }
+                            vtable2.registerPoll(this);
                         },
                     }
                 },
@@ -57,11 +56,11 @@ pub fn PosixPipeReader(
         }
 
         pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
-            const resizable_buffer = vtable.getBuffer(parent);
-            const fd = vtable.getFd(parent);
+            const resizable_buffer = vtable2.getBuffer(parent);
+            const fd = vtable2.getFd(parent);
             bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
 
-            switch (vtable.getFileType(parent)) {
+            switch (vtable2.getFileType(parent)) {
                 .nonblocking_pipe => {
                     readPipe(parent, resizable_buffer, fd, size_hint, received_hup);
                 },
@@ -148,10 +147,10 @@ pub fn PosixPipeReader(
                                 stack_buffer_head = stack_buffer_head[bytes_read..];
 
                                 if (bytes_read == 0) {
-                                    vtable.close(parent);
+                                    vtable2.close(parent);
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                         _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
-                                    vtable.done(parent);
+                                    vtable2.done(parent);
                                     return;
                                 }
 
@@ -164,11 +163,11 @@ pub fn PosixPipeReader(
                                             },
                                             .not_ready => {
                                                 if (received_hup) {
-                                                    vtable.close(parent);
+                                                    vtable2.close(parent);
                                                 }
                                                 defer {
                                                     if (received_hup) {
-                                                        vtable.done(parent);
+                                                        vtable2.done(parent);
                                                     }
                                                 }
                                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
@@ -178,9 +177,7 @@ pub fn PosixPipeReader(
                                                 }
 
                                                 if (!received_hup) {
-                                                    if (comptime vtable.registerPoll) |register| {
-                                                        register(parent);
-                                                    }
+                                                    vtable2.registerPoll(parent);
                                                 }
 
                                                 return;
@@ -205,9 +202,7 @@ pub fn PosixPipeReader(
                                     if (comptime file_type == .file) {
                                         bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
                                     } else {
-                                        if (comptime vtable.registerPoll) |register| {
-                                            register(parent);
-                                        }
+                                        vtable2.registerPoll(parent);
                                     }
 
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
@@ -217,7 +212,7 @@ pub fn PosixPipeReader(
 
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                     _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress);
-                                vtable.onError(parent, err);
+                                vtable2.onError(parent, err);
                                 return;
                             },
                         }
@@ -244,9 +239,9 @@ pub fn PosixPipeReader(
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
-                            vtable.close(parent);
+                            vtable2.close(parent);
                             _ = drainChunk(parent, resizable_buffer.items, .eof);
-                            vtable.done(parent);
+                            vtable2.done(parent);
                             return;
                         }
 
@@ -259,11 +254,11 @@ pub fn PosixPipeReader(
                                     },
                                     .not_ready => {
                                         if (received_hup) {
-                                            vtable.close(parent);
+                                            vtable2.close(parent);
                                         }
                                         defer {
                                             if (received_hup) {
-                                                vtable.done(parent);
+                                                vtable2.done(parent);
                                             }
                                         }
 
@@ -277,9 +272,7 @@ pub fn PosixPipeReader(
                                         }
 
                                         if (!received_hup) {
-                                            if (comptime vtable.registerPoll) |register| {
-                                                register(parent);
-                                            }
+                                            vtable2.registerPoll(parent);
                                         }
 
                                         return;
@@ -315,13 +308,11 @@ pub fn PosixPipeReader(
                             if (comptime file_type == .file) {
                                 bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
                             } else {
-                                if (comptime vtable.registerPoll) |register| {
-                                    register(parent);
-                                }
+                                vtable2.registerPoll(parent);
                             }
                             return;
                         }
-                        vtable.onError(parent, err);
+                        vtable2.onError(parent, err);
                         return;
                     },
                 }
@@ -738,16 +729,7 @@ const PosixBufferedReader = struct {
         this.handle = .{ .fd = fd };
     }
 
-    pub usingnamespace PosixPipeReader(@This(), .{
-        .getFd = @ptrCast(&getFd),
-        .getBuffer = @ptrCast(&buffer),
-        .onReadChunk = @ptrCast(&_onReadChunk),
-        .registerPoll = @ptrCast(&registerPoll),
-        .done = @ptrCast(&done),
-        .close = @ptrCast(&closeWithoutReporting),
-        .onError = @ptrCast(&onError),
-        .getFileType = @ptrCast(&getFileType),
-    });
+    pub usingnamespace PosixPipeReader(@This());
 
     fn getFileType(this: *const PosixBufferedReader) FileType {
         const flags = this.flags;

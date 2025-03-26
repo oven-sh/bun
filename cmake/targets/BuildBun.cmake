@@ -555,8 +555,10 @@ endif()
 
 if (TEST)
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
+  set(ZIG_STEPS test)
 else()
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  set(ZIG_STEPS obj)
 endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
@@ -580,19 +582,13 @@ if(NOT "${REVISION}" STREQUAL "")
   set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
 endif()
 
-if (TEST)
-  set(ZIG_STEPS test)
-else()
-  set(ZIG_STEPS obj)
-endif()
-
 register_command(
   TARGET
     bun-zig
   GROUP
     console
   COMMENT
-    "Building src/*.zig for ${ZIG_TARGET}"
+    "Building src/*.zig into ${BUN_ZIG_OUTPUT} for ${ZIG_TARGET}"
   COMMAND
     ${ZIG_EXECUTABLE}
       build ${ZIG_STEPS}

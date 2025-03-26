@@ -597,7 +597,6 @@ pub fn WindowsPipeReader(
     };
 }
 
-pub const PipeReader = if (bun.Environment.isWindows) WindowsPipeReader else PosixPipeReader;
 const Async = bun.Async;
 
 // This is a runtime type instead of comptime due to bugs in Zig.

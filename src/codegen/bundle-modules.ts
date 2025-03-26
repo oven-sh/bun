@@ -391,19 +391,20 @@ writeIfNotChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
-    // Predefined
     javascript = 0,
     package_json_type_module = 1,
     wasm = 2,
     object = 3,
     file = 4,
+    /// Read from the ES Module registry
     esm = 5,
     json_for_object_loader = 6,
     /// Generate an object with "default" set to all the exports, including a "default" property
     exports_object = 7,
-
     /// Generate a module that only exports default the input JSValue
     export_default_object = 8,
+    /// Signal upwards that the matching value in 'require.extensions' should be used.
+    common_js_custom_extension = 9,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -429,6 +430,7 @@ writeIfNotChanged(
     JSONForObjectLoader = 6,
     ExportsObject = 7,
     ExportDefaultObject = 8,
+    CommonJSCustomExtension = 9,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,

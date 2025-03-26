@@ -82,7 +82,7 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
     if (!contains(child, parent)) return .unrelated;
 
     if (child.len == parent.len) return .equal;
-    if (isSepAny(child[parent.len])) return .parent;
+    if (child.len > parent.len and isSepAny(child[parent.len])) return .parent;
     return .unrelated;
 }
 

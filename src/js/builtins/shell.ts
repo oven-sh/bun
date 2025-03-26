@@ -71,6 +71,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     stdout: Buffer;
     stderr: Buffer;
     exitCode: number;
+
     constructor(stdout: Buffer, stderr: Buffer, exitCode: number) {
       this.stdout = stdout;
       this.stderr = stderr;

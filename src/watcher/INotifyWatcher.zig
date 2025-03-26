@@ -12,11 +12,12 @@ const log = Output.scoped(.watcher, false);
 // `bun.Watcher` has the same hardcoded `max_count`.
 const max_count = bun.Watcher.max_count;
 const eventlist_bytes_size = (Event.largest_size / 2) * max_count;
-
+const EventListBytes = [eventlist_bytes_size]u8;
 fd: bun.FileDescriptor = bun.invalid_fd,
 loaded: bool = false,
 
-eventlist_bytes: [eventlist_bytes_size]u8 align(@alignOf(Event)) = undefined,
+// Avoid statically allocating because it increases the binary size.
+eventlist_bytes: *EventListBytes align(@alignOf(Event)) = undefined,
 /// pointers into the next chunk of events
 eventlist_ptrs: [max_count]*align(1) Event = undefined,
 /// if defined, it means `read` should continue from this offset before asking
@@ -98,7 +99,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
 
     // TODO: convert to bun.sys.Error
     this.fd = bun.toFD(try std.posix.inotify_init1(IN.CLOEXEC));
-
+    this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
     log("{} init", .{this.fd});
 }
 
@@ -123,7 +124,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
 
         const rc = std.posix.system.read(
             this.fd.cast(),
-            &this.eventlist_bytes,
+            this.eventlist_bytes,
             this.eventlist_bytes.len,
         );
         const errno = std.posix.errno(rc);

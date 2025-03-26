@@ -866,7 +866,8 @@ fn writeOrEnd(
                     this.onWritableCallback.set(globalObject, callback_value.withAsyncContextIfNeeded(globalObject));
                     this.raw_response.onWritable(*NodeHTTPResponse, onDrain, this);
                 }
-                return JSC.JSValue.jsNumberFromInt64(-@as(i64, @intCast(written)));
+
+                return JSC.JSValue.jsNumberFromInt64(-@as(i64, @intCast(@min(written, std.math.maxInt(i64)))));
             },
         }
     }

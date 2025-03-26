@@ -290,7 +290,6 @@ public:
 
         LoopData *loopData = getLoopData();
         AsyncSocketData<SSL> *asyncSocketData = getAsyncSocketData();
-
         /* We are limited if we have a per-socket buffer */
         if (asyncSocketData->buffer.length()) {
             size_t buffer_len = asyncSocketData->buffer.length();
@@ -318,7 +317,7 @@ public:
             asyncSocketData->buffer.clear();
         }
 
-        if (length) {
+        if (length) {          
             if (loopData->isCorkedWith(this)) {
                 /* We are corked */
                 if (LoopData::CORK_BUFFER_SIZE - loopData->getCorkOffset() >= (unsigned int) length) {

@@ -2254,28 +2254,92 @@ it("should support localAddress", async () => {
   });
 });
 
-it("should handle backpressure", async () => {
-  await using server = http.createServer((req, res) => {
-    // Set headers
-    res.writeHead(200, {
-      "Content-Type": "application/octet-stream",
-      "Transfer-Encoding": "chunked",
-    });
-
-    // Send 3 chunks of 1MB each
-    const payload = Buffer.alloc(1024 * 1024, "a");
-
-    res.write(payload, () => {
+describe("backpressure", () => {
+  it("should handle backpressure", async () => {
+    await using server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Transfer-Encoding": "chunked",
+      });
+      // send 3 chunks of 1MB each which is more than the socket buffer and will trigger a backpressure event
+      const payload = Buffer.alloc(1024 * 1024, "a");
       res.write(payload, () => {
         res.write(payload, () => {
-          res.end();
+          res.write(payload, () => {
+            res.end();
+          });
         });
       });
     });
-  });
-  await once(server.listen(0), "listening");
+    await once(server.listen(0), "listening");
 
-  const PORT = (server.address() as AddressInfo).port;
-  const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.bytes());
-  expect(bytes.length).toBe(1024 * 1024 * 3);
+    const PORT = (server.address() as AddressInfo).port;
+    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.bytes());
+    expect(bytes.length).toBe(1024 * 1024 * 3);
+  });
+  it("should handle backpressure with INT_MAX bytes", async () => {
+    // INT_MAX is the maximum we can sent to the socket in one call
+    const payloadSize = 1024 * 1024 * 1024 * 2;
+    await using server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Transfer-Encoding": "chunked",
+      });
+
+      const payload = Buffer.allocUnsafe(payloadSize);
+      res.write(payload, () => {
+        res.end();
+      });
+    });
+
+    await once(server.listen(0), "listening");
+
+    const PORT = (server.address() as AddressInfo).port;
+    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.bytes());
+    expect(bytes.length).toBe(payloadSize);
+  }, 30_000);
+
+  it("should handle backpressure with more than INT_MAX bytes", async () => {
+    // INT_MAX is the maximum we can sent to the socket in one call
+    const payloadSize = 2 * 1024 * 1024 * 1024;
+    // enough to fill the socket buffer
+    const smallPayloadSize = 1024 * 1024;
+    await using server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Transfer-Encoding": "chunked",
+      });
+      res.write(Buffer.alloc(smallPayloadSize, "a"));
+      res.write(Buffer.allocUnsafe(payloadSize), () => {
+        res.end();
+      });
+    });
+
+    await once(server.listen(0), "listening");
+
+    const PORT = (server.address() as AddressInfo).port;
+    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.bytes());
+    expect(bytes.length).toBe(payloadSize + smallPayloadSize);
+  }, 30_000);
+
+  it("should handle backpressure with the maximum allowed bytes", async () => {
+    // max allowed by node:http to be sent in one go, more will throw an error
+    const payloadSize = 4 * 1024 * 1024 * 1024;
+    await using server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Transfer-Encoding": "chunked",
+      });
+      const payload = Buffer.allocUnsafe(payloadSize);
+      res.write(payload, () => {
+        res.end();
+      });
+    });
+
+    await once(server.listen(0), "listening");
+
+    const PORT = (server.address() as AddressInfo).port;
+    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.bytes());
+    expect(bytes.length).toBe(payloadSize);
+  }, 60_000);
 });

@@ -12,11 +12,6 @@ pub fn WindowsPipeReader(
     comptime This: type,
 ) type {
     return struct {
-        const buffer = 1;
-        const getBuffer = This.buffer;
-        const onReadChunk = This._onReadChunk;
-        const done = This.done;
-        const onError = This.onError;
         fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
             var this = bun.cast(*This, handle.data);
             const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
@@ -187,7 +182,7 @@ pub fn WindowsPipeReader(
                     },
                 }
                 this.source = null;
-                if (comptime callDone) done(this);
+                if (comptime callDone) this.done();
             }
         }
 
@@ -214,22 +209,22 @@ pub fn WindowsPipeReader(
 
         pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
             if (amount == .err) {
-                onError(this, amount.err);
+                this.onError(amount.err);
                 return;
             }
 
             switch (hasMore) {
                 .eof => {
                     // we call report EOF and close
-                    _ = onReadChunk(this, slice, hasMore);
+                    _ = this._onReadChunk(slice, hasMore);
                     close(this);
                 },
                 .drained => {
                     // we call drained so we know if we should stop here
-                    _ = onReadChunk(this, slice, hasMore);
+                    _ = this._onReadChunk(slice, hasMore);
                 },
                 else => {
-                    var buf = getBuffer(this);
+                    var buf = this.buffer();
                     if (comptime bun.Environment.allow_assert) {
                         if (slice.len > 0 and !bun.isSliceInBuffer(slice, buf.allocatedSlice())) {
                             @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
@@ -237,7 +232,7 @@ pub fn WindowsPipeReader(
                     }
                     // move cursor foward
                     buf.items.len += amount.result;
-                    _ = onReadChunk(this, slice, hasMore);
+                    _ = this._onReadChunk(slice, hasMore);
                 },
             }
         }

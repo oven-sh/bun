@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 
 describe("Bun.Cookie validation tests", () => {
   describe("expires validation", () => {
@@ -99,6 +99,7 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+console.log("describe Bun.serve() cookies");
 describe("Bun.serve() cookies", () => {
   const server = Bun.serve({
     port: 0,
@@ -124,6 +125,9 @@ describe("Bun.serve() cookies", () => {
         },
       },
     },
+  });
+  afterAll(() => {
+    server.stop();
   });
 
   test("set-cookie", async () => {
@@ -243,6 +247,71 @@ describe("Bun.serve() cookies", () => {
         "do_modify": "FIVE",
         "dont_modify": "ONE",
       }
+    `);
+  });
+});
+
+describe("Bun.serve() cookies 2", () => {
+  const server = Bun.serve({
+    port: 0,
+    routes: {
+      "/": req => {
+        // Access request cookies
+        const cookies = req.cookies;
+
+        // Get a specific cookie
+        const sessionCookie = cookies.get("session");
+        if (sessionCookie != null) {
+          // console.log(sessionCookie);
+        }
+
+        // Check if a cookie exists
+        if (cookies.has("theme")) {
+          // ...
+        }
+
+        // Set a cookie, it will be automatically applied to the response
+        cookies.set("visited", "true");
+
+        console.log(cookies.toSetCookieHeaders());
+
+        return new Response("Hello");
+      },
+      "/redirect": req => {
+        req.cookies.set("redirected", "true");
+        return Response.redirect("/redirect-target");
+      },
+    },
+  });
+  afterAll(() => {
+    server.stop();
+  });
+
+  test("server sets cookie", async () => {
+    const response = await fetch(server.url, {
+      headers: {
+        "Cookie": "abc=def; ghi=jkl",
+      },
+    });
+    expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "visited=true; SameSite=Lax",
+      ]
+    `);
+  });
+  test("server sets cookie on redirect", async () => {
+    const response = await fetch(server.url + "/redirect", {
+      headers: {
+        "Cookie": "abc=def; ghi=jkl",
+      },
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/redirect-target");
+    expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "redirected=true; SameSite=Lax",
+      ]
     `);
   });
 });

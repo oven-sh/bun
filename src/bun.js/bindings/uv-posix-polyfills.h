@@ -14,6 +14,6 @@ void __bun_throw_not_implemented(const char* symbol_name);
 // libuv headers will use UV_EXTERN
 #define UV_EXTERN BUN_EXPORT
 
-#include <uv.h>
+#include "./libuv/uv.h"
 
 #endif

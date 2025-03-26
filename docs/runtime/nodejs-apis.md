@@ -104,7 +104,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `ECDH` `checkPrime` `checkPrimeSync` `generatePrime` `generatePrimeSync` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
+🟡 Missing `secureHeapUsed` `setEngine` `setFips`
 
 Some methods are not optimized yet.
 

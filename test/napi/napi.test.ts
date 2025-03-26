@@ -15,7 +15,8 @@ describe("napi", () => {
       stdin: "inherit",
     });
     if (!install.success) {
-      throw new Error("build failed");
+      console.error("build failed, bailing out!");
+      process.exit(1);
     }
   });
 

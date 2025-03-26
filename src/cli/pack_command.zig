@@ -325,12 +325,12 @@ pub const PackCommand = struct {
 
                 if (!included) {
                     for (includes) |include| {
-                        if (include.dirs_only and entry.kind != .directory) continue;
+                        if (include.flags.dirs_only and entry.kind != .directory) continue;
 
                         // include patters are not recursive unless they start with `**/`
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
-                        const match_path = if (include.@"leading **/") entry_name else entry_subpath;
+                        const match_path = if (include.flags.@"leading **/") entry_name else entry_subpath;
                         switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
@@ -1107,9 +1107,9 @@ pub const PackCommand = struct {
                 }
             }
             for (ignore.list) |pattern| {
-                if (pattern.dirs_only and entry.kind != .directory) continue;
+                if (pattern.flags.dirs_only and entry.kind != .directory) continue;
 
-                const match_path = if (pattern.rel_path) rel else entry_name;
+                const match_path = if (pattern.flags.rel_path) rel else entry_name;
                 switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob, match_path)) {
                     .match => {
                         ignored = true;
@@ -2123,18 +2123,20 @@ pub const PackCommand = struct {
         return package_json_writer.ctx.writtenWithoutTrailingZero();
     }
 
-    /// A pattern used to ignore or include
-    /// files in the project tree. Might come
-    /// from .npmignore, .gitignore, or `files`
-    /// in package.json
+    /// A glob pattern used to ignore or include files in the project tree.
+    /// Might come from .npmignore, .gitignore, or `files` in package.json
     const Pattern = struct {
         glob: []const u8,
-        /// beginning or middle slash (leading slash was trimmed)
-        rel_path: bool,
-        // can only match directories (had an ending slash, also trimmed)
-        dirs_only: bool,
+        flags: Flags,
 
-        @"leading **/": bool,
+        const Flags = packed struct {
+            /// beginning or middle slash (leading slash was trimmed)
+            rel_path: bool,
+            // can only match directories (had an ending slash, also trimmed)
+            dirs_only: bool,
+
+            @"leading **/": bool,
+        };
 
         pub fn fromUTF8(allocator: std.mem.Allocator, pattern: string) OOM!?Pattern {
             var remain = pattern;
@@ -2189,9 +2191,11 @@ pub const PackCommand = struct {
 
             return .{
                 .glob = buf[0..end],
-                .rel_path = has_leading_or_middle_slash,
-                .@"leading **/" = @"has leading **/, (could start with '!')",
-                .dirs_only = has_trailing_slash,
+                .flags = .{
+                    .rel_path = has_leading_or_middle_slash,
+                    .@"leading **/" = @"has leading **/, (could start with '!')",
+                    .dirs_only = has_trailing_slash,
+                },
             };
         }
 
@@ -2294,7 +2298,7 @@ pub const PackCommand = struct {
                 const parsed = try Pattern.fromUTF8(allocator, trimmed) orelse continue;
                 try patterns.append(allocator, parsed);
 
-                has_rel_path = has_rel_path or parsed.rel_path;
+                has_rel_path = has_rel_path or parsed.flags.rel_path;
             }
 
             if (patterns.items.len == 0) return null;

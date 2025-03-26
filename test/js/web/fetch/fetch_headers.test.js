@@ -23,13 +23,14 @@ describe("Headers", async () => {
   });
 
   it("Header names must be valid", async () => {
-    expect(() => fetch(url, { headers: { "a\tb:c": "foo" } })).toThrow("Invalid header name: 'a\tb:c'");
-    expect(() => fetch(url, { headers: { "❤️": "foo" } })).toThrow("Invalid header name: '❤️'");
+    const prefix = "Header name must be a valid HTTP token";
+    expect(() => fetch(url, { headers: { "a\tb:c": "foo" } })).toThrow(prefix + ' ["a\tb:c"]');
+    expect(() => fetch(url, { headers: { "❤️": "foo" } })).toThrow(prefix + ' ["❤️"]');
   });
 
   it("Header values must be valid", async () => {
-    expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value: '\0'");
-    expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value: '❤️'");
+    expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Invalid value '\0' for header 'x-test'");
+    expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Invalid value '❤️' for header 'x-test'");
   });
 
   it("repro 1602", async () => {

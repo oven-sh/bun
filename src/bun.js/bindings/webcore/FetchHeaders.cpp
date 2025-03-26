@@ -43,11 +43,22 @@ static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
     headers.remove(HTTPHeaderName::Range);
 }
 
+template<typename T>
+static inline Exception invalidHTTPToken(const T& name)
+{
+    return Exception { InvalidHTTPTokenError, makeString("Header name must be a valid HTTP token [\""_s, name, "\"]"_s) };
+}
+
+static inline Exception invalidHeaderValue(const StringView& name, const StringView& value)
+{
+    return Exception { InvalidCharError, makeString("Invalid value '"_s, value, "' for header '"_s, name, "'"_s) };
+}
+
 static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
-    if (!isValidHTTPHeaderValue((value)))
-        return Exception { InvalidHTTPTokenError, makeString("Invalid value \""_s, value, "\" for header \""_s, name, "\""_s) };
+    if (!isValidHTTPHeaderValue(value))
+        return invalidHeaderValue(httpHeaderNameString(name), value);
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -57,11 +68,11 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
 {
     // TODO: consolidate error messages with ErrorCode.cpp
     if (!isValidHTTPToken(name))
-        return Exception { InvalidHTTPTokenError, makeString("Header name must be a valid HTTP token [\""_s, name, "\"]"_s) };
+        return invalidHTTPToken(name);
 
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
-    if (!isValidHTTPHeaderValue((value)))
-        return Exception { InvalidCharError, makeString("Invalid character in header content [\""_s, name, "\"]"_s) };
+    if (!isValidHTTPHeaderValue(value))
+        return invalidHeaderValue(name, value);
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -207,7 +218,7 @@ ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 ExceptionOr<void> FetchHeaders::remove(const StringView name)
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return invalidHTTPToken(name);
     if (m_guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     if (m_guard == FetchHeaders::Guard::Request && isForbiddenHeaderName(name))
@@ -234,14 +245,14 @@ size_t FetchHeaders::memoryCost() const
 ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return invalidHTTPToken(name);
     return m_headers.get(name);
 }
 
 ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
+        return invalidHTTPToken(name);
     return m_headers.contains(name);
 }
 

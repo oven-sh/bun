@@ -301,17 +301,20 @@ pub fn build(b: *Build) !void {
             .strip = false,
         });
         configureObj(b, &o, unit_tests);
+        // Setting `linker_allow_shlib_undefined` causes the linker to ignore
+        // all undefined symbols.  We want this because all we care about is the
+        // object file Zig creates; we perform our own linking later. There is
+        // currently no way to make a test build that only creates an object
+        // file w/o creating an executable.
+        //
+        // See: https://github.com/ziglang/zig/issues/23374
         unit_tests.linker_allow_shlib_undefined = true;
         unit_tests.link_function_sections = true;
         unit_tests.link_data_sections = true;
         unit_tests.bundle_ubsan_rt = false;
 
         const bin = unit_tests.getEmittedBin();
-        const obj = Build.LazyPath{ .generated = .{
-            .file = bin.generated.file,
-            .up = 1,
-            .sub_path = "bun-test.o",
-        } };
+        const obj = bin.dirname().path(b, "bun-test.o");
         const cpy_obj = b.addInstallFile(obj, "bun-test.o");
         step.dependOn(&cpy_obj.step);
     }

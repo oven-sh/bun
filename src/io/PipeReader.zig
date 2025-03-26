@@ -600,13 +600,12 @@ const PosixBufferedReader = struct {
     }
 
     const This = @This();
-    const vtable2 = This;
 
     pub fn read(this: *This) void {
-        const buf = vtable2.buffer(this);
-        const fd = vtable2.getFd(this);
+        const buf = this.buffer();
+        const fd = this.getFd();
 
-        switch (vtable2.getFileType(this)) {
+        switch (this.getFileType()) {
             .nonblocking_pipe => {
                 readPipe(this, buf, fd, 0, false);
                 return;
@@ -628,7 +627,7 @@ const PosixBufferedReader = struct {
                         readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, true);
                     },
                     .not_ready => {
-                        vtable2.registerPoll(this);
+                        this.registerPoll();
                     },
                 }
             },
@@ -636,11 +635,11 @@ const PosixBufferedReader = struct {
     }
 
     pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
-        const resizable_buffer = vtable2.buffer(parent);
-        const fd = vtable2.getFd(parent);
+        const resizable_buffer = parent.buffer();
+        const fd = parent.getFd();
         bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
 
-        switch (vtable2.getFileType(parent)) {
+        switch (parent.getFileType()) {
             .nonblocking_pipe => {
                 readPipe(parent, resizable_buffer, fd, size_hint, received_hup);
             },
@@ -727,10 +726,10 @@ const PosixBufferedReader = struct {
                             stack_buffer_head = stack_buffer_head[bytes_read..];
 
                             if (bytes_read == 0) {
-                                vtable2.closeWithoutReporting(parent);
+                                parent.closeWithoutReporting();
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                     _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
-                                vtable2.done(parent);
+                                parent.done();
                                 return;
                             }
 
@@ -743,11 +742,11 @@ const PosixBufferedReader = struct {
                                         },
                                         .not_ready => {
                                             if (received_hup) {
-                                                vtable2.closeWithoutReporting(parent);
+                                                parent.closeWithoutReporting();
                                             }
                                             defer {
                                                 if (received_hup) {
-                                                    vtable2.done(parent);
+                                                    parent.done();
                                                 }
                                             }
                                             if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
@@ -757,7 +756,7 @@ const PosixBufferedReader = struct {
                                             }
 
                                             if (!received_hup) {
-                                                vtable2.registerPoll(parent);
+                                                parent.registerPoll();
                                             }
 
                                             return;
@@ -782,7 +781,7 @@ const PosixBufferedReader = struct {
                                 if (comptime file_type == .file) {
                                     bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
                                 } else {
-                                    vtable2.registerPoll(parent);
+                                    parent.registerPoll();
                                 }
 
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
@@ -792,7 +791,7 @@ const PosixBufferedReader = struct {
 
                             if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                 _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress);
-                            vtable2.onError(parent, err);
+                            parent.onError(err);
                             return;
                         },
                     }
@@ -819,9 +818,9 @@ const PosixBufferedReader = struct {
                     resizable_buffer.items.len += bytes_read;
 
                     if (bytes_read == 0) {
-                        vtable2.closeWithoutReporting(parent);
+                        parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
-                        vtable2.done(parent);
+                        parent.done();
                         return;
                     }
 
@@ -834,11 +833,11 @@ const PosixBufferedReader = struct {
                                 },
                                 .not_ready => {
                                     if (received_hup) {
-                                        vtable2.closeWithoutReporting(parent);
+                                        parent.closeWithoutReporting();
                                     }
                                     defer {
                                         if (received_hup) {
-                                            vtable2.done(parent);
+                                            parent.done();
                                         }
                                     }
 
@@ -852,7 +851,7 @@ const PosixBufferedReader = struct {
                                     }
 
                                     if (!received_hup) {
-                                        vtable2.registerPoll(parent);
+                                        parent.registerPoll();
                                     }
 
                                     return;
@@ -888,11 +887,11 @@ const PosixBufferedReader = struct {
                         if (comptime file_type == .file) {
                             bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
                         } else {
-                            vtable2.registerPoll(parent);
+                            parent.registerPoll();
                         }
                         return;
                     }
-                    vtable2.onError(parent, err);
+                    parent.onError(err);
                     return;
                 },
             }

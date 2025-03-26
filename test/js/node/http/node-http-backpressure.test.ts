@@ -35,7 +35,6 @@ describe("backpressure", () => {
     expect(bytes.byteLength).toBe(1024 * 1024 * 3);
   });
   it("should handle backpressure with INT_MAX bytes", async () => {
-    Bun.gc(true);
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
@@ -50,12 +49,22 @@ describe("backpressure", () => {
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.arrayBuffer());
-    expect(bytes.byteLength).toBe(TwoGBPayload.byteLength);
+    const response = await fetch(`http://localhost:${PORT}/`);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (value) {
+        totalBytes += value.byteLength;
+      }
+      if (done) break;
+    }
+
+    expect(totalBytes).toBe(TwoGBPayload.byteLength);
   }, 30_000);
 
   it("should handle backpressure with more than INT_MAX bytes", async () => {
-    Bun.gc(true);
     // enough to fill the socket buffer
     const smallPayloadSize = 1024 * 1024;
     await using server = http.createServer((req, res) => {
@@ -72,7 +81,18 @@ describe("backpressure", () => {
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.arrayBuffer());
-    expect(bytes.byteLength).toBe(TwoGBPayload.byteLength + smallPayloadSize);
+    const response = await fetch(`http://localhost:${PORT}/`);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (value) {
+        totalBytes += value.byteLength;
+      }
+      if (done) break;
+    }
+
+    expect(totalBytes).toBe(TwoGBPayload.byteLength + smallPayloadSize);
   }, 30_000);
 });

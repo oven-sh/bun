@@ -11,7 +11,6 @@ import type { AddressInfo } from "node:net";
 
 describe("backpressure", () => {
   it("should handle backpressure with the maximum allowed bytes", async () => {
-    Bun.gc(true);
     // max allowed by node:http to be sent in one go, more will throw an error
     const payloadSize = 4 * 1024 * 1024 * 1024;
     await using server = http.createServer((req, res) => {
@@ -28,7 +27,18 @@ describe("backpressure", () => {
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.arrayBuffer());
-    expect(bytes.byteLength).toBe(payloadSize);
+    const response = await fetch(`http://localhost:${PORT}/`);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (value) {
+        totalBytes += value.byteLength;
+      }
+      if (done) break;
+    }
+
+    expect(totalBytes).toBe(payloadSize);
   }, 60_000);
 });

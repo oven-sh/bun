@@ -1,9 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 pub const bun = @import("./bun.zig");
+const recover = @import("test/recover.zig");
+
+const TestFn = std.builtin.TestFn;
 const Output = bun.Output;
 const Environment = bun.Environment;
-const recover = @import("test/recover.zig");
 
 // pub const panic = bun.crash_handler.panic;
 pub const panic = recover.panic;
@@ -47,14 +49,16 @@ pub fn main() void {
 }
 
 const Stats = struct {
-    pass: u32 = 0,
-    fail: u32 = 0,
-    leak: u32 = 0,
-    panic: u32 = 0,
+    pass: u32,
+    fail: u32,
+    leak: u32,
+    panic: u32,
     start: i64,
 
     fn init() Stats {
-        return Stats{ .start = std.time.milliTimestamp() };
+        var stats = std.mem.zeroes(Stats);
+        stats.start = std.time.milliTimestamp();
+        return stats;
     }
 
     /// Time elapsed since start in milliseconds
@@ -80,7 +84,13 @@ fn runTests() u8 {
     var stats = Stats.init();
     var stderr = std.io.getStdErr();
 
-    for (builtin.test_functions) |t| {
+    namebuf = std.heap.page_allocator.alloc(u8, namebuf_size) catch {
+        Output.panic("Failed to allocate name buffer", .{});
+    };
+    defer std.heap.page_allocator.free(namebuf);
+
+    const tests: []const TestFn = builtin.test_functions;
+    for (tests) |t| {
         std.testing.allocator_instance = .{};
 
         var did_lock = true;
@@ -122,7 +132,7 @@ fn runTests() u8 {
     const total_time = stats.elapsed();
 
     if (total == stats.pass) {
-        Output.pretty("<green>All tests passed</r>\n", .{});
+        Output.pretty("\n<green>All tests passed</r>\n", .{});
     } else {
         Output.pretty("\n<green>{d}</r> passed", .{stats.pass});
         if (stats.fail > 0)
@@ -133,13 +143,28 @@ fn runTests() u8 {
         if (stats.panic > 0) Output.pretty(", <magenta>{d}</r> panicked", .{stats.panic});
     }
 
-    Output.pretty("\n\n\tRan {d} tests in {d}ms\n\n", .{ total, total_time });
+    Output.pretty("\n\tRan <b>{d}</r> tests in <b>{d}</r>ms\n\n", .{ total, total_time });
     return stats.exitCode();
 }
 
-fn extractName(t: std.builtin.TestFn) []const u8 {
-    const marker = std.mem.lastIndexOf(u8, t.name, ".test.") orelse return t.name;
-    return t.name[marker + 6 ..];
+// heap-allocated on start to avoid increasing binary size
+threadlocal var namebuf: []u8 = undefined;
+const namebuf_size = 4096;
+comptime {
+    std.debug.assert(std.math.isPowerOfTwo(namebuf_size));
+}
+
+fn extractName(t: TestFn) []const u8 {
+    inline for (.{ ".test.", ".decltest." }) |test_sep| {
+        if (std.mem.lastIndexOf(u8, t.name, test_sep)) |marker| {
+            const prefix = t.name[0..marker];
+            const test_name = t.name[marker + test_sep.len ..];
+            const full_name = std.fmt.bufPrint(namebuf, "{s}\t{s}", .{ prefix, test_name }) catch @panic("name buffer too small");
+            return full_name;
+        }
+    }
+
+    return t.name;
 }
 
 pub const overrides = struct {

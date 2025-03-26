@@ -5,7 +5,7 @@ exports[`can get sourceURL from eval inside node:vm 1`] = `
 Error: hello
     at hellohello.js:2:16
     at runInNewContext (unknown)
-    at <anonymous> (<this-url>:693:5)"
+    at <anonymous> (<this-url>:line:character)"
 `;
 
 exports[`can get sourceURL inside node:vm 1`] = `
@@ -14,7 +14,7 @@ exports[`can get sourceURL inside node:vm 1`] = `
 error: hello
       at hello (hellohello.js:4:24)
       at hellohello.js:7:6
-      at <anonymous> (<this-url>:708:15)
+      at <anonymous> (<this-url>:line:character)
 "
 `;
 
@@ -24,6 +24,6 @@ exports[`eval sourceURL is correct 1`] = `
 error: hello
       at hello (hellohello.js:4:24)
       at eval (hellohello.js:7:6)
-      at <anonymous> (<this-url>:726:15)
+      at <anonymous> (<this-url>:line:character)
 "
 `;

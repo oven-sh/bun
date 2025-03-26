@@ -701,7 +701,12 @@ throw new Error("hello");
     var err: Error = e;
   }
 
-  expect(err!.stack!.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
+  expect(
+    err!
+      .stack!.replaceAll("\r\n", "\n")
+      .replaceAll(import.meta.path, "<this-url>")
+      .replace(/<this-url>:\d+:\d+/, "<this-url>:line:character"),
+  ).toMatchSnapshot();
 });
 
 test("can get sourceURL inside node:vm", () => {
@@ -719,7 +724,12 @@ hello();
     { Bun },
   );
 
-  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
+  expect(
+    err
+      .replaceAll("\r\n", "\n")
+      .replaceAll(import.meta.path, "<this-url>")
+      .replace(/<this-url>:\d+:\d+/, "<this-url>:line:character"),
+  ).toMatchSnapshot();
 });
 
 test("eval sourceURL is correct", () => {
@@ -735,5 +745,10 @@ hello();
 //# sourceURL=hellohello.js
 `,
   );
-  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
+  expect(
+    err
+      .replaceAll("\r\n", "\n")
+      .replaceAll(import.meta.path, "<this-url>")
+      .replace(/<this-url>:\d+:\d+/, "<this-url>:line:character"),
+  ).toMatchSnapshot();
 });

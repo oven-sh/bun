@@ -559,6 +559,15 @@ it("Cipheriv.update throws expected error for invalid data", () => {
   );
 });
 
+it("verifyOneShot should not accept strings for signatures", () => {
+  const data = Buffer.alloc(1);
+  expect(() => {
+    crypto.verify(null, data, "test", "oops");
+  }).toThrow(
+    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+  );
+});
+
 it("x25519", () => {
   // Generate Alice's keys
   const alice = crypto.generateKeyPairSync("x25519", {

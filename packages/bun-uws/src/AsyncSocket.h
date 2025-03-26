@@ -182,9 +182,9 @@ public:
     }
 
     /* Returns the user space backpressure. */
-    unsigned int getBufferedAmount() {
+    size_t getBufferedAmount() {
         /* We return the actual amount of bytes in backbuffer, including pendingRemoval */
-        return (unsigned int) getAsyncSocketData()->buffer.totalLength();
+        return getAsyncSocketData()->buffer.totalLength();
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */

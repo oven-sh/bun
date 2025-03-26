@@ -213,21 +213,21 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
-    loop->data.closed_head = 0;
+    loop->data.closed_head = NULL;
 
     for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
         struct us_udp_socket_t *next = s->next;
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
-    loop->data.closed_udp_head = 0;
+    loop->data.closed_udp_head = NULL;
 
     for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
         struct us_connecting_socket_t *next = s->next;
         us_free(s);
         s = next;
     }
-    loop->data.closed_connecting_head = 0;
+    loop->data.closed_connecting_head = NULL;
 }
 
 void us_internal_free_closed_contexts(struct us_loop_t *loop) {
@@ -236,7 +236,7 @@ void us_internal_free_closed_contexts(struct us_loop_t *loop) {
         us_free(ctx);
         ctx = next;
     }
-    loop->data.closed_context_head = 0;
+    loop->data.closed_context_head = NULL;
 }
 
 void sweep_timer_cb(struct us_internal_callback_t *cb) {

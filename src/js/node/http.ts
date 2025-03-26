@@ -701,6 +701,7 @@ function onRequestEvent(event) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const server: Server = this?.server;
+
   const socket: NodeHTTPServerSocket = this;
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
@@ -935,6 +936,7 @@ const ServerPrototype = {
             [kHandle]: handle,
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+          handle.onabort = onServerRequestEvent.bind(socket);
           drainMicrotasks();
 
           let capturedError;
@@ -950,7 +952,6 @@ const ServerPrototype = {
           let resolveFunction;
           let didFinish = false;
 
-          handle.onabort = onServerRequestEvent.bind(socket);
           const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
           let reachedRequestsLimit = false;
           if (isRequestsLimitSet) {

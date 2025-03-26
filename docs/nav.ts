@@ -364,7 +364,7 @@ export default {
     page("api/console", "Console", {
       description: `Bun implements a Node.js-compatible \`console\` object with colorized output and deep pretty-printing.`,
     }), // "`Node-API`"),
-    page("api/cookies", "Cookies", {
+    page("api/cookie", "Cookie", {
       description: "Bun's native Cookie API simplifies working with HTTP cookies.",
     }), // "`Node-API`"),
     page("api/ffi", "FFI", {

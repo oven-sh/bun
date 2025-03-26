@@ -705,7 +705,7 @@ throw new Error("hello");
     err!
       .stack!.replaceAll("\r\n", "\n")
       .replaceAll(import.meta.path, "<this-url>")
-      .replace(/<this-url>:\d+:\d+/, "<this-url>:line:character"),
+      .replaceAll(/<this-url>:\d+:\d+/g, "<this-url>:line:character"),
   ).toMatchSnapshot();
 });
 
@@ -728,7 +728,7 @@ hello();
     err
       .replaceAll("\r\n", "\n")
       .replaceAll(import.meta.path, "<this-url>")
-      .replace(/<this-url>:\d+:\d+/, "<this-url>:line:character"),
+      .replaceAll(/<this-url>:\d+:\d+/g, "<this-url>:line:character"),
   ).toMatchSnapshot();
 });
 
@@ -749,6 +749,6 @@ hello();
     err
       .replaceAll("\r\n", "\n")
       .replaceAll(import.meta.path, "<this-url>")
-      .replace(/<this-url>:\d+:\d+/, "<this-url>:line:character"),
+      .replaceAll(/<this-url>:\d+:\d+/g, "<this-url>:line:character"),
   ).toMatchSnapshot();
 });

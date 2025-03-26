@@ -26,7 +26,7 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
-
+extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 namespace Bun {
 
 using namespace JSC;
@@ -183,20 +183,27 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodeHTTPServerSocket = std::forward<decltype(space)>(space); });
     }
 
+    void detach()
+    {
+        this->m_duplex.clear();
+        this->currentResponseObject.clear();
+        this->strongThis.clear();
+    }
+
     void onClose()
     {
         this->socket = nullptr;
-        this->m_duplex.clear();
         if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
             Bun__NodeHTTPResponse_setClosed(res->m_ctx);
         }
-        this->currentResponseObject.clear();
 
         // This function can be called during GC!
         Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
         if (!functionToCallOnClose) {
-            this->strongThis.clear();
-
+            if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+            }
+            this->detach();
             return;
         }
 
@@ -209,7 +216,10 @@ public:
                 auto* thisObject = self;
                 auto* callbackObject = thisObject->functionToCallOnClose.get();
                 if (!callbackObject) {
-                    self->strongThis.clear();
+                    if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                        Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+                    }
+                    thisObject->detach();
                     return;
                 }
                 auto callData = JSC::getCallData(callbackObject);
@@ -217,6 +227,10 @@ public:
                 EnsureStillAliveScope ensureStillAlive(self);
 
                 if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+                    if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                        Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+                    }
+
                     profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
 
                     if (auto* ptr = exception.get()) {
@@ -224,7 +238,7 @@ public:
                         globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
                     }
                 }
-                self->strongThis.clear();
+                thisObject->detach();
             });
         }
     }
@@ -252,6 +266,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
     thisObject->close();
+
     return JSValue::encode(JSC::jsUndefined());
 }
 

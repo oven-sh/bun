@@ -5278,9 +5278,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (arguments[0].as(Request)) |request| {
                 _ = request.request_context.setTimeout(value);
             } else if (arguments[0].as(NodeHTTPResponse)) |response| {
-                if (!response.finished) {
-                    _ = response.response.timeout(@intCast(@min(value, 255)));
-                }
+                response.setTimeout(@truncate(value % 255));
             } else {
                 return this.globalThis.throwInvalidArguments("timeout() requires a Request object", .{});
             }
@@ -5358,7 +5356,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
-                if (nodeHttpResponse.aborted or nodeHttpResponse.ended) {
+                if (nodeHttpResponse.ended or nodeHttpResponse.socket_closed) {
                     return JSC.jsBoolean(false);
                 }
 
@@ -5427,8 +5425,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
 
                             // we must write the status first so that 200 OK isn't written
-                            nodeHttpResponse.response.writeStatus("101 Switching Protocols");
-                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.response.socket());
+                            nodeHttpResponse.raw_response.writeStatus("101 Switching Protocols");
+                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.raw_response.socket());
                         }
 
                         if (globalThis.hasException()) {
@@ -6486,7 +6484,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .pending => {
                             globalThis.handleRejectedPromises();
                             if (node_http_response) |node_response| {
-                                if (node_response.finished or node_response.aborted or node_response.upgraded) {
+                                if (node_response.request_has_completed or node_response.socket_closed or node_response.upgraded) {
                                     strong_promise.deinit();
                                     break :brk .{ .success = {} };
                                 }
@@ -6517,12 +6515,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
 
                     if (node_http_response) |node_response| {
-                        if (!node_response.finished and node_response.response.state().isResponsePending()) {
-                            if (node_response.response.state().isHttpStatusCalled()) {
-                                node_response.response.writeStatus("500 Internal Server Error");
-                                node_response.response.endWithoutBody(true);
+                        if (!node_response.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                            if (node_response.raw_response.state().isHttpStatusCalled()) {
+                                node_response.raw_response.writeStatus("500 Internal Server Error");
+                                node_response.raw_response.endWithoutBody(true);
                             } else {
-                                node_response.response.endStream(true);
+                                node_response.raw_response.endStream(true);
                             }
                         }
                         node_response.onRequestComplete();
@@ -6533,7 +6531,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.finished and node_response.response.state().isResponsePending()) {
+                if (!node_response.request_has_completed and node_response.raw_response.state().isResponsePending()) {
                     node_response.setOnAbortedHandler();
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream

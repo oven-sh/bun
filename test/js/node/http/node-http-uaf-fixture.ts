@@ -1,6 +1,6 @@
 import express from "express";
 import bodyParser from "body-parser";
-import { fetch } from "undici";
+
 import { setTimeout as sleep } from "node:timers/promises";
 
 const CONCURRENCY = 100;
@@ -18,7 +18,7 @@ app.post("/error", (req, res) => {
   }
 });
 
-const server = app.listen(0, async () => {
+var server = app.listen(0, async () => {
   const port = server.address().port;
   console.log(`Server running on http://localhost:${port}`);
 
@@ -27,7 +27,7 @@ const server = app.listen(0, async () => {
   async function makeRequest(id) {
     const controller = new AbortController();
 
-    setTimeout(() => controller.abort(), Math.random() * 5 + 1);
+    const secondPromise = setTimeout(() => controller.abort(), Math.random() * 5 + 1);
 
     try {
       await fetch(`http://localhost:${port}/error`, {
@@ -36,6 +36,10 @@ const server = app.listen(0, async () => {
         body: "{}",
         signal: controller.signal,
       }).catch(() => {});
+    } catch (e) {}
+
+    try {
+      await secondPromise;
     } catch (e) {}
 
     active.delete(id);
@@ -49,5 +53,11 @@ const server = app.listen(0, async () => {
 
     active.add(i);
     makeRequest(i);
+    if (i > 0 && i % 1000 === 0) {
+      console.count("Completed request x 1000");
+    }
   }
+
+  console.log("Done");
+  server.close();
 });

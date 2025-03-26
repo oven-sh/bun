@@ -243,7 +243,7 @@ public:
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
                 asyncSocketData->buffer.erase((unsigned int) written);
-                if(written < max_flush_len) {
+                if(LIKELY(written < max_flush_len)) {
                     return total_written;
                 }
                 continue;

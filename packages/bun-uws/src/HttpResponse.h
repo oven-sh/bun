@@ -477,13 +477,16 @@ public:
 
         size_t length = data.length();
 
+        // Special handling for extremely large data (greater than UINT_MAX bytes)
+        // most clients expect a max of UINT_MAX, so we need to split the write into multiple writes
         if (length > UINT_MAX) {
-            // max chunk size is UINT_MAX, so we need to split the write into multiple writes
-            // we can do this by calling write with the remaining length
             bool has_failed = false;
             size_t total_written = 0;
+            // Process full-sized chunks until remaining data is less than UINT_MAX
             while (length > UINT_MAX) {
                 size_t written = 0;
+                // Write a UINT_MAX-sized chunk and check for failure
+                // even after failure we continue writing because the data will be buffered
                 if(!this->write(data.substr(0, UINT_MAX), &written)) {
                     has_failed = true;
                 }
@@ -491,6 +494,7 @@ public:
                 length -= UINT_MAX;
                 data = data.substr(UINT_MAX);
             }
+            // Handle the final chunk (less than UINT_MAX bytes)
             if (length > 0) {
                 size_t written = 0;
                 if(!this->write(data, &written)) {
@@ -527,15 +531,19 @@ public:
         int total_written = 0;
         int has_failed = false;
 
+        // Handle data larger than INT_MAX by writing it in chunks of INT_MAX bytes
         while (length > INT_MAX) {
-            // int max is the maximum number of bytes that can be written in one go
+            // Write the maximum allowed chunk size (INT_MAX)
             auto [written, failed] = Super::write(data.data(), INT_MAX);
+            // If the write failed, set the has_failed flag we continue writting because the data will be buffered
             has_failed = has_failed || failed;
             total_written += written;
             length -= INT_MAX;
             data = data.substr(INT_MAX);
         }
+        // Handle the remaining data (less than INT_MAX bytes)
         if (length > 0) {
+            // Write the final chunk with exact remaining length
             auto [written, failed] = Super::write(data.data(), (int) length);
             has_failed = has_failed || failed;
             total_written += written;

@@ -86,8 +86,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     void* userData = nullptr;
     void* socketData = nullptr;
 
-    void* zigResponse = nullptr;
-
     /* Per socket event handlers */
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;

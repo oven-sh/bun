@@ -32,8 +32,6 @@
 #include <iostream>
 #include "MoveOnlyFunction.h"
 
-extern "C" void Bun__NodeHTTPResponse_setClosed(void *zigResponse);
-
 namespace uWS {
 template<bool> struct HttpResponse;
 
@@ -133,11 +131,6 @@ private:
 
             if (httpResponseData->socketData && httpContextData->onSocketClosed) {
                 httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
-            }
-
-            if (httpResponseData->zigResponse) {
-                // Inform the Zig HTTP response that its C++ counterpart is being destroyed.
-                Bun__NodeHTTPResponse_setClosed(httpResponseData->zigResponse);
             }
 
             /* Destruct socket ext */

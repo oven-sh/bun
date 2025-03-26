@@ -24,6 +24,8 @@
 
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
+extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
+
 namespace Bun {
 
 using namespace JSC;
@@ -118,9 +120,7 @@ public:
     static void clearSocketData(us_socket_t* socket)
     {
         auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
-        if (httpResponseData->socketData) {
-            httpResponseData->socketData = nullptr;
-        }
+        httpResponseData->socketData = nullptr;
     }
 
     void close()
@@ -183,6 +183,9 @@ public:
     {
         this->socket = nullptr;
         this->m_duplex.clear();
+        if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_setClosed(res->m_ctx);
+        }
         this->currentResponseObject.clear();
 
         // This function can be called during GC!
@@ -196,20 +199,18 @@ public:
         WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
         if (scriptExecutionContext) {
-            JSC::gcProtect(this);
             scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
                 WTF::NakedPtr<JSC::Exception> exception;
                 auto* globalObject = defaultGlobalObject(context.globalObject());
                 auto* thisObject = self;
                 auto* callbackObject = thisObject->functionToCallOnClose.get();
                 if (!callbackObject) {
-                    JSC::gcUnprotect(self);
+                    self->strongThis.clear();
                     return;
                 }
                 auto callData = JSC::getCallData(callbackObject);
                 MarkedArgumentBuffer args;
                 EnsureStillAliveScope ensureStillAlive(self);
-                JSC::gcUnprotect(self);
 
                 if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
                     profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
@@ -219,10 +220,9 @@ public:
                         globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
                     }
                 }
+                self->strongThis.clear();
             });
         }
-
-        this->strongThis.clear();
     }
 
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -891,7 +891,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
-    response->getHttpResponseData()->zigResponse = *nodeHttpResponsePtr;
 
     JSC::CallData callData = getCallData(callbackObject);
     args.append(nodeHTTPResponseObject);

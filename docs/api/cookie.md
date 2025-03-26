@@ -28,30 +28,31 @@ const cookies3 = new Bun.CookieMap([
 
 ### In HTTP servers
 
-In Bun's HTTP server, the `cookies` property on the request object is an instance of `CookieMap`:
+In Bun's HTTP server, the `cookies` property on the request object (in `routes`) is an instance of `CookieMap`:
 
 ```ts
 const server = Bun.serve({
-  port: 3000,
-  fetch(req) {
-    // Access request cookies
-    const cookies = req.cookies;
+  routes: {
+    "/": req => {
+      // Access request cookies
+      const cookies = req.cookies;
 
-    // Get a specific cookie
-    const sessionCookie = cookies.get("session");
-    if (sessionCookie != null) {
-      console.log(sessionCookie);
-    }
+      // Get a specific cookie
+      const sessionCookie = cookies.get("session");
+      if (sessionCookie != null) {
+        console.log(sessionCookie);
+      }
 
-    // Check if a cookie exists
-    if (cookies.has("theme")) {
-      // ...
-    }
+      // Check if a cookie exists
+      if (cookies.has("theme")) {
+        // ...
+      }
 
-    // Set a cookie, it will be automatically applied to the response
-    cookies.set("visited", "true");
+      // Set a cookie, it will be automatically applied to the response
+      cookies.set("visited", "true");
 
-    return new Response("Hello");
+      return new Response("Hello");
+    },
   },
 });
 ```

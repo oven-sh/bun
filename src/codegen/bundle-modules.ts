@@ -324,13 +324,14 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
-        const inner = n >= nativeStartIndex
-           ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-           : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-        id.replace(/\.[mc]?[tj]s$/, ".js"),
-      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-        .replace(/\.[mc]?[tj]s$/, "")
-        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`
+        const inner =
+          n >= nativeStartIndex
+            ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
+                id.replace(/\.[mc]?[tj]s$/, ".js"),
+              )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+                .replace(/\.[mc]?[tj]s$/, "")
+                .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;
@@ -380,7 +381,10 @@ namespace InternalModuleRegistryConstants {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.slice(0, nativeStartIndex).map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+  ${moduleList
+    .slice(0, nativeStartIndex)
+    .map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`)
+    .join("\n")}
 }
 }`,
   );
@@ -394,20 +398,24 @@ pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,
     package_json_type_module = 1,
-    wasm = 2,
-    object = 3,
-    file = 4,
-    esm = 5,
-    json_for_object_loader = 6,
-    /// Generate an object with "default" set to all the exports, including a "default" property
-    exports_object = 7,
+    package_json_type_commonjs = 2,
+    wasm = 3,
+    object = 4,
+    file = 5,
+    esm = 6,
+    json_for_object_loader = 7,
+    /// Generate an object with "default" set to all the exports, including a "default" propert
+    exports_object = 8,
 
     /// Generate a module that only exports default the input JSValue
-    export_default_object = 8,
+    export_default_object = 9,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
-${moduleList.slice(0, nativeStartIndex).map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
+${moduleList
+  .slice(0, nativeStartIndex)
+  .map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`)
+  .join("\n")}
     // Native modules come after the JS modules
 ${Object.entries(nativeModuleEnumToId)
   .map(([id, n], i) => `    @"${moduleList[nativeStartIndex + i]}" = ${(1 << 9) | (n + nativeStartIndex)},`)
@@ -422,17 +430,21 @@ writeIfNotChanged(
   `enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
     PackageJSONTypeModule = 1,
-    Wasm = 2,
-    ObjectModule = 3,
-    File = 4,
-    ESM = 5,
-    JSONForObjectLoader = 6,
-    ExportsObject = 7,
-    ExportDefaultObject = 8,
+    PackageJSONTypeCommonJS = 2,
+    Wasm = 3,
+    ObjectModule = 4,
+    File = 5,
+    ESM = 6,
+    JSONForObjectLoader = 7,
+    ExportsObject = 8,
+    ExportDefaultObject = 9,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
-${moduleList.slice(0, nativeStartIndex).map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
+${moduleList
+  .slice(0, nativeStartIndex)
+  .map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`)
+  .join("\n")}
     // Native modules come after the JS modules
 ${Object.entries(nativeModuleEnumToId)
   .map(([id, n], i) => `    ${id} = ${(1 << 9) | (i + nativeStartIndex)},`)
@@ -516,7 +528,9 @@ if (!silent) {
   console.log(
     `  %s kb`,
     Math.floor(
-      (moduleList.slice(0, nativeStartIndex).reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
+      (moduleList
+        .slice(0, nativeStartIndex)
+        .reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
         globalThis.internalFunctionJSSize) /
         1000,
     ),

@@ -1,5 +1,3 @@
-# Bun.Cookie & Bun.CookieMap
-
 Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and `Bun.CookieMap`. These APIs offer fast, easy-to-use methods for parsing, generating, and manipulating cookies in HTTP requests and responses.
 
 ## CookieMap class
@@ -30,30 +28,31 @@ const cookies3 = new Bun.CookieMap([
 
 ### In HTTP servers
 
-In Bun's HTTP server, the `cookies` property on the request object is an instance of `CookieMap`:
+In Bun's HTTP server, the `cookies` property on the request object (in `routes`) is an instance of `CookieMap`:
 
 ```ts
 const server = Bun.serve({
-  port: 3000,
-  fetch(req) {
-    // Access request cookies
-    const cookies = req.cookies;
+  routes: {
+    "/": req => {
+      // Access request cookies
+      const cookies = req.cookies;
 
-    // Get a specific cookie
-    const sessionCookie = cookies.get("session");
-    if (sessionCookie != null) {
-      console.log(sessionCookie);
-    }
+      // Get a specific cookie
+      const sessionCookie = cookies.get("session");
+      if (sessionCookie != null) {
+        console.log(sessionCookie);
+      }
 
-    // Check if a cookie exists
-    if (cookies.has("theme")) {
-      // ...
-    }
+      // Check if a cookie exists
+      if (cookies.has("theme")) {
+        // ...
+      }
 
-    // Set a cookie, it will be automatically applied to the response
-    cookies.set("visited", "true");
+      // Set a cookie, it will be automatically applied to the response
+      cookies.set("visited", "true");
 
-    return new Response("Hello");
+      return new Response("Hello");
+    },
   },
 });
 ```
@@ -113,7 +112,7 @@ cookies.set(cookie);
 
 #### `delete(options: CookieStoreDeleteOptions): void`
 
-Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past. A cookie will only delete succesfully on the browser if the domain and path is the same as it was when the cookie was created.
+Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past. A cookie will only delete successfully on the browser if the domain and path is the same as it was when the cookie was created.
 
 ```ts
 // Delete by name using default domain and path.

@@ -622,7 +622,7 @@ const url2 = new ExtendedExtendedDOMGlobal("https://example.com/path?foo=bar&baz
 if (url.ok !== true) {
   throw new Error("bad");
 }
-  
+
 if (url2.wowSuchGetter !== "wow such getter") {
   throw new Error("bad");
 }
@@ -701,13 +701,7 @@ throw new Error("hello");
     var err: Error = e;
   }
 
-  expect(err!.stack!.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
-    "evalmachine.<anonymous>:2
-    Error: hello
-        at hellohello.js:2:16
-        at runInNewContext (unknown)
-        at <anonymous> (<this-url>:630:5)"
-  `);
+  expect(err!.stack!.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
 });
 
 test("can get sourceURL inside node:vm", () => {
@@ -725,15 +719,7 @@ hello();
     { Bun },
   );
 
-  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
-    "4 |     return Bun.inspect(new Error("hello"));
-                               ^
-    error: hello
-          at hello (hellohello.js:4:24)
-          at hellohello.js:7:6
-          at <anonymous> (<this-url>:651:15)
-    "
-  `);
+  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
 });
 
 test("eval sourceURL is correct", () => {
@@ -749,13 +735,5 @@ hello();
 //# sourceURL=hellohello.js
 `,
   );
-  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
-    "4 |     return Bun.inspect(new Error("hello"));
-                               ^
-    error: hello
-          at hello (hellohello.js:4:24)
-          at eval (hellohello.js:7:6)
-          at <anonymous> (<this-url>:677:15)
-    "
-  `);
+  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
 });

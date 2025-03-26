@@ -2,6 +2,8 @@ import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } fr
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, gc, isBroken, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
+import { spawn, ChildProcess } from "child_process";
+
 import { mkfifo } from "mkfifo";
 import net from "net";
 import { join } from "path";
@@ -10,7 +12,7 @@ import { Readable } from "stream";
 import { once } from "events";
 import type { AddressInfo } from "net";
 const tmp_dir = tmpdirSync();
-
+import http from "http";
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
@@ -2332,4 +2334,92 @@ it("should allow to follow redirect if connection is closed, abort should work e
       }
     }
   }
+});
+
+describe("fetch should be resilient to aborted requests", () => {
+  it("should not crash if the request is aborted", async () => {
+    const body = JSON.stringify({ data: "X".repeat(10 * 1024) }); // 10KB JSON
+
+    interface ServerInfo {
+      host: string;
+      port: number;
+    }
+    async function spawnServer(): Promise<{ child: ChildProcess; serverInfo: ServerInfo }> {
+      return new Promise((resolve, reject) => {
+        const child = spawn(bunExe(), [join(import.meta.dir, "fixtures", "express-aborted-fixture.mjs")], {
+          stdio: ["inherit", "inherit", "inherit", "ipc"],
+          env: bunEnv,
+
+          serialization: "json",
+        });
+
+        child.on("message", (message: any) => {
+          if (message.type === "listening") {
+            resolve({
+              child,
+              serverInfo: {
+                host: message.host,
+                port: message.port,
+              },
+            });
+          }
+        });
+
+        child.on("error", err => {
+          reject(err);
+        });
+
+        child.on("exit", code => {
+          if (code !== 0 && code !== null) {
+            reject(new Error(`Server process exited with code ${code}`));
+          }
+        });
+      });
+    }
+
+    const { child, serverInfo } = await spawnServer();
+    try {
+      const url = `http://${serverInfo.host}:${serverInfo.port}/aborted`;
+
+      const REQUESTS_COUNT = 20000;
+      const BATCH_SIZE = 50;
+      async function createAbortedRequestBatch(url: string): Promise<void> {
+        let signal = new AbortController();
+
+        let batch = new Array(BATCH_SIZE);
+        for (let i = 0; i < BATCH_SIZE; i++) {
+          batch[i] = fetch(url, {
+            method: "POST",
+            body,
+            signal: signal.signal,
+          })
+            .then(r => r.blob())
+            .catch(e => {});
+        }
+
+        await Bun.sleep(0);
+        signal.abort();
+        await Promise.allSettled(batch);
+      }
+      for (let i = 0; i < REQUESTS_COUNT; i += BATCH_SIZE) {
+        await createAbortedRequestBatch(url);
+      }
+    } finally {
+      // Shutdown the server
+      if (child.connected) {
+        child.send({ type: "shutdown" });
+      } else {
+        child.kill();
+      }
+
+      // Wait for the process to exit
+      await new Promise<void>(resolve => {
+        child.on("exit", () => resolve());
+        setTimeout(() => {
+          child.kill("SIGKILL");
+          resolve();
+        }, 1000);
+      });
+    }
+  }, 30_000);
 });

@@ -528,8 +528,8 @@ public:
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
-        int total_written = 0;
-        int has_failed = false;
+        size_t total_written = 0;
+        bool has_failed = false;
 
         // Handle data larger than INT_MAX by writing it in chunks of INT_MAX bytes
         while (length > INT_MAX) {

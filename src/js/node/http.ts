@@ -72,7 +72,7 @@ const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject } = require("internal/validators");
+const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject, validateInteger } = require("internal/validators");
 const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
@@ -609,13 +609,16 @@ const Server = function Server(options, callback) {
   this._unref = false;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
+  this[tlsSymbol] = null;
 
   if (typeof options === "function") {
     callback = options;
     options = {};
-  } else if (options == null || typeof options === "object") {
+  } else if (options == null) {
+    options = {};
+  } else {
+    validateObject(options, "options");
     options = { ...options };
-    this[tlsSymbol] = null;
     let key = options.key;
     if (key) {
       if (!isValidTLSArray(key)) {
@@ -671,8 +674,6 @@ const Server = function Server(options, callback) {
     } else {
       this[tlsSymbol] = null;
     }
-  } else {
-    throw new Error("bun-http-polyfill: invalid arguments");
   }
 
   this[optionsSymbol] = options;
@@ -3524,14 +3525,23 @@ function _writeHead(statusCode, reason, obj, response) {
   {
     // Slow-case: when progressive API and header fields are passed.
     let k;
-    if (Array.isArray(obj)) {
-      if (obj.length % 2 !== 0) {
-        throw new Error("raw headers must have an even number of elements");
-      }
 
-      for (let n = 0; n < obj.length; n += 2) {
-        k = obj[n + 0];
-        if (k) response.setHeader(k, obj[n + 1]);
+    if ($isArray(obj)) {
+      // Append all the headers provided in the array:
+      if (obj.length && $isArray(obj[0])) {
+        for (let i = 0; i < obj.length; i++) {
+          const k = obj[i];
+          if (k) response.appendHeader(k[0], k[1]);
+        }
+      } else {
+        if (obj.length % 2 !== 0) {
+          throw new Error("raw headers must have an even number of elements");
+        }
+
+        for (let n = 0; n < obj.length; n += 2) {
+          k = obj[n + 0];
+          if (k) response.setHeader(k, obj[n + 1]);
+        }
       }
     } else if (obj) {
       const keys = Object.keys(obj);
@@ -3697,6 +3707,7 @@ const http_exports = {
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
+    validateInteger(max, "max", 1);
     $debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   globalAgent,

@@ -34,7 +34,20 @@
     macro(OperationWasAborted, "The operation was aborted.") \
     macro(OperationTimedOut, "The operation timed out.") \
     macro(ConnectionWasClosed, "The connection was closed.") \
-    macro(OperationFailed, "The operation failed.")
+    macro(OperationFailed, "The operation failed.") \
+    macro(GET, "GET") \
+    macro(PUT, "PUT") \
+    macro(POST, "POST") \
+    macro(HEAD, "HEAD") \
+    macro(COPY, "COPY") \
+    macro(PATCH, "PATCH") \
+    macro(MERGE, "MERGE") \
+    macro(TRACE, "TRACE") \
+    macro(FETCH, "FETCH") \
+    macro(PURGE, "PURGE") \
+    macro(DELETE, "DELETE") \
+    macro(CONNECT, "CONNECT") \
+    macro(OPTIONS, "OPTIONS")
 
 // clang-format on
 

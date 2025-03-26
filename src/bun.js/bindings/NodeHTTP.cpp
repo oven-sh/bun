@@ -21,7 +21,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
-
+#include "BunCommonStrings.h"
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
@@ -546,10 +546,62 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+static JSString* getMethodString(JSC::VM& vm, Zig::GlobalObject* globalObject, Bun::CommonStrings& commonStrings, std::string_view method)
+{
+    switch (method.length()) {
+    case 3: {
+        if (method == std::string_view("get", 3)) {
+            return commonStrings.GETString(globalObject);
+        }
+        if (method == std::string_view("put", 3)) {
+            return commonStrings.PUTString(globalObject);
+        }
+        break;
+    }
+    case 4: {
+        if (method == std::string_view("post", 4)) {
+            return commonStrings.POSTString(globalObject);
+        }
+        if (method == std::string_view("head", 4)) {
+            return commonStrings.HEADString(globalObject);
+        }
+        break;
+    }
+    case 5: {
+        if (method == std::string_view("patch", 5)) {
+            return commonStrings.PATCHString(globalObject);
+        }
+
+        break;
+    }
+    case 6: {
+        if (method == std::string_view("delete", 6)) {
+            return commonStrings.DELETEString(globalObject);
+        }
+        break;
+    }
+
+    case 8: {
+        if (method == std::string_view("options", 8)) {
+            return commonStrings.OPTIONSString(globalObject);
+        }
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+
+    std::span<const LChar> data(reinterpret_cast<const LChar*>(method.data()), method.length());
+    auto str = String::fromUTF8ReplacingInvalidSequences(data);
+    return jsString(vm, str);
+}
+
+static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, MarkedArgumentBuffer& args, Zig::GlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::string_view fullURLStdStr = request->getFullUrl();
+    auto& commonStrings = globalObject->commonStrings();
     String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length() });
 
     // Get the URL.
@@ -560,89 +612,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
     // Get the method.
     {
         std::string_view methodView = request->getMethod();
-        WTF::String methodString;
-        switch (methodView.length()) {
-        case 3: {
-            if (methodView == std::string_view("get", 3)) {
-                methodString = "GET"_s;
-                break;
-            }
-            if (methodView == std::string_view("put", 3)) {
-                methodString = "PUT"_s;
-                break;
-            }
-
-            break;
-        }
-        case 4: {
-            if (methodView == std::string_view("post", 4)) {
-                methodString = "POST"_s;
-                break;
-            }
-            if (methodView == std::string_view("head", 4)) {
-                methodString = "HEAD"_s;
-                break;
-            }
-
-            if (methodView == std::string_view("copy", 4)) {
-                methodString = "COPY"_s;
-                break;
-            }
-        }
-
-        case 5: {
-            if (methodView == std::string_view("patch", 5)) {
-                methodString = "PATCH"_s;
-                break;
-            }
-            if (methodView == std::string_view("merge", 5)) {
-                methodString = "MERGE"_s;
-                break;
-            }
-            if (methodView == std::string_view("trace", 5)) {
-                methodString = "TRACE"_s;
-                break;
-            }
-            if (methodView == std::string_view("fetch", 5)) {
-                methodString = "FETCH"_s;
-                break;
-            }
-            if (methodView == std::string_view("purge", 5)) {
-                methodString = "PURGE"_s;
-                break;
-            }
-
-            break;
-        }
-
-        case 6: {
-            if (methodView == std::string_view("delete", 6)) {
-                methodString = "DELETE"_s;
-                break;
-            }
-
-            break;
-        }
-
-        case 7: {
-            if (methodView == std::string_view("connect", 7)) {
-                methodString = "CONNECT"_s;
-                break;
-            }
-            if (methodView == std::string_view("options", 7)) {
-                methodString = "OPTIONS"_s;
-                break;
-            }
-
-            break;
-        }
-        }
-
-        if (methodString.isNull()) {
-            methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(methodView.data()), methodView.length() });
-        }
-
-        args.append(jsString(vm, methodString));
+        args.append(getMethodString(vm, globalObject, commonStrings, methodView));
     }
 
     size_t size = 0;

@@ -76,7 +76,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
+        expect(["ECONNRESET", "ConnectionRefused"]).toContain(e.code);
       }
     }
 
@@ -1773,7 +1773,7 @@ it("should be able to abrupt stop the server", async () => {
       await fetch(server.url).then(res => res.text());
       expect.unreachable();
     } catch (e) {
-      expect(e.code).toBe("ConnectionClosed");
+      expect(e.code).toBe("ECONNRESET");
     }
   }
 });

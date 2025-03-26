@@ -39,6 +39,8 @@
 #include "GeneratedBunObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
+#include "JSCookie.h"
+#include "JSCookieMap.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -81,6 +83,9 @@ static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject
 {
     return jsCast<Zig::GlobalObject*>(bunObject->globalObject())->ArrayBufferSink();
 }
+
+static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
+static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -694,6 +699,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
+    Cookie                                         constructCookieObject                                              DontDelete|ReadOnly|PropertyCallback
+    CookieMap                                      constructCookieMapObject                                           DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_getter_wrap_FileSystemRouter                              DontDelete|PropertyCallback
@@ -711,6 +718,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
     s3                                             BunObject_getter_wrap_s3                                            DontDelete|PropertyCallback
+    CSRF                                           BunObject_getter_wrap_CSRF                                          DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
@@ -844,6 +852,18 @@ public:
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
+static JSValue constructCookieObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return WebCore::JSCookie::getConstructor(vm, zigGlobalObject);
+}
+
+static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
+
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
     return JSBunObject::create(vm, jsCast<Zig::GlobalObject*>(globalObject));
@@ -859,6 +879,9 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, void());
 
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(object);
+
     for (const auto& propertyName : propertyNames) {
         exportNames.append(propertyName);
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
@@ -872,9 +895,6 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         }
         exportValues.append(value);
     }
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
 }
 
 }

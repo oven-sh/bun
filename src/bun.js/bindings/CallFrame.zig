@@ -150,11 +150,10 @@ pub const CallFrame = opaque {
     /// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const slice = self.arguments();
-        comptime bun.assert(max <= 14);
+        comptime bun.assert(max <= 15);
         return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...14 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
-            else => unreachable,
+            inline 1...15 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
         };
     }
 
@@ -189,5 +188,10 @@ pub const CallFrame = opaque {
             .line = line,
             .column = column,
         };
+    }
+
+    extern fn Bun__CallFrame__describeFrame(*const CallFrame) [*:0]const u8;
+    pub fn describeFrame(self: *const CallFrame) [:0]const u8 {
+        return std.mem.span(Bun__CallFrame__describeFrame(self));
     }
 };

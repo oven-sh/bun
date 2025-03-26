@@ -36,13 +36,13 @@ pub const Options = struct {
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a| addr: {
             if (!a.isString()) return global.throwInvalidArgumentTypeValue("options.address", "string", a);
-            break :addr try bun.String.fromJS2(a, global);
+            break :addr try bun.String.fromJS(a, global);
         } else null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             // "ipv4" or "ipv6", ignoring case
             if (fam.isString()) {
-                const fam_str = try bun.String.fromJS2(fam, global);
+                const fam_str = try bun.String.fromJS(fam, global);
                 defer fam_str.deref();
                 if (fam_str.length() != 4)
                     return throwBadFamilyIP(global, fam);
@@ -129,15 +129,21 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     const input = blk: {
         const input_arg = callframe.argument(0);
         if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
-        break :blk try bun.String.fromJS2(input_arg, global);
+        break :blk try bun.String.fromJS(input_arg, global);
     };
-    var stackfb = std.heap.stackFallback(256, bun.default_allocator);
-    const alloc = stackfb.get();
+    defer input.deref();
 
-    const url_str = bun.String.createFromConcat(
-        alloc,
-        &[_]bun.String{ bun.String.static("http://"), input },
-    ) catch return global.throwOutOfMemory();
+    const prefix = "http://";
+    const url_str = switch (input.is8Bit()) {
+        inline else => |is_8_bit| with_prefix: {
+            const enc: bun.String.WTFEncoding = if (is_8_bit) .latin1 else .utf16;
+            const from_chars = if (is_8_bit) input.latin1() else input.utf16();
+            const str, const to_chars = bun.String.createUninitialized(enc, from_chars.len + prefix.len);
+            @memcpy(to_chars[0..prefix.len], bun.strings.literal(enc.Byte(), prefix));
+            @memcpy(to_chars[prefix.len..], from_chars);
+            break :with_prefix str;
+        },
+    };
     defer url_str.deref();
 
     const url = JSC.URL.fromString(url_str) orelse return JSValue.jsUndefined();
@@ -191,7 +197,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
         ._addr = sockaddr.@"127.0.0.1",
         ._presentation = .empty,
         // ._presentation = WellKnownAddress.@"127.0.0.1"(),
-        // ._presentation = bun.String.fromJS2(global.commonStrings().@"127.0.0.1"()) catch unreachable,
+        // ._presentation = bun.String.fromJS(global.commonStrings().@"127.0.0.1"()) catch unreachable,
     });
     options_obj.ensureStillAlive();
 

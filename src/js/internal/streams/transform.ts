@@ -169,4 +169,4 @@ Transform.prototype._read = function () {
   }
 };
 
-export default Transform;
+export default Transform as unknown as typeof import("node:stream").Transform;

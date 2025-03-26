@@ -69,7 +69,7 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -2134,8 +2134,25 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
     NAPI_RETURN_SUCCESS(env);
 }
 
-template<typename BufferElement, WebCore::BufferEncodingType EncodeTo>
-napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, BufferElement* buf, size_t bufsize, size_t* writtenPtr)
+// must match src/bun.js/node/types.zig#Encoding, which matches WebCore::BufferEncodingType
+enum class NapiStringEncoding : uint8_t {
+    utf8 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf8),
+    utf16le = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
+    latin1 = static_cast<uint8_t>(WebCore::BufferEncodingType::latin1),
+};
+
+template<NapiStringEncoding...>
+struct BufferElement {
+    using Type = char;
+};
+
+template<>
+struct BufferElement<NapiStringEncoding::utf16le> {
+    using Type = char16_t;
+};
+
+template<NapiStringEncoding EncodeTo>
+napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, typename BufferElement<EncodeTo>::Type* buf, size_t bufsize, size_t* writtenPtr)
 {
     NAPI_CHECK_ARG(env, napiValue);
     JSValue jsValue = toJS(napiValue);
@@ -2148,10 +2165,22 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
     if (buf == nullptr) {
         // they just want to know the length
         NAPI_CHECK_ARG(env, writtenPtr);
-        if (view.is8Bit()) {
-            *writtenPtr = Bun__encoding__byteLengthLatin1(view.span8().data(), length, static_cast<uint8_t>(EncodeTo));
-        } else {
-            *writtenPtr = Bun__encoding__byteLengthUTF16(view.span16().data(), length, static_cast<uint8_t>(EncodeTo));
+        switch (EncodeTo) {
+        case NapiStringEncoding::utf8:
+            if (view.is8Bit()) {
+                *writtenPtr = Bun__encoding__byteLengthLatin1AsUTF8(view.span8().data(), length);
+            } else {
+                *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view.span16().data(), length);
+            }
+            break;
+        case NapiStringEncoding::utf16le:
+            [[fallthrough]];
+        case NapiStringEncoding::latin1:
+            // if the string's encoding is the same as the destination encoding, this is trivially correct
+            // if we are converting UTF-16 to Latin-1, then we do so by truncating each code unit, so the length is the same
+            // if we are converting Latin-1 to UTF-16, then we do so by extending each code unit, so the length is also the same
+            *writtenPtr = length;
+            break;
         }
         return napi_set_last_error(env, napi_ok);
     }
@@ -2168,10 +2197,30 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
     }
 
     size_t written;
+    std::span<unsigned char> writable_byte_slice(reinterpret_cast<unsigned char*>(buf),
+        EncodeTo == NapiStringEncoding::utf16le
+            // don't write encoded text to the last element of the destination buffer
+            // since we need to put a null terminator there
+            ? 2 * (bufsize - 1)
+            : bufsize - 1);
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(EncodeTo));
+        if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+            // pass subslice to work around Bun__encoding__writeLatin1 asserting that the output has room
+            written = Bun__encoding__writeLatin1(view.span8().data(),
+                std::min(static_cast<size_t>(view.span8().size()), bufsize),
+                writable_byte_slice.data(),
+                writable_byte_slice.size(),
+                static_cast<uint8_t>(EncodeTo));
+        } else {
+            written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+        }
     } else {
-        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(EncodeTo));
+        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+    }
+
+    // convert bytes to code units
+    if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+        written /= 2;
     }
 
     if (writtenPtr != nullptr) {
@@ -2193,7 +2242,7 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<char, WebCore::BufferEncodingType::utf8>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::utf8>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_string_latin1(napi_env env, napi_value napiValue, char* buf, size_t bufsize, size_t* writtenPtr)
@@ -2201,7 +2250,7 @@ extern "C" napi_status napi_get_value_string_latin1(napi_env env, napi_value nap
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<char, WebCore::BufferEncodingType::latin1>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::latin1>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napiValue, char16_t* buf, size_t bufsize, size_t* writtenPtr)
@@ -2209,7 +2258,7 @@ extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napi
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<char16_t, WebCore::BufferEncodingType::latin1>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::utf16le>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)

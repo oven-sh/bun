@@ -6,17 +6,17 @@ const invalids = [
   {
     code: '',
     expected: 1,
-    pattern: `Received type string \\(""\\)$`,
+    pattern: "Received type string \\(''\\)$",
   },
   {
     code: '1 one',
     expected: 1,
-    pattern: `Received type string \\("1 one"\\)$`,
+    pattern: "Received type string \\('1 one'\\)$",
   },
   {
     code: 'two',
     expected: 1,
-    pattern: `Received type string \\("two"\\)$`,
+    pattern: "Received type string \\('two'\\)$",
   },
   {
     code: {},

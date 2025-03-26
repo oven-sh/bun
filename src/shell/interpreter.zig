@@ -34,8 +34,8 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+const TaggedPointer = @import("../ptr.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
@@ -462,7 +462,7 @@ pub const RefCountedStr = struct {
 /// A) or B) won't even mutate the environment anyway.
 ///
 /// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
-pub const CowEnvMap = bun.Cow(EnvMap, struct {
+pub const CowEnvMap = bun.ptr.Cow(EnvMap, struct {
     pub fn copy(val: *const EnvMap) EnvMap {
         return val.clone();
     }
@@ -654,7 +654,7 @@ pub const ParsedShellScript = struct {
         const str_js = arguments.nextEat() orelse {
             return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
-        const str = bun.String.fromJS(str_js, globalThis);
+        const str = try bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }
@@ -666,10 +666,9 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const value1 = callframe.argument(0);
-        if (!value1.isObject()) {
+        const value1 = callframe.argument(0).getObject() orelse {
             return globalThis.throwInvalidArguments("env must be an object", .{});
-        }
+        };
 
         var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
@@ -1699,7 +1698,7 @@ pub const Interpreter = struct {
 
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value = callframe.argument(0);
-        const str = bun.String.fromJS(value, globalThis);
+        const str = try bun.String.fromJS(value, globalThis);
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();
@@ -3671,8 +3670,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_redirect.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_redirect.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 this.next();
@@ -4089,8 +4087,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_args.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_args.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 child.deinit();
@@ -4691,8 +4688,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_assigns.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_assigns.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
 
@@ -4715,8 +4711,7 @@ pub const Interpreter = struct {
                         else => @panic("Invalid state"),
                     };
                     defer err.deinit(bun.default_allocator);
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 // Handling this case from the shell spec:
@@ -4935,19 +4930,29 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
+            var did_exit_immediately = false;
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child, &did_exit_immediately)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.exec = .none;
-                    const msg = e.fmt();
-                    defer bun.default_allocator.free(msg);
-                    this.writeFailingError("{s}", .{msg});
+                    this.writeFailingError("{}\n", .{e});
                     return;
                 },
             };
             subproc.ref();
             this.spawn_arena_freed = true;
             arena.deinit();
+
+            if (did_exit_immediately) {
+                if (subproc.process.hasExited()) {
+                    // process has already exited, we called wait4(), but we did not call onProcessExit()
+                    subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage));
+                } else {
+                    // process has already exited, but we haven't called wait4() yet
+                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                    subproc.process.wait(false);
+                }
+            }
         }
 
         fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {
@@ -10596,9 +10601,9 @@ pub const Interpreter = struct {
                         if (err == .sys and
                             err.sys.getErrno() == .BUSY and
                             (task.tgt_absolute != null and
-                            err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
+                                err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
                             (task.src_absolute != null and
-                            err.sys.path.eqlUTF8(task.src_absolute.?)))
+                                err.sys.path.eqlUTF8(task.src_absolute.?)))
                         {
                             log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                             this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { render } from "svelte/server";
 import { SveltePlugin } from "../src";
+import type { BuildOutput } from "bun";
 
 const fixturePath = (...segs: string[]) => path.join(import.meta.dirname, "fixtures", ...segs);
 
@@ -23,13 +24,81 @@ afterAll(() => {
   }
 });
 
-it("hello world component", async () => {
-  const res = await Bun.build({
-    entrypoints: [fixturePath("foo.svelte")],
-    outdir,
-    plugins: [SveltePlugin()],
+describe("given a hello world component", () => {
+  const entrypoints = [fixturePath("foo.svelte")];
+  it("when no options are provided, builds successfully", async () => {
+    const res = await Bun.build({
+      entrypoints,
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+    expect(res.success).toBeTrue();
   });
-  expect(res.success).toBeTrue();
+
+  describe("when a custom element is provided", () => {
+    let res: BuildOutput;
+
+    beforeAll(async () => {
+      res = await Bun.build({
+        entrypoints,
+        outdir,
+        plugins: [SveltePlugin({ compilerOptions: { customElement: true } })],
+      });
+    });
+
+    it("builds successfully", () => {
+      expect(res.success).toBeTrue();
+    });
+  });
+});
+
+describe("when importing `.svelte.ts` files with ESM", () => {
+  let res: BuildOutput;
+
+  beforeAll(async () => {
+    res = await Bun.build({
+      entrypoints: [fixturePath("with-modules.svelte")],
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+  });
+
+  it("builds successfully", () => {
+    expect(res.success).toBeTrue();
+  });
+
+  it(`handles "svelte" export condition`, async () => {
+    const res = await Bun.build({
+      entrypoints: [fixturePath("svelte-export-condition.svelte")],
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+    expect(res.success).toBeTrue();
+  });
+});
+
+describe("when importing `.svelte.ts` files with CJS", () => {
+  let res: BuildOutput;
+
+  beforeAll(async () => {
+    res = await Bun.build({
+      entrypoints: [fixturePath("with-cjs.svelte")],
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+  });
+
+  it("builds successfully", () => {
+    expect(res.success).toBeTrue();
+  });
+
+  it("does not double-wrap the module with function(module, exports, __filename, __dirname)", async () => {
+    const ts = res.outputs.find(output => output.loader === "ts");
+    expect(ts).toBeDefined();
+    const code = await ts!.text();
+    expect(code).toContain("require_todo_cjs_svelte");
+    expect(code).toContain("var require_todo_cjs_svelte = __commonJS((exports, module) => {\n");
+  });
 });
 
 describe("Bun.build", () => {

@@ -543,14 +543,6 @@ declare module "bun:ffi" {
 
   type Symbols = Readonly<Record<string, FFIFunction>>;
 
-  // /**
-  //  * Compile a callback function
-  //  *
-  //  * Returns a function pointer
-  //  *
-  //  */
-  // export function callback(ffi: FFIFunction, cb: Function): number;
-
   interface Library<Fns extends Symbols> {
     symbols: ConvertFns<Fns>;
 
@@ -626,9 +618,9 @@ declare module "bun:ffi" {
    * JavaScript:
    * ```js
    * import { cc } from "bun:ffi";
-   * import hello from "./hello.c" with {type: "file"};
+   * import source from "./hello.c" with {type: "file"};
    * const {symbols: {hello}} = cc({
-   *   source: hello,
+   *   source,
    *   symbols: {
    *     hello: {
    *       returns: "cstring",
@@ -681,8 +673,9 @@ declare module "bun:ffi" {
      * @example
      * ```js
      * import { cc } from "bun:ffi";
+     * import source from "./hello.c" with {type: "file"};
      * const {symbols: {hello}} = cc({
-     *   source: hello,
+     *   source,
      *   define: {
      *     "NDEBUG": "1",
      *   },
@@ -707,8 +700,9 @@ declare module "bun:ffi" {
      * @example
      * ```js
      * import { cc } from "bun:ffi";
+     * import source from "./hello.c" with {type: "file"};
      * const {symbols: {hello}} = cc({
-     *   source: hello,
+     *   source,
      *   flags: ["-framework CoreFoundation", "-framework Security"],
      *   symbols: {
      *     hello: {

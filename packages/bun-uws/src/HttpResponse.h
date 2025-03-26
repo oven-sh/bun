@@ -81,8 +81,12 @@ public:
 
     /* Called only once per request */
     void writeMark() {
+        if (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER) {
+            return;
+        }
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
@@ -113,7 +117,8 @@ public:
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
 
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) {
+        /* if write was called and there was previously no Content-Length header set */
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -145,6 +150,8 @@ public:
                         }
                     }
                 }
+            } else {
+                this->uncork();
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -152,7 +159,7 @@ public:
             return true;
         } else {
             /* Write content-length on first call */
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
                 /* Write mark, this propagates to WebSockets too */
                 writeMark();
 
@@ -162,7 +169,8 @@ public:
                     Super::write("Content-Length: ", 16);
                     writeUnsigned64(totalSize);
                     Super::write("\r\n\r\n", 4);
-                } else {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     Super::write("\r\n", 2);
                 }
 
@@ -207,6 +215,8 @@ public:
                             }
                         }
                     }
+                }  else {
+                    this->uncork();
                 }
             }
 
@@ -231,7 +241,7 @@ public:
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
     template <typename UserData>
-    void upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
+    us_socket_t *upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             struct us_socket_context_t *webSocketContext) {
 
@@ -313,8 +323,8 @@ public:
         bool wasCorked = Super::isCorked();
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) us_socket_context_adopt_socket(SSL,
-                    (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
+        us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
+        WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
         /* For whatever reason we were corked, update cork to the new socket */
         if (wasCorked) {
@@ -344,6 +354,8 @@ public:
         if (webSocketContextData->openHandler) {
             webSocketContextData->openHandler(webSocket);
         }
+
+        return usSocket;
     }
 
     /* Immediately terminate this Http response */
@@ -427,7 +439,7 @@ public:
 
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
-        internalEnd(data, data.length(), false, true, closeConnection);
+        internalEnd(data, data.length(), false, !(this->getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER), closeConnection);
     }
 
     /* Try and end the response. Returns [true, true] on success.
@@ -441,12 +453,12 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
             /* Write mark on first call to write */
             writeMark();
 
             writeHeader("Transfer-Encoding", "chunked");
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
         /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
@@ -456,32 +468,45 @@ public:
     }
 
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
-    bool write(std::string_view data) {
+    bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
         if (data.empty()) {
+            if (writtenPtr) {
+                *writtenPtr = 0;
+            }
             /* If you called us, then according to you it was fine to call us so it's fine to still call us */
             return true;
         }
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-            /* Write mark on first call to write */
-            writeMark();
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                /* Write mark on first call to write */
+                writeMark();
 
-            writeHeader("Transfer-Encoding", "chunked");
+                writeHeader("Transfer-Encoding", "chunked");
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            }
+
+            Super::write("\r\n", 2);
+            writeUnsignedHex((unsigned int) data.length());
+            Super::write("\r\n", 2);
+        } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            writeMark();
+            Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
-
-        Super::write("\r\n", 2);
-        writeUnsignedHex((unsigned int) data.length());
-        Super::write("\r\n", 2);
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
+
+        if (writtenPtr) {
+            *writtenPtr = written;
+        }
 
         /* If we did not fail the write, accept more */
         return !failed;
@@ -515,7 +540,7 @@ public:
             Super::cork();
             handler();
 
-            /* The only way we could possibly have changed the corked socket during handler call, would be if 
+            /* The only way we could possibly have changed the corked socket during handler call, would be if
              * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
              * from here downwards. The corking is done with corkUnchecked() in upgrade. It steals cork. */
             auto *newCorkedSocket = loopData->getCorkedSocket();
@@ -582,7 +607,7 @@ public:
     /* Attach handler for aborted HTTP request */
     HttpResponse *onAborted(void* userData,  HttpResponseData<SSL>::OnAbortedCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        
+
         httpResponseData->userData = userData;
         httpResponseData->onAborted = handler;
         return this;
@@ -590,7 +615,7 @@ public:
 
     HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL>::OnTimeoutCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        
+
         httpResponseData->userData = userData;
         httpResponseData->onTimeout = handler;
         return this;
@@ -620,7 +645,7 @@ public:
         return this;
     }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
-    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) { 
+    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) {
         HttpResponseData<SSL> *data = getHttpResponseData();
         data->userData = userData;
         data->inStream = handler;
@@ -629,6 +654,11 @@ public:
         data->received_bytes_per_timeout = 0;
     }
 
+    void* getSocketData() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        return httpResponseData->socketData;
+    }
 
     void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

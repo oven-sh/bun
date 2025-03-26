@@ -8,7 +8,6 @@ pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
-pub const Shimmer = @import("./bun.js/bindings/shimmer.zig").Shimmer;
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
@@ -28,6 +27,7 @@ pub const Jest = @import("./bun.js/test/jest.zig");
 pub const Expect = @import("./bun.js/test/expect.zig");
 pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
+    pub const NodeHTTPResponse = @import("./bun.js/api/server.zig").NodeHTTPResponse;
     pub const Glob = @import("./bun.js/api/glob.zig");
     pub const Shell = @import("./shell/shell.zig");
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
@@ -86,6 +86,7 @@ pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub inline fn markMemberBinding(comptime class: anytype, src: std.builtin.SourceLocation) void {
+    if (!bun.Environment.enable_logs) return;
     const classname = switch (@typeInfo(@TypeOf(class))) {
         .pointer => class, // assumed to be a static string
         else => @typeName(class),

@@ -383,7 +383,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
                 break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(ptr)), 0);
-            } else if (length > std.math.maxInt(u32)) {
+            } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
                 break :brk ptr[0..length];
@@ -424,7 +424,7 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
                 break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
-            } else if (length > std.math.maxInt(u32)) {
+            } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
                 break :brk ptr[0..length];
@@ -460,7 +460,7 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
                 break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
-            } else if (length > std.math.maxInt(u32)) {
+            } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
                 break :brk ptr[0..length];
@@ -670,7 +670,7 @@ pub export fn napi_make_callback(env_: napi_env, _: *anyopaque, recv_: napi_valu
         return envIsNull();
     };
     const recv, const func = .{ recv_.get(), func_.get() };
-    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.toJS().vm())) {
+    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable()) {
         return env.setLastError(.function_expected);
     }
 
@@ -1749,7 +1749,7 @@ pub export fn napi_create_threadsafe_function(
     };
     const func = func_.get();
 
-    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.toJS().vm()))) {
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable())) {
         return env.setLastError(.function_expected);
     }
 
@@ -2137,12 +2137,21 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn schedule(this: *NapiFinalizerTask) void {
-        const vm = this.finalizer.env.?.toJS().bunVM();
+        const globalThis = this.finalizer.env.?.toJS();
+
+        const vm, const thread_kind = globalThis.tryBunVM();
+
+        if (thread_kind != .main) {
+            // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
+            vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+            return;
+        }
+
         if (vm.isShuttingDown()) {
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             vm.rareData().pushCleanupHook(vm.global, this, runAsCleanupHook);
         } else {
-            this.finalizer.env.?.toJS().bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
+            globalThis.bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
         }
     }
 

@@ -130,6 +130,7 @@
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
+#include "wtf-bindings.h"
 
 #if OS(DARWIN)
 #if BUN_DEBUG
@@ -143,65 +144,6 @@
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
     return sv.substring(start, end - start);
-}
-
-template<typename UWSResponse>
-static void writeResponseHeader(UWSResponse* res, const WTF::StringView& name, const WTF::StringView& value)
-{
-    WTF::CString nameStr;
-    WTF::CString valueStr;
-
-    std::string_view nameView;
-    std::string_view valueView;
-
-    if (name.is8Bit()) {
-        const auto nameSpan = name.span8();
-        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
-    } else {
-        nameStr = name.utf8();
-        nameView = std::string_view(nameStr.data(), nameStr.length());
-    }
-
-    if (value.is8Bit()) {
-        const auto valueSpan = value.span8();
-        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
-    } else {
-        valueStr = value.utf8();
-        valueView = std::string_view(valueStr.data(), valueStr.length());
-    }
-
-    res->writeHeader(nameView, valueView);
-}
-
-template<typename UWSResponse>
-static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
-{
-    auto& internalHeaders = headers->internalHeaders();
-
-    for (auto& value : internalHeaders.getSetCookieHeaders()) {
-
-        if (value.is8Bit()) {
-            const auto valueSpan = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
-        } else {
-            WTF::CString valueStr = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
-        }
-    }
-
-    for (const auto& header : internalHeaders.commonHeaders()) {
-        const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
-
-        writeResponseHeader<UWSResponse>(res, name, value);
-    }
-
-    for (auto& header : internalHeaders.uncommonHeaders()) {
-        const auto& name = header.key;
-        const auto& value = header.value;
-
-        writeResponseHeader<UWSResponse>(res, name, value);
-    }
 }
 
 using namespace JSC;
@@ -331,7 +273,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
-    if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
+    if (jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -383,7 +325,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             }
 
-            if (auto* booleanObject = jsDynamicCast<BooleanObject*>(otherProp)) {
+            if (jsDynamicCast<BooleanObject*>(otherProp)) {
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -395,7 +337,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             }
 
-            if (auto* numberObject = jsDynamicCast<NumberObject*>(otherProp)) {
+            if (jsDynamicCast<NumberObject*>(otherProp)) {
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -1673,15 +1615,6 @@ bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
     return arg0->size() == 0;
 }
 
-void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2)
-{
-    if (is_ssl) {
-        copyToUWS<uWS::HttpResponse<true>>(arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
-    } else {
-        copyToUWS<uWS::HttpResponse<false>>(arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
-    }
-}
-
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
@@ -1828,7 +1761,8 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
                 *values = { i, value.length() };
                 i += value.length();
             } else {
-                ASSERT_WITH_MESSAGE(value.containsOnlyASCII(), "Header value must be ASCII. This should already be validated before calling this function.");
+                // HTTP headers can contain non-ASCII characters according to RFC 7230
+                // Non-ASCII content should be properly encoded
                 WTF::CString valueCString = value.utf8();
                 memcpy(&buf[i], valueCString.data(), valueCString.length());
                 *values = { i, static_cast<uint32_t>(valueCString.length()) };
@@ -2100,6 +2034,12 @@ void JSGlobalObject__throwOutOfMemoryError(JSC::JSGlobalObject* globalObject)
     throwOutOfMemoryError(globalObject, scope);
 }
 
+JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* globalObject)
+{
+    JSObject* exception = createOutOfMemoryError(globalObject);
+    return JSValue::encode(exception);
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {
@@ -2304,7 +2244,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     }
 
     case WebCore::JSDOMWrapperType: {
-        if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
+        if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
         if (auto* blob = jsDynamicCast<WebCore::JSBlob*>(cell)) {
@@ -2504,7 +2444,7 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
         handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
-    } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
+    } else if (JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
         RELEASE_ASSERT(false);
     }
 }
@@ -2749,6 +2689,11 @@ JSC__JSObject* JSC__JSCell__getObject(JSC__JSCell* arg0)
 }
 unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
+JSC__JSObject* JSC__JSCell__toObject(JSC__JSCell* cell, JSC__JSGlobalObject* globalObject)
+{
+    return cell->toObject(globalObject);
+}
+
 #pragma mark - JSC::JSString
 
 void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
@@ -2855,7 +2800,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        JSC::JSValue codeValue = Zig::toJSString(code, globalObject);
         rangeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue,
             JSC::PropertyAttribute::ReadOnly | 0);
     }
@@ -2872,7 +2817,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        JSC::JSValue codeValue = Zig::toJSString(code, globalObject);
         typeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
     }
 
@@ -2897,12 +2842,12 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
             for (size_t i = 0; i < initialCapacity; ++i) {
                 object->putDirect(
                     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                    Zig::toJSStringValueGC(values[i], globalObject), 0);
+                    Zig::toJSStringGC(values[i], globalObject), 0);
             }
         } else {
             for (size_t i = 0; i < initialCapacity; ++i) {
                 object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                    Zig::toJSStringValueGC(values[i], globalObject), 0);
+                    Zig::toJSStringGC(values[i], globalObject), 0);
             }
         }
     }
@@ -3240,19 +3185,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, nullptr);
-
-    // if (promise->status(globalObject->vm()) ==
-    // JSC::JSPromise::Status::Fulfilled) {
-    //     return reinterpret_cast<JSC::JSInternalPromise*>(
-    //         JSC::JSInternalPromise::resolvedPromise(
-    //             globalObject,
-    //             doLink(globalObject, promise->result(globalObject->vm()))
-    //         )
-    //     );
-    // }
-
-    return result;
+    return promise->then(globalObject, resolverFunction, nullptr);
 }
 #pragma mark - JSC::JSPromise
 
@@ -3723,7 +3656,7 @@ void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, voi
         });
 }
 
-bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1)
+bool JSC__JSValue__isCallable(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isCallable();
 }
@@ -4528,7 +4461,7 @@ public:
                 // /path/to/file.js:
                 // /path/to/file.js:1
                 // node:child_process
-                // C:\Users\dave\bun\file.js
+                // C:\Users\chloe\bun\file.js
 
                 marker3 = lineInner.length();
 
@@ -4547,9 +4480,9 @@ public:
             // /path/to/file.js:1:
             // /path/to/file.js:1:2
             // node:child_process:1:2
-            // C:\Users\dave\bun\file.js:
-            // C:\Users\dave\bun\file.js:1
-            // C:\Users\dave\bun\file.js:1:2
+            // C:\Users\chloe\bun\file.js:
+            // C:\Users\chloe\bun\file.js:1
+            // C:\Users\chloe\bun\file.js:1:2
 
             while (true) {
                 auto newcolon = lineInner.find(':', marker3 + 1);
@@ -6126,7 +6059,7 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC
 // this is largely copied from dateProtoFuncToISOString
 extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
 {
-    char buffer[29];
+    char buffer[64];
     JSC::DateInstance* thisDateObj = JSC::jsDynamicCast<JSC::DateInstance*>(JSC::JSValue::decode(dateValue));
     if (!thisDateObj)
         return -1;
@@ -6136,28 +6069,7 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
 
     auto& vm = JSC::getVM(globalObject);
 
-    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
-    if (!gregorianDateTime)
-        return -1;
-
-    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
-    if (ms < 0)
-        ms += msPerSecond;
-
-    int charactersWritten;
-    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
-    else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
-
-    memcpy(buf, buffer, charactersWritten);
-
-    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
-    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
-        return -1;
-
-    return charactersWritten;
+    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buffer));
 }
 
 extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
@@ -6486,28 +6398,9 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
-using StackCodeType = JSC::StackVisitor::Frame::CodeType;
-CPP_DECL bool Bun__util__isInsideNodeModules(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+#if BUN_DEBUG
+CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {
-    auto& vm = JSC::getVM(globalObject);
-    bool inNodeModules = false;
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor) || visitor->isNativeCalleeFrame()) {
-            return WTF::IterationStatus::Continue;
-        }
-
-        if (visitor->hasLineAndColumnInfo()) {
-            String sourceURL = Zig::sourceURL(visitor);
-            if (sourceURL.startsWith("node:"_s) || sourceURL.startsWith("bun:"_s))
-                return WTF::IterationStatus::Continue;
-            if (sourceURL.contains("node_modules"_s))
-                inNodeModules = true;
-
-            return WTF::IterationStatus::Done;
-        }
-
-        return WTF::IterationStatus::Continue;
-    });
-
-    return inNodeModules;
+    return callFrame->describeFrame();
 }
+#endif

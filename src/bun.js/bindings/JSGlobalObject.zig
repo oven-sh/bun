@@ -12,6 +12,11 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
+    extern fn JSGlobalObject__createOutOfMemoryError(this: *JSGlobalObject) JSValue;
+    pub fn createOutOfMemoryError(this: *JSGlobalObject) JSValue {
+        return JSGlobalObject__createOutOfMemoryError(this);
+    }
+
     pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
         JSGlobalObject__throwOutOfMemoryError(this);
         return .zero;
@@ -114,6 +119,27 @@ pub const JSGlobalObject = opaque {
         return str;
     }
 
+    pub fn throwIncompatibleOptionPair(
+        this: *JSGlobalObject,
+        opt1: []const u8,
+        opt2: []const u8,
+    ) JSError {
+        return this.ERR_INCOMPATIBLE_OPTION_PAIR("Option \"{s}\" cannot be used in combination with option \"{s}\"", .{ opt1, opt2 }).throw();
+    }
+
+    pub fn throwInvalidScryptParams(
+        this: *JSGlobalObject,
+    ) JSError {
+        const err = bun.BoringSSL.c.ERR_peek_last_error();
+        if (err != 0) {
+            var buf: [256]u8 = undefined;
+            const msg = bun.BoringSSL.c.ERR_error_string_n(err, &buf, buf.len);
+            return this.ERR_CRYPTO_INVALID_SCRYPT_PARAMS("Invalid scrypt params: {s}", .{msg}).throw();
+        }
+
+        return this.ERR_CRYPTO_INVALID_SCRYPT_PARAMS("Invalid scrypt params", .{}).throw();
+    }
+
     /// "The {argname} argument must be of type {typename}. Received {value}"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
@@ -124,6 +150,29 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+    }
+
+    pub fn throwInvalidArgumentTypeValue2(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+    }
+
+    /// "The <argname> argument must be one of type <typename>. Received <value>"
+    pub fn throwInvalidArgumentTypeValueOneOf(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -209,7 +258,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
 
             // Ensure we clone it.
@@ -351,6 +400,11 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
+    pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = this.createTypeErrorInstance(fmt, args);
+        return this.throwValue(instance);
+    }
+
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
         if (err == error.OutOfMemory) {
             return this.throwOutOfMemory();
@@ -468,10 +522,32 @@ pub const JSGlobalObject = opaque {
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
-            bun.assert(assertion);
+            if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            } else {
+                @panic("This thread lacks a Bun VM");
+            }
         }
         return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+    }
+
+    pub const ThreadKind = enum {
+        main,
+        other,
+    };
+
+    pub fn tryBunVM(this: *JSGlobalObject) struct { *JSC.VirtualMachine, ThreadKind } {
+        const vmPtr = @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
+
+        if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+            if (comptime bun.Environment.allow_assert) {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            }
+        } else {
+            return .{ vmPtr, .other };
+        }
+
+        return .{ vmPtr, .main };
     }
 
     /// We can't do the threadlocal check when queued from another thread
@@ -640,6 +716,10 @@ pub const JSGlobalObject = opaque {
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 
+    pub fn ERR(global: *JSGlobalObject, comptime code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) @import("ErrorCode").ErrorBuilder(code, fmt, @TypeOf(args)) {
+        return .{ .global = global, .args = args };
+    }
+
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
@@ -649,6 +729,60 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+
+    extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
+    pub fn create(
+        v: *JSC.VirtualMachine,
+        console: *anyopaque,
+        context_id: i32,
+        mini_mode: bool,
+        eval_mode: bool,
+        worker_ptr: ?*anyopaque,
+    ) *JSGlobalObject {
+        v.eventLoop().ensureWaker();
+        const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
+
+        // JSC might mess with the stack size.
+        bun.StackCheck.configureThread();
+
+        return global;
+    }
+
+    extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
+    pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
+        return Zig__GlobalObject__getModuleRegistryMap(global);
+    }
+
+    extern fn Zig__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
+    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
+        return Zig__GlobalObject__resetModuleRegistryMap(global, map);
+    }
+
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
+        JSC.markBinding(@src());
+        return JSC.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
+            bun.debugAssert(res.success == false);
+        };
+    }
+
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *JSC.Exception) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        return JSC.VirtualMachine.reportUncaughtException(global, exception);
+    }
+
+    pub fn onCrash() callconv(.C) void {
+        JSC.markBinding(@src());
+        bun.Output.flush();
+        @panic("A C++ exception occurred");
+    }
+
+    pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
+
+    comptime {
+        @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
+        @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
+        @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
+    }
 };
 
 const CommonStrings = JSC.CommonStrings;

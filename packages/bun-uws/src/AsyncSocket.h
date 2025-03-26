@@ -30,6 +30,9 @@
 #include <iostream>
 
 #include "libusockets.h"
+#include "bun-usockets/src/internal/internal.h"
+
+
 
 #include "LoopData.h"
 #include "AsyncSocketData.h"
@@ -54,28 +57,6 @@ struct AsyncSocket {
     template <typename, typename> friend struct TopicTree;
     template <bool> friend struct HttpResponse;
 
-private:
-    /* Helper, do not use directly (todo: move to uSockets or de-crazify) */
-    void throttle_helper(int toggle) {
-        /* These should be exposed by uSockets */
-        static thread_local int us_events[2] = {0, 0};
-
-        struct us_poll_t *p = (struct us_poll_t *) this;
-        struct us_loop_t *loop = us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) this));
-
-        if (toggle) {
-            /* Pause */
-            int events = us_poll_events(p);
-            if (events) {
-                us_events[getBufferedAmount() ? 1 : 0] = events;
-            }
-            us_poll_change(p, loop, 0);
-        } else {
-            /* Resume */
-            int events = us_events[getBufferedAmount() ? 1 : 0];
-            us_poll_change(p, loop, events);
-        }
-    }
 
 public:
     /* Returns SSL pointer or FD as pointer */
@@ -105,13 +86,13 @@ public:
 
     /* Experimental pause */
     us_socket_t *pause() {
-        throttle_helper(1);
+        us_socket_pause(SSL, (us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
     /* Experimental resume */
     us_socket_t *resume() {
-        throttle_helper(0);
+        us_socket_resume(SSL, (us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
@@ -150,7 +131,7 @@ public:
         getLoopData()->setCorkedSocket(this, SSL);
     }
 
-    /* Returns wheter we are corked or not */
+    /* Returns whether we are corked */
     bool isCorked() {
         return getLoopData()->isCorkedWith(this);
     }

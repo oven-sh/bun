@@ -109,6 +109,10 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return fmtstring.transferToJS(globalThis);
 }
 
+pub fn etimedoutErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ETIMEDOUT);
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///
@@ -132,14 +136,6 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
         else
             return JSC.JSValue.jsUndefined(),
     };
-}
-
-extern fn Bun__util__isInsideNodeModules(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bool;
-/// Walks the call stack from bottom to top, returning `true` when it finds a
-/// frame within a `node_modules` directory.
-pub fn isInsideNodeModules(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const res = Bun__util__isInsideNodeModules(globalObject, callframe);
-    return JSC.JSValue.jsBoolean(res);
 }
 
 fn split(
@@ -207,7 +203,7 @@ pub fn SplitNewlineIterator(comptime T: type) type {
 
 pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const input = callframe.argument(0);
-    const str = bun.String.fromJS(input, globalThis);
+    const str = try bun.String.fromJS(input, globalThis);
     bun.assert(str.tag != .Dead);
     defer str.deref();
     if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);

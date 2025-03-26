@@ -34,6 +34,9 @@ cluster._setupWorker = function () {
 
   cluster.worker = worker;
 
+  // make sure the process.once("disconnect") doesn't count as a ref
+  // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
+  $newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
     worker.emit("disconnect");
 
@@ -144,7 +147,7 @@ function rr(message, { indexesKey, index }, cb) {
 
   let key = message.key;
 
-  let fakeHandle: number | null = null;
+  let fakeHandle: Timer | null = null;
 
   function ref() {
     if (!fakeHandle) {

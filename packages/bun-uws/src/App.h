@@ -189,6 +189,10 @@ public:
      * This function should probably be optimized a lot in future releases,
      * it could be O(1) with a hash map of fullnames and their counts. */
     unsigned int numSubscribers(std::string_view topic) {
+        if (!topicTree) {
+            return 0;
+        }
+
         Topic *t = topicTree->lookupTopic(topic);
         if (t) {
             return (unsigned int) t->size();
@@ -408,14 +412,14 @@ public:
         webSocketContext->getExt()->messageHandler = std::move(behavior.message);
         webSocketContext->getExt()->drainHandler = std::move(behavior.drain);
         webSocketContext->getExt()->subscriptionHandler = std::move(behavior.subscription);
-        webSocketContext->getExt()->closeHandler = std::move([closeHandler = std::move(behavior.close)](WebSocket<SSL, true, UserData> *ws, int code, std::string_view message) mutable {
+        webSocketContext->getExt()->closeHandler = [closeHandler = std::move(behavior.close)](WebSocket<SSL, true, UserData> *ws, int code, std::string_view message) mutable {
             if (closeHandler) {
                 closeHandler(ws, code, message);
             }
 
             /* Destruct user data after returning from close handler */
             ((UserData *) ws->getUserData())->~UserData();
-        });
+        };
         webSocketContext->getExt()->pingHandler = std::move(behavior.ping);
         webSocketContext->getExt()->pongHandler = std::move(behavior.pong);
 
@@ -428,8 +432,8 @@ public:
         webSocketContext->getExt()->maxLifetime = behavior.maxLifetime;
         webSocketContext->getExt()->compression = behavior.compression;
 
-        /* Calculate idleTimeoutCompnents */
-        webSocketContext->getExt()->calculateIdleTimeoutCompnents(behavior.idleTimeout);
+        /* Calculate idleTimeoutComponents */
+        webSocketContext->getExt()->calculateIdleTimeoutComponents(behavior.idleTimeout);
 
         httpContext->onHttp("GET", pattern, [webSocketContext, behavior = std::move(behavior)](auto *res, auto *req) mutable {
 
@@ -606,8 +610,17 @@ public:
         return std::move(*this);
     }
 
+    void setOnClose(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+        httpContext->getSocketContextData()->onSocketClosed = onClose;
+    }
+
     TemplatedApp &&run() {
         uWS::run();
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setUsingCustomExpectHandler(bool value) {
+        httpContext->getSocketContextData()->usingCustomExpectHandler = value;
         return std::move(*this);
     }
 

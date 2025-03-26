@@ -93,6 +93,100 @@ export default [
   generate(`DebugHTTPSServer`),
 
   define({
+    name: "NodeHTTPResponse",
+    JSType: "0b11101110",
+    proto: {
+      writeHead: {
+        fn: "writeHead",
+        length: 3,
+      },
+      writeContinue: {
+        fn: "writeContinue",
+      },
+      write: {
+        fn: "write",
+        length: 3,
+      },
+      end: {
+        fn: "end",
+        length: 2,
+      },
+      cork: {
+        fn: "cork",
+        length: 1,
+      },
+      ref: {
+        fn: "jsRef",
+      },
+      unref: {
+        fn: "jsUnref",
+      },
+      abort: {
+        fn: "abort",
+        length: 0,
+      },
+      pause: {
+        fn: "doPause",
+        length: 0,
+      },
+      drainRequestBody: {
+        fn: "drainRequestBody",
+        length: 0,
+      },
+      dumpRequestBody: {
+        fn: "dumpRequestBody",
+        length: 0,
+      },
+      resume: {
+        fn: "doResume",
+        length: 0,
+      },
+      bufferedAmount: {
+        getter: "getBufferedAmount",
+      },
+      aborted: {
+        getter: "getAborted",
+      },
+      finished: {
+        getter: "getFinished",
+      },
+      hasBody: {
+        getter: "getHasBody",
+      },
+      ended: {
+        getter: "getEnded",
+      },
+      ondata: {
+        getter: "getOnData",
+        setter: "setOnData",
+      },
+      onabort: {
+        getter: "getOnAbort",
+        setter: "setOnAbort",
+      },
+      hasCustomOnData: {
+        getter: "getHasCustomOnData",
+        setter: "setHasCustomOnData",
+      },
+      upgraded: {
+        getter: "getUpgraded",
+      },
+      // ontimeout: {
+      //   getter: "getOnTimeout",
+      //   setter: "setOnTimeout",
+      // },
+      onwritable: {
+        getter: "getOnWritable",
+        setter: "setOnWritable",
+      },
+    },
+    klass: {},
+    finalize: true,
+    noConstructor: true,
+    values: ["onAborted", "onWritable", "onData"],
+  }),
+
+  define({
     name: "ServerWebSocket",
     JSType: "0b11101110",
     memoryCost: true,
@@ -206,6 +300,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
+    values: ["socket"],
   }),
 
   define({

@@ -2027,6 +2027,28 @@ pub const AnyRequestContext = struct {
         return false;
     }
 
+    pub fn setCookies(self: AnyRequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setCookies(cookie_map);
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
     pub fn enableTimeoutEvents(self: AnyRequestContext) void {
         if (self.tagged_pointer.isNull()) {
             return;
@@ -2182,6 +2204,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         request_weakref: Request.WeakRef = .{},
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
+        cookies: ?*JSC.WebCore.CookieMap = null,
 
         flags: NewFlags(debug_mode) = .{},
 
@@ -2240,6 +2263,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.has_abort_handler = true;
                 resp.onAborted(*RequestContext, RequestContext.onAbort, this);
             }
+        }
+
+        pub fn setCookies(this: *RequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+            if (this.cookies) |cookies| cookies.deref();
+            this.cookies = cookie_map;
+            if (this.cookies) |cookies| cookies.ref();
         }
 
         pub fn setTimeoutHandler(this: *RequestContext) void {
@@ -2795,6 +2824,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.request_body_readable_stream_ref.deinit();
+
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                cookies.deref();
+            }
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
@@ -4313,6 +4347,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn doWriteHeaders(this: *RequestContext, headers: *JSC.FetchHeaders) void {
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                defer cookies.deref();
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+            }
+
             writeHeaders(headers, ssl_enabled, this.resp);
         }
 
@@ -5238,9 +5278,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (arguments[0].as(Request)) |request| {
                 _ = request.request_context.setTimeout(value);
             } else if (arguments[0].as(NodeHTTPResponse)) |response| {
-                if (!response.finished) {
-                    _ = response.response.timeout(@intCast(@min(value, 255)));
-                }
+                response.setTimeout(@truncate(value % 255));
             } else {
                 return this.globalThis.throwInvalidArguments("timeout() requires a Request object", .{});
             }
@@ -5318,7 +5356,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
-                if (nodeHttpResponse.aborted or nodeHttpResponse.ended) {
+                if (nodeHttpResponse.ended or nodeHttpResponse.socket_closed) {
                     return JSC.jsBoolean(false);
                 }
 
@@ -5387,8 +5425,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
 
                             // we must write the status first so that 200 OK isn't written
-                            nodeHttpResponse.response.writeStatus("101 Switching Protocols");
-                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.response.socket());
+                            nodeHttpResponse.raw_response.writeStatus("101 Switching Protocols");
+                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.raw_response.socket());
                         }
 
                         if (globalThis.hasException()) {
@@ -6446,7 +6484,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .pending => {
                             globalThis.handleRejectedPromises();
                             if (node_http_response) |node_response| {
-                                if (node_response.finished or node_response.aborted or node_response.upgraded) {
+                                if (node_response.request_has_completed or node_response.socket_closed or node_response.upgraded) {
                                     strong_promise.deinit();
                                     break :brk .{ .success = {} };
                                 }
@@ -6477,12 +6515,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
 
                     if (node_http_response) |node_response| {
-                        if (!node_response.finished and node_response.response.state().isResponsePending()) {
-                            if (node_response.response.state().isHttpStatusCalled()) {
-                                node_response.response.writeStatus("500 Internal Server Error");
-                                node_response.response.endWithoutBody(true);
+                        if (!node_response.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                            if (node_response.raw_response.state().isHttpStatusCalled()) {
+                                node_response.raw_response.writeStatus("500 Internal Server Error");
+                                node_response.raw_response.endWithoutBody(true);
                             } else {
-                                node_response.response.endStream(true);
+                                node_response.raw_response.endStream(true);
                             }
                         }
                         node_response.onRequestComplete();
@@ -6493,7 +6531,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.finished and node_response.response.state().isResponsePending()) {
+                if (!node_response.request_has_completed and node_response.raw_response.state().isResponsePending()) {
                     node_response.setOnAbortedHandler();
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream

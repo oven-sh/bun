@@ -132,7 +132,7 @@ public:
         getLoopData()->setCorkedSocket(this, SSL);
     }
 
-    /* Returns wheter we are corked or not */
+    /* Returns whether we are corked */
     bool isCorked() {
         return getLoopData()->isCorkedWith(this);
     }

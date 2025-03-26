@@ -1,5 +1,5 @@
 import { fileURLToPath, $ as Shell } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +67,13 @@ beforeEach(async () => {
     cd ${FIXTURE_DIR}
     cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
     sed -i 's/"skipLibCheck": true/"skipLibCheck": false/' tsconfig.json
+    sed -i 's/"noPropertyAccessFromIndexSignature": false/"noPropertyAccessFromIndexSignature": false,\n    "exactOptionalPropertyTypes": true/' tsconfig.json
+  `;
+});
+
+afterEach(async () => {
+  await $`
+    cd ${FIXTURE_DIR}
     cat tsconfig.json
   `;
 });
@@ -104,7 +111,7 @@ describe("@types/bun integration test", () => {
     const importantLines = [
       `error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.`,
       "error TS2769: No overload matches this call.",
-      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
+      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error",
       `Type '"direct"' is not assignable to type '"bytes"'`,
       "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",

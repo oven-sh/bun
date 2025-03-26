@@ -209,9 +209,9 @@ String Cookie::toString(JSC::VM& vm) const
 void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
 {
     // Name=Value is the basic format
-    builder.append(WTF::encodeWithURLEscapeSequences(m_name));
+    builder.append(m_name);
     builder.append('=');
-    builder.append(WTF::encodeWithURLEscapeSequences(m_value));
+    builder.append(WTF::percentEncodeFragmentDirectiveSpecialCharacters(m_value));
 
     // Add domain if present
     if (!m_domain.isEmpty()) {

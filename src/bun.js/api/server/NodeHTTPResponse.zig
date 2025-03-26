@@ -600,6 +600,10 @@ pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject,
     this.maybeStopReadingBody(globalObject.bunVM());
 
     if (!this.request_has_completed and !this.socket_closed) {
+        const this_value = this.getThisValue();
+        if (this_value != .zero) {
+            NodeHTTPResponse.onAbortedSetCached(this_value, globalObject, .zero);
+        }
         this.clearJSValues();
         this.raw_response.clearOnData();
         this.raw_response.clearOnWritable();
@@ -623,7 +627,10 @@ pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *JSC.JSGlobalObject, 
     defer this.deref();
 
     if (!this.request_has_completed and !this.socket_closed) {
-        this.clearJSValues();
+        const this_value = this.getThisValue();
+        if (this_value != .zero) {
+            NodeHTTPResponse.onAbortedSetCached(this_value, globalObject, .zero);
+        }
         this.raw_response.clearOnData();
         this.raw_response.clearOnWritable();
         this.raw_response.clearTimeout();
@@ -758,6 +765,7 @@ fn writeOrEnd(
     this: *NodeHTTPResponse,
     globalObject: *JSC.JSGlobalObject,
     arguments: []const JSC.JSValue,
+    this_value: JSC.JSValue,
     comptime is_end: bool,
 ) bun.JSError!JSC.JSValue {
     if (this.isDone()) {
@@ -830,6 +838,10 @@ fn writeOrEnd(
             this.body_read_ref.unref(JSC.VirtualMachine.get());
             this.deref();
             this.body_read_state = .none;
+        }
+
+        if (this_value != .zero) {
+            NodeHTTPResponse.onAbortedSetCached(this_value, globalObject, .zero);
         }
 
         this.raw_response.clearAborted();
@@ -965,12 +977,12 @@ pub fn setOnData(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, val
 pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).slice();
 
-    return writeOrEnd(this, globalObject, arguments, false);
+    return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
 
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    return writeOrEnd(this, globalObject, arguments, true);
+    return writeOrEnd(this, globalObject, arguments, callframe.this(), true);
 }
 
 fn handleCorked(globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, result: *JSValue, is_exception: *bool) void {

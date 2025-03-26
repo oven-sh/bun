@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
+import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack, tempDirWithFiles } from "harness";
 import { join } from "path";
 import fs from "node:fs/promises";
 
@@ -292,7 +292,7 @@ describe("flags", () => {
     },
     {
       filename: "no-extension",
-      error: false
+      error: false,
     },
     {
       filename: "no-extension.tar",
@@ -300,13 +300,13 @@ describe("flags", () => {
     },
     {
       filename: "out/foo.tgz",
-      error: true
+      error: true,
     },
     {
       filename: "out/foo.tar",
       mkdir: "out",
-      error: false
-    }
+      error: false,
+    },
   ];
 
   for (const { filename, error, mkdir } of filenameTests) {
@@ -1035,13 +1035,14 @@ describe("files", () => {
         JSON.stringify({
           name: "pack-files-4",
           version: "1.2.123",
-          files: ["**/index.js"],
+          files: ["**/index.js", "!**/index.test.ts"],
         }),
       ),
       write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
       write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
       write(join(packageDir, "subdir", "anotherdir", "index.js"), "console.log('hello ./subdir/anotherdir/index.js')"),
       write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      write(join(packageDir, "index.test.ts"), "console.log('hello ./index.test.ts')"),
     ]);
 
     await pack(packageDir, bunEnv);
@@ -1051,6 +1052,30 @@ describe("files", () => {
       { "pathname": "package/index.js" },
       { "pathname": "package/subdir/anotherdir/index.js" },
       { "pathname": "package/subdir/index.js" },
+    ]);
+  });
+
+  test("excluded entries within included directories are not included", async () => {
+    const dir = tempDirWithFiles("bun-pack-files-excluded-entries", {
+      "package.json": `
+      {
+        "name": "pack-excluded-entries-from-files",
+        "version": "1.0.0",
+        "files": ["src/**", "!src/**/*.test.ts"]
+      }
+      `,
+      src: {
+        "index.ts": "console.log('hello ./src/index.js')",
+        "index.test.ts": "test('foo', () => expect(1).toBe(1))",
+      },
+    });
+
+    const { out } = await pack(dir, bunEnv);
+    expect(out).toContain("Total files: 2");
+    const tarball = readTarball(join(dir, "pack-excluded-entries-from-files-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/src/index.ts" },
     ]);
   });
 });

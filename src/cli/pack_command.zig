@@ -267,9 +267,16 @@ pub const PackCommand = struct {
     fn iterateIncludedProjectTree(
         allocator: std.mem.Allocator,
         includes: []const Pattern,
+        excludes: []const Pattern,
         root_dir: std.fs.Dir,
         log_level: LogLevel,
     ) OOM!PackQueue {
+        if (comptime Environment.isDebug) {
+            for (excludes) |exclude| {
+                bun.assertf(exclude.flags.negated, "Illegal exclusion pattern '{s}'. Exclusion patterns are always negated.", .{exclude.glob});
+            }
+        }
+
         var pack_queue = PackQueue.init(allocator, {});
 
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
@@ -303,13 +310,16 @@ pub const PackCommand = struct {
                 const entry_subpath = try entrySubpath(allocator, dir_subpath, entry_name);
 
                 var included = false;
+                var is_unconditionally_included = false;
 
                 if (dir_depth == 1) {
                     if (strings.eqlComptime(entry_name, "package.json")) continue;
                     if (strings.eqlComptime(entry_name, "node_modules")) continue;
 
-                    if (entry.kind == .file and isUnconditionallyIncludedFile(entry_name))
+                    if (entry.kind == .file and isUnconditionallyIncludedFile(entry_name)) {
                         included = true;
+                        is_unconditionally_included = true;
+                    }
                 }
 
                 if (!included) {
@@ -322,13 +332,30 @@ pub const PackCommand = struct {
                         const match_path = if (include.flags.@"leading **/") entry_name else entry_subpath;
                         switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
                             .match => included = true,
-                            .negate_no_match => included = false,
-
+                            .negate_no_match, .negate_match => unreachable,
                             else => {},
                         }
                     }
                 }
 
+                // There may be a "narrowing" exclusion that excludes a subset
+                // of files within an included directory/pattern.
+                if (included and !is_unconditionally_included and excludes.len > 0) {
+                    for (excludes) |exclude| {
+                        if (exclude.flags.dirs_only and entry.kind != .directory) continue;
+
+                        const match_path = if (exclude.flags.@"leading **/") entry_name else entry_subpath;
+                        // NOTE: These patterns have `!` so `.match` logic is
+                        // inverted here
+                        switch (glob.walk.matchImpl(allocator, exclude.glob, match_path)) {
+                            .negate_no_match => included = false,
+                            else => {},
+                        }
+                    }
+                }
+
+                // TODO: do not traverse directories that match patterns
+                // excluding all files within them (e.g. `!test/**`)
                 if (!included) {
                     if (entry.kind == .directory) {
                         const subdir = openSubdir(dir, entry_name, entry_subpath);
@@ -357,7 +384,14 @@ pub const PackCommand = struct {
 
         // for each included dir, traverse it's entries, exclude any with `negate_no_match`.
         for (included_dirs.items) |included_dir_info| {
-            try addEntireTree(allocator, included_dir_info, &pack_queue, &subpath_dedupe, log_level);
+            try addEntireTree(
+                allocator,
+                excludes,
+                included_dir_info,
+                &pack_queue,
+                &subpath_dedupe,
+                log_level,
+            );
         }
 
         return pack_queue;
@@ -366,6 +400,7 @@ pub const PackCommand = struct {
     /// Adds all files in a directory tree to `pack_list` (default ignores still apply)
     fn addEntireTree(
         allocator: std.mem.Allocator,
+        excludes: []const Pattern,
         root_dir_info: DirInfo,
         pack_queue: *PackQueue,
         maybe_dedupe: ?*bun.StringHashMap(void),
@@ -378,6 +413,24 @@ pub const PackCommand = struct {
 
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
         defer ignores.deinit(allocator);
+
+        var negated_excludes: std.ArrayListUnmanaged(Pattern) = .{};
+        defer negated_excludes.deinit(allocator);
+
+        if (excludes.len > 0) {
+            try negated_excludes.ensureTotalCapacityPrecise(allocator, excludes.len);
+            for (excludes) |exclude| {
+                try negated_excludes.append(allocator, exclude.asPositive());
+            }
+            try ignores.append(allocator, IgnorePatterns{
+                .list = negated_excludes.items,
+                .kind = .@"package.json",
+                .depth = 1,
+                // always assume no relative path b/c matching is done from the
+                // root directory
+                .has_rel_path = false,
+            });
+        }
 
         while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
@@ -1327,7 +1380,11 @@ pub const PackCommand = struct {
                 files_error: {
                     if (files.asArray()) |_files_array| {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
-                        defer includes.deinit(ctx.allocator);
+                        var excludes: std.ArrayListUnmanaged(Pattern) = .{};
+                        defer {
+                            includes.deinit(ctx.allocator);
+                            excludes.deinit(ctx.allocator);
+                        }
 
                         var path_buf: PathBuffer = undefined;
                         var files_array = _files_array;
@@ -1335,7 +1392,13 @@ pub const PackCommand = struct {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
                                 const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
                                 const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
-                                try includes.append(ctx.allocator, parsed);
+                                if (parsed.flags.negated) {
+                                    @branchHint(.unlikely); // most "files" entries are not exclusions.
+                                    try excludes.append(ctx.allocator, parsed);
+                                } else {
+                                    try includes.append(ctx.allocator, parsed);
+                                }
+
                                 continue;
                             }
 
@@ -1345,6 +1408,7 @@ pub const PackCommand = struct {
                         break :pack_queue try iterateIncludedProjectTree(
                             ctx.allocator,
                             includes.items,
+                            excludes.items,
                             root_dir,
                             log_level,
                         );
@@ -2113,6 +2177,8 @@ pub const PackCommand = struct {
             dirs_only: bool,
 
             @"leading **/": bool,
+            /// true if the pattern starts with `!`
+            negated: bool,
         };
 
         pub fn fromUTF8(allocator: std.mem.Allocator, pattern: string) OOM!?Pattern {
@@ -2172,6 +2238,21 @@ pub const PackCommand = struct {
                     .rel_path = has_leading_or_middle_slash,
                     .@"leading **/" = @"has leading **/, (could start with '!')",
                     .dirs_only = has_trailing_slash,
+                    .negated = add_negate,
+                },
+            };
+        }
+
+        /// Invert a negated pattern to a positive pattern
+        pub fn asPositive(this: *const Pattern) Pattern {
+            bun.assertWithLocation(this.flags.negated and this.glob.len > 0, @src());
+            return Pattern{
+                .glob = this.glob[1..], // remove the leading `!`
+                .flags = .{
+                    .rel_path = this.flags.rel_path,
+                    .dirs_only = this.flags.dirs_only,
+                    .@"leading **/" = this.flags.@"leading **/",
+                    .negated = false,
                 },
             };
         }
@@ -2195,6 +2276,8 @@ pub const PackCommand = struct {
             default,
             @".npmignore",
             @".gitignore",
+            /// Exlusion pattern in "files" field within `package.json`
+            @"package.json",
         };
 
         pub const List = std.ArrayListUnmanaged(IgnorePatterns);
@@ -2375,9 +2458,10 @@ pub const PackCommand = struct {
             eql(filename, "LICENSE") or
             eql(filename, "LICENCE") or
             eql(filename, "README") or
-            filename.len > "README.".len and eql(filename[0.."README.".len], "README.") or
-            eql(filename, "CHANGELOG") or
-            filename.len > "CHANGELOG.".len and eql(filename[0.."CHANGELOG.".len], "CHANGELOG."));
+            filename.len > "README.".len and eql(filename[0.."README.".len], "README."));
+        //or
+        // eql(filename, "CHANGELOG") or
+        // filename.len > "CHANGELOG.".len and eql(filename[0.."CHANGELOG.".len], "CHANGELOG."));
     }
 };
 

@@ -144,7 +144,7 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=test; SameSite=Lax",
+        "test=test; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -166,8 +166,8 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=test; SameSite=Lax",
-        "test2=test2; SameSite=Lax",
+        "test=test; Path=/; SameSite=Lax",
+        "test2=test2; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -181,7 +181,7 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`{}`);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "test=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
       ]
     `);
   });
@@ -207,8 +207,8 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "do_modify=c; SameSite=Lax",
-        "add_cookie=d; SameSite=Lax",
+        "do_modify=c; Path=/; SameSite=Lax",
+        "add_cookie=d; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -238,8 +238,8 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "do_delete=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-        "do_modify=FIVE; SameSite=Lax",
+        "do_delete=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "do_modify=FIVE; Path=/; SameSite=Lax",
       ]
     `);
     expect(map.toJSON()).toMatchInlineSnapshot(`
@@ -295,7 +295,7 @@ describe("Bun.serve() cookies 2", () => {
     });
     expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "visited=true; SameSite=Lax",
+        "visited=true; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -310,7 +310,36 @@ describe("Bun.serve() cookies 2", () => {
     expect(response.headers.get("Location")).toBe("/redirect-target");
     expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "redirected=true; SameSite=Lax",
+        "redirected=true; Path=/; SameSite=Lax",
+      ]
+    `);
+  });
+});
+
+describe("cookie path option", () => {
+  const server = Bun.serve({
+    port: 0,
+    routes: {
+      "/x/y": {
+        GET(r) {
+          r.cookies.set("user", "a", { maxAge: 3600, path: "/" });
+          const cookie = r.cookies.toSetCookieHeaders().at(0);
+          return new Response("ok", {
+            headers: { "set-cookie": cookie },
+          });
+        },
+      },
+    },
+  });
+  afterAll(() => server.stop());
+
+  test("cookie path option", async () => {
+    const response = await fetch(server.url + "/x/y");
+    expect(response.status).toBe(200);
+    expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "user=a; Path=/; Max-Age=3600; SameSite=Lax",
+        "user=a; Path=/; Max-Age=3600; SameSite=Lax",
       ]
     `);
   });

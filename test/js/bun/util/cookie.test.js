@@ -243,6 +243,7 @@ const cookie = {
     return Object.fromEntries(new Bun.CookieMap(str).entries());
   },
   serialize: (name, value, options) => {
+    options = { path: "", ...options };
     const cookie = new Bun.Cookie(name, value, options);
     return cookie.toString();
   },

@@ -19,7 +19,7 @@ struct CookieInit {
     String name = String();
     String value = String();
     String domain = String();
-    String path = String();
+    String path = "/"_s;
 
     int64_t expires = emptyExpiresAtValue;
     bool secure = false;

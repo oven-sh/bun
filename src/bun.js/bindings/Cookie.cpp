@@ -48,7 +48,7 @@ Cookie::Cookie(const String& name, const String& value,
     : m_name(name)
     , m_value(value)
     , m_domain(domain)
-    , m_path(path.isEmpty() ? "/"_s : path)
+    , m_path(path)
     , m_expires(expires)
     , m_secure(secure)
     , m_sameSite(sameSite)
@@ -219,7 +219,7 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
         builder.append(m_domain);
     }
 
-    if (!m_path.isEmpty() && m_path != "/"_s) {
+    if (!m_path.isEmpty()) {
         builder.append("; Path="_s);
         builder.append(m_path);
     }

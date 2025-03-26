@@ -12,6 +12,7 @@ pub fn WindowsPipeReader(
     comptime This: type,
 ) type {
     return struct {
+        const buffer = 1;
         const getBuffer = This.buffer;
         const onReadChunk = This._onReadChunk;
         const done = This.done;
@@ -228,14 +229,14 @@ pub fn WindowsPipeReader(
                     _ = onReadChunk(this, slice, hasMore);
                 },
                 else => {
-                    var buffer = getBuffer(this);
+                    var buf = getBuffer(this);
                     if (comptime bun.Environment.allow_assert) {
-                        if (slice.len > 0 and !bun.isSliceInBuffer(slice, buffer.allocatedSlice())) {
+                        if (slice.len > 0 and !bun.isSliceInBuffer(slice, buf.allocatedSlice())) {
                             @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
                         }
                     }
                     // move cursor foward
-                    buffer.items.len += amount.result;
+                    buf.items.len += amount.result;
                     _ = onReadChunk(this, slice, hasMore);
                 },
             }

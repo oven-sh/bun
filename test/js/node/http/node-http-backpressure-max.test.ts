@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import { isCI, isLinux } from "harness";
 
 describe("backpressure", () => {
+  // Linux CI only have 8GB with is not enought because we will clone all or most of this 4GB into memory
   it.skipIf(isCI && isLinux)(
     "should handle backpressure with the maximum allowed bytes",
     async () => {

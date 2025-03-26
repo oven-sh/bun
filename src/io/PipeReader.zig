@@ -30,23 +30,29 @@ const BufferedReaderVTable = struct {
         eventLoop: *const fn (*anyopaque) JSC.EventLoopHandle,
 
         pub fn init(comptime Type: type) *const BufferedReaderVTable.Fn {
-            const loop_fn = &struct {
-                pub fn loop_fn(this: *anyopaque) *Async.Loop {
-                    return Type.loop(@alignCast(@ptrCast(this)));
+            const fns = struct {
+                fn onReadChunk(this: *anyopaque, chunk: []const u8, hasMore: ReadState) bool {
+                    return Type.onReadChunk(@as(*Type, @alignCast(@ptrCast(this))), chunk, hasMore);
                 }
-            }.loop_fn;
-
-            const eventLoop_fn = &struct {
-                pub fn eventLoop_fn(this: *anyopaque) JSC.EventLoopHandle {
-                    return JSC.EventLoopHandle.init(Type.eventLoop(@alignCast(@ptrCast(this))));
+                fn onReaderDone(this: *anyopaque) void {
+                    return Type.onReaderDone(@as(*Type, @alignCast(@ptrCast(this))));
                 }
-            }.eventLoop_fn;
+                fn onReaderError(this: *anyopaque, err: bun.sys.Error) void {
+                    return Type.onReaderError(@as(*Type, @alignCast(@ptrCast(this))), err);
+                }
+                fn eventLoop(this: *anyopaque) JSC.EventLoopHandle {
+                    return JSC.EventLoopHandle.init(Type.eventLoop(@as(*Type, @alignCast(@ptrCast(this)))));
+                }
+                fn loop(this: *anyopaque) *Async.Loop {
+                    return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                }
+            };
             return comptime &BufferedReaderVTable.Fn{
-                .onReadChunk = if (@hasDecl(Type, "onReadChunk")) @ptrCast(&Type.onReadChunk) else null,
-                .onReaderDone = @ptrCast(&Type.onReaderDone),
-                .onReaderError = @ptrCast(&Type.onReaderError),
-                .eventLoop = eventLoop_fn,
-                .loop = loop_fn,
+                .onReadChunk = if (@hasDecl(Type, "onReadChunk")) &fns.onReadChunk else null,
+                .onReaderDone = &fns.onReaderDone,
+                .onReaderError = &fns.onReaderError,
+                .eventLoop = &fns.eventLoop,
+                .loop = &fns.loop,
             };
         }
     };
@@ -203,7 +209,7 @@ const PosixBufferedReader = struct {
     }
 
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
-        return &@as(*PosixBufferedReader, @alignCast(@ptrCast(this)))._buffer;
+        return &this._buffer;
     }
 
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
@@ -698,11 +704,22 @@ pub const WindowsBufferedReader = struct {
     };
 
     pub fn init(comptime Type: type) WindowsOutputReader {
+        const fns = struct {
+            fn onReadChunk(this: *anyopaque, chunk: []const u8, hasMore: ReadState) bool {
+                return Type.onReadChunk(@as(*Type, @alignCast(@ptrCast(this))), chunk, hasMore);
+            }
+            fn onReaderDone(this: *anyopaque) void {
+                return Type.onReaderDone(@as(*Type, @alignCast(@ptrCast(this))));
+            }
+            fn onReaderError(this: *anyopaque, err: bun.sys.Error) void {
+                return Type.onReaderError(@as(*Type, @alignCast(@ptrCast(this))), err);
+            }
+        };
         return .{
             .vtable = .{
-                .onReadChunk = if (@hasDecl(Type, "onReadChunk")) @ptrCast(&Type.onReadChunk) else null,
-                .onReaderDone = @ptrCast(&Type.onReaderDone),
-                .onReaderError = @ptrCast(&Type.onReaderError),
+                .onReadChunk = if (@hasDecl(Type, "onReadChunk")) &fns.onReadChunk else null,
+                .onReaderDone = &fns.onReaderDone,
+                .onReaderError = &fns.onReaderError,
             },
         };
     }
@@ -875,7 +892,8 @@ pub const WindowsBufferedReader = struct {
         buf.* = uv.uv_buf_t.init(result);
     }
 
-    fn onStreamRead(stream: *uv.uv_stream_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
+    fn onStreamRead(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
+        const stream = bun.cast(*uv.uv_stream_t, handle);
         var this = bun.cast(*WindowsBufferedReader, stream.data);
 
         const nread_int = nread.int();
@@ -986,7 +1004,7 @@ pub const WindowsBufferedReader = struct {
                 }
             },
             else => {
-                if (uv.uv_read_start(source.toStream(), &onStreamAlloc, @ptrCast(&onStreamRead)).toError(.open)) |err| {
+                if (uv.uv_read_start(source.toStream(), &onStreamAlloc, &onStreamRead).toError(.open)) |err| {
                     bun.windows.libuv.log("uv_read_start() = {s}", .{err.name()});
                     return .{ .err = err };
                 }

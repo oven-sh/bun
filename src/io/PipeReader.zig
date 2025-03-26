@@ -6,321 +6,6 @@ const Source = @import("./source.zig").Source;
 const ReadState = @import("./pipes.zig").ReadState;
 const FileType = @import("./pipes.zig").FileType;
 
-/// Read a blocking pipe without blocking the current thread.
-pub fn PosixPipeReader(
-    comptime This: type,
-) type {
-    return struct {
-        // const This = @This();
-        const vtable2 = This;
-
-        pub fn read(this: *This) void {
-            const buf = vtable2.buffer(this);
-            const fd = vtable2.getFd(this);
-
-            switch (vtable2.getFileType(this)) {
-                .nonblocking_pipe => {
-                    readPipe(this, buf, fd, 0, false);
-                    return;
-                },
-                .file => {
-                    readFile(this, buf, fd, 0, false);
-                    return;
-                },
-                .socket => {
-                    readSocket(this, buf, fd, 0, false);
-                    return;
-                },
-                .pipe => {
-                    switch (bun.isReadable(fd)) {
-                        .ready => {
-                            readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, false);
-                        },
-                        .hup => {
-                            readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, true);
-                        },
-                        .not_ready => {
-                            vtable2.registerPoll(this);
-                        },
-                    }
-                },
-            }
-        }
-
-        pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
-            const resizable_buffer = vtable2.buffer(parent);
-            const fd = vtable2.getFd(parent);
-            bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
-
-            switch (vtable2.getFileType(parent)) {
-                .nonblocking_pipe => {
-                    readPipe(parent, resizable_buffer, fd, size_hint, received_hup);
-                },
-                .file => {
-                    readFile(parent, resizable_buffer, fd, size_hint, received_hup);
-                },
-                .socket => {
-                    readSocket(parent, resizable_buffer, fd, size_hint, received_hup);
-                },
-                .pipe => {
-                    readFromBlockingPipeWithoutBlocking(parent, resizable_buffer, fd, size_hint, received_hup);
-                },
-            }
-        }
-
-        const stack_buffer_len = 64 * 1024;
-
-        inline fn drainChunk(parent: *This, chunk: []const u8, hasMore: ReadState) bool {
-            if (parent.vtable.isStreamingEnabled()) {
-                if (chunk.len > 0) {
-                    return parent.vtable.onReadChunk(chunk, hasMore);
-                }
-            }
-
-            return false;
-        }
-
-        fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize) {
-            return struct {
-                pub fn call(fd: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
-                    _ = offset;
-                    return func(fd, buf);
-                }
-            }.call;
-        }
-
-        fn readFile(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            const preadFn = struct {
-                pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
-                    return bun.sys.pread(fd1, buf, @intCast(offset));
-                }
-            }.call;
-            if (parent.flags.use_pread) {
-                return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, preadFn);
-            } else {
-                return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, wrapReadFn(bun.sys.read));
-            }
-        }
-
-        fn readSocket(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, wrapReadFn(bun.sys.recvNonBlock));
-        }
-
-        fn readPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
-        }
-
-        fn readBlockingPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, wrapReadFn(bun.sys.readNonblocking));
-        }
-
-        fn readWithFn(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
-            _ = size_hint; // autofix
-            const streaming = parent.vtable.isStreamingEnabled();
-
-            var received_hup = received_hup_;
-
-            if (streaming) {
-                const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
-                while (resizable_buffer.capacity == 0) {
-                    const stack_buffer_cutoff = stack_buffer.len / 2;
-                    var stack_buffer_head = stack_buffer;
-                    while (stack_buffer_head.len > 16 * 1024) {
-                        var buf = stack_buffer_head;
-
-                        switch (sys_fn(
-                            fd,
-                            buf,
-                            parent._offset,
-                        )) {
-                            .result => |bytes_read| {
-                                parent._offset += bytes_read;
-                                buf = stack_buffer_head[0..bytes_read];
-                                stack_buffer_head = stack_buffer_head[bytes_read..];
-
-                                if (bytes_read == 0) {
-                                    vtable2.closeWithoutReporting(parent);
-                                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
-                                    vtable2.done(parent);
-                                    return;
-                                }
-
-                                if (comptime file_type == .pipe) {
-                                    if (bun.Environment.isMac or !bun.C.RWFFlagSupport.isMaybeSupported()) {
-                                        switch (bun.isReadable(fd)) {
-                                            .ready => {},
-                                            .hup => {
-                                                received_hup = true;
-                                            },
-                                            .not_ready => {
-                                                if (received_hup) {
-                                                    vtable2.closeWithoutReporting(parent);
-                                                }
-                                                defer {
-                                                    if (received_hup) {
-                                                        vtable2.done(parent);
-                                                    }
-                                                }
-                                                if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .drained)) {
-                                                        return;
-                                                    }
-                                                }
-
-                                                if (!received_hup) {
-                                                    vtable2.registerPoll(parent);
-                                                }
-
-                                                return;
-                                            },
-                                        }
-                                    }
-                                }
-
-                                if (comptime file_type != .pipe) {
-                                    // blocking pipes block a process, so we have to keep reading as much as we can
-                                    // otherwise, we do want to stream the data
-                                    if (stack_buffer_head.len < stack_buffer_cutoff) {
-                                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress)) {
-                                            return;
-                                        }
-                                        stack_buffer_head = stack_buffer;
-                                    }
-                                }
-                            },
-                            .err => |err| {
-                                if (err.isRetry()) {
-                                    if (comptime file_type == .file) {
-                                        bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
-                                    } else {
-                                        vtable2.registerPoll(parent);
-                                    }
-
-                                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .drained);
-                                    return;
-                                }
-
-                                if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress);
-                                vtable2.onError(parent, err);
-                                return;
-                            },
-                        }
-                    }
-
-                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
-                            return;
-                        }
-                    }
-
-                    if (!parent.vtable.isStreamingEnabled()) break;
-                }
-            }
-
-            while (true) {
-                resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
-                var buf: []u8 = resizable_buffer.unusedCapacitySlice();
-
-                switch (sys_fn(fd, buf, parent._offset)) {
-                    .result => |bytes_read| {
-                        parent._offset += bytes_read;
-                        buf = buf[0..bytes_read];
-                        resizable_buffer.items.len += bytes_read;
-
-                        if (bytes_read == 0) {
-                            vtable2.closeWithoutReporting(parent);
-                            _ = drainChunk(parent, resizable_buffer.items, .eof);
-                            vtable2.done(parent);
-                            return;
-                        }
-
-                        if (comptime file_type == .pipe) {
-                            if (bun.Environment.isMac or !bun.C.RWFFlagSupport.isMaybeSupported()) {
-                                switch (bun.isReadable(fd)) {
-                                    .ready => {},
-                                    .hup => {
-                                        received_hup = true;
-                                    },
-                                    .not_ready => {
-                                        if (received_hup) {
-                                            vtable2.closeWithoutReporting(parent);
-                                        }
-                                        defer {
-                                            if (received_hup) {
-                                                vtable2.done(parent);
-                                            }
-                                        }
-
-                                        if (parent.vtable.isStreamingEnabled()) {
-                                            defer {
-                                                resizable_buffer.clearRetainingCapacity();
-                                            }
-                                            if (!parent.vtable.onReadChunk(resizable_buffer.items, if (received_hup) .eof else .drained) and !received_hup) {
-                                                return;
-                                            }
-                                        }
-
-                                        if (!received_hup) {
-                                            vtable2.registerPoll(parent);
-                                        }
-
-                                        return;
-                                    },
-                                }
-                            }
-                        }
-
-                        if (comptime file_type != .pipe) {
-                            if (parent.vtable.isStreamingEnabled()) {
-                                if (resizable_buffer.items.len > 128_000) {
-                                    defer {
-                                        resizable_buffer.clearRetainingCapacity();
-                                    }
-                                    if (!parent.vtable.onReadChunk(resizable_buffer.items, .progress)) {
-                                        return;
-                                    }
-
-                                    continue;
-                                }
-                            }
-                        }
-                    },
-                    .err => |err| {
-                        if (parent.vtable.isStreamingEnabled()) {
-                            if (resizable_buffer.items.len > 0) {
-                                _ = parent.vtable.onReadChunk(resizable_buffer.items, .drained);
-                                resizable_buffer.clearRetainingCapacity();
-                            }
-                        }
-
-                        if (err.isRetry()) {
-                            if (comptime file_type == .file) {
-                                bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
-                            } else {
-                                vtable2.registerPoll(parent);
-                            }
-                            return;
-                        }
-                        vtable2.onError(parent, err);
-                        return;
-                    },
-                }
-            }
-        }
-
-        fn readFromBlockingPipeWithoutBlocking(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            if (parent.vtable.isStreamingEnabled()) {
-                resizable_buffer.clearRetainingCapacity();
-            }
-
-            readBlockingPipe(parent, resizable_buffer, fd, size_hint, received_hup);
-        }
-    };
-}
-
 const PollOrFd = @import("./pipes.zig").PollOrFd;
 
 pub fn WindowsPipeReader(
@@ -721,8 +406,6 @@ const PosixBufferedReader = struct {
         this.handle = .{ .fd = fd };
     }
 
-    pub usingnamespace PosixPipeReader(@This());
-
     fn getFileType(this: *const PosixBufferedReader) FileType {
         const flags = this.flags;
         if (flags.socket) {
@@ -914,6 +597,314 @@ const PosixBufferedReader = struct {
 
     pub fn eventLoop(this: *const PosixBufferedReader) JSC.EventLoopHandle {
         return this.vtable.eventLoop();
+    }
+
+    const This = @This();
+    const vtable2 = This;
+
+    pub fn read(this: *This) void {
+        const buf = vtable2.buffer(this);
+        const fd = vtable2.getFd(this);
+
+        switch (vtable2.getFileType(this)) {
+            .nonblocking_pipe => {
+                readPipe(this, buf, fd, 0, false);
+                return;
+            },
+            .file => {
+                readFile(this, buf, fd, 0, false);
+                return;
+            },
+            .socket => {
+                readSocket(this, buf, fd, 0, false);
+                return;
+            },
+            .pipe => {
+                switch (bun.isReadable(fd)) {
+                    .ready => {
+                        readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, false);
+                    },
+                    .hup => {
+                        readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, true);
+                    },
+                    .not_ready => {
+                        vtable2.registerPoll(this);
+                    },
+                }
+            },
+        }
+    }
+
+    pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
+        const resizable_buffer = vtable2.buffer(parent);
+        const fd = vtable2.getFd(parent);
+        bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
+
+        switch (vtable2.getFileType(parent)) {
+            .nonblocking_pipe => {
+                readPipe(parent, resizable_buffer, fd, size_hint, received_hup);
+            },
+            .file => {
+                readFile(parent, resizable_buffer, fd, size_hint, received_hup);
+            },
+            .socket => {
+                readSocket(parent, resizable_buffer, fd, size_hint, received_hup);
+            },
+            .pipe => {
+                readFromBlockingPipeWithoutBlocking(parent, resizable_buffer, fd, size_hint, received_hup);
+            },
+        }
+    }
+
+    const stack_buffer_len = 64 * 1024;
+
+    inline fn drainChunk(parent: *This, chunk: []const u8, hasMore: ReadState) bool {
+        if (parent.vtable.isStreamingEnabled()) {
+            if (chunk.len > 0) {
+                return parent.vtable.onReadChunk(chunk, hasMore);
+            }
+        }
+
+        return false;
+    }
+
+    fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize) {
+        return struct {
+            pub fn call(fd: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
+                _ = offset;
+                return func(fd, buf);
+            }
+        }.call;
+    }
+
+    fn readFile(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+        const preadFn = struct {
+            pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
+                return bun.sys.pread(fd1, buf, @intCast(offset));
+            }
+        }.call;
+        if (parent.flags.use_pread) {
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, preadFn);
+        } else {
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, wrapReadFn(bun.sys.read));
+        }
+    }
+
+    fn readSocket(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+        return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, wrapReadFn(bun.sys.recvNonBlock));
+    }
+
+    fn readPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+        return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
+    }
+
+    fn readBlockingPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+        return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, wrapReadFn(bun.sys.readNonblocking));
+    }
+
+    fn readWithFn(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
+        _ = size_hint; // autofix
+        const streaming = parent.vtable.isStreamingEnabled();
+
+        var received_hup = received_hup_;
+
+        if (streaming) {
+            const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
+            while (resizable_buffer.capacity == 0) {
+                const stack_buffer_cutoff = stack_buffer.len / 2;
+                var stack_buffer_head = stack_buffer;
+                while (stack_buffer_head.len > 16 * 1024) {
+                    var buf = stack_buffer_head;
+
+                    switch (sys_fn(
+                        fd,
+                        buf,
+                        parent._offset,
+                    )) {
+                        .result => |bytes_read| {
+                            parent._offset += bytes_read;
+                            buf = stack_buffer_head[0..bytes_read];
+                            stack_buffer_head = stack_buffer_head[bytes_read..];
+
+                            if (bytes_read == 0) {
+                                vtable2.closeWithoutReporting(parent);
+                                if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
+                                vtable2.done(parent);
+                                return;
+                            }
+
+                            if (comptime file_type == .pipe) {
+                                if (bun.Environment.isMac or !bun.C.RWFFlagSupport.isMaybeSupported()) {
+                                    switch (bun.isReadable(fd)) {
+                                        .ready => {},
+                                        .hup => {
+                                            received_hup = true;
+                                        },
+                                        .not_ready => {
+                                            if (received_hup) {
+                                                vtable2.closeWithoutReporting(parent);
+                                            }
+                                            defer {
+                                                if (received_hup) {
+                                                    vtable2.done(parent);
+                                                }
+                                            }
+                                            if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
+                                                if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .drained)) {
+                                                    return;
+                                                }
+                                            }
+
+                                            if (!received_hup) {
+                                                vtable2.registerPoll(parent);
+                                            }
+
+                                            return;
+                                        },
+                                    }
+                                }
+                            }
+
+                            if (comptime file_type != .pipe) {
+                                // blocking pipes block a process, so we have to keep reading as much as we can
+                                // otherwise, we do want to stream the data
+                                if (stack_buffer_head.len < stack_buffer_cutoff) {
+                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress)) {
+                                        return;
+                                    }
+                                    stack_buffer_head = stack_buffer;
+                                }
+                            }
+                        },
+                        .err => |err| {
+                            if (err.isRetry()) {
+                                if (comptime file_type == .file) {
+                                    bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
+                                } else {
+                                    vtable2.registerPoll(parent);
+                                }
+
+                                if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .drained);
+                                return;
+                            }
+
+                            if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
+                                _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress);
+                            vtable2.onError(parent, err);
+                            return;
+                        },
+                    }
+                }
+
+                if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
+                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
+                        return;
+                    }
+                }
+
+                if (!parent.vtable.isStreamingEnabled()) break;
+            }
+        }
+
+        while (true) {
+            resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+            var buf: []u8 = resizable_buffer.unusedCapacitySlice();
+
+            switch (sys_fn(fd, buf, parent._offset)) {
+                .result => |bytes_read| {
+                    parent._offset += bytes_read;
+                    buf = buf[0..bytes_read];
+                    resizable_buffer.items.len += bytes_read;
+
+                    if (bytes_read == 0) {
+                        vtable2.closeWithoutReporting(parent);
+                        _ = drainChunk(parent, resizable_buffer.items, .eof);
+                        vtable2.done(parent);
+                        return;
+                    }
+
+                    if (comptime file_type == .pipe) {
+                        if (bun.Environment.isMac or !bun.C.RWFFlagSupport.isMaybeSupported()) {
+                            switch (bun.isReadable(fd)) {
+                                .ready => {},
+                                .hup => {
+                                    received_hup = true;
+                                },
+                                .not_ready => {
+                                    if (received_hup) {
+                                        vtable2.closeWithoutReporting(parent);
+                                    }
+                                    defer {
+                                        if (received_hup) {
+                                            vtable2.done(parent);
+                                        }
+                                    }
+
+                                    if (parent.vtable.isStreamingEnabled()) {
+                                        defer {
+                                            resizable_buffer.clearRetainingCapacity();
+                                        }
+                                        if (!parent.vtable.onReadChunk(resizable_buffer.items, if (received_hup) .eof else .drained) and !received_hup) {
+                                            return;
+                                        }
+                                    }
+
+                                    if (!received_hup) {
+                                        vtable2.registerPoll(parent);
+                                    }
+
+                                    return;
+                                },
+                            }
+                        }
+                    }
+
+                    if (comptime file_type != .pipe) {
+                        if (parent.vtable.isStreamingEnabled()) {
+                            if (resizable_buffer.items.len > 128_000) {
+                                defer {
+                                    resizable_buffer.clearRetainingCapacity();
+                                }
+                                if (!parent.vtable.onReadChunk(resizable_buffer.items, .progress)) {
+                                    return;
+                                }
+
+                                continue;
+                            }
+                        }
+                    }
+                },
+                .err => |err| {
+                    if (parent.vtable.isStreamingEnabled()) {
+                        if (resizable_buffer.items.len > 0) {
+                            _ = parent.vtable.onReadChunk(resizable_buffer.items, .drained);
+                            resizable_buffer.clearRetainingCapacity();
+                        }
+                    }
+
+                    if (err.isRetry()) {
+                        if (comptime file_type == .file) {
+                            bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
+                        } else {
+                            vtable2.registerPoll(parent);
+                        }
+                        return;
+                    }
+                    vtable2.onError(parent, err);
+                    return;
+                },
+            }
+        }
+    }
+
+    fn readFromBlockingPipeWithoutBlocking(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+        if (parent.vtable.isStreamingEnabled()) {
+            resizable_buffer.clearRetainingCapacity();
+        }
+
+        readBlockingPipe(parent, resizable_buffer, fd, size_hint, received_hup);
     }
 
     comptime {

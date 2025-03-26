@@ -1,5 +1,3 @@
-# Bun.Cookie & Bun.CookieMap
-
 Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and `Bun.CookieMap`. These APIs offer fast, easy-to-use methods for parsing, generating, and manipulating cookies in HTTP requests and responses.
 
 ## CookieMap class

@@ -680,7 +680,7 @@ pub const WindowsBufferedReader = struct {
     flags: Flags = .{},
 
     parent: *anyopaque = undefined,
-    vtable: WindowsOutputReaderVTable = undefined,
+    vtable: WindowsBufferedReaderVTable = undefined,
 
     pub fn memoryCost(this: *const WindowsBufferedReader) usize {
         return @sizeOf(@This()) + this._buffer.capacity;

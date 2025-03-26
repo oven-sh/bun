@@ -4905,6 +4905,9 @@ pub const WebSocketServer = struct {
     }
 };
 
+pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
+pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
+
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
     state: State,

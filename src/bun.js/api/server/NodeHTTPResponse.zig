@@ -1,8 +1,16 @@
+const NodeHTTPResponse = @This();
+const log = bun.Output.scoped(.NodeHTTPResponse, false);
+
+pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
 raw_response: uws.AnyResponse,
 onDataCallback: JSC.Strong = .empty,
 onWritableCallback: JSC.Strong = .empty,
 
-ref_count: u32 = 1,
+ref_count: RefCount,
 js_ref: JSC.Ref = .{},
 socket_closed: bool = false,
 request_has_completed: bool = false,
@@ -25,10 +33,6 @@ is_data_buffered_during_pause: bool = false,
 is_data_buffered_during_pause_last: bool = false,
 
 upgrade_context: UpgradeCTX = .{},
-
-const log = bun.Output.scoped(.NodeHTTPResponse, false);
-pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
-pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const UpgradeCTX = struct {
     context: ?*uws.uws_socket_context_t = null,
@@ -283,7 +287,12 @@ pub fn create(
         has_body.* = req_len > 0 or request.header("transfer-encoding") != null;
     }
 
-    const response = NodeHTTPResponse.new(.{
+    const response = bun.new(NodeHTTPResponse, .{
+        // 1 - the HTTP response
+        // 1 - the JS object
+        // 1 - the Server handler.
+        // 1 - the onData callback (request body)
+        .ref_count = .initExactRefs(if (has_body.*) 4 else 3),
         .upgrade_context = .{
             .context = @ptrCast(upgrade_ctx),
             .request = request,
@@ -294,11 +303,6 @@ pub fn create(
             false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
         },
         .body_read_state = if (has_body.*) .pending else .none,
-        // 1 - the HTTP response
-        // 1 - the JS object
-        // 1 - the Server handler.
-        // 1 - the onData callback (request body)
-        .ref_count = if (has_body.*) 4 else 3,
     });
     if (has_body.*) {
         response.body_read_ref.ref(vm);
@@ -1055,7 +1059,7 @@ pub fn finalize(this: *NodeHTTPResponse) void {
     this.deref();
 }
 
-pub fn deinit(this: *NodeHTTPResponse) void {
+fn deinit(this: *NodeHTTPResponse) void {
     bun.debugAssert(!this.body_read_ref.has);
     bun.debugAssert(!this.js_ref.has);
     bun.debugAssert(!this.is_request_pending);
@@ -1068,7 +1072,7 @@ pub fn deinit(this: *NodeHTTPResponse) void {
     this.onDataCallback.deinit();
     this.onWritableCallback.deinit();
     this.promise.deinit();
-    this.destroy();
+    bun.destroy(this);
 }
 
 comptime {
@@ -1083,8 +1087,6 @@ pub export fn Bun__NodeHTTPResponse_onClose(response: *NodeHTTPResponse, js_valu
 pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void {
     response.socket_closed = true;
 }
-
-const NodeHTTPResponse = @This();
 
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;

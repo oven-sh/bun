@@ -12,18 +12,10 @@ pub fn PosixPipeReader(
 ) type {
     return struct {
         // const This = @This();
-        const vtable2 = struct {
-            const getFd = This.getFd;
-            const getBuffer = This.buffer;
-            const registerPoll = This.registerPoll;
-            const done = This.done;
-            const close = This.closeWithoutReporting;
-            const onError = This.onError;
-            const getFileType = This.getFileType;
-        };
+        const vtable2 = This;
 
         pub fn read(this: *This) void {
-            const buffer = vtable2.getBuffer(this);
+            const buffer = vtable2.buffer(this);
             const fd = vtable2.getFd(this);
 
             switch (vtable2.getFileType(this)) {
@@ -56,7 +48,7 @@ pub fn PosixPipeReader(
         }
 
         pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
-            const resizable_buffer = vtable2.getBuffer(parent);
+            const resizable_buffer = vtable2.buffer(parent);
             const fd = vtable2.getFd(parent);
             bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
 
@@ -147,7 +139,7 @@ pub fn PosixPipeReader(
                                 stack_buffer_head = stack_buffer_head[bytes_read..];
 
                                 if (bytes_read == 0) {
-                                    vtable2.close(parent);
+                                    vtable2.closeWithoutReporting(parent);
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                         _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
                                     vtable2.done(parent);
@@ -163,7 +155,7 @@ pub fn PosixPipeReader(
                                             },
                                             .not_ready => {
                                                 if (received_hup) {
-                                                    vtable2.close(parent);
+                                                    vtable2.closeWithoutReporting(parent);
                                                 }
                                                 defer {
                                                     if (received_hup) {
@@ -239,7 +231,7 @@ pub fn PosixPipeReader(
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
-                            vtable2.close(parent);
+                            vtable2.closeWithoutReporting(parent);
                             _ = drainChunk(parent, resizable_buffer.items, .eof);
                             vtable2.done(parent);
                             return;
@@ -254,7 +246,7 @@ pub fn PosixPipeReader(
                                     },
                                     .not_ready => {
                                         if (received_hup) {
-                                            vtable2.close(parent);
+                                            vtable2.closeWithoutReporting(parent);
                                         }
                                         defer {
                                             if (received_hup) {

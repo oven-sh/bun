@@ -10,14 +10,13 @@ const PollOrFd = @import("./pipes.zig").PollOrFd;
 
 pub fn WindowsPipeReader(
     comptime This: type,
-    comptime _: anytype,
-    comptime getBuffer: fn (*This) *std.ArrayList(u8),
-    comptime onReadChunk: fn (*This, chunk: []u8, ReadState) bool,
-    comptime registerPoll: ?fn (*This) void,
-    comptime done: fn (*This) void,
-    comptime onError: fn (*This, bun.sys.Error) void,
 ) type {
     return struct {
+        const getBuffer = This.buffer;
+        const onReadChunk = This._onReadChunk;
+        const registerPoll = null;
+        const done = This.done;
+        const onError = This.onError;
         fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
             var this = bun.cast(*This, handle.data);
             const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
@@ -1020,15 +1019,7 @@ pub const WindowsBufferedReader = struct {
         this.updateRef(false);
     }
 
-    pub usingnamespace WindowsPipeReader(
-        @This(),
-        {},
-        buffer,
-        _onReadChunk,
-        null,
-        done,
-        onError,
-    );
+    pub usingnamespace WindowsPipeReader(@This());
 
     pub fn takeBuffer(this: *WindowsOutputReader) std.ArrayList(u8) {
         const out = this._buffer;

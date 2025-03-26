@@ -869,15 +869,14 @@ pub const WindowsBufferedReader = struct {
         return source.setRawMode(value);
     }
 
-    const This = @This();
     fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
-        var this = bun.cast(*This, handle.data);
+        var this = bun.cast(*WindowsBufferedReader, handle.data);
         const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
         buf.* = uv.uv_buf_t.init(result);
     }
 
     fn onStreamRead(stream: *uv.uv_stream_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
-        var this = bun.cast(*This, stream.data);
+        var this = bun.cast(*WindowsBufferedReader, stream.data);
 
         const nread_int = nread.int();
 
@@ -917,7 +916,7 @@ pub const WindowsBufferedReader = struct {
             fs.deinit();
             return;
         }
-        var this: *This = bun.cast(*This, fs.data);
+        var this: *WindowsBufferedReader = bun.cast(*WindowsBufferedReader, fs.data);
         fs.deinit();
         if (this.flags.is_done) return;
 
@@ -970,7 +969,7 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn startReading(this: *This) bun.JSC.Maybe(void) {
+    pub fn startReading(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
         if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
         this.flags.is_paused = false;
         const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
@@ -997,7 +996,7 @@ pub const WindowsBufferedReader = struct {
         return .{ .result = {} };
     }
 
-    pub fn stopReading(this: *This) bun.JSC.Maybe(void) {
+    pub fn stopReading(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
         if (this.flags.is_done or this.flags.is_paused) return .{ .result = {} };
         this.flags.is_paused = true;
         const source = this.source orelse return .{ .result = {} };
@@ -1012,7 +1011,7 @@ pub const WindowsBufferedReader = struct {
         return .{ .result = {} };
     }
 
-    pub fn closeImpl(this: *This, comptime callDone: bool) void {
+    pub fn closeImpl(this: *WindowsBufferedReader, comptime callDone: bool) void {
         if (this.source) |source| {
             switch (source) {
                 .sync_file, .file => |file| {
@@ -1044,7 +1043,7 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn close(this: *This) void {
+    pub fn close(this: *WindowsBufferedReader) void {
         _ = this.stopReading();
         this.closeImpl(true);
     }
@@ -1065,7 +1064,7 @@ pub const WindowsBufferedReader = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
+    pub fn onRead(this: *WindowsBufferedReader, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
         if (amount == .err) {
             this.onError(amount.err);
             return;
@@ -1095,15 +1094,15 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn pause(this: *This) void {
+    pub fn pause(this: *WindowsBufferedReader) void {
         _ = this.stopReading();
     }
 
-    pub fn unpause(this: *This) void {
+    pub fn unpause(this: *WindowsBufferedReader) void {
         _ = this.startReading();
     }
 
-    pub fn read(this: *This) void {
+    pub fn read(this: *WindowsBufferedReader) void {
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
         this.unpause();
     }

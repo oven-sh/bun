@@ -308,18 +308,7 @@ pub const PackCommand = struct {
                     if (strings.eqlComptime(entry_name, "package.json")) continue;
                     if (strings.eqlComptime(entry_name, "node_modules")) continue;
 
-                    // TODO: should this be case insensitive on all platforms?
-                    const eql = if (comptime Environment.isLinux)
-                        strings.eqlComptime
-                    else
-                        strings.eqlCaseInsensitiveASCIIICheckLength;
-
-                    if (entry.kind == .file and
-                        (eql(entry_name, "package.json") or
-                            eql(entry_name, "LICENSE") or
-                            eql(entry_name, "LICENCE") or
-                            eql(entry_name, "README") or
-                            entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
+                    if (entry.kind == .file and isUnconditionallyIncludedFile(entry_name))
                         included = true;
                 }
 
@@ -1021,23 +1010,11 @@ pub const PackCommand = struct {
         const entry_name = entry.name.slice();
 
         if (dir_depth == 1) {
-
-            // TODO: should this be case insensitive on all platforms?
-            const eql = if (comptime Environment.isLinux)
-                strings.eqlComptime
-            else
-                strings.eqlCaseInsensitiveASCIIICheckLength;
-
-            // first, check files that can never be ignored. project root directory only
-            if (entry.kind == .file and
-                (eql(entry_name, "package.json") or
-                    eql(entry_name, "LICENSE") or
-                    eql(entry_name, "LICENCE") or
-                    eql(entry_name, "README") or
-                    entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
-                    eql(entry_name, "CHANGELOG") or
-                    entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
+            // first, check files that can never be ignored. project root
+            // directory only
+            if (isUnconditionallyIncludedFile(entry_name)) {
                 return null;
+            }
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
@@ -2383,6 +2360,24 @@ pub const PackCommand = struct {
         }
 
         Output.flush();
+    }
+
+    /// Some files are always packed, even if they are explicitly ignored or not
+    /// included in package.json "files".
+    fn isUnconditionallyIncludedFile(filename: []const u8) bool {
+        // TODO: should this be case insensitive on all platforms?
+        const eql = comptime if (Environment.isLinux)
+            strings.eqlComptime
+        else
+            strings.eqlCaseInsensitiveASCIIICheckLength;
+
+        return filename.len > 5 and (eql(filename, "package.json") or
+            eql(filename, "LICENSE") or
+            eql(filename, "LICENCE") or
+            eql(filename, "README") or
+            filename.len > "README.".len and eql(filename[0.."README.".len], "README.") or
+            eql(filename, "CHANGELOG") or
+            filename.len > "CHANGELOG.".len and eql(filename[0.."CHANGELOG.".len], "CHANGELOG."));
     }
 };
 

@@ -125,7 +125,7 @@ private:
             }
 
             /* Signal broken HTTP request only if we have a pending request */
-            if (httpResponseData->onAborted) {
+            if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 

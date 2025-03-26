@@ -660,12 +660,6 @@ public:
         return httpResponseData->socketData;
     }
 
-    void setSocketData(void* socketData) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->socketData = socketData;
-    }
-
     void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 

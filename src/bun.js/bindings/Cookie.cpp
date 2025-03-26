@@ -8,32 +8,6 @@
 #include "HTTPParsers.h"
 namespace WebCore {
 
-extern "C" JSC::EncodedJSValue Cookie__create(JSDOMGlobalObject* globalObject, const ZigString* name, const ZigString* value, const ZigString* domain, const ZigString* path, double expires, bool secure, int32_t sameSite, bool httpOnly, double maxAge, bool partitioned)
-{
-    String nameStr = Zig::toString(*name);
-    String valueStr = Zig::toString(*value);
-    String domainStr = Zig::toString(*domain);
-    String pathStr = Zig::toString(*path);
-
-    CookieSameSite sameSiteEnum;
-    switch (sameSite) {
-    case 0:
-        sameSiteEnum = CookieSameSite::Strict;
-        break;
-    case 1:
-        sameSiteEnum = CookieSameSite::Lax;
-        break;
-    case 2:
-        sameSiteEnum = CookieSameSite::None;
-        break;
-    default:
-        sameSiteEnum = CookieSameSite::Strict;
-    }
-
-    auto result = Cookie::create(nameStr, valueStr, domainStr, pathStr, expires, secure, sameSiteEnum, httpOnly, maxAge, partitioned);
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(result)));
-}
-
 extern "C" WebCore::Cookie* Cookie__fromJS(JSC::EncodedJSValue value)
 {
     return WebCoreCast<WebCore::JSCookie, WebCore::Cookie>(value);

@@ -14,7 +14,6 @@ pub fn WindowsPipeReader(
     return struct {
         const getBuffer = This.buffer;
         const onReadChunk = This._onReadChunk;
-        const registerPoll = null;
         const done = This.done;
         const onError = This.onError;
         fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
@@ -195,13 +194,6 @@ pub fn WindowsPipeReader(
             _ = this.stopReading();
             this.closeImpl(true);
         }
-
-        const vtable = .{
-            .getBuffer = getBuffer,
-            .registerPoll = registerPoll,
-            .done = done,
-            .onError = onError,
-        };
 
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);

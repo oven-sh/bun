@@ -891,6 +891,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
+    response->getHttpResponseData()->zigResponse = *nodeHttpResponsePtr;
 
     JSC::CallData callData = getCallData(callbackObject);
     args.append(nodeHTTPResponseObject);

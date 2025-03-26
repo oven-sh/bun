@@ -9,6 +9,7 @@ aborted: bool = false,
 finished: bool = false,
 ended: bool = false,
 upgraded: bool = false,
+closed: bool = false,
 hasCustomOnData: bool = false,
 is_request_pending: bool = true,
 body_read_state: BodyReadState = .none,
@@ -991,7 +992,7 @@ pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfram
         return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
     }
 
-    if (this.finished or this.aborted) {
+    if (this.finished or this.aborted or this.closed) {
         return globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
     }
 
@@ -1041,6 +1042,10 @@ comptime {
     @export(&create, .{ .name = "NodeHTTPResponse__createForJS" });
 }
 extern "c" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, ?*anyopaque) void;
+
+pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void {
+    response.closed = true;
+}
 
 const NodeHTTPResponse = @This();
 

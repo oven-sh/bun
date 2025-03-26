@@ -5,8 +5,6 @@ Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and 
 `Bun.CookieMap` provides a Map-like interface for working with collections of cookies. It implements the `Iterable` interface, allowing you to use it with `for...of` loops and other iteration methods.
 
 ```ts
-import { CookieMap } from "bun";
-
 // Empty cookie map
 const cookies = new Bun.CookieMap();
 
@@ -55,6 +53,8 @@ const server = Bun.serve({
     },
   },
 });
+
+console.log("Server listening at: " + server.url);
 ```
 
 ### Methods

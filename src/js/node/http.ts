@@ -1689,7 +1689,6 @@ const OutgoingMessagePrototype = {
       throw $ERR_HTTP_HEADERS_SENT("set");
     }
 
-    // validateHeaderName(name);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value as any);
     return this;

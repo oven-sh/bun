@@ -23,6 +23,7 @@
 #include "JSSocketAddressDTO.h"
 
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
+extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 
@@ -42,6 +43,7 @@ JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex);
@@ -54,6 +56,7 @@ static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
     { "response"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterResponse, noOpSetter } },
     { "duplex"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterDuplex, jsNodeHttpServerSocketSetterDuplex } },
     { "remoteAddress"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterRemoteAddress, noOpSetter } },
+    { "localAddress"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterLocalAddress, noOpSetter } },
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
 };
 
@@ -157,6 +160,7 @@ public:
     mutable WriteBarrier<JSObject> functionToCallOnClose;
     mutable WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
     mutable WriteBarrier<JSObject> m_remoteAddress;
+    mutable WriteBarrier<JSObject> m_localAddress;
     mutable WriteBarrier<JSObject> m_duplex;
 
     unsigned is_ssl : 1;
@@ -308,6 +312,39 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress, (JSC::JSGlob
     return JSValue::encode(object);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    if (thisObject->m_localAddress) {
+        return JSValue::encode(thisObject->m_localAddress.get());
+    }
+
+    us_socket_t* socket = thisObject->socket;
+    if (!socket) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    const char* address = nullptr;
+    int port = 0;
+    bool is_ipv6 = false;
+
+    uws_res_get_local_address_info(socket, &address, &port, &is_ipv6);
+
+    if (address == nullptr) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    auto addressString = WTF::String::fromUTF8(address);
+    if (addressString.isEmpty()) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    auto* object = JSSocketAddressDTO::create(defaultGlobalObject(globalObject), jsString(vm, addressString), port, is_ipv6);
+    thisObject->m_localAddress.set(vm, thisObject, object);
+    return JSValue::encode(object);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
@@ -366,6 +403,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->currentResponseObject);
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->m_remoteAddress);
+    visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);
 }
 
@@ -614,14 +652,11 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
 
     JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
     RETURN_IF_EXCEPTION(scope, void());
-    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, size * 2);
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
+    MarkedArgumentBuffer arrayValues;
 
     args.append(headersObject);
-    args.append(array);
-
-    unsigned i = 0;
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -632,38 +667,57 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
             memcpy(data.data(), pair.second.data(), pair.second.length());
 
         HTTPHeaderName name;
-        WTF::String nameString;
-        WTF::String lowercasedNameString;
-
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
-            nameString = WTF::httpHeaderNameStringImpl(name);
-            lowercasedNameString = nameString;
-        } else {
-            nameString = nameView.toString();
-            lowercasedNameString = nameString.convertToASCIILowercase();
-        }
 
         JSString* jsValue = jsString(vm, value);
+
+        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
+        Identifier nameIdentifier;
+        JSString* nameString = nullptr;
+
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            nameString = identifiers.stringFor(globalObject, name);
+            nameIdentifier = identifiers.identifierFor(vm, name);
+        } else {
+            WTF::String wtfString = nameView.toString();
+            nameString = jsString(vm, wtfString);
+            nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
+        }
 
         if (name == WebCore::HTTPHeaderName::SetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
-                setCookiesHeaderString = jsString(vm, nameString);
-                headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), setCookiesHeaderArray, 0);
+                setCookiesHeaderString = nameString;
+                headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            array->putDirectIndex(globalObject, i++, setCookiesHeaderString);
-            array->putDirectIndex(globalObject, i++, jsValue);
+            arrayValues.append(setCookiesHeaderString);
+            arrayValues.append(jsValue);
             setCookiesHeaderArray->push(globalObject, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
-            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
-            array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
-            array->putDirectIndex(globalObject, i++, jsValue);
+            headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
+            arrayValues.append(nameString);
+            arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+
+    JSC::JSArray* array;
+    {
+
+        ObjectInitializationScope initializationScope(vm);
+        if (LIKELY(array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) {
+            EncodedJSValue* data = arrayValues.data();
+            for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
+                array->initializeIndex(initializationScope, i, JSValue::decode(data[i]));
+            }
+        } else {
+            array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
+        }
+    }
+
+    args.append(array);
 }
 
 // This is an 8% speedup.

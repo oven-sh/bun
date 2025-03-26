@@ -472,6 +472,7 @@ int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length, in
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
+unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(int ssl, us_socket_r s);
 
 void us_socket_ref(us_socket_r s);

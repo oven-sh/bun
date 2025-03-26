@@ -2027,6 +2027,28 @@ pub const AnyRequestContext = struct {
         return false;
     }
 
+    pub fn setCookies(self: AnyRequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setCookies(cookie_map);
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
     pub fn enableTimeoutEvents(self: AnyRequestContext) void {
         if (self.tagged_pointer.isNull()) {
             return;
@@ -2182,6 +2204,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         request_weakref: Request.WeakRef = .{},
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
+        cookies: ?*JSC.WebCore.CookieMap = null,
 
         flags: NewFlags(debug_mode) = .{},
 
@@ -2240,6 +2263,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.has_abort_handler = true;
                 resp.onAborted(*RequestContext, RequestContext.onAbort, this);
             }
+        }
+
+        pub fn setCookies(this: *RequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+            if (this.cookies) |cookies| cookies.deref();
+            this.cookies = cookie_map;
+            if (this.cookies) |cookies| cookies.ref();
         }
 
         pub fn setTimeoutHandler(this: *RequestContext) void {
@@ -2795,6 +2824,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.request_body_readable_stream_ref.deinit();
+
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                cookies.deref();
+            }
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
@@ -4313,6 +4347,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn doWriteHeaders(this: *RequestContext, headers: *JSC.FetchHeaders) void {
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                defer cookies.deref();
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+            }
+
             writeHeaders(headers, ssl_enabled, this.resp);
         }
 

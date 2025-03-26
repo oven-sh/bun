@@ -365,11 +365,22 @@ private:
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
+            /* Drain socket buffer before onWritable is called */
+            size_t bufferedAmount = asyncSocket->getBufferedAmount();
+            if (bufferedAmount > 0) {
+                bufferedAmount -= asyncSocket->flush();
+                if (bufferedAmount > 0) {
+                    /* Expect another writable event, or another request within the timeout */
+                    reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+                    return s;
+               }
+            }
+            
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
                 us_socket_timeout(SSL, s, 0);
-
+                
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
                 bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
@@ -384,7 +395,7 @@ private:
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
-            /*auto [written, failed] = */asyncSocket->write(nullptr, 0, true, 0);
+            asyncSocket->flush();
 
             /* Should we close this connection after a response - and is this response really done? */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {

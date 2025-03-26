@@ -222,6 +222,40 @@ public:
         return addressAsText(getRemoteAddress());
     }
 
+    /* Flush the socket buffer */
+    size_t flush() {
+        if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
+            /* If the socket is closed, we can't flush */
+            return 0;
+        }
+
+        AsyncSocketData<SSL> *asyncSocketData = getAsyncSocketData();
+        size_t total_written = 0;
+        /* We are limited if we have a per-socket buffer */
+        while (asyncSocketData->buffer.length()) {
+            size_t buffer_len = asyncSocketData->buffer.length();
+            // we cannot not flush more than INT_MAX bytes at a time
+            int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
+
+            /* Write off as much as we can */
+            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, /*nextLength != 0 | */0);
+            total_written += written;
+            if ((unsigned int) written < buffer_len) {
+                /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
+                asyncSocketData->buffer.erase((unsigned int) written);
+                if(written < max_flush_len) {
+                    return total_written;
+                }
+                continue;
+            }
+
+            /* At this point we simply have no buffer and can continue as normal */
+            asyncSocketData->buffer.clear();
+        }
+
+        return total_written;
+    }
+
     /* Write in three levels of prioritization: cork-buffer, syscall, socket-buffer. Always drain if possible.
      * Returns pair of bytes written (anywhere) and wheter or not this call resulted in the polling for
      * writable (or we are in a state that implies polling for writable). */

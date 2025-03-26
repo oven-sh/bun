@@ -569,11 +569,6 @@ JSValue resolveAndFetchBuiltinModule(
     return {};
 }
 
-uint32_t NodeModuleModule__getLongestCustomExtension(BunString* str)
-{
-    return 0;
-}
-
 void evaluateCommonJSCustomExtension(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,

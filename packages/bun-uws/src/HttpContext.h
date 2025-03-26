@@ -365,15 +365,25 @@ private:
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
-            /* Drain socket buffer before onWritable is called */
+            /* Attempt to drain the socket buffer before triggering onWritable callback */
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
+                /* Try to flush pending data from the socket's buffer to the network */
                 bufferedAmount -= asyncSocket->flush();
+                
+                /* Check if there's still data waiting to be sent after flush attempt */
                 if (bufferedAmount > 0) {
-                    /* Expect another writable event, or another request within the timeout */
+                    /* Socket buffer is not completely empty yet
+                    * - Reset the timeout to prevent premature connection closure
+                    * - This allows time for another writable event or new request
+                    * - Return the socket to indicate we're still processing
+                    */
                     reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
                     return s;
-               }
+                }
+                /* If bufferedAmount is now 0, we've successfully flushed everything
+                * and will fall through to the next section of code
+                */
             }
             
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */

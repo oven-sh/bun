@@ -28,6 +28,7 @@
 
 #include <cstring>
 #include <iostream>
+#include <stdbool.h>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -222,37 +223,59 @@ public:
         return addressAsText(getRemoteAddress());
     }
 
-    /* Flush the socket buffer */
+    /**
+    * Flushes the socket buffer by writing as much data as possible to the underlying socket.
+    * 
+    * @return The total number of bytes successfully written to the socket
+    */
     size_t flush() {
+        /* Check if socket is valid for operations */
         if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
-            /* If the socket is closed, we can't flush */
+            /* Socket is closed, no flushing is possible */
             return 0;
         }
 
+        /* Get the associated asynchronous socket data structure */
         AsyncSocketData<SSL> *asyncSocketData = getAsyncSocketData();
         size_t total_written = 0;
-        /* We are limited if we have a per-socket buffer */
+        
+        /* Continue flushing as long as we have data in the buffer */
         while (asyncSocketData->buffer.length()) {
+            /* Get current buffer size */
             size_t buffer_len = asyncSocketData->buffer.length();
-            // we cannot not flush more than INT_MAX bytes at a time
+            
+            /* Limit write size to INT_MAX as the underlying socket API uses int for length */
             int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
 
-            /* Write off as much as we can */
-            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, /*nextLength != 0 | */0);
+            /* Attempt to write data to the socket */
+            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, 0);
             total_written += written;
+            
+            /* Check if we couldn't write the entire buffer */
             if ((unsigned int) written < buffer_len) {
-                /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
+                /* Remove the successfully written data from the buffer */
                 asyncSocketData->buffer.erase((unsigned int) written);
+                
+                /* If we wrote less than we attempted, the socket buffer is likely full
+                * LIKELY macro is used as an optimization hint to the compiler
+                * since written < buffer_len is very likely to be true
+                */
                 if(LIKELY(written < max_flush_len)) {
+                    /* Cannot write more at this time, return what we've written so far */
                     return total_written;
                 }
+                /* If we wrote exactly max_flush_len, we might be able to write more, so continue
+                 * This is unlikely to happen, because this would be INT_MAX bytes, which is unlikely to be written in one go
+                 * but we keep this check for completeness
+                 */
                 continue;
             }
 
-            /* At this point we simply have no buffer and can continue as normal */
+            /* Successfully wrote the entire buffer, clear the buffer */
             asyncSocketData->buffer.clear();
         }
 
+        /* Return the total number of bytes written during this flush operation */
         return total_written;
     }
 

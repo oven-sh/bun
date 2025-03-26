@@ -3,7 +3,6 @@ import bodyParser from "body-parser";
 import { fetch } from "undici";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const PORT = 3031;
 const CONCURRENCY = 100;
 
 const app = express();
@@ -19,8 +18,9 @@ app.post("/error", (req, res) => {
   }
 });
 
-const server = app.listen(PORT, async () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const server = app.listen(0, async () => {
+  const port = server.address().port;
+  console.log(`Server running on http://localhost:${port}`);
 
   const active = new Set();
 
@@ -30,7 +30,7 @@ const server = app.listen(PORT, async () => {
     setTimeout(() => controller.abort(), Math.random() * 5 + 1);
 
     try {
-      await fetch(`http://localhost:${PORT}/error`, {
+      await fetch(`http://localhost:${port}/error`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",

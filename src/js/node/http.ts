@@ -62,6 +62,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kCorked = Symbol("corked");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -1775,8 +1776,20 @@ const OutgoingMessagePrototype = {
     return this.finished;
   },
 
+  get writableCorked() {
+    return this[kCorked];
+  },
+
   get writableFinished() {
     return this.finished && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
+  },
+  cork() {
+    this[kCorked]++;
+    // corking is actually handled internally in the socket/handler
+  },
+  uncork() {
+    this[kCorked]--;
+    // uncorking is actually handled internally in the socket/handler
   },
 
   _send(data, encoding, callback, byteLength) {
@@ -1786,6 +1799,7 @@ const OutgoingMessagePrototype = {
     return this.write(data, encoding, callback);
   },
   end(chunk, encoding, callback) {
+    this[kCorked] = 0;
     return this;
   },
   destroy(err?: Error) {
@@ -1992,6 +2006,7 @@ const ServerResponsePrototype = {
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
+    this[kCorked] = 0;
     if (handle?.aborted) {
       return this;
     }
@@ -2142,7 +2157,7 @@ const ServerResponsePrototype = {
       }
       // this are write parameters errors that we should throw see
       // test/js/node/test/parallel/test-http-res-write-end-dont-take-array.js
-      // test/js/node/test/parallel/test-http-outgoing-write-types.js
+      // test/js/node/test/parallel/test-http-outgoing-write-types.js -
       throw err;
     }
 

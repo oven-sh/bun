@@ -47,6 +47,7 @@ const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
@@ -2987,5 +2988,3 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     const str = data[0..len];
     return HardcodedModule.map.get(str) != null;
 }
-
-const node_module_module = @import("./bindings/NodeModuleModule.zig");

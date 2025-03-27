@@ -2563,11 +2563,6 @@ pub const Resolver = struct {
         return result;
     }
 
-    // TODO:
-    pub fn prettyPath(_: *ThisResolver, path: Path) string {
-        return path.text;
-    }
-
     pub fn binDirs(_: *const ThisResolver) []const string {
         if (!bin_folders_loaded) return &[_]string{};
         return bin_folders.constSlice();

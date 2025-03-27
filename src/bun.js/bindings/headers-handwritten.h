@@ -349,7 +349,7 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     const BunString* typeAttribute,
     ErrorableResolvedSource* result,
     bool allowPromise,
-    bool allowCJSCustomExtensions);
+    bool isCommonJSRequire);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,

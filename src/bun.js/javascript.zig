@@ -74,6 +74,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -5019,4 +5020,3 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     return JSValue.jsNumber(prev);
 }
 
-const node_module_module = @import("./bindings/NodeModuleModule.zig");

@@ -36,7 +36,6 @@ pub fn main() void {
         _environ = @ptrCast(std.os.environ.ptr);
     }
 
-    bun.start_time = std.time.nanoTimestamp();
     bun.initArgv(bun.default_allocator) catch |err| {
         Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
     };
@@ -194,9 +193,14 @@ pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
 }
 
 comptime {
-    std.testing.refAllDecls(bun.bake.production);
-    std.testing.refAllDecls(bun.bun_js);
-    std.testing.refAllDecls(@import("bun.js/node/buffer.zig").BufferVectorized);
-    std.testing.refAllDeclsRecursive(@import("cli/upgrade_command.zig"));
-    std.testing.refAllDeclsRecursive(@import("cli/test_command.zig"));
+    // _ = bun.bake.production.@"export"();
+    
+    _ = bun.bake.production.BakeProdResolve;
+    _ = bun.bake.production.BakeProdLoad;
+
+    _ = bun.bun_js.Bun__onRejectEntryPointResult;
+    _ = bun.bun_js.Bun__onResolveEntryPointResult;
+    @import("bun.js/node/buffer.zig").@"export"();
+    @import("cli/upgrade_command.zig").@"export"();
+    @import("cli/test_command.zig").@"export"();
 }

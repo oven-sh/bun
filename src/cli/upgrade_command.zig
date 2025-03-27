@@ -113,11 +113,9 @@ pub const Version = struct {
         return strings.eqlComptime(this.tag, current_version);
     }
 
-    comptime {
-        _ = Bun__githubURL;
-    }
-    test {
-        _ = Bun__githubURL;
+    pub fn @"export"() void {
+        _ = &Bun__githubURL;
+        _ = &Bun__githubBaselineURL;
     }
 };
 
@@ -1016,3 +1014,8 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 };
+
+pub fn @"export"() void {
+    _ = &upgrade_js_bindings;
+    Version.@"export"();
+}

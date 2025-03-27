@@ -2231,7 +2231,7 @@ pub const Flags = packed struct {
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
-    defer_fail_until_connecting_is_done: bool = false,
+    defer_fail_until_connecting_is_complete: bool = false,
 };
 
 // TODO: reduce the size of this struct
@@ -3087,7 +3087,7 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     // mark that we are connecting
-    this.flags.defer_fail_until_connecting_is_done = true;
+    this.flags.defer_fail_until_connecting_is_complete = true;
     // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
     defer this.completeConnectingProcess();
     if (comptime Environment.allow_assert) {
@@ -3784,8 +3784,8 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 }
 
 fn completeConnectingProcess(this: *HTTPClient) void {
-    if (this.flags.defer_fail_until_connecting_is_done) {
-        this.flags.defer_fail_until_connecting_is_done = false;
+    if (this.flags.defer_fail_until_connecting_is_complete) {
+        this.flags.defer_fail_until_connecting_is_complete = false;
         if (this.state.stage == .fail) {
             const callback = this.result_callback;
             const result = this.toResult();
@@ -3811,7 +3811,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         this.state.fail = err;
         this.state.stage = .fail;
 
-        if (!this.flags.defer_fail_until_connecting_is_done) {
+        if (!this.flags.defer_fail_until_connecting_is_complete) {
             const callback = this.result_callback;
             const result = this.toResult();
             this.state.reset(this.allocator);

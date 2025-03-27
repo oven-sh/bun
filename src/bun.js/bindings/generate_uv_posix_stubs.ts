@@ -1,4 +1,34 @@
 import { join } from "path";
+import { symbols, test_skipped } from "./generate_uv_posix_stubs_constants";
+
+import Parser from "tree-sitter";
+import C from "tree-sitter-c";
+
+const parser = new Parser();
+parser.setLanguage(C);
+
+const overrides = {
+  uv_setup_args: {
+    args: ["argc", "argv"],
+    decls: ["int argc", "char **argv"],
+  },
+  uv_udp_try_send2: {
+    args: ["arg0", "arg1", "arg2", "arg3", "arg4", "arg5"],
+    decls: [
+      "uv_udp_t* arg0",
+      "unsigned int arg1",
+      "uv_buf_t** arg2",
+      "unsigned int* arg3",
+      "struct sockaddr** arg4",
+      "unsigned int arg5",
+    ],
+  },
+};
+
+type TestInfo = {
+  decls: string[];
+  args: string[];
+};
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -12,7 +42,7 @@ function assert(condition: boolean, message: string) {
  * 2. Find the range of text which makes up the declaration
  * 3. Generate and return stub
  */
-async function generate(symbol_name: string): Promise<string> {
+async function generate(symbol_name: string): Promise<[stub: string, symbol_name: string, types: TestInfo]> {
   console.log("Looking for", symbol_name);
 
   const HEADER_PATH = "src/bun.js/bindings/libuv";
@@ -73,16 +103,134 @@ async function generate(symbol_name: string): Promise<string> {
 
   const { filename, lineNumber, rest } = matches[0];
 
-  function addStub(symbolName: string, decl: string): string {
+  function extractParameterTypes(decl: string): TestInfo {
+    if (overrides[symbol_name]) return overrides[symbol_name];
+    console.log("DECL", decl);
+    decl = decl.replace("UV_EXTERN", "");
+    const rootNode = parser.parse(decl).rootNode;
+    assert(rootNode.children[0].type === "declaration", "Root node must be a declaration");
+    const declNode = rootNode.children[0];
+    console.log("DECL NODE", declNode.children);
+    let functionDeclNode = declNode.children.find(n => n.type === "function_declarator")!;
+    // it can be a PointerDeclaratorNode:
+    // uv_loop_t* uv_default_loop
+    if (!functionDeclNode) {
+      const pointerDeclaratorNode = declNode.children.find(n => n.type === "pointer_declarator")!;
+      assert(!!pointerDeclaratorNode, "Pointer declarator not found");
+      console.log("POINTER DECLARATOR", pointerDeclaratorNode.children);
+      functionDeclNode = pointerDeclaratorNode.children.find(n => n.type === "function_declarator")!;
+    }
+    assert(!!functionDeclNode, "Function declarator not found");
+    const parameterListNode = functionDeclNode.children.find(n => n.type === "parameter_list")!;
+    assert(!!parameterListNode, "Parameter list not found");
+    const parameterDeclarationNodes = parameterListNode.children.filter(n => n.type === "parameter_declaration")!;
+    assert(parameterDeclarationNodes.length > 0, "Must have exactly one parameter declaration");
+
+    let decls: string[] = [];
+    let args: string[] = [];
+
+    let i = 0;
+    for (const parameterDeclarationNode of parameterDeclarationNodes) {
+      console.log("PARAM", parameterDeclarationNode.children.length, parameterDeclarationNode.text);
+      const last_idx = parameterDeclarationNode.children.length - 1;
+      const last = parameterDeclarationNode.children[last_idx];
+      if (last.type === "primitive_type") {
+        if (last.text === "void") {
+          decls.push("(void) 0");
+          args.push("void");
+          continue;
+        }
+        const arg = `arg${i++}`;
+        decls.push(`${last.text} ${arg}`);
+        args.push(arg);
+        continue;
+      }
+
+      if (last.type === "array_declarator") {
+        const arg = `arg${i++}`;
+        const ident = last.children[0].text;
+        const array_declarator = last.children
+          .slice(1)
+          .map(n => n.text)
+          .join("");
+        const type = parameterDeclarationNode.children
+          .slice(0, last_idx)
+          .map(n => n.text)
+          .join(" ");
+        console.log("IDENT", ident, "TYPE", type, "ARRAY DECLARATOR", array_declarator);
+        decls.push(`${type} *${arg}`);
+        args.push(arg);
+        continue;
+      }
+
+      // function pointer
+      if (last.type === "function_declarator") {
+        console.log("FUNCTION DECLARATOR", last.children);
+        const return_ty = parameterDeclarationNode.children[0].text;
+        // console.log("LMAO", );
+        const arg = `arg${i++}`;
+        const param_list = last.children[1];
+        if (param_list.type !== "parameter_list") {
+          throw new Error("expect param list man");
+        }
+        args.push(arg);
+        const decl = `${return_ty} (*${arg})${param_list.text}`;
+        decls.push(decl);
+        continue;
+      }
+
+      assert(
+        last.type === "identifier" || last.type === "pointer_declarator" || last.type === "abstract_pointer_declarator", // ||
+        // last.type === "array_declarator",
+        `${symbol_name} Inalid param type, but got: ` + last.type,
+      );
+
+      let type = "";
+      for (let i = 0; i < last_idx; i++) {
+        type += parameterDeclarationNode.children[i].text;
+        type += " ";
+      }
+
+      console.log(type, "LAST TYPE lol", last.type);
+      if (last.type === "pointer_declarator" || last.type === "abstract_pointer_declarator") {
+        let cur = last;
+        do {
+          type += "*";
+          assert(cur.children[0].type === "*", "Pointer declarator must have a *");
+          cur = cur.children[1];
+        } while (!!cur && cur.type === "pointer_declarator" && cur.children.length > 0);
+      }
+
+      const arg = `arg${i++}`;
+      decls.push(`${type} ${arg}`);
+      args.push(arg);
+    }
+
+    // function extractParam(node: Parser.SyntaxNode): [decl: string, arg: string] {}
+
+    return { decls, args };
+  }
+
+  function addStub(symbolName: string, decl: string): [stub: string, symbol_name: string, types: TestInfo] {
     assert(decl.includes("UV_EXTERN"), "Must include UV_EXTERN: \n" + decl);
 
-    const contents = `${decl.replaceAll(";", "").trim()} {
+    const types = extractParameterTypes(decl);
+    types.decls = types.decls.map(d => d + ";");
+    if (types.args.length === 1 && types.args[0] === "void") {
+      types.decls = [];
+      types.args = [];
+    }
+
+    const decl_without_semicolon = decl.replaceAll(";", "").trim();
+    console.log(decl_without_semicolon);
+
+    const contents = `${decl_without_semicolon} {
   __bun_throw_not_implemented("${symbolName}");
   __builtin_unreachable();
 }`;
 
     // await Bun.write(stubPath, contents);
-    return contents;
+    return [contents, symbolName, types];
   }
 
   function parseOutput(line: string): { filename: string; lineNumber: number; rest: string } | null {
@@ -103,327 +251,7 @@ async function generate(symbol_name: string): Promise<string> {
   return addStub(symbol_name, rest);
 }
 
-const symbols = [
-  "uv_accept",
-  "uv_async_init",
-  "uv_async_send",
-  "uv_available_parallelism",
-  "uv_backend_fd",
-  "uv_backend_timeout",
-  "uv_barrier_destroy",
-  "uv_barrier_init",
-  "uv_barrier_wait",
-  "uv_buf_init",
-  "uv_cancel",
-  "uv_chdir",
-  "uv_check_init",
-  "uv_check_start",
-  "uv_check_stop",
-  "uv_clock_gettime",
-  "uv_close",
-  "uv_cond_broadcast",
-  "uv_cond_destroy",
-  "uv_cond_init",
-  "uv_cond_signal",
-  "uv_cond_timedwait",
-  "uv_cond_wait",
-  "uv_cpu_info",
-  "uv_cpumask_size",
-  "uv_cwd",
-  "uv_default_loop",
-  "uv_disable_stdio_inheritance",
-  "uv_dlclose",
-  "uv_dlerror",
-  "uv_dlopen",
-  "uv_dlsym",
-  "uv_err_name",
-  "uv_err_name_r",
-  "uv_exepath",
-  "uv_fileno",
-  "uv_free_cpu_info",
-  "uv_free_interface_addresses",
-  "uv_freeaddrinfo",
-  "uv_fs_access",
-  "uv_fs_chmod",
-  "uv_fs_chown",
-  "uv_fs_close",
-  "uv_fs_closedir",
-  "uv_fs_copyfile",
-  "uv_fs_event_getpath",
-  "uv_fs_event_init",
-  "uv_fs_event_start",
-  "uv_fs_event_stop",
-  "uv_fs_fchmod",
-  "uv_fs_fchown",
-  "uv_fs_fdatasync",
-  "uv_fs_fstat",
-  "uv_fs_fsync",
-  "uv_fs_ftruncate",
-  "uv_fs_futime",
-  "uv_fs_get_path",
-  "uv_fs_get_ptr",
-  "uv_fs_get_result",
-  "uv_fs_get_statbuf",
-  "uv_fs_get_system_error",
-  "uv_fs_get_type",
-  "uv_fs_lchown",
-  "uv_fs_link",
-  "uv_fs_lstat",
-  "uv_fs_lutime",
-  "uv_fs_mkdir",
-  "uv_fs_mkdtemp",
-  "uv_fs_mkstemp",
-  "uv_fs_open",
-  "uv_fs_opendir",
-  "uv_fs_poll_getpath",
-  "uv_fs_poll_init",
-  "uv_fs_poll_start",
-  "uv_fs_poll_stop",
-  "uv_fs_read",
-  "uv_fs_readdir",
-  "uv_fs_readlink",
-  "uv_fs_realpath",
-  "uv_fs_rename",
-  "uv_fs_req_cleanup",
-  "uv_fs_rmdir",
-  "uv_fs_scandir",
-  "uv_fs_scandir_next",
-  "uv_fs_sendfile",
-  "uv_fs_stat",
-  "uv_fs_statfs",
-  "uv_fs_symlink",
-  "uv_fs_unlink",
-  "uv_fs_utime",
-  "uv_fs_write",
-  "uv_get_available_memory",
-  "uv_get_constrained_memory",
-  "uv_get_free_memory",
-  "uv_get_osfhandle",
-  "uv_get_process_title",
-  "uv_get_total_memory",
-  "uv_getaddrinfo",
-  "uv_getnameinfo",
-  "uv_getrusage",
-  "uv_getrusage_thread",
-  "uv_gettimeofday",
-  "uv_guess_handle",
-  "uv_handle_get_data",
-  "uv_handle_get_loop",
-  "uv_handle_get_type",
-  "uv_handle_set_data",
-  "uv_handle_size",
-  "uv_handle_type_name",
-  "uv_has_ref",
-  "uv_hrtime",
-  "uv_idle_init",
-  "uv_idle_start",
-  "uv_idle_stop",
-  "uv_if_indextoiid",
-  "uv_if_indextoname",
-  "uv_inet_ntop",
-  "uv_inet_pton",
-  "uv_interface_addresses",
-  "uv_ip4_addr",
-  "uv_ip4_name",
-  "uv_ip6_addr",
-  "uv_ip6_name",
-  "uv_ip_name",
-  "uv_is_active",
-  "uv_is_closing",
-  "uv_is_readable",
-  "uv_is_writable",
-  "uv_key_create",
-  "uv_key_delete",
-  "uv_key_get",
-  "uv_key_set",
-  "uv_kill",
-  "uv_library_shutdown",
-  "uv_listen",
-  "uv_loadavg",
-  "uv_loop_alive",
-  "uv_loop_close",
-  "uv_loop_configure",
-  "uv_loop_delete",
-  "uv_loop_fork",
-  "uv_loop_get_data",
-  "uv_loop_init",
-  "uv_loop_new",
-  "uv_loop_set_data",
-  "uv_loop_size",
-  "uv_metrics_idle_time",
-  "uv_metrics_info",
-  "uv_mutex_destroy",
-  "uv_mutex_init",
-  "uv_mutex_init_recursive",
-  "uv_mutex_lock",
-  "uv_mutex_trylock",
-  "uv_mutex_unlock",
-  "uv_now",
-  "uv_once",
-  "uv_open_osfhandle",
-  "uv_os_environ",
-  "uv_os_free_environ",
-  "uv_os_free_group",
-  "uv_os_free_passwd",
-  "uv_os_get_group",
-  "uv_os_get_passwd",
-  "uv_os_get_passwd2",
-  "uv_os_getenv",
-  "uv_os_gethostname",
-  // Defined in uv-posix-polyfills.cpp
-  // "uv_os_getpid",
-  // Defined in uv-posix-polyfills.cpp
-  // "uv_os_getppid",
-  "uv_os_getpriority",
-  "uv_os_homedir",
-  "uv_os_setenv",
-  "uv_os_setpriority",
-  "uv_os_tmpdir",
-  "uv_os_uname",
-  "uv_os_unsetenv",
-  "uv_pipe",
-  "uv_pipe_bind",
-  "uv_pipe_bind2",
-  "uv_pipe_chmod",
-  "uv_pipe_connect",
-  "uv_pipe_connect2",
-  "uv_pipe_getpeername",
-  "uv_pipe_getsockname",
-  "uv_pipe_init",
-  "uv_pipe_open",
-  "uv_pipe_pending_count",
-  "uv_pipe_pending_instances",
-  "uv_pipe_pending_type",
-  "uv_poll_init",
-  "uv_poll_init_socket",
-  "uv_poll_start",
-  "uv_poll_stop",
-  "uv_prepare_init",
-  "uv_prepare_start",
-  "uv_prepare_stop",
-  "uv_print_active_handles",
-  "uv_print_all_handles",
-  "uv_process_get_pid",
-  "uv_process_kill",
-  "uv_queue_work",
-  "uv_random",
-  "uv_read_start",
-  "uv_read_stop",
-  "uv_recv_buffer_size",
-  "uv_ref",
-  "uv_replace_allocator",
-  "uv_req_get_data",
-  "uv_req_get_type",
-  "uv_req_set_data",
-  "uv_req_size",
-  "uv_req_type_name",
-  "uv_resident_set_memory",
-  "uv_run",
-  "uv_rwlock_destroy",
-  "uv_rwlock_init",
-  "uv_rwlock_rdlock",
-  "uv_rwlock_rdunlock",
-  "uv_rwlock_tryrdlock",
-  "uv_rwlock_trywrlock",
-  "uv_rwlock_wrlock",
-  "uv_rwlock_wrunlock",
-  "uv_sem_destroy",
-  "uv_sem_init",
-  "uv_sem_post",
-  "uv_sem_trywait",
-  "uv_sem_wait",
-  "uv_send_buffer_size",
-  "uv_set_process_title",
-  "uv_setup_args",
-  "uv_shutdown",
-  "uv_signal_init",
-  "uv_signal_start",
-  "uv_signal_start_oneshot",
-  "uv_signal_stop",
-  "uv_sleep",
-  "uv_socketpair",
-  "uv_spawn",
-  "uv_stop",
-  "uv_stream_get_write_queue_size",
-  "uv_stream_set_blocking",
-  "uv_strerror",
-  "uv_strerror_r",
-  "uv_tcp_bind",
-  "uv_tcp_close_reset",
-  "uv_tcp_connect",
-  "uv_tcp_getpeername",
-  "uv_tcp_getsockname",
-  "uv_tcp_init",
-  "uv_tcp_init_ex",
-  "uv_tcp_keepalive",
-  "uv_tcp_nodelay",
-  "uv_tcp_open",
-  "uv_tcp_simultaneous_accepts",
-  "uv_thread_create",
-  "uv_thread_create_ex",
-  "uv_thread_detach",
-  "uv_thread_equal",
-  "uv_thread_getaffinity",
-  "uv_thread_getcpu",
-  "uv_thread_getname",
-  "uv_thread_getpriority",
-  "uv_thread_join",
-  "uv_thread_self",
-  "uv_thread_setaffinity",
-  "uv_thread_setname",
-  "uv_thread_setpriority",
-  "uv_timer_again",
-  "uv_timer_get_due_in",
-  "uv_timer_get_repeat",
-  "uv_timer_init",
-  "uv_timer_set_repeat",
-  "uv_timer_start",
-  "uv_timer_stop",
-  "uv_translate_sys_error",
-  "uv_try_write",
-  "uv_try_write2",
-  "uv_tty_get_vterm_state",
-  "uv_tty_get_winsize",
-  "uv_tty_init",
-  // Defined in wtf-bindings.cpp
-  // "uv_tty_reset_mode",
-  "uv_tty_set_mode",
-  "uv_tty_set_vterm_state",
-  "uv_udp_bind",
-  "uv_udp_connect",
-  "uv_udp_get_send_queue_count",
-  "uv_udp_get_send_queue_size",
-  "uv_udp_getpeername",
-  "uv_udp_getsockname",
-  "uv_udp_init",
-  "uv_udp_init_ex",
-  "uv_udp_open",
-  "uv_udp_recv_start",
-  "uv_udp_recv_stop",
-  "uv_udp_send",
-  "uv_udp_set_broadcast",
-  "uv_udp_set_membership",
-  "uv_udp_set_multicast_interface",
-  "uv_udp_set_multicast_loop",
-  "uv_udp_set_multicast_ttl",
-  "uv_udp_set_source_membership",
-  "uv_udp_set_ttl",
-  "uv_udp_try_send",
-  "uv_udp_try_send2",
-  "uv_udp_using_recvmmsg",
-  "uv_unref",
-  "uv_update_time",
-  "uv_uptime",
-  "uv_utf16_length_as_wtf8",
-  "uv_utf16_to_wtf8",
-  "uv_version",
-  "uv_version_string",
-  "uv_walk",
-  "uv_write",
-  "uv_write2",
-  "uv_wtf8_length_as_utf16",
-  "uv_wtf8_to_utf16",
-];
+// const symbols = ["uv_async_init"];
 
 if (!Bun.which("rg")) {
   console.error("You need ripgrep bro");
@@ -441,12 +269,97 @@ const final_contents = `// GENERATED CODE - DO NOT MODIFY BY HAND
 
 
 #if OS(LINUX) || OS(DARWIN)
-${parts.join("\n\n")}
+${parts.map(([stub, _]) => stub).join("\n\n")}
 #endif
 
 `;
 
 await Bun.write("src/bun.js/bindings/uv-posix-stubs.cpp", final_contents);
+
+const test_plugin_contents = ` // GENERATED CODE ... NO TOUCHY!!
+  #include <node_api.h>
+
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <uv.h>
+
+napi_value call_uv_func(napi_env env, napi_callback_info info) {
+  napi_status status;
+
+  size_t argc = 2;
+  napi_value args[2];
+  status = napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  if (status != napi_ok) {
+    napi_throw_error(env, NULL, "Failed to parse arguments");
+    return NULL;
+  }
+
+  if (argc < 1) {
+    napi_throw_error(env, NULL, "Wrong number of arguments");
+    return NULL;
+  }
+
+  napi_value arg = args[0];
+  char buffer[256];
+  size_t buffer_size = sizeof(buffer);
+  size_t copied;
+
+  status = napi_get_value_string_utf8(env, arg, buffer, buffer_size, &copied);
+  if (status != napi_ok) {
+    napi_throw_error(env, NULL, "Failed to get string value");
+    return NULL;
+  }
+
+  buffer[copied] = '\\0';
+  printf("Got string: %s\\n", buffer);
+
+${parts
+  .map(([_, symbol_name, types]) => {
+    if (test_skipped.includes(symbol_name)) return "";
+    return `
+if (strcmp(buffer, "${symbol_name}") == 0) {
+  ${types.decls.join("\n")}
+
+  ${symbol_name}(${types.args.join(", ")});
+  return NULL;
+}
+`;
+  })
+  .join("\n\n")}
+
+  napi_throw_error(env, NULL, "Function not found");
+
+  return NULL;
+}
+  
+napi_value Init(napi_env env, napi_value exports) {
+  napi_status status;
+  napi_value fn_call_uv_func;
+
+  // Register call_uv_func function
+  status =
+      napi_create_function(env, NULL, 0, call_uv_func, NULL, &fn_call_uv_func);
+  if (status != napi_ok) {
+    napi_throw_error(env, NULL, "Failed to create call_uv_func function");
+    return NULL;
+  }
+
+  status = napi_set_named_property(env, exports, "callUVFunc", fn_call_uv_func);
+  if (status != napi_ok) {
+    napi_throw_error(env, NULL,
+                     "Failed to add call_uv_func function to exports");
+    return NULL;
+  }
+
+  return exports;
+}
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
+`;
+
+await Bun.write("test/napi/uv-stub-stuff/plugin.c", test_plugin_contents);
 
 // for (const symbol of symbols) {
 // await generate("uv_if_indextoiid");

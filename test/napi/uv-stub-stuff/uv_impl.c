@@ -1,4 +1,3 @@
-// GENERATED CODE ... NO TOUCHY!!
 #include <node_api.h>
 
 #include <signal.h>

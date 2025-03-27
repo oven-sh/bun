@@ -349,7 +349,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const req = message?.req;
     if (req && !req.complete) {
       // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy(new ConnResetException("aborted"));
+      req.destroy();
     }
   }
   #onClose() {
@@ -2135,7 +2135,13 @@ const ServerResponsePrototype = {
         result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
       }
     } catch (err) {
-      this.emit("error", err);
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      if (err?.code === "ERR_STREAM_ALREADY_FINISHED") {
+        return true;
+      }
+      process.nextTick(emitErrorNt, this, err, callback);
+      return false;
     }
 
     if (result < 0) {

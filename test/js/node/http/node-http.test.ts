@@ -23,6 +23,7 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import type { AddressInfo } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import * as path from "node:path";

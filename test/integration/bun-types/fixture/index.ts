@@ -14,6 +14,19 @@ const options: Bun.TLSOptions = {
 
 process.assert;
 
+const channel = new BroadcastChannel("my-channel");
+const message = { hello: "world" };
+
+channel.onmessage = event => {
+  console.log(event);
+};
+
+channel.postMessage(message);
+
+const error = new Error("hello world");
+const clone = structuredClone(error);
+console.log(clone.message); // "hello world"
+
 new SubtleCrypto();
 declare const mySubtleCrypto: SubtleCrypto;
 
@@ -81,6 +94,9 @@ new WritableStream();
 new TransformStream();
 new AbortSignal();
 new AbortController();
+AbortSignal.timeout(200);
+AbortSignal.any([new AbortSignal()]);
+AbortSignal.abort(200);
 
 new TextDecoder();
 new TextEncoder();

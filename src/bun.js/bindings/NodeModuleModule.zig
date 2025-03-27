@@ -203,9 +203,7 @@ fn swapRemoveExtension(vm: *JSC.VirtualMachine, index: u32) void {
 pub fn findLongestRegisteredExtension(vm: *JSC.VirtualMachine, filename: []const u8) ?CustomLoader {
     const basename = std.fs.path.basename(filename);
     var next: usize = 0;
-    while (true) {
-        const i = bun.strings.indexOfCharPos(basename, '.', next) orelse
-            return null;
+    while (bun.strings.indexOfCharPos(basename, '.', next)) |i| {
         next = i + 1;
         if (i == 0) continue;
         const ext = basename[i..];
@@ -213,6 +211,7 @@ pub fn findLongestRegisteredExtension(vm: *JSC.VirtualMachine, filename: []const
             return value.unpack();
         }
     }
+    return null;
 }
 
 fn onRequireExtensionModifyBinding(

@@ -194,7 +194,7 @@ pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
 
 comptime {
     // _ = bun.bake.production.@"export"();
-    
+
     _ = bun.bake.production.BakeProdResolve;
     _ = bun.bake.production.BakeProdLoad;
 

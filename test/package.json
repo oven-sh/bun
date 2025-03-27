@@ -80,6 +80,7 @@
     "stripe": "15.4.0",
     "supertest": "6.3.3",
     "svelte": "5.20.4",
+    "tsyringe": "4.8.0",
     "type-graphql": "2.0.0-rc.2",
     "typeorm": "0.3.20",
     "typescript": "5.0.2",

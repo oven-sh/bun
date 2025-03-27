@@ -1018,7 +1018,7 @@ extern "C"
                         (uWS::OpCode)(unsigned char)opcode, compress);
   }
 
-  unsigned int uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)
+  size_t uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)
   {
     if (ssl)
     {

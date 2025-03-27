@@ -2456,10 +2456,11 @@ pub const VirtualMachine = struct {
 
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        defer if (blob_to_deinit) |*blob| blob.deinit();
         const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
             return error.ModuleNotFound;
         };
-        defer if (blob_to_deinit) |*blob| blob.deinit();
+        const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -2474,6 +2475,7 @@ pub const VirtualMachine = struct {
             _specifier,
             lr.path,
             lr.loader orelse if (lr.is_main) .js else .file,
+            module_type,
             log,
             lr.virtual_source,
             null,

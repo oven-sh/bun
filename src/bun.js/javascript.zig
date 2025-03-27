@@ -5021,4 +5021,3 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     string_allocation_limit = limit;
     return JSValue.jsNumber(prev);
 }
-

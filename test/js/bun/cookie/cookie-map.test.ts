@@ -112,8 +112,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     const cookie2 = new Bun.Cookie("baz", "qux");
 
     expect(cookie1.serialize() + "\n" + cookie2.serialize()).toMatchInlineSnapshot(`
-      "foo=bar; SameSite=Lax
-      baz=qux; SameSite=Lax"
+      "foo=bar; Path=/; SameSite=Lax
+      baz=qux; Path=/; SameSite=Lax"
     `);
   });
 
@@ -183,8 +183,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.has("foo")).toBe(true);
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "name=value; SameSite=Lax",
-        "foo=bar; Secure; HttpOnly; Partitioned; SameSite=Lax",
+        "name=value; Path=/; SameSite=Lax",
+        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
       ]
     `);
 
@@ -197,8 +197,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     // Get changes
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "foo=bar; Secure; HttpOnly; Partitioned; SameSite=Lax",
-        "name=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
+        "name=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
       ]
     `);
   });
@@ -252,7 +252,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.get("session")).toBe("abc123");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "session=abc123; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Lax",
+        "session=abc123; Path=/; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Lax",
       ]
     `);
   });
@@ -275,7 +275,7 @@ describe("Cookie name field is immutable", () => {
     expect(cookieMap.get("name")).toBe("value2");
     expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "name=value2; SameSite=Lax",
+        "name=value2; Path=/; SameSite=Lax",
       ]
     `);
   });

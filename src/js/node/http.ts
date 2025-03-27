@@ -439,6 +439,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
+  get writableHighWaterMark() {
+    // 256kb is for macOS 208kb is for Linux and 64kb is for Windows
+    // this is not quite correct, but it's close enough for now
+    return 256 * 1024;
+  }
   get remoteAddress() {
     return this.address()?.address;
   }
@@ -1765,7 +1770,9 @@ const OutgoingMessagePrototype = {
   },
 
   get writableHighWaterMark() {
-    return 16 * 1024;
+    // 256kb is for macOS 208kb is for Linux and 64kb is for Windows
+    // this is not quite correct, but it's close enough for now
+    return 256 * 1024;
   },
 
   get writableNeedDrain() {
@@ -2229,7 +2236,9 @@ const ServerResponsePrototype = {
   },
 
   get writableHighWaterMark() {
-    return 64 * 1024;
+    // 256kb is for macOS 208kb is for Linux and 64kb is for Windows
+    // this is not quite correct, but it's close enough for now
+    return 256 * 1024;
   },
 
   get closed() {

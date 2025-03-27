@@ -62,6 +62,11 @@ pub fn removeFromPipereader(ptr: *?*MaxBuf) void {
         this.destroy();
     }
 }
+pub fn transferToPipereader(prev: *?*MaxBuf, next: *?*MaxBuf) void {
+    if (prev.* == null) return;
+    next.* = prev.*;
+    prev.* = null;
+}
 pub fn onReadBytes(this: *MaxBuf, bytes: u64) void {
     this.remaining_bytes = std.math.sub(i64, this.remaining_bytes, std.math.cast(i64, bytes) orelse 0) catch -1;
     if (this.remaining_bytes < 0 and this.owned_by_subprocess != null) {

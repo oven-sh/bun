@@ -137,13 +137,12 @@ const PosixBufferedReader = struct {
                 .fns = to.vtable.fns,
                 .parent = parent_,
             },
-            .maxbuf = other.maxbuf,
         };
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         other._offset = 0;
-        other.maxbuf = null;
+        MaxBuf.transferToPipereader(&other.maxbuf, &to.maxbuf);
         to.handle.setOwner(to);
 
         // note: the caller is supposed to drain the buffer themselves
@@ -751,6 +750,7 @@ pub const WindowsBufferedReader = struct {
         other._offset = 0;
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         other.source = null;
+        MaxBuf.transferToPipereader(&other.maxbuf, &to.maxbuf);
         to.setParent(parent);
     }
 

@@ -5370,7 +5370,7 @@ pub const ByteStream = struct {
             this.pending.result.deinit();
             this.done = true;
             this.buffer.clearAndFree();
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
 
         if (this.toAnyBlob()) |blob_| {

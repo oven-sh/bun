@@ -864,7 +864,8 @@ pub const Blob = struct {
         destination_blob: *Blob,
         options: WriteFileOptions,
     ) JSC.JSValue {
-        const destination_type = std.meta.activeTag(destination_blob.store.?.data);
+        const destination_store = destination_blob.store orelse Output.panic("Destination blob is detached", .{});
+        const destination_type = std.meta.activeTag(destination_store.data);
 
         // Writing an empty string to a file truncates it
         // This matches the behavior we do with the fast path.
@@ -875,7 +876,7 @@ pub const Blob = struct {
                 // TODO: make this async
                 // TODO: mkdirp()
                 var result = ctx.bunVM().nodeFS().truncate(.{
-                    .path = destination_blob.store.?.data.file.pathlike,
+                    .path = destination_store.data.file.pathlike,
                     .len = 0,
                     .flags = bun.O.CREAT,
                 }, .sync);
@@ -886,16 +887,16 @@ pub const Blob = struct {
                         result.err.errno = @intCast(@intFromEnum(bun.C.E.NOENT));
                     }
 
-                    result.err = result.err.withPathLike(destination_blob.store.?.data.file.pathlike);
+                    result.err = result.err.withPathLike(destination_store.data.file.pathlike);
 
-                    return JSC.JSPromise.rejectedPromiseValue(ctx, result.toJS(ctx));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, result.toJS(ctx));
                 }
             } else if (destination_type == .s3) {
 
                 // create empty file
-                const s3 = &destination_blob.store.?.data.s3;
+                const s3 = &destination_store.data.s3;
                 var aws_options = s3.getCredentialsWithOptions(options.extra_options, ctx) catch |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.takeException(err));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.takeException(err));
                 };
                 defer aws_options.deinit();
 
@@ -926,7 +927,7 @@ pub const Blob = struct {
                 const promise_value = promise.value();
                 const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
-                destination_blob.store.?.ref();
+                destination_store.ref();
                 S3.upload(
                     &aws_options.credentials,
                     s3.path(),
@@ -938,7 +939,7 @@ pub const Blob = struct {
                     Wrapper.resolve,
                     Wrapper.new(.{
                         .promise = promise,
-                        .store = destination_blob.store.?,
+                        .store = destination_store,
                         .global = ctx,
                     }),
                 );
@@ -993,7 +994,7 @@ pub const Blob = struct {
         else if (destination_type == .file and source_type == .file) {
             if (comptime Environment.isWindows) {
                 return Store.CopyFileWindows.init(
-                    destination_blob.store.?,
+                    destination_store,
                     source_blob.store.?,
                     ctx.bunVM().eventLoop(),
                     options.mkdirp_if_not_exists orelse true,
@@ -1002,7 +1003,7 @@ pub const Blob = struct {
             }
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
-                destination_blob.store.?,
+                destination_store,
                 source_blob.store.?,
 
                 destination_blob.offset,
@@ -1021,7 +1022,7 @@ pub const Blob = struct {
             ), ctx)) |stream| {
                 return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
             } else {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
             }
         } else if (destination_type == .bytes and source_type == .bytes) {
             // If this is bytes <> bytes, we can just duplicate it
@@ -1041,9 +1042,9 @@ pub const Blob = struct {
                 blob_value,
             );
         } else if (destination_type == .s3) {
-            const s3 = &destination_blob.store.?.data.s3;
+            const s3 = &destination_store.data.s3;
             var aws_options = s3.getCredentialsWithOptions(options.extra_options, ctx) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.takeException(err));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.takeException(err));
             };
             defer aws_options.deinit();
             const store = source_blob.store.?;
@@ -1071,7 +1072,7 @@ pub const Blob = struct {
                                 undefined,
                             );
                         } else {
-                            return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                         }
                     } else {
                         const Wrapper = struct {
@@ -1138,7 +1139,7 @@ pub const Blob = struct {
                             undefined,
                         );
                     } else {
-                        return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                     }
                 },
             }
@@ -1298,7 +1299,7 @@ pub const Blob = struct {
                     .Error => |*err_ref| {
                         destination_blob.detach();
                         _ = response.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => |*locked| {
                         if (destination_blob.isS3()) {
@@ -1359,7 +1360,7 @@ pub const Blob = struct {
                     .Error => |*err_ref| {
                         destination_blob.detach();
                         _ = request.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => |locked| {
                         if (destination_blob.isS3()) {
@@ -1433,6 +1434,8 @@ pub const Blob = struct {
 
         return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
     }
+
+
     pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
@@ -1496,7 +1499,7 @@ pub const Blob = struct {
                         return .zero;
                     }
 
-                    return JSC.JSPromise.rejectedPromiseValue(
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
@@ -1540,9 +1543,9 @@ pub const Blob = struct {
                             return .zero;
                         }
                         if (comptime !needs_open) {
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                         }
-                        return JSC.JSPromise.rejectedPromiseValue(
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                             globalThis,
                             err.withPath(pathlike.path.slice()).toJSC(globalThis),
                         );
@@ -1584,7 +1587,7 @@ pub const Blob = struct {
                         }
                     }
 
-                    return JSC.JSPromise.rejectedPromiseValue(
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
@@ -1621,12 +1624,12 @@ pub const Blob = struct {
                         }
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.rejectedPromiseValue(
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                             globalThis,
                             err.toJSC(globalThis),
                         );
                     }
-                    return JSC.JSPromise.rejectedPromiseValue(
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
@@ -4139,13 +4142,13 @@ pub const Blob = struct {
 
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
         };
 
         if (this.isS3()) {
             const s3 = &this.store.?.data.s3;
             var aws_options = s3.getCredentialsWithOptions(extra_options, globalThis) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.takeException(err));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.takeException(err));
             };
             defer aws_options.deinit();
 
@@ -4169,7 +4172,7 @@ pub const Blob = struct {
         }
 
         if (store.data != .file) {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is read-only", .{}));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is read-only", .{}));
         }
 
         const file_sink = brk_sink: {
@@ -4187,7 +4190,7 @@ pub const Blob = struct {
                             break :brk result;
                         },
                         .err => |err| {
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.withPath(path).toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJSC(globalThis));
                         },
                     }
                     unreachable;
@@ -4220,7 +4223,7 @@ pub const Blob = struct {
                     switch (sink.writer.startSync(fd, false)) {
                         .err => |err| {
                             sink.deref();
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                         },
                         else => {},
                     }
@@ -4228,7 +4231,7 @@ pub const Blob = struct {
                     switch (sink.writer.start(fd, true)) {
                         .err => |err| {
                             sink.deref();
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                         },
                         else => {},
                     }
@@ -4263,7 +4266,7 @@ pub const Blob = struct {
             switch (sink.start(stream_start)) {
                 .err => |err| {
                     sink.deref();
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                 },
                 else => {},
             }
@@ -4292,7 +4295,7 @@ pub const Blob = struct {
 
         if (assignment_result.toError()) |err| {
             file_sink.deref();
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
 
         if (!assignment_result.isEmptyOrUndefinedOrNull()) {
@@ -4328,7 +4331,7 @@ pub const Blob = struct {
 
                         readable_stream.cancel(globalThis);
 
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, promise.result(globalThis.vm()));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, promise.result(globalThis.vm()));
                     },
                 }
             } else {
@@ -4336,7 +4339,7 @@ pub const Blob = struct {
 
                 readable_stream.cancel(globalThis);
 
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, assignment_result);
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
             }
         }
         file_sink.deref();

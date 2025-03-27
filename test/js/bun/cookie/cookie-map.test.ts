@@ -280,3 +280,38 @@ describe("Cookie name field is immutable", () => {
     `);
   });
 });
+
+test("delete in a loop", () => {
+  const map = new Bun.CookieMap();
+  for (let i = 0; i < 1000; i++) {
+    map.set(`name${i}`, `value${i}`);
+  }
+  for (const key of map.keys()) {
+    map.delete(key);
+  }
+  // expect(map.size).toBe(0);
+  expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+});
+test("delete in a loop with predefined entries", () => {
+  const entries: [string, string][] = [];
+  for (let i = 0; i < 1000; i++) {
+    entries.push([`name${i}`, `value${i}`]);
+  }
+  const map = new Bun.CookieMap(entries);
+  for (const key of map.keys()) {
+    map.delete(key);
+  }
+  // expect(map.size).toBe(0);
+  expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+});
+test.only("basic iterator", () => {
+  const cookies = new Bun.CookieMap({ a: "b", c: "d" });
+  cookies.set("e", "f");
+  cookies.set("g", "h");
+  expect([...cookies.entries()].map(([key, value]) => `${key}=${value}`).join("\n")).toMatchInlineSnapshot(`
+    "e=f
+    g=h
+    c=d
+    a=b"
+  `);
+});

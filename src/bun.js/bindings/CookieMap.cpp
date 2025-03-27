@@ -272,7 +272,7 @@ std::optional<KeyValuePair<String, String>> CookieMap::Iterator::next()
 {
     while (m_index < m_target->m_modifiedCookies.size() + m_target->m_originalCookies.size()) {
         if (m_index >= m_target->m_modifiedCookies.size()) {
-            return m_target->m_originalCookies[m_index++];
+            return m_target->m_originalCookies[(m_index++) - m_target->m_modifiedCookies.size()];
         }
 
         auto result = m_target->m_modifiedCookies[m_index++];

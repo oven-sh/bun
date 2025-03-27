@@ -1,21 +1,13 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const Loader = @import("../options.zig").Loader;
 const ComptimeStringMap = bun.ComptimeStringMap;
 
 const MimeType = @This();
 
-value: string,
+value: []const u8,
 category: Category,
 
 pub const Map = bun.StringHashMap(MimeType);
@@ -89,28 +81,19 @@ pub const Category = enum {
     }
 };
 
-pub const none = MimeType.initComptime("", .none);
-pub const other = MimeType.initComptime("application/octet-stream", .other);
-pub const css = MimeType.initComptime("text/css;charset=utf-8", .css);
-pub const javascript = MimeType.initComptime("text/javascript;charset=utf-8", .javascript);
-pub const ico = MimeType.initComptime("image/vnd.microsoft.icon", .image);
-pub const html = MimeType.initComptime("text/html;charset=utf-8", .html);
-// we transpile json to javascript so that it is importable without import assertions.
-pub const json = MimeType.initComptime("application/json;charset=utf-8", .json);
+pub const none = MimeType{ .value = "", .category = .none };
+pub const other = MimeType{ .value = "application/octet-stream", .category = .other };
+pub const css = MimeType{ .value = "text/css;charset=utf-8", .category = .css };
+pub const javascript = MimeType{ .value = "text/javascript;charset=utf-8", .category = .javascript };
+pub const ico = MimeType{ .value = "image/vnd.microsoft.icon", .category = .image };
+pub const html = MimeType{ .value = "text/html;charset=utf-8", .category = .html };
+pub const json = MimeType{ .value = "application/json;charset=utf-8", .category = .json };
 pub const transpiled_json = javascript;
-pub const text = MimeType.initComptime("text/plain;charset=utf-8", .html);
-pub const wasm = MimeType.initComptime(
-    "application/wasm",
-    .wasm,
-);
-fn initComptime(comptime str: string, t: Category) MimeType {
-    return MimeType{
-        .value = str,
-        .category = t,
-    };
-}
+pub const text = MimeType{ .value = "text/plain;charset=utf-8", .category = .html }; // why??
+pub const wasm = MimeType{ .value = "application/wasm", .category = .wasm };
+pub const form_urlencoded = MimeType{ .value = "application/x-www-form-urlencoded", .category = .application };
 
-pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) MimeType {
+pub fn init(str_: []const u8, allocator: ?std.mem.Allocator, allocated: ?*bool) MimeType {
     var str = str_;
     if (std.mem.indexOfScalar(u8, str, '/')) |slash| {
         const category_ = str[0..slash];
@@ -216,31 +199,16 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
     };
 }
 
-// TODO: improve this
-pub fn byLoader(loader: Loader, ext: string) MimeType {
-    switch (loader) {
-        .tsx, .ts, .js, .jsx, .json => {
-            return javascript;
-        },
-        .css => {
-            return css;
-        },
-        else => {
-            return byExtension(ext);
-        },
-    }
-}
-
-pub fn byExtension(ext_without_leading_dot: string) MimeType {
+pub fn byExtension(ext_without_leading_dot: []const u8) MimeType {
     return byExtensionNoDefault(ext_without_leading_dot) orelse MimeType.other;
 }
 
-pub fn byExtensionNoDefault(ext_without_leading_dot: string) ?MimeType {
+pub fn byExtensionNoDefault(ext_without_leading_dot: []const u8) ?MimeType {
     return extensions.get(ext_without_leading_dot);
 }
 
 // this is partially auto-generated
-pub const all = struct {
+const all = struct {
     pub const @"application/webassembly" = wasm;
     pub const @"application/1d-interleaved-parityfec": MimeType = MimeType{ .category = .application, .value = "application/1d-interleaved-parityfec" };
     pub const @"application/3gpdash-qoe-report+xml": MimeType = MimeType{ .category = .application, .value = "application/3gpdash-qoe-report+xml" };
@@ -1879,7 +1847,7 @@ pub const all = struct {
     pub const @"application/x-virtualbox-vmdk": MimeType = MimeType{ .category = .application, .value = "application/x-virtualbox-vmdk" };
     pub const @"application/x-wais-source": MimeType = MimeType{ .category = .application, .value = "application/x-wais-source" };
     pub const @"application/x-web-app-manifest+json": MimeType = MimeType{ .category = .application, .value = "application/x-web-app-manifest+json" };
-    pub const @"application/x-www-form-urlencoded": MimeType = MimeType{ .category = .application, .value = "application/x-www-form-urlencoded;charset=UTF-8" };
+    pub const @"application/x-www-form-urlencoded": MimeType = form_urlencoded;
     pub const @"application/x-x509-ca-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-ca-cert" };
     pub const @"application/x-x509-ca-ra-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-ca-ra-cert" };
     pub const @"application/x-x509-next-ca-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-next-ca-cert" };
@@ -2537,7 +2505,7 @@ pub fn byName(name: []const u8) MimeType {
 pub fn deinit(mimeType: MimeType, allocator: std.mem.Allocator) void {
     allocator.free(mimeType.value);
 }
-pub const extensions = ComptimeStringMap(MimeType, .{
+const extensions = ComptimeStringMap(MimeType, .{
     .{ "123", all.@"application/vnd.lotus-1-2-3" },
     .{ "1km", all.@"application/vnd.1000minds.decision-model+xml" },
     .{ "3dml", all.@"text/vnd.in3d.3dml" },
@@ -3734,13 +3702,13 @@ pub const extensions = ComptimeStringMap(MimeType, .{
     .{ "zmm", all.@"application/vnd.handheld-entertainment+xml" },
 });
 
-const IMAGES_HEADERS = .{
-    .{ [_]u8{ 0x42, 0x4d }, all.@"image/bmp" },
-    .{ [_]u8{ 0xff, 0xd8, 0xff }, all.@"image/jpeg" },
-    .{ [_]u8{ 0x49, 0x49, 0x2a, 0x00 }, all.@"image/tiff" },
-    .{ [_]u8{ 0x4d, 0x4d, 0x00, 0x2a }, all.@"image/tiff" },
-    .{ [_]u8{ 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, all.@"image/gif" },
-    .{ [_]u8{ 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }, all.@"image/png" },
+const IMAGES_HEADERS = &[_]struct { []const u8, MimeType }{
+    .{ &[_]u8{ 0x42, 0x4d }, all.@"image/bmp" },
+    .{ &[_]u8{ 0xff, 0xd8, 0xff }, all.@"image/jpeg" },
+    .{ &[_]u8{ 0x49, 0x49, 0x2a, 0x00 }, all.@"image/tiff" },
+    .{ &[_]u8{ 0x4d, 0x4d, 0x00, 0x2a }, all.@"image/tiff" },
+    .{ &[_]u8{ 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, all.@"image/gif" },
+    .{ &[_]u8{ 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }, all.@"image/png" },
 };
 pub fn sniff(bytes: []const u8) ?MimeType {
     if (bytes.len < 2) return null;

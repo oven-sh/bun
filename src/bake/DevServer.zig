@@ -6843,7 +6843,7 @@ pub fn putOrOverwriteAsset(
 ) !void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
-    _ = try dev.assets.replacePath(path.text, contents, &.byExtension(path.name.extWithoutLeadingDot()), content_hash);
+    _ = try dev.assets.replacePath(path.text, contents, &MimeType.byExtension(path.name.extWithoutLeadingDot()), content_hash);
 }
 
 /// Storage for hashed assets on `/_bun/asset/{hash}.ext`

@@ -14,7 +14,6 @@ const SystemError = JSC.SystemError;
 const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
-const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
@@ -83,7 +82,7 @@ pub const Blob = struct {
     /// If the blob is contained in Response or Request, this must be null
     allocator: ?std.mem.Allocator = null,
     store: ?*Store = null,
-    content_type: string = "",
+    content_type:[]const u8 = "",
     content_type_allocated: bool = false,
     content_type_was_set: bool = false,
 
@@ -568,7 +567,7 @@ pub const Blob = struct {
         };
         search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
         var store = Blob.Store.init(converter.buf, allocator);
-        store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+        store.mime_type = MimeType.form_urlencoded;
 
         var blob = Blob.initWithStore(store, globalThis);
         blob.content_type = store.mime_type.value;
@@ -618,7 +617,7 @@ pub const Blob = struct {
         return blob;
     }
 
-    pub fn contentType(this: *const Blob) string {
+    pub fn contentType(this: *const Blob)[]const u8 {
         return this.content_type;
     }
 
@@ -4609,7 +4608,7 @@ pub const Blob = struct {
             }
         }
 
-        var content_type: string = "";
+        var content_type:[]const u8 = "";
         var content_type_was_allocated = false;
         if (args_iter.nextEat()) |content_type_| {
             inner: {

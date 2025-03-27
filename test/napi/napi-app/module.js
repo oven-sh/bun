@@ -619,21 +619,12 @@ nativeTests.test_get_value_string = () => {
   }
 };
 
-nativeTests.test_worker_throw_with_finalizer = () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const worker = new Worker(
-    /* js */ `
-    import { createRequire } from "node:module";
-    const require = createRequire(import.meta.url);
-    const { add_finalizer_to_object } = require("./build/Debug/napitests.node");
-    let object = {};
-    add_finalizer_to_object(object);
-  `,
-    { eval: true },
-  );
-  worker.on("exit", resolve);
-  worker.on("error", reject);
-  return promise;
+// Should be run with
+// BUN_DESTRUCT_VM_ON_EXIT=1 -- makes us tear down the JSC::VM while exiting, so that finalizers run
+// BUN_JSC_useGC=0 -- ensures the object's finalizer will be called at exit not during normal GC
+nativeTests.test_finalizer_called_during_destruction = () => {
+  let object = {};
+  nativeTests.add_finalizer_to_object(object);
 };
 
 module.exports = nativeTests;

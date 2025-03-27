@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isBroken, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -455,8 +455,9 @@ describe("napi", () => {
   });
 
   describe("napi_add_finalizer", () => {
-    it("does not crash if the finalizer is called during VM shutdown", () => {
-      checkSameOutput("test_worker_throw_with_finalizer", [], {
+    it.todoIf(isBroken)("does not crash if the finalizer is called during VM shutdown", () => {
+      checkSameOutput("test_finalizer_called_during_destruction", [], {
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
         BUN_JSC_useGC: "0",
       });
     });

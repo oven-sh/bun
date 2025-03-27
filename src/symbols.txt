@@ -389,8 +389,6 @@ _uv_os_get_passwd2
 _uv_os_getenv
 _uv_os_gethostname
 _uv_os_getpid
-_uv_os_getpid
-_uv_os_getppid
 _uv_os_getppid
 _uv_os_getpriority
 _uv_os_homedir

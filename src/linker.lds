@@ -172,8 +172,6 @@ BUN_1.2 {
   uv_os_getenv;
   uv_os_gethostname;
   uv_os_getpid;
-  uv_os_getpid;
-  uv_os_getppid;
   uv_os_getppid;
   uv_os_getpriority;
   uv_os_homedir;

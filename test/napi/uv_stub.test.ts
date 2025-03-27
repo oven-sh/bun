@@ -7,6 +7,7 @@ import { symbols, test_skipped } from "../../src/bun.js/bindings/generate_uv_pos
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
+// We use libuv on Windows
 describe.if(!isWindows)("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
@@ -36,19 +37,24 @@ describe.if(!isWindows)("uv stubs", () => {
       "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
       "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
       "binding.gyp": `{
-        "targets": [
-          {
-            "target_name": "xXx123_foo_counter_321xXx",
-            "sources": [ "plugin.c" ],
-            "include_dirs": [ ".", "./libuv" ]
-          },
-          {
-            "target_name": "good_plugin",
-            "sources": [ "good_plugin.c" ],
-            "include_dirs": [ ".", "./libuv" ]
-          },
-        ]
-      }`,
+  "targets": [
+    {
+      "target_name": "xXx123_foo_counter_321xXx",
+      "sources": [ "plugin.c" ],
+      "include_dirs": [ ".", "./libuv" ],
+      "cflags": ["-fPIC"],
+      "ldflags": ["-Wl,--export-dynamic"]
+    },
+    {
+      "target_name": "good_plugin",
+      "sources": [ "good_plugin.c" ],
+      "include_dirs": [ ".", "./libuv" ],
+      "cflags": ["-fPIC"],
+      "ldflags": ["-Wl,--export-dynamic"]
+    }
+  ]
+}
+`,
     };
 
     tempdir = tempDirWithFiles("native-plugins", files);

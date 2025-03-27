@@ -238,6 +238,32 @@ describe("Bun.CookieMap", () => {
   });
 });
 
+test("cookie invalid surrogate pair", () => {
+  const cookie = new Bun.Cookie("name", "hello\uD800goodbye", {});
+  expect(cookie.value).toBe("hello\uFFFDgoodbye");
+  expect(cookie.toString()).toMatchInlineSnapshot(`"name=hello%EF%BF%BDgoodbye; Path=/; SameSite=Lax"`);
+
+  const cookie2 = new Bun.Cookie("name", "abcdefg", {});
+  cookie2.value = "hello\uD800goodbye";
+  expect(cookie2.value).toBe("hello\uFFFDgoodbye");
+  expect(cookie2.toString()).toMatchInlineSnapshot(`"name=hello%EF%BF%BDgoodbye; Path=/; SameSite=Lax"`);
+});
+
+test("validation errors", () => {
+  const mycookie = new Bun.Cookie("a", "b");
+  expect(() => (mycookie.domain = "ndcla \nkjnc iap!PL)P890u89iop")).toThrow(
+    /Invalid cookie domain: contains invalid characters/,
+  );
+  expect(mycookie.domain).toBe(null);
+  expect(() => (mycookie.path = "ndcla \nkjnc iap!PL)P890u89iop")).toThrow(
+    /Invalid cookie path: contains invalid characters/,
+  );
+  expect(mycookie.path).toBe("/");
+  // set name does nothing with no error
+  mycookie.name = "ndcla \nkjnc iap!PL)P890u89iop";
+  expect(mycookie.name).toBe("a");
+});
+
 const cookie = {
   parse: str => {
     return Object.fromEntries(new Bun.CookieMap(str).entries());
@@ -367,8 +393,8 @@ describe("cookie.serialize(name, value)", function () {
     expect(cookie.serialize("foo", "bar")).toEqual("foo=bar; SameSite=Lax");
   });
 
-  it.failing("should URL-encode value", function () {
-    expect(cookie.serialize("foo", "bar +baz")).toEqual("foo=bar%20%2Bbaz; SameSite=Lax");
+  it("should URL-encode value", function () {
+    expect(cookie.serialize("foo", "bar +baz;")).toEqual("foo=bar%20%2Bbaz%3B; SameSite=Lax");
   });
 
   it("should serialize empty value", function () {
@@ -379,41 +405,43 @@ describe("cookie.serialize(name, value)", function () {
     ["foo"],
     ["foo,bar"],
     ["foo!bar"],
-    // ["foo#bar"],
+    ["foo#bar"],
     ["foo$bar"],
     ["foo'bar"],
     ["foo*bar"],
     ["foo+bar"],
     ["foo-bar"],
     ["foo.bar"],
-    // ["foo^bar"],
+    ["foo^bar"],
     ["foo_bar"],
-    // ["foo`bar"],
-    // ["foo|bar"],
+    ["foo`bar"],
+    ["foo|bar"],
     ["foo~bar"],
     ["foo7bar"],
-    // ["foo/bar"],
-    // ["foo@bar"],
-    // ["foo[bar"],
-    // ["foo]bar"],
-    // ["foo:bar"],
-    // ["foo{bar"],
-    // ["foo}bar"],
-    // ['foo"bar'],
-    // ["foo<bar"],
-    // ["foo>bar"],
-    // ["foo?bar"],
-    // ["foo\\bar"],
+    ["foo/bar"],
+    ["foo@bar"],
+    ["foo[bar"],
+    ["foo]bar"],
+    ["foo:bar"],
+    ["foo{bar"],
+    ["foo}bar"],
+    ['foo"bar'],
+    ["foo<bar"],
+    ["foo>bar"],
+    ["foo?bar"],
+    ["foo\\bar"],
   ])("should serialize name: %s", name => {
     expect(cookie.serialize(name, "baz")).toEqual(`${name}=baz; SameSite=Lax`);
   });
 
-  // it.each([["foo\n"], ["foo\u280a"], ["foo=bar"], ["foo;bar"], ["foo bar"], ["foo\tbar"]])(
-  //   "should throw for invalid name: %s",
-  //   name => {
-  //     expect(() => cookie.serialize(name, "bar")).toThrow(/argument name is invalid/);
-  //   },
-  // );
+  it.each([["foo\n"], ["foo\u280a"], ["foo=bar"], ["foo;bar"], ["foo bar"], ["foo\tbar"], [""]])(
+    "should throw for invalid name: %s",
+    name => {
+      expect(() => cookie.serialize(name, "bar")).toThrow(
+        /name is required|Invalid cookie name: contains invalid characters/,
+      );
+    },
+  );
 });
 
 describe("cookie.serialize(name, value, options)", function () {
@@ -430,16 +458,18 @@ describe("cookie.serialize(name, value, options)", function () {
       expect(cookie.serialize("foo", "bar", { domain })).toEqual(`foo=bar; Domain=${domain}; SameSite=Lax`);
     });
 
-    // it.each([
-    //   ["example.com\n"],
-    //   ["sub.example.com\u0000"],
-    //   ["my site.org"],
-    //   ["domain..com"],
-    //   ["example.com; Path=/"],
-    //   ["example.com /* inject a comment */"],
-    // ])("should throw for invalid domain: %s", domain => {
-    //   expect(() => cookie.serialize("foo", "bar", { domain })).toThrow(/option domain is invalid/);
-    // });
+    it.each([
+      ["example.com\n"],
+      ["sub.example.com\u0000"],
+      ["my site.org"],
+      // ["domain..com"], // TODO
+      ["example.com; Path=/"],
+      ["example.com /* inject a comment */"],
+    ])("should throw for invalid domain: %s", domain => {
+      expect(() => cookie.serialize("foo", "bar", { domain })).toThrow(
+        /Invalid cookie domain: contains invalid characters/,
+      );
+    });
   });
 
   describe.skip('with "encode" option', function () {

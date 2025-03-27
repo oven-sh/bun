@@ -196,7 +196,7 @@ void CookieMap::set(Ref<Cookie> cookie)
     m_modifiedCookies.append(WTFMove(cookie));
 }
 
-void CookieMap::remove(const CookieStoreDeleteOptions& options)
+ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
     removeInternal(options.name);
 
@@ -205,8 +205,13 @@ void CookieMap::remove(const CookieStoreDeleteOptions& options)
     String path = options.path;
 
     // Add the new cookie
-    auto cookie = Cookie::create(name, ""_s, domain, path, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
+    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
+    if (cookie_exception.hasException()) {
+        return cookie_exception.releaseException();
+    }
+    auto cookie = cookie_exception.releaseReturnValue();
     m_modifiedCookies.append(WTFMove(cookie));
+    return {};
 }
 
 size_t CookieMap::size() const
@@ -227,13 +232,13 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
 
     // Create an object to hold cookie key-value pairs
     auto* object = JSC::constructEmptyObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Add modified cookies to the object
     for (const auto& cookie : m_modifiedCookies) {
         if (!cookie->value().isEmpty()) {
             object->putDirect(vm, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
-            RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -242,7 +247,7 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
         // Skip if this cookie name was already added from modified cookies
         if (!object->hasProperty(globalObject, JSC::Identifier::fromString(vm, cookie.key))) {
             object->putDirect(vm, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
-            RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

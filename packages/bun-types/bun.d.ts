@@ -1759,10 +1759,9 @@ declare module "bun" {
      * const [user] = await sql`select * from users where id = ${1}`;
      */
     (value: string | { [key: string]: any } | TemplateStringsArray, ...values: any[]): SQLQuery;
-    /**
-     * Helper function to allow easy use to insert values into a query
+    /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
-     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     * await sql.commitDistributed("my_distributed_transaction");
      */
     commitDistributed(name: string): Promise<void>;
     /** Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL

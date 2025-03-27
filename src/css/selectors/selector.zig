@@ -1176,7 +1176,7 @@ pub const serialize = struct {
             // so use :is() if that is not the case.
             if (ctx.selectors.v.len() == 1 and
                 (first or (!hasTypeSelector(ctx.selectors.v.at(0)) and
-                isSimple(ctx.selectors.v.at(0)))))
+                    isSimple(ctx.selectors.v.at(0)))))
             {
                 try serializeSelector(ctx.selectors.v.at(0), W, dest, ctx.parent, false);
             } else {

@@ -1697,15 +1697,15 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
 
                             const layer: ?struct { value: ?LayerName } =
                                 if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) == .result)
-                                .{ .value = null }
-                            else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
-                                break :brk .{
-                                    .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
-                                        .result => |v| v,
-                                        .err => |e| return .{ .err = e },
-                                    },
-                                };
-                            } else null;
+                                    .{ .value = null }
+                                else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
+                                    break :brk .{
+                                        .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
+                                            .result => |v| v,
+                                            .err => |e| return .{ .err = e },
+                                        },
+                                    };
+                                } else null;
 
                             const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) == .result) brk: {
                                 const Func = struct {
@@ -4710,11 +4710,12 @@ pub const nth = struct {
         if (bytes.len >= 3 and
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
             brk: {
-            for (bytes[2..]) |b| {
-                if (b < '0' or b > '9') break :brk false;
-            }
-            break :brk true;
-        }) {
+                for (bytes[2..]) |b| {
+                    if (b < '0' or b > '9') break :brk false;
+                }
+                break :brk true;
+            })
+        {
             return parse_number_saturate(allocator, str[1..]); // Include the minus sign
         } else {
             return .{ .err = {} };

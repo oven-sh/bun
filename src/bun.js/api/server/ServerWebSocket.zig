@@ -28,7 +28,7 @@ inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
 }
 
 pub usingnamespace JSC.Codegen.JSServerWebSocket;
-pub usingnamespace bun.New(ServerWebSocket);
+pub const new = bun.TrivialNew(ServerWebSocket);
 
 pub fn memoryCost(this: *const ServerWebSocket) usize {
     if (this.flags.closed) {
@@ -351,7 +351,7 @@ pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSE
 
 pub fn finalize(this: *ServerWebSocket) void {
     log("finalize", .{});
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn publish(

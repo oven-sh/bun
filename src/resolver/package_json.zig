@@ -604,7 +604,7 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ input_path, @errorName(err) }) catch unreachable;
             }
 
             return null;
@@ -618,7 +618,7 @@ pub const PackageJSON = struct {
         const key_path = fs.Path.init(package_json_path);
 
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
-        json_source.path.pretty = r.prettyPath(json_source.path);
+        json_source.path.pretty = json_source.path.text;
 
         const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
             if (Environment.isDebug) {

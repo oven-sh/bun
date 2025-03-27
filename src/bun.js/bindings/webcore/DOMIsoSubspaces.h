@@ -37,6 +37,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSModule;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSExtensions;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;

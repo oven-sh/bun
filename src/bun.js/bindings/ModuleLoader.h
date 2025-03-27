@@ -110,7 +110,7 @@ JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
-    BunString* specifier,
+    String specifier,
     BunString* referrer,
     BunString* typeAttribute);
 

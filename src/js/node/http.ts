@@ -2140,8 +2140,10 @@ const ServerResponsePrototype = {
       if (err?.code === "ERR_STREAM_ALREADY_FINISHED") {
         return true;
       }
-      process.nextTick(emitErrorNt, this, err, callback);
-      return false;
+      // this are write parameters errors that we should throw see
+      // test/js/node/test/parallel/test-http-res-write-end-dont-take-array.js
+      // test/js/node/test/parallel/test-http-outgoing-write-types.js
+      throw err;
     }
 
     if (result < 0) {

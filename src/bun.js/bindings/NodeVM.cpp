@@ -453,7 +453,8 @@ public:
 
     bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool* outProduceCachedData)
     {
-        if (JSValue produceCachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s))) {
+        JSValue produceCachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s));
+        if (produceCachedDataOpt && !produceCachedDataOpt.isUndefined()) {
             RETURN_IF_EXCEPTION(scope, {});
             if (!produceCachedDataOpt.isBoolean()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.produceCachedData"_s, "boolean"_s, produceCachedDataOpt);
@@ -467,7 +468,8 @@ public:
 
     bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options)
     {
-        if (JSValue cachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s))) {
+        JSValue cachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s));
+        if (cachedDataOpt && !cachedDataOpt.isUndefined()) {
             RETURN_IF_EXCEPTION(scope, {});
             if (!cachedDataOpt.isCell()) {
                 ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
@@ -501,7 +503,8 @@ public:
 
     bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>* outTimeout)
     {
-        if (JSValue timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s))) {
+        JSValue timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s));
+        if (timeoutOpt && !timeoutOpt.isUndefined()) {
             if (!timeoutOpt.isNumber()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.timeout"_s, "number"_s, timeoutOpt);
                 return false;
@@ -647,7 +650,7 @@ public:
             JSValue parsingContextValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (!parsingContextValue.isEmpty()) {
+            if (!parsingContextValue.isEmpty() && !parsingContextValue.isUndefined()) {
                 if (parsingContextValue.isNull() || !parsingContextValue.isObject())
                     return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 
@@ -669,7 +672,7 @@ public:
             JSValue contextExtensionsValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextExtensions"_s));
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (!contextExtensionsValue.isEmpty()) {
+            if (!contextExtensionsValue.isEmpty() && !contextExtensionsValue.isUndefined()) {
                 if (contextExtensionsValue.isNull() || !contextExtensionsValue.isObject())
                     return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 

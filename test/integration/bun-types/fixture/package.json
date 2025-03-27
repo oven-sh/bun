@@ -6,7 +6,6 @@
   },
   "type": "module",
   "dependencies": {
-    "@types/bun": "types-bun-1.2.6.tgz",
     "typescript": "latest"
   }
 }

@@ -511,7 +511,7 @@ declare module "bun" {
     threadId: number;
   }
 
-  interface Env {
+  interface Env extends NodeJS.ProcessEnv {
     NODE_ENV?: string;
     /**
      * Can be used to change the default timezone at runtime
@@ -526,7 +526,8 @@ declare module "bun" {
    *
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    */
-  const env: NodeJS.ProcessEnv;
+  const env: Env;
+
   /**
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
    */
@@ -3450,6 +3451,7 @@ declare module "bun" {
 
   interface BunRequest<T extends string = string> extends Request {
     params: RouterTypes.ExtractRouteParams<T>;
+    readonly cookies: CookieMap;
   }
 
   interface GenericServeOptions {
@@ -7256,4 +7258,183 @@ declare module "bun" {
     | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
     /** root */
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
+
+  interface CookieInit {
+    name?: string;
+    value?: string;
+    domain?: string;
+    /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
+    path?: string;
+    expires?: number | Date | string;
+    secure?: boolean;
+    /** Defaults to `lax`. */
+    sameSite?: CookieSameSite;
+    httpOnly?: boolean;
+    partitioned?: boolean;
+    maxAge?: number;
+  }
+
+  interface CookieStoreDeleteOptions {
+    name: string;
+    domain?: string | null;
+    path?: string;
+  }
+
+  interface CookieStoreGetOptions {
+    name?: string;
+    url?: string;
+  }
+
+  type CookieSameSite = "strict" | "lax" | "none";
+
+  class Cookie {
+    constructor(name: string, value: string, options?: CookieInit);
+    constructor(cookieString: string);
+    constructor(cookieObject?: CookieInit);
+
+    readonly name: string;
+    value: string;
+    domain?: string;
+    path: string;
+    expires?: Date;
+    secure: boolean;
+    sameSite: CookieSameSite;
+    partitioned: boolean;
+    maxAge?: number;
+    httpOnly: boolean;
+
+    isExpired(): boolean;
+
+    serialize(): string;
+    toString(): string;
+    toJSON(): CookieInit;
+
+    static parse(cookieString: string): Cookie;
+    static from(name: string, value: string, options?: CookieInit): Cookie;
+  }
+
+  /**
+   * A Map-like interface for working with collections of cookies.
+   * Implements the `Iterable` interface, allowing use with `for...of` loops.
+   */
+  class CookieMap implements Iterable<[string, string]> {
+    /**
+     * Creates a new CookieMap instance.
+     *
+     * @param init - Optional initial data for the cookie map:
+     *   - string: A cookie header string (e.g., "name=value; foo=bar")
+     *   - string[][]: An array of name/value pairs (e.g., [["name", "value"], ["foo", "bar"]])
+     *   - Record<string, string>: An object with cookie names as keys (e.g., { name: "value", foo: "bar" })
+     */
+    constructor(init?: string[][] | Record<string, string> | string);
+
+    /**
+     * Gets the value of a cookie with the specified name.
+     *
+     * @param name - The name of the cookie to retrieve
+     * @returns The cookie value as a string, or null if the cookie doesn't exist
+     */
+    get(name: string): string | null;
+
+    /**
+     * Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
+     *
+     * @returns An array of values for Set-Cookie headers
+     */
+    toSetCookieHeaders(): string[];
+
+    /**
+     * Checks if a cookie with the given name exists.
+     *
+     * @param name - The name of the cookie to check
+     * @returns true if the cookie exists, false otherwise
+     */
+    has(name: string): boolean;
+
+    /**
+     * Adds or updates a cookie in the map.
+     *
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
+    set(name: string, value: string, options?: CookieInit): void;
+
+    /**
+     * Adds or updates a cookie in the map using a cookie options object.
+     *
+     * @param options - Cookie options including name and value
+     */
+    set(options: CookieInit): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param name - The name of the cookie to delete
+     */
+    delete(name: string): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param options - The options for the cookie to delete
+     */
+    delete(options: CookieStoreDeleteOptions): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param name - The name of the cookie to delete
+     * @param options - The options for the cookie to delete
+     */
+    delete(name: string, options: Omit<CookieStoreDeleteOptions, "name">): void;
+
+    /**
+     * Converts the cookie map to a serializable format.
+     *
+     * @returns An array of name/value pairs
+     */
+    toJSON(): Record<string, string>;
+
+    /**
+     * The number of cookies in the map.
+     */
+    readonly size: number;
+
+    /**
+     * Returns an iterator of [name, value] pairs for every cookie in the map.
+     *
+     * @returns An iterator for the entries in the map
+     */
+    entries(): IterableIterator<[string, string]>;
+
+    /**
+     * Returns an iterator of all cookie names in the map.
+     *
+     * @returns An iterator for the cookie names
+     */
+    keys(): IterableIterator<string>;
+
+    /**
+     * Returns an iterator of all cookie values in the map.
+     *
+     * @returns An iterator for the cookie values
+     */
+    values(): IterableIterator<string>;
+
+    /**
+     * Executes a provided function once for each cookie in the map.
+     *
+     * @param callback - Function to execute for each entry
+     */
+    forEach(callback: (value: string, key: string, map: CookieMap) => void): void;
+
+    /**
+     * Returns the default iterator for the CookieMap.
+     * Used by for...of loops to iterate over all entries.
+     *
+     * @returns An iterator for the entries in the map
+     */
+    [Symbol.iterator](): IterableIterator<[string, string]>;
+  }
 }

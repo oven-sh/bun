@@ -3,7 +3,7 @@ import path from "node:path";
 import { bunEnv, bunExe, makeTree, tempDirWithFiles, isWindows } from "harness";
 import source from "./uv-stub-stuff/plugin.c";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
-import { symbols, test_skipped } from "../../src/bun.js/bindings/generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_uv_posix_stubs_constants";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 

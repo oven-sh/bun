@@ -255,11 +255,12 @@ pub fn crashHandler(
                             \\Bun is actively working on supporting all libuv functions for POSIX
                             \\systems, please see this issue to track our progress:
                             \\
-                            \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                            \\<cyan>https://github.com/oven-sh/bun/issues/18546<r>
                             \\
                             \\
                         ;
                         writer.print(Output.prettyFmt(fmt, true), .{name}) catch std.posix.abort();
+                        has_printed_message = true;
                     }
                 } else {
                     if (Output.enable_ansi_colors) {
@@ -368,7 +369,7 @@ pub fn crashHandler(
                                 \\Bun is actively working on supporting all libuv functions for POSIX
                                 \\systems, please see this issue to track our progress:
                                 \\
-                                \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                                \\<cyan>https://github.com/oven-sh/bun/issues/18546<r>
                                 \\
                                 \\
                             ;

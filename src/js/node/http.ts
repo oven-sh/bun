@@ -2121,18 +2121,21 @@ const ServerResponsePrototype = {
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
     }
+    try {
+      if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+        handle.cork(() => {
+          handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
 
-    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-      handle.cork(() => {
-        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-
-        // If handle.writeHead throws, we don't want headersSent to be set to true.
-        // So we set it here.
-        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+          // If handle.writeHead throws, we don't want headersSent to be set to true.
+          // So we set it here.
+          this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+          result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+        });
+      } else {
         result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
-      });
-    } else {
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+      }
+    } catch (err) {
+      this.emit("error", err);
     }
 
     if (result < 0) {

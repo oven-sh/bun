@@ -52,7 +52,6 @@ public:
     static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
 
     const String& name() const { return m_name; }
-    void setName(const String& name) { m_name = name; }
 
     const String& value() const { return m_value; }
     void setValue(const String& value) { m_value = value; }

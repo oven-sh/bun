@@ -344,3 +344,30 @@ describe("cookie path option", () => {
     `);
   });
 });
+test("delete cookie path option", () => {
+  const map = new Bun.CookieMap();
+  map.delete("a", { path: "/b" });
+  map.delete("b", { path: "" });
+  map.delete("c", {});
+  map.delete("d", { path: "/" });
+  expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
+    [
+      "a=; Path=/b; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "b=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "c=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "d=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+    ]
+  `);
+});
+test("delete cookie invalid path option", () => {
+  const map = new Bun.CookieMap();
+  expect(() => map.delete("a", { path: "\n" })).toThrowErrorMatchingInlineSnapshot(
+    `"Invalid cookie path: contains invalid characters"`,
+  );
+  expect(() => map.delete("a", { domain: "\n" })).toThrowErrorMatchingInlineSnapshot(
+    `"Invalid cookie domain: contains invalid characters"`,
+  );
+  expect(() => map.delete("\n", {})).toThrowErrorMatchingInlineSnapshot(
+    `"Invalid cookie name: contains invalid characters"`,
+  );
+});

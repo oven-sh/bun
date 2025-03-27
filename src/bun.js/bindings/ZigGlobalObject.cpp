@@ -4672,6 +4672,16 @@ bool GlobalObject::hasNapiFinalizers() const
     return false;
 }
 
+extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    gcUnprotect(globalObject);
+    globalObject = nullptr;
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    vm.derefSuppressingSaferCPPChecking();
+    vm.derefSuppressingSaferCPPChecking();
+}
+
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 #include "ZigGlobalObject.lut.h"
 

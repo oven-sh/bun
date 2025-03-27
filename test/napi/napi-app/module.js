@@ -2,6 +2,7 @@ const assert = require("node:assert");
 const nativeTests = require("./build/Debug/napitests.node");
 const secondAddon = require("./build/Debug/second_addon.node");
 const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
+const { Worker } = require("node:worker_threads");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -616,6 +617,23 @@ nativeTests.test_get_value_string = () => {
       fn(string);
     }
   }
+};
+
+nativeTests.test_worker_throw_with_finalizer = () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const worker = new Worker(
+    /* js */ `
+    import { createRequire } from "node:module";
+    const require = createRequire(import.meta.url);
+    const { add_finalizer_to_object } = require("./build/Debug/napitests.node");
+    let object = {};
+    add_finalizer_to_object(object);
+  `,
+    { eval: true },
+  );
+  worker.on("exit", resolve);
+  worker.on("error", reject);
+  return promise;
 };
 
 module.exports = nativeTests;

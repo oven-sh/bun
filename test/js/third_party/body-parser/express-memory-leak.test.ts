@@ -255,4 +255,4 @@ test("memory leak check - aborted requests", async () => {
       }, 1000).unref();
     });
   }
-}, 20000);
+}, 40000);

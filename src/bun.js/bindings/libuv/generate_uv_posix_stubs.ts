@@ -1,4 +1,4 @@
-import { join } from "path";
+import path, { join } from "path";
 import { symbols, test_skipped } from "./generate_uv_posix_stubs_constants";
 
 import Parser from "tree-sitter";
@@ -45,7 +45,7 @@ function assert(condition: boolean, message: string) {
 async function generate(symbol_name: string): Promise<[stub: string, symbol_name: string, types: TestInfo]> {
   console.log("Looking for", symbol_name);
 
-  const HEADER_PATH = "src/bun.js/bindings/libuv";
+  const HEADER_PATH = import.meta.dir;
 
   const output = await Bun.$`rg -n ${symbol_name + "\\("}`.cwd(HEADER_PATH).text();
 
@@ -274,7 +274,10 @@ ${parts.map(([stub, _]) => stub).join("\n\n")}
 
 `;
 
-await Bun.write("src/bun.js/bindings/uv-posix-stubs.cpp", final_contents);
+await Bun.write(join(import.meta.dir, "../", "uv-posix-stubs.cpp"), final_contents);
+if (Bun.which("clang-format")) {
+  await Bun.$`clang-format -i ${join(import.meta.dir, "../", "uv-posix-stubs.cpp")}`;
+}
 
 const test_plugin_contents = ` // GENERATED CODE ... NO TOUCHY!!
   #include <node_api.h>
@@ -359,7 +362,7 @@ napi_value Init(napi_env env, napi_value exports) {
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
 `;
 
-await Bun.write("test/napi/uv-stub-stuff/plugin.c", test_plugin_contents);
+await Bun.write(join(import.meta.dir, "../", "../", "test", "napi", "uv-stub-stuff", "plugin.c"), test_plugin_contents);
 
 // for (const symbol of symbols) {
 // await generate("uv_if_indextoiid");

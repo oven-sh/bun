@@ -82,7 +82,7 @@ pub const Blob = struct {
     /// If the blob is contained in Response or Request, this must be null
     allocator: ?std.mem.Allocator = null,
     store: ?*Store = null,
-    content_type:[]const u8 = "",
+    content_type: []const u8 = "",
     content_type_allocated: bool = false,
     content_type_was_set: bool = false,
 
@@ -617,7 +617,7 @@ pub const Blob = struct {
         return blob;
     }
 
-    pub fn contentType(this: *const Blob)[]const u8 {
+    pub fn contentType(this: *const Blob) []const u8 {
         return this.content_type;
     }
 
@@ -4608,7 +4608,7 @@ pub const Blob = struct {
             }
         }
 
-        var content_type:[]const u8 = "";
+        var content_type: []const u8 = "";
         var content_type_was_allocated = false;
         if (args_iter.nextEat()) |content_type_| {
             inner: {

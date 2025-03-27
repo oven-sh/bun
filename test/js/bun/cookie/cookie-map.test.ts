@@ -281,7 +281,7 @@ describe("Cookie name field is immutable", () => {
   });
 });
 
-test("iterator", () => {
+describe("iterator", () => {
   test("delete in a loop", () => {
     const map = new Bun.CookieMap();
     for (let i = 0; i < 1000; i++) {
@@ -302,8 +302,7 @@ test("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(0);
   });
   test("delete in a loop with both", () => {
     const entries: [string, string][] = [];
@@ -320,7 +319,7 @@ test("iterator", () => {
     // expect(map.size).toBe(0);
     expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
   });
-  test.only("basic iterator", () => {
+  test("basic iterator", () => {
     const cookies = new Bun.CookieMap({ a: "b", c: "d" });
     cookies.set("e", "f");
     cookies.set("g", "h");

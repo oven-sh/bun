@@ -72,7 +72,13 @@ const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject, validateInteger } = require("internal/validators");
+const {
+  validateFunction,
+  checkIsHttpToken,
+  validateLinkHeaderValue,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
 const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
@@ -343,7 +349,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const req = message?.req;
     if (req && !req.complete) {
       // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy(new ConnResetException("aborted"));
+      req.destroy();
     }
   }
   #onClose() {
@@ -353,7 +359,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     if (req && !req.complete && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
-      req.destroy(new ConnResetException("aborted"));
+      req.destroy();
     }
   }
   #onCloseForDestroy(closeCallback) {
@@ -1922,10 +1928,6 @@ function callWriteHeadIfObservable(self, headerState) {
   }
 }
 
-function allowWritesToContinue() {
-  this._callPendingCallbacks();
-  this.emit("drain");
-}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -2123,10 +2125,11 @@ const ServerResponsePrototype = {
         // If handle.writeHead throws, we don't want headersSent to be set to true.
         // So we set it here.
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+
+        result = handle.write(chunk, encoding);
       });
     } else {
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+      result = handle.write(chunk, encoding);
     }
 
     if (result < 0) {

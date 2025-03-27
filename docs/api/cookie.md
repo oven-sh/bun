@@ -89,7 +89,7 @@ if (cookies.has("session")) {
 
 #### `set(cookie: Cookie): void`
 
-Adds or updates a cookie in the map. Cookies have `SameSite=Lax` set by default for security, and have `Path=/` by default.
+Adds or updates a cookie in the map. Cookies default to `{ path: "/", sameSite: "lax" }`.
 
 ```ts
 // Set by name and value
@@ -373,9 +373,11 @@ interface CookieInit {
   name?: string;
   value?: string;
   domain?: string;
+  /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
   path?: string;
   expires?: number | Date | string;
   secure?: boolean;
+  /** Defaults to `lax`. */
   sameSite?: CookieSameSite;
   httpOnly?: boolean;
   partitioned?: boolean;

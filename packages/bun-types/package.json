@@ -1,5 +1,4 @@
 {
-  "version": "1.2.7",
   "name": "bun-types",
   "license": "MIT",
   "types": "./index.d.ts",

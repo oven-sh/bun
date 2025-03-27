@@ -34,7 +34,7 @@ declare module "bun" {
        *
        * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
        */
-      toJSON(): Record<string, string>;
+      toJSON(): Record<string, string | string[]>;
 
       /**
        * Get the total number of headers

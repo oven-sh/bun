@@ -89,7 +89,7 @@ if (cookies.has("session")) {
 
 #### `set(cookie: Cookie): void`
 
-Adds or updates a cookie in the map.
+Adds or updates a cookie in the map. Cookies have `SameSite=Lax` set by default for security, and have `Path=/` by default.
 
 ```ts
 // Set by name and value

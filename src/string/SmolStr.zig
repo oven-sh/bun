@@ -21,7 +21,7 @@ pub const SmolStr = packed struct {
         __len: u7,
         _tag: u1,
 
-        const MAX_LEN = 15;
+        const max_len: comptime_int = @sizeOf(@FieldType(Inlined, "data")) - 1;
         const empty: Inlined = .{
             .data = 0,
             .__len = 0,
@@ -29,9 +29,9 @@ pub const SmolStr = packed struct {
         };
 
         /// ## Errors
-        /// if `str` is longer than `MAX_LEN`
+        /// if `str` is longer than `max_len`
         pub fn init(str: []const u8) !Inlined {
-            if (str.len > MAX_LEN) {
+            if (str.len > max_len) {
                 @branchHint(.unlikely);
                 return error.StringTooLong;
             }
@@ -60,8 +60,8 @@ pub const SmolStr = packed struct {
             return this.ptr()[0..this.__len];
         }
 
-        pub fn allChars(this: *Inlined) *[MAX_LEN]u8 {
-            return this.ptr()[0..MAX_LEN];
+        pub fn allChars(this: *Inlined) *[max_len]u8 {
+            return this.ptr()[0..max_len];
         }
 
         inline fn ptr(this: *Inlined) [*]u8 {
@@ -108,7 +108,7 @@ pub const SmolStr = packed struct {
     /// ## Panics
     /// if `this` is too long to fit in an inlined string
     pub fn toInlined(this: *const SmolStr) Inlined {
-        assert(this.len() <= Inlined.MAX_LEN);
+        assert(this.len() <= Inlined.max_len);
         var inlined: Inlined = @bitCast(@as(u128, @bitCast(this.*)));
         inlined._tag = 1;
         return inlined;
@@ -149,7 +149,7 @@ pub const SmolStr = packed struct {
     }
 
     pub fn fromSlice(allocator: Allocator, values: []const u8) Allocator.Error!SmolStr {
-        if (values.len > Inlined.MAX_LEN) {
+        if (values.len > Inlined.max_len) {
             var baby_list = try BabyList(u8).initCapacity(allocator, values.len);
             baby_list.appendSliceAssumeCapacity(values);
             return SmolStr.fromBabyList(baby_list);
@@ -171,7 +171,7 @@ pub const SmolStr = packed struct {
     pub fn appendChar(this: *SmolStr, allocator: Allocator, char: u8) Allocator.Error!void {
         if (this.isInlined()) {
             var inlined = this.toInlined();
-            if (inlined.len() + 1 > Inlined.MAX_LEN) {
+            if (inlined.len() + 1 > Inlined.max_len) {
                 var baby_list = try BabyList(u8).initCapacity(allocator, inlined.len() + 1);
                 baby_list.appendSliceAssumeCapacity(inlined.slice());
                 try baby_list.push(allocator, char);
@@ -204,7 +204,7 @@ pub const SmolStr = packed struct {
     pub fn appendSlice(this: *SmolStr, allocator: Allocator, values: []const u8) Allocator.Error!void {
         if (this.isInlined()) {
             var inlined = this.toInlined();
-            if (inlined.len() + values.len > Inlined.MAX_LEN) {
+            if (inlined.len() + values.len > Inlined.max_len) {
                 var baby_list = try BabyList(u8).initCapacity(allocator, inlined.len() + values.len);
                 baby_list.appendSliceAssumeCapacity(inlined.slice());
                 baby_list.appendSliceAssumeCapacity(values);

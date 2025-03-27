@@ -2,6 +2,8 @@ import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } fr
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, gc, isBroken, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
+import { spawn, ChildProcess } from "child_process";
+
 import { mkfifo } from "mkfifo";
 import net from "net";
 import { join } from "path";
@@ -10,7 +12,7 @@ import { Readable } from "stream";
 import { once } from "events";
 import type { AddressInfo } from "net";
 const tmp_dir = tmpdirSync();
-
+import http from "http";
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");

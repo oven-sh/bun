@@ -340,6 +340,8 @@ declare module "bun" {
   /**
    * Represents a file in an S3-compatible storage service.
    * Extends the Blob interface for compatibility with web APIs.
+   *
+   * @category Cloud Storage
    */
   interface S3File extends Blob {
     /**
@@ -635,6 +637,8 @@ declare module "bun" {
    *     await bucket.write("data.json", JSON.stringify({hello: "world"}));
    *     const url = bucket.presign("file.pdf");
    *     await bucket.unlink("old.txt");
+   *
+   * @category Cloud Storage
    */
   class S3Client {
     prototype: S3Client;
@@ -820,6 +824,8 @@ declare module "bun" {
    * A default instance of S3Client
    *
    * Pulls credentials from environment variables. Use `new Bun.S3Client()` if you need to explicitly set credentials.
+   *
+   * @category Cloud Storage
    */
   var s3: S3Client;
 }

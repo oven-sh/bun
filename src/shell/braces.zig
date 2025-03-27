@@ -800,7 +800,7 @@ test Lexer {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
 
-    const TestCase = struct{ []const u8, []const Token };
+    const TestCase = struct { []const u8, []const Token };
     const test_cases: []const TestCase = &[_]TestCase{
         .{
             "{}",

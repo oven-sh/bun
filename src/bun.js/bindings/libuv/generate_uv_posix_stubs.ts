@@ -362,7 +362,12 @@ napi_value Init(napi_env env, napi_value exports) {
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
 `;
 
-await Bun.write(join(import.meta.dir, "../", "../", "test", "napi", "uv-stub-stuff", "plugin.c"), test_plugin_contents);
+const plugin_path_ = join(import.meta.dir, "../", "../", "test", "napi", "uv-stub-stuff", "plugin.c");
+await Bun.write(plugin_path_, test_plugin_contents);
+
+if (Bun.which("clang-format")) {
+  await Bun.$`clang-format -i ${plugin_path_}`.quiet();
+}
 
 // for (const symbol of symbols) {
 // await generate("uv_if_indextoiid");

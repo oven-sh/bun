@@ -48,10 +48,6 @@ public:
     }
 
     static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
-    static Ref<Cookie> from(const String& name, const String& value,
-        const String& domain, const String& path,
-        int64_t expires, bool secure, CookieSameSite sameSite,
-        bool httpOnly, double maxAge, bool partitioned);
 
     static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
 

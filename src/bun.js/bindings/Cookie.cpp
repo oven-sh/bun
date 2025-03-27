@@ -40,14 +40,6 @@ Ref<Cookie> Cookie::create(const String& name, const String& value,
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
-Ref<Cookie> Cookie::from(const String& name, const String& value,
-    const String& domain, const String& path,
-    int64_t expires, bool secure, CookieSameSite sameSite,
-    bool httpOnly, double maxAge, bool partitioned)
-{
-    return create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
-}
-
 String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies)
 {
     if (cookies.empty())

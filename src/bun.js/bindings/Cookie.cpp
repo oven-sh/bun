@@ -1,4 +1,5 @@
 #include "Cookie.h"
+#include "EncodeURIComponent.h"
 #include "JSCookie.h"
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -7,32 +8,6 @@
 #include <JavaScriptCore/DateInstance.h>
 #include "HTTPParsers.h"
 namespace WebCore {
-
-extern "C" JSC::EncodedJSValue Cookie__create(JSDOMGlobalObject* globalObject, const ZigString* name, const ZigString* value, const ZigString* domain, const ZigString* path, double expires, bool secure, int32_t sameSite, bool httpOnly, double maxAge, bool partitioned)
-{
-    String nameStr = Zig::toString(*name);
-    String valueStr = Zig::toString(*value);
-    String domainStr = Zig::toString(*domain);
-    String pathStr = Zig::toString(*path);
-
-    CookieSameSite sameSiteEnum;
-    switch (sameSite) {
-    case 0:
-        sameSiteEnum = CookieSameSite::Strict;
-        break;
-    case 1:
-        sameSiteEnum = CookieSameSite::Lax;
-        break;
-    case 2:
-        sameSiteEnum = CookieSameSite::None;
-        break;
-    default:
-        sameSiteEnum = CookieSameSite::Strict;
-    }
-
-    auto result = Cookie::create(nameStr, valueStr, domainStr, pathStr, expires, secure, sameSiteEnum, httpOnly, maxAge, partitioned);
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(result)));
-}
 
 extern "C" WebCore::Cookie* Cookie__fromJS(JSC::EncodedJSValue value)
 {
@@ -48,7 +23,7 @@ Cookie::Cookie(const String& name, const String& value,
     : m_name(name)
     , m_value(value)
     , m_domain(domain)
-    , m_path(path.isEmpty() ? "/"_s : path)
+    , m_path(path)
     , m_expires(expires)
     , m_secure(secure)
     , m_sameSite(sameSite)
@@ -58,20 +33,21 @@ Cookie::Cookie(const String& name, const String& value,
 {
 }
 
-Ref<Cookie> Cookie::create(const String& name, const String& value,
+ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     const String& domain, const String& path,
     int64_t expires, bool secure, CookieSameSite sameSite,
     bool httpOnly, double maxAge, bool partitioned)
 {
+    if (!isValidCookieName(name)) {
+        return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
+    }
+    if (!isValidCookiePath(path)) {
+        return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+    }
+    if (!isValidCookieDomain(domain)) {
+        return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+    }
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
-}
-
-Ref<Cookie> Cookie::from(const String& name, const String& value,
-    const String& domain, const String& path,
-    int64_t expires, bool secure, CookieSameSite sameSite,
-    bool httpOnly, double maxAge, bool partitioned)
-{
-    return create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
 }
 
 String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies)
@@ -206,12 +182,74 @@ String Cookie::toString(JSC::VM& vm) const
     return builder.toString();
 }
 
+static inline bool isValidCharacterInCookieName(UChar c)
+{
+    return (c >= 0x21 && c <= 0x3A) || (c == 0x3C) || (c >= 0x3E && c <= 0x7E);
+}
+bool Cookie::isValidCookieName(const String& name)
+{
+    // /^[\u0021-\u003A\u003C\u003E-\u007E]+$/
+    if (name.length() == 0) return false; // disallow empty name
+    if (name.is8Bit()) {
+        for (auto c : name.span8()) {
+            if (!isValidCharacterInCookieName(c)) return false;
+        }
+    } else {
+        for (auto c : name.span16()) {
+            if (!isValidCharacterInCookieName(c)) return false;
+        }
+    }
+    return true;
+}
+static inline bool isValidCharacterInCookiePath(UChar c)
+{
+    return (c >= 0x20 && c <= 0x3A) || (c >= 0x3D && c <= 0x7E);
+}
+bool Cookie::isValidCookiePath(const String& path)
+{
+    // /^[\u0020-\u003A\u003D-\u007E]*$/
+    if (path.is8Bit()) {
+        for (auto c : path.span8()) {
+            if (!isValidCharacterInCookiePath(c)) return false;
+        }
+    } else {
+        for (auto c : path.span16()) {
+            if (!isValidCharacterInCookiePath(c)) return false;
+        }
+    }
+    return true;
+}
+
+static inline bool isValidCharacterInCookieDomain(UChar c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-';
+}
+bool Cookie::isValidCookieDomain(const String& domain)
+{
+    // TODO: /^([.]?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i
+    // for now, require all characters to be [a-z0-9.-]
+    if (domain.is8Bit()) {
+        for (auto c : domain.span8()) {
+            if (!isValidCharacterInCookieDomain(c)) return false;
+        }
+    } else {
+        for (auto c : domain.span16()) {
+            if (!isValidCharacterInCookieDomain(c)) return false;
+        }
+    }
+    return true;
+}
+
 void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
 {
     // Name=Value is the basic format
-    builder.append(WTF::encodeWithURLEscapeSequences(m_name));
+    builder.append(m_name);
     builder.append('=');
-    builder.append(WTF::encodeWithURLEscapeSequences(m_value));
+    auto result = encodeURIComponent(vm, m_value, builder);
+    if (result.hasException()) {
+        // m_value contained unpaired surrogate. oops!
+        // fortunately, this never happens because the string has already had invalid surrogate pairs converted to the replacement character
+    }
 
     // Add domain if present
     if (!m_domain.isEmpty()) {
@@ -219,7 +257,7 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
         builder.append(m_domain);
     }
 
-    if (!m_path.isEmpty() && m_path != "/"_s) {
+    if (!m_path.isEmpty()) {
         builder.append("; Path="_s);
         builder.append(m_path);
     }

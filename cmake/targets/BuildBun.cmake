@@ -795,6 +795,10 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
+if(NOT WIN32) 
+  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
+endif()
+
 if(LINUX)
   include(CheckIncludeFiles)
   check_include_files("sys/queue.h" HAVE_SYS_QUEUE_H)

@@ -110,7 +110,7 @@ void InternalWritableStream::lock()
     arguments.append(guardedObject());
     ASSERT(!arguments.hasOverflowed());
 
-    invokeWritableStreamFunction(*globalObject, privateName, arguments);
+    auto result = invokeWritableStreamFunction(*globalObject, privateName, arguments);
     if (UNLIKELY(scope.exception()))
         scope.clearException();
 }

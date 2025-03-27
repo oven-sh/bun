@@ -2807,7 +2807,7 @@ pub const AnyWebSocket = union(enum) {
             compress,
         );
     }
-    pub fn getBufferedAmount(this: AnyWebSocket) u32 {
+    pub fn getBufferedAmount(this: AnyWebSocket) usize {
         return switch (this) {
             .ssl => uws_ws_get_buffered_amount(1, this.ssl.raw()),
             .tcp => uws_ws_get_buffered_amount(0, this.tcp.raw()),
@@ -4014,7 +4014,7 @@ extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8
 extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
 extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize) bool;
 extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
-extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) c_uint;
+extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) usize;
 extern fn uws_ws_get_remote_address(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 extern fn uws_res_get_remote_address_info(res: *uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;

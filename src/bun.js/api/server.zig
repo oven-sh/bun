@@ -4291,6 +4291,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.doWriteStatus(status);
             }
 
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                defer cookies.deref();
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+            }
+
             if (needs_content_type and
                 // do not insert the content type if it is the fallback value
                 // we may not know the content-type when streaming
@@ -4347,12 +4353,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn doWriteHeaders(this: *RequestContext, headers: *JSC.FetchHeaders) void {
-            if (this.cookies) |cookies| {
-                this.cookies = null;
-                defer cookies.deref();
-                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
-            }
-
             writeHeaders(headers, ssl_enabled, this.resp);
         }
 

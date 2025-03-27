@@ -816,6 +816,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) void {
+        if (this.maxbuf) |m| m.onReadBytes(buf.len);
         this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;

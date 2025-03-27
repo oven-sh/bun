@@ -691,6 +691,7 @@ pub const WindowsBufferedReader = struct {
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     // for compatibility with Linux
     flags: Flags = .{},
+    maxbuf: ?*MaxBuf = null,
 
     parent: *anyopaque = undefined,
     vtable: WindowsOutputReaderVTable = undefined,
@@ -880,6 +881,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn deinit(this: *WindowsOutputReader) void {
+        MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
         if (!source.isClosed()) {

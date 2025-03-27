@@ -90,4 +90,25 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(nativeModule.testUvOnce()).toBe(1);
     expect(nativeModule.testUvOnce()).toBe(1);
   });
+
+  test("hrtime", () => {
+    const result = nativeModule.testHrtime();
+
+    // Reconstruct the 64-bit values
+    const time1 = (BigInt(result.time1High) << 32n) | BigInt(result.time1Low >>> 0);
+    const time2 = (BigInt(result.time2High) << 32n) | BigInt(result.time2Low >>> 0);
+
+    // Verify that:
+    // 1. time2 is greater than time1 (time passed)
+    expect(time2 > time1).toBe(true);
+
+    // 2. The difference should be at least 1ms (we slept for 1ms)
+    // hrtime is in nanoseconds, so 1ms = 1,000,000 ns
+    const diff = time2 - time1;
+    expect(diff >= 1_000_000n).toBe(true);
+
+    // 3. The difference shouldn't be unreasonably large
+    // Let's say not more than 100ms (100,000,000 ns)
+    expect(diff <= 100_000_000n).toBe(true);
+  });
 });

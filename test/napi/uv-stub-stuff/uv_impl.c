@@ -103,6 +103,35 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+// Test uv_hrtime
+static napi_value test_hrtime(napi_env env, napi_callback_info info) {
+  uint64_t time1 = uv_hrtime();
+
+  // Sleep for a tiny bit to ensure time passes
+  usleep(1000); // Sleep for 1ms
+
+  uint64_t time2 = uv_hrtime();
+
+  // Create return object with both timestamps
+  napi_value obj;
+  napi_create_object(env, &obj);
+
+  // Convert uint64_t to two int32 values (high and low bits)
+  // because JavaScript numbers can't safely handle 64-bit integers
+  napi_value time1_low, time1_high, time2_low, time2_high;
+  napi_create_int32(env, (int32_t)(time1 & 0xFFFFFFFF), &time1_low);
+  napi_create_int32(env, (int32_t)(time1 >> 32), &time1_high);
+  napi_create_int32(env, (int32_t)(time2 & 0xFFFFFFFF), &time2_low);
+  napi_create_int32(env, (int32_t)(time2 >> 32), &time2_high);
+
+  napi_set_named_property(env, obj, "time1Low", time1_low);
+  napi_set_named_property(env, obj, "time1High", time1_high);
+  napi_set_named_property(env, obj, "time2Low", time2_low);
+  napi_set_named_property(env, obj, "time2High", time2_high);
+
+  return obj;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
@@ -121,6 +150,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_uv_once, NULL, &fn);
   napi_set_named_property(env, exports, "testUvOnce", fn);
+
+  napi_create_function(env, NULL, 0, test_hrtime, NULL, &fn);
+  napi_set_named_property(env, exports, "testHrtime", fn);
 
   return exports;
 }

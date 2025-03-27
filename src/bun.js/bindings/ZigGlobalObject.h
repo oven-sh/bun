@@ -651,7 +651,6 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
-    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     bool hasNapiFinalizers() const;

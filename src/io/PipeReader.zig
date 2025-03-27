@@ -217,9 +217,6 @@ const PosixBufferedReader = struct {
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         return &this._buffer;
     }
-    pub fn getLimit(this: *PosixBufferedReader) ?*MaxBuf {
-        return this.maxbuf;
-    }
 
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
@@ -460,7 +457,6 @@ const PosixBufferedReader = struct {
 
     fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
         _ = size_hint; // autofix
-        const limit = parent.getLimit();
         const streaming = parent.vtable.isStreamingEnabled();
 
         var received_hup = received_hup_;
@@ -479,7 +475,7 @@ const PosixBufferedReader = struct {
                         parent._offset,
                     )) {
                         .result => |bytes_read| {
-                            if (limit) |l| l.onReadBytes(bytes_read);
+                            if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                             parent._offset += bytes_read;
                             buf = stack_buffer_head[0..bytes_read];
                             stack_buffer_head = stack_buffer_head[bytes_read..];
@@ -572,7 +568,7 @@ const PosixBufferedReader = struct {
 
             switch (sys_fn(fd, buf, parent._offset)) {
                 .result => |bytes_read| {
-                    if (limit) |l| l.onReadBytes(bytes_read);
+                    if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                     parent._offset += bytes_read;
                     buf = buf[0..bytes_read];
                     resizable_buffer.items.len += bytes_read;

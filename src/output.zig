@@ -702,7 +702,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = comptime if(!Environment.enable_logs) .{} else brk: {
+    const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
             else => tag,

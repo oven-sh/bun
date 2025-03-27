@@ -536,9 +536,11 @@ declare module "bun" {
   /**
    * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
    *
-   * @param {string} command The name of the executable or script
-   * @param {string} options.PATH Overrides the PATH environment variable
-   * @param {string} options.cwd When given a relative path, use this path to join it.
+   * @category Utilities
+   *
+   * @param command The name of the executable or script
+   * @param options.PATH Overrides the PATH environment variable
+   * @param options.cwd When given a relative path, use this path to join it.
    */
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
@@ -944,19 +946,24 @@ declare module "bun" {
     blob(): Blob;
   }
 
+  /**
+   * The Bun shell
+   *
+   * @category Process Management
+   */
   const $: Shell;
 
-  interface TOML {
+  const TOML: {
     /**
      * Parse a TOML string into a JavaScript object.
      *
-     * @param {string} command The name of the executable or script
-     * @param {string} options.PATH Overrides the PATH environment variable
-     * @param {string} options.cwd Limits the search to a particular directory in which to searc
+     * @category Utilities
+     *
+     * @param input The TOML string to parse
+     * @returns A JavaScript object
      */
     parse(input: string): object;
-  }
-  const TOML: TOML;
+  };
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -978,6 +985,8 @@ declare module "bun" {
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
+   *
+   * @category File System
    *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
@@ -1270,6 +1279,8 @@ declare module "bun" {
   /**
    * Escape the following characters in a string:
    *
+   * @category Security
+   *
    * - `"` becomes `"&quot;"`
    * - `&` becomes `"&amp;"`
    * - `'` becomes `"&#x27;"`
@@ -1289,6 +1300,8 @@ declare module "bun" {
    *
    * @param path The path to convert.
    * @returns A {@link URL} with the file:// scheme.
+   *
+   * @category File System
    *
    * @example
    * ```js
@@ -1312,9 +1325,13 @@ declare module "bun" {
 
   /**
    * Convert a {@link URL} to a filesystem path.
+   *
    * @param url The URL to convert.
    * @returns A filesystem path.
    * @throws If the URL is not a URL.
+   *
+   * @category File System
+   *
    * @example
    * ```js
    * const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
@@ -1522,6 +1539,8 @@ declare module "bun" {
    * - `size` will not be valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
    *
+   * @category File System
+   *
    * @example
    * ```js
    * const file = Bun.file("./hello.json");
@@ -1557,7 +1576,7 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     * If `begin` > 0, {@link Bun.write}() will be slower on macOS
      *
      * @param begin - start offset in bytes
      * @param contentType - MIME type for the new BunFile
@@ -2509,6 +2528,15 @@ declare module "bun" {
     throw?: boolean;
   }
 
+  /**
+   * Hash and verify passwords using argon2 or bcrypt
+   *
+   * These are fast APIs that can run in a worker thread if used asynchronously.
+   *
+   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   *
+   * @category Security
+   */
   namespace Password {
     type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
 
@@ -2538,6 +2566,10 @@ declare module "bun" {
    * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
    * Password hashing functions are necessarily slow, and this object will
    * automatically run in a worker thread.
+   *
+   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   *
+   * @category Security
    *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
@@ -2995,6 +3027,8 @@ declare module "bun" {
   /**
    * A fast WebSocket designed for servers.
    *
+   * @category HTTP & Networking
+   *
    * Features:
    * - **Message compression** - Messages can be compressed
    * - **Backpressure** - If the client is not ready to receive data, the server will tell you.
@@ -3262,6 +3296,8 @@ declare module "bun" {
 
   /**
    * Create a server-side {@link ServerWebSocket} handler for use with {@link Bun.serve}
+   *
+   * @category HTTP & Networking
    *
    * @example
    * ```ts
@@ -3970,6 +4006,8 @@ declare module "bun" {
    *
    * To start the server, see {@link serve}
    *
+   * @category HTTP & Networking
+   *
    * For performance, Bun pre-allocates most of the data for 2048 concurrent requests.
    * That means starting a new server allocates about 500 KB of memory. Try to
    * avoid starting and stopping the server often (unless it's a new instance of bun).
@@ -4268,6 +4306,8 @@ declare module "bun" {
    * parameters and method-specific handling.
    *
    * @param options - Server configuration options
+   *
+   * @category HTTP & Networking
    *
    * @example Basic Usage
    * ```ts
@@ -4599,6 +4639,11 @@ declare module "bun" {
 
   type StringLike = string | { toString(): string };
 
+  /**
+   * Valid inputs for {@link color}
+   *
+   * @category Utilities
+   */
   type ColorInput =
     | { r: number; g: number; b: number; a?: number }
     | [number, number, number]
@@ -4613,6 +4658,9 @@ declare module "bun" {
 
   /**
    * Converts formats of colors
+   *
+   * @category Utilities
+   *
    * @param input A value that could possibly be a color
    * @param outputFormat An optional output format
    */
@@ -5032,6 +5080,8 @@ declare module "bun" {
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
    *
+   * @category Utilities
+   *
    * @param ms milliseconds to delay resolving the promise. This is a minimum
    * number. It may take longer. If a {@link Date} is passed, it will sleep until the
    * {@link Date} is reached.
@@ -5074,6 +5124,8 @@ declare module "bun" {
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
+   * @category Utilities
+   *
    * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
    * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
    *
@@ -5092,6 +5144,8 @@ declare module "bun" {
 
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
+   *
+   * @category Utilities
    *
    * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
    * @param encoding `DigestEncoding` to return the hash in
@@ -6735,6 +6789,8 @@ declare module "bun" {
   /**
    * Spawn a new process
    *
+   * @category Process Management
+   *
    * ```js
    * const subprocess = Bun.spawn({
    *  cmd: ["echo", "hello"],
@@ -6798,6 +6854,8 @@ declare module "bun" {
 
   /**
    * Spawn a new process
+   *
+   * @category Process Management
    *
    * ```js
    * const {stdout} = Bun.spawnSync({

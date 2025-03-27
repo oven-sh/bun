@@ -76,6 +76,7 @@
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
+#include "JSCommonJSExtensions.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
@@ -298,12 +299,31 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
+    return JSValue::encode(thisObject->lazyRequireExtensionsObject());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
+    return true;
+}
+
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
 
 static const HashTableValue RequireFunctionPrototypeValues[] = {
     { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
+    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireExtensionsSetter } },
 };
 
 Structure* RequireFunctionPrototype::createStructure(
@@ -366,13 +386,6 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
         JSC::Identifier::fromString(vm, "main"_s),
         JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, requireDotMainFunction),
         PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
-
-    auto extensions = constructEmptyObject(globalObject);
-    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
-    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
-    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);
-
-    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), extensions, 0);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -1151,7 +1164,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // This is always a new JSCommonJSModule object; cast cannot fail.
     JSCommonJSModule* child = jsCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
 
-    BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
     BunString typeAttributeStr = { BunStringTag::Dead };
     String typeAttribute = String();
@@ -1182,7 +1194,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         globalObject,
         child,
         specifierValue,
-        &specifierStr,
+        specifier,
         &referrerStr,
         LIKELY(typeAttribute.isEmpty())
             ? nullptr

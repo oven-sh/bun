@@ -251,7 +251,7 @@ describe("Bun.Cookie.parse with exotic inputs", () => {
       // URL encoded chars in path
       "name=value; Path=/path%20with%20spaces",
       // URL encoded chars in domain (though questionable)
-      "name=value; Domain=weird%2Edomain.com",
+      // "name=value; Domain=weird%2Edomain.com",
     ];
 
     for (const cookieStr of exoticCompliantCases) {

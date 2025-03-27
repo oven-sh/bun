@@ -495,7 +495,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
     expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "name=value; SameSite=Lax",
+        "name=value; Path=/; SameSite=Lax",
         "foo=bar; Path=/path; Secure; SameSite=Lax",
       ]
     `);

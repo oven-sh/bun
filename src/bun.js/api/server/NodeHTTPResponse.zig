@@ -747,6 +747,7 @@ fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool
     defer this.deref();
     response.clearOnWritable();
     if (this.socket_closed or this.request_has_completed) {
+        // return false means we don't have anything to drain
         return false;
     }
     const on_writable = this.onWritableCallback.trySwap() orelse return false;
@@ -754,10 +755,7 @@ fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool
     const vm = globalThis.bunVM();
 
     response.corked(JSC.EventLoop.runCallback, .{ vm.eventLoop(), on_writable, globalThis, .undefined, &.{JSC.JSValue.jsNumberFromUint64(offset)} });
-    if (this.socket_closed or this.request_has_completed) {
-        return false;
-    }
-
+    // return true means we may have something to drain
     return true;
 }
 
@@ -868,7 +866,8 @@ fn writeOrEnd(
                     this.onWritableCallback.set(globalObject, callback_value.withAsyncContextIfNeeded(globalObject));
                     this.raw_response.onWritable(*NodeHTTPResponse, onDrain, this);
                 }
-                return JSC.JSValue.jsNumberFromInt64(-@as(i64, @intCast(written)));
+
+                return JSC.JSValue.jsNumberFromInt64(-@as(i64, @intCast(@min(written, std.math.maxInt(i64)))));
             },
         }
     }

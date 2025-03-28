@@ -15,7 +15,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
 
     for (std.meta.fields(T)) |field| {
         if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
+            if (field.defaultValue() != 1) {
                 @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
             }
         }
@@ -34,20 +34,19 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
         }
 
         pub fn ref(self: *T) void {
-            if (bun.Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
-
+            if (bun.Environment.isDebug) {
+                log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+                bun.assertf(self.ref_count > 0, "use-after-free detected on {*}", .{self});
+            }
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
             const ref_count = self.ref_count;
             if (bun.Environment.isDebug) {
-                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
-                    @panic("Use after-free detected on " ++ output_name);
-                }
+                log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+                bun.assertf(ref_count > 0, "use-after-free detected on {*}", .{self});
             }
-
-            if (bun.Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
 
             self.ref_count = ref_count - 1;
 
@@ -65,7 +64,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
 
             if (bun.Environment.enable_logs) {
                 if (ptr.ref_count == 0) {
-                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
+                    std.debug.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
                 }
             }
 
@@ -81,8 +80,8 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
 
     for (std.meta.fields(T)) |field| {
         if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            if (field.defaultValue() == null or field.defaultValue().?.raw != 1) {
+                @compileError("Expected an atomic field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
             }
         }
     }
@@ -100,16 +99,21 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
         }
 
         pub fn ref(self: *T) void {
-            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
-            if (bun.Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-            bun.debugAssert(ref_count > 0);
+            const prev_ref_count = self.ref_count.fetchAdd(1, .seq_cst);
+            if (bun.Environment.isDebug) {
+                log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), prev_ref_count, prev_ref_count + 1 });
+                bun.assertf(prev_ref_count > 0, "use-after-free detected on {*}", .{self});
+            }
         }
 
         pub fn deref(self: *T) void {
-            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
-            if (bun.Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+            const prev_ref_count = self.ref_count.fetchSub(1, .seq_cst);
+            if (bun.Environment.isDebug) {
+                log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), prev_ref_count, prev_ref_count -| 1 });
+                bun.assertf(prev_ref_count > 0, "use-after-free detected on {*}", .{self});
+            }
 
-            if (ref_count == 1) {
+            if (prev_ref_count == 1) {
                 if (comptime deinit_fn) |deinit| {
                     deinit(self);
                 } else {

@@ -3587,7 +3587,7 @@ declare module "bun" {
     id?: string | null;
   }
 
-  interface ServeOptions extends GenericServeOptions {
+  interface BasicFetchServeOptions extends GenericServeOptions {
     /**
      * What port should the server listen on?
      * @default process.env.PORT || "3000"
@@ -3813,6 +3813,14 @@ declare module "bun" {
     tls?: TLSOptions | TLSOptions[];
   }
 
+  interface TLSBasicFetchServeOptions extends BasicFetchServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
+  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
   interface ErrorLike extends Error {
     code?: string;
     errno?: number;
@@ -4011,14 +4019,6 @@ declare module "bun" {
      * @deprecated `Use .tls.secureOptions` instead
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
-  }
-
-  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
-  }
-
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
   }
 
   interface SocketAddress {
@@ -4295,8 +4295,8 @@ declare module "bun" {
    * The type of options that can be passed to {@link serve}
    */
   type Serve<WebSocketDataType = undefined> =
-    | ServeOptions
-    | TLSServeOptions
+    | BasicFetchServeOptions
+    | TLSBasicFetchServeOptions
     | UnixServeOptions
     | UnixTLSServeOptions
     | WebSocketServeOptions<WebSocketDataType>

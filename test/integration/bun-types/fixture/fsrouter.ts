@@ -1,5 +1,5 @@
 import { FileSystemRouter } from "bun";
-import { expectType } from "./utilities.test";
+import { expectType } from "./utilities";
 
 const router = new FileSystemRouter({
   dir: "/pages",

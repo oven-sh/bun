@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { expectType } from "./utilities.test";
+import { expectType } from "./utilities";
 
 // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
 // EventEmitter<

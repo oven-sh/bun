@@ -1,7 +1,6 @@
-import { ZlibCompressionOptions } from "bun";
 import * as fs from "fs";
 import * as fsPromises from "fs/promises";
-import { expectAssignable, expectType } from "./utilities.test";
+import { expectAssignable, expectType } from "./utilities";
 
 // FileBlob
 expectType<ReadableStream<Uint8Array>>(Bun.file("index.test-d.ts").stream());
@@ -36,7 +35,7 @@ expectType<Uint8Array>(
 expectType<Uint8Array>(Bun.gzipSync(new Uint8Array(128), { level: 9, memLevel: 6, windowBits: 27 }));
 expectType<Uint8Array>(Bun.inflateSync(new Uint8Array(64))); // Pretend this is DEFLATE compressed data
 expectType<Uint8Array>(Bun.gunzipSync(new Uint8Array(64))); // Pretend this is GZIP compressed data
-expectAssignable<ZlibCompressionOptions>({ windowBits: -11 });
+expectAssignable<Bun.ZlibCompressionOptions>({ windowBits: -11 });
 
 // Other
 expectType<Promise<number>>(Bun.write("test.json", "lol"));
@@ -47,14 +46,8 @@ expectType<string>(Bun.fileURLToPath(new URL("file:///foo/bar.txt")));
 // Testing ../fs.d.ts
 expectType<string>(fs.readFileSync("./index.d.ts", { encoding: "utf-8" }).toString());
 expectType<boolean>(fs.existsSync("./index.d.ts"));
-// tslint:disable-next-line:no-void-expression
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 expectType<void>(fs.accessSync("./index.d.ts"));
-// tslint:disable-next-line:no-void-expression
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 expectType<void>(fs.appendFileSync("./index.d.ts", "test"));
-// tslint:disable-next-line:no-void-expression
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 expectType<void>(fs.mkdirSync("./index.d.ts"));
 
 // Testing ^promises.d.ts
@@ -112,32 +105,29 @@ CountQueuingStrategy;
 TextEncoder;
 TextDecoder;
 ReadableStreamDefaultReader;
-// ReadableStreamBYOBReader;
+ReadableStreamBYOBReader;
 ReadableStreamDefaultController;
-// ReadableByteStreamController;
+ReadableByteStreamController;
 WritableStreamDefaultWriter;
 
-function stuff(arg: Blob): any;
-function stuff(arg: WebSocket): any;
-function stuff(arg: Request): any;
-function stuff(arg: Response): any;
-function stuff(arg: Headers): any;
-function stuff(arg: FormData): any;
-function stuff(arg: URL): any;
-function stuff(arg: URLSearchParams): any;
-function stuff(arg: ReadableStream): any;
-function stuff(arg: WritableStream): any;
-function stuff(arg: TransformStream): any;
-function stuff(arg: ByteLengthQueuingStrategy): any;
-function stuff(arg: CountQueuingStrategy): any;
-function stuff(arg: TextEncoder): any;
-function stuff(arg: TextDecoder): any;
-function stuff(arg: ReadableStreamDefaultReader): any;
-function stuff(arg: ReadableStreamDefaultController): any;
-function stuff(arg: WritableStreamDefaultWriter): any;
-function stuff(arg: any) {
-  return "asfd";
-}
+declare function stuff(arg: Blob): any;
+declare function stuff(arg: WebSocket): any;
+declare function stuff(arg: Request): any;
+declare function stuff(arg: Response): any;
+declare function stuff(arg: Headers): any;
+declare function stuff(arg: FormData): any;
+declare function stuff(arg: URL): any;
+declare function stuff(arg: URLSearchParams): any;
+declare function stuff(arg: ReadableStream): any;
+declare function stuff(arg: WritableStream): any;
+declare function stuff(arg: TransformStream): any;
+declare function stuff(arg: ByteLengthQueuingStrategy): any;
+declare function stuff(arg: CountQueuingStrategy): any;
+declare function stuff(arg: TextEncoder): any;
+declare function stuff(arg: TextDecoder): any;
+declare function stuff(arg: ReadableStreamDefaultReader): any;
+declare function stuff(arg: ReadableStreamDefaultController): any;
+declare function stuff(arg: WritableStreamDefaultWriter): any;
 
 stuff("asdf" as any as Blob);
 
@@ -260,8 +250,9 @@ const writableStream = new WritableStream();
   a.href;
 }
 {
-  const a = new URLSearchParams();
-  a;
+  new URLSearchParams();
+  new URLSearchParams("");
+  new URLSearchParams([]);
 }
 {
   const a = new TextDecoder();

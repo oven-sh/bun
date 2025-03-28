@@ -1,7 +1,7 @@
 declare module "bun" {
   namespace __internal {
     type NodeWorkerThreadsWorker = import("worker_threads").Worker;
-    type LibWorkerOrNodeWorkerThreadsWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", NodeWorkerThreadsWorker>;
+    type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
 
     type NodePerfHooksPerformance = import("perf_hooks").Performance;
     type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
@@ -11,8 +11,10 @@ declare module "bun" {
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
-    type NodeUtilTextEncoder = import("util").TextEncoder;
-    type NodeUtilTextDecoder = import("util").TextDecoder;
+
+    type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("util").TextEncoder;
+
+    type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("util").TextDecoder;
 
     type LibEmptyOrNodeReadableStream<T = any> = LibDomIsLoaded extends true
       ? {}
@@ -47,7 +49,7 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface Worker extends Bun.__internal.LibWorkerOrNodeWorkerThreadsWorker {}
+interface Worker extends Bun.__internal.LibWorkerOrBunWorker {}
 declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
   {
@@ -81,7 +83,7 @@ declare var crypto: Crypto;
  * const uint8array = encoder.encode('this is some data');
  * ```
  */
-interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
+interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
   /**
    * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
    * containing the read Unicode code units and written UTF-8 bytes.
@@ -113,14 +115,12 @@ declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
+interface TextDecoder extends Bun.__internal.LibEmptyOrNodeUtilTextDecoder {}
 declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoder",
   {
-    prototype: Bun.__internal.NodeUtilTextDecoder;
-    new (
-      encoding?: Bun.Encoding,
-      options?: { fatal?: boolean; ignoreBOM?: boolean },
-    ): Bun.__internal.NodeUtilTextDecoder;
+    prototype: TextDecoder;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
   }
 >;
 
@@ -1119,7 +1119,7 @@ interface ImportMeta {
    * import.meta.env === process.env
    * ```
    */
-  readonly env: NodeJS.ProcessEnv;
+  readonly env: Bun.Env;
 
   /**
    * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
@@ -1256,6 +1256,16 @@ interface BlobPropertyBag {
 interface WorkerOptions extends Bun.WorkerOptions {}
 
 interface Blob {
+  /**
+   * The size of this Blob in bytes
+   */
+  readonly size: number;
+
+  /**
+   * The MIME type of this Blob
+   */
+  readonly type: string;
+
   /**
    * Read the data from the blob as a JSON object.
    *
@@ -1542,7 +1552,17 @@ declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
 interface URLSearchParams {}
 declare var URLSearchParams: Bun.__internal.UseLibDomIfAvailable<
   "URLSearchParams",
-  { prototype: URLSearchParams; new (): URLSearchParams }
+  {
+    prototype: URLSearchParams;
+    new (
+      init?:
+        | URLSearchParams
+        | string
+        | Record<string, string | readonly string[]>
+        | Iterable<[string, string]>
+        | ReadonlyArray<[string, string]>,
+    ): URLSearchParams;
+  }
 >;
 
 interface MessageChannel {}
@@ -1682,26 +1702,6 @@ interface BunFetchRequestInit extends RequestInit {
    */
   s3?: Bun.S3Options;
 }
-
-/**
- * Send a HTTP(s) request
- *
- * @param request Request object
- * @param init A structured value that contains settings for the fetch() request.
- *
- * @returns A promise that resolves to {@link Response} object.
- */
-declare function fetch(request: Request, init?: BunFetchRequestInit): Promise<Response>;
-
-/**
- * Send a HTTP(s) request
- *
- * @param url URL string
- * @param init A structured value that contains settings for the fetch() request.
- *
- * @returns A promise that resolves to {@link Response} object.
- */
-declare function fetch(url: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
 /**
  * Send a HTTP(s) request

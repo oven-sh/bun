@@ -40,7 +40,6 @@ declare module "bun" {
   type SignalsListener = (signal: NodeJS.Signals) => void;
   type BlobPart = string | Blob | BufferSource;
   type TimerHandler = (...args: any[]) => void;
-
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;

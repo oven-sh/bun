@@ -219,6 +219,19 @@ const writableStream = new WritableStream();
 {
   const a = new FormData();
   a.delete("asdf");
+  a.get("asdf");
+  a.append("asdf", "asdf");
+  a.set("asdf", "asdf");
+  a.forEach((value, key) => {
+    console.log(value, key);
+  });
+  a.entries();
+  a.get("asdf");
+  a.getAll("asdf");
+  a.has("asdf");
+  a.keys();
+  a.values();
+  a.toString();
 }
 {
   const a = new Headers();

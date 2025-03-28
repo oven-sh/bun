@@ -27,6 +27,8 @@ declare module "bun" {
     type LibEmptyOrNodeTransformStream<I = any, O = any> = LibDomIsLoaded extends true
       ? {}
       : import("stream/web").TransformStream<I, O>;
+
+    type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("worker_threads").MessagePort;
   }
 }
 
@@ -124,42 +126,42 @@ declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-// interface Event {
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   readonly bubbles: boolean;
-//   /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-//   cancelBubble: () => void;
-//   /** True if the event was created with the cancelable option */
-//   readonly cancelable: boolean;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   readonly composed: boolean;
-//   /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-//   composedPath(): [EventTarget?];
-//   /** Alias for event.target. */
-//   readonly currentTarget: EventTarget | null;
-//   /** Is true if cancelable is true and event.preventDefault() has been called. */
-//   readonly defaultPrevented: boolean;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   readonly eventPhase: typeof globalThis extends { Event: infer T extends {eventPhase: number} } ? T['eventPhase'] : 0 | 2;
-//   /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-//   readonly isTrusted: boolean;
-//   /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-//   preventDefault(): void;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   returnValue: boolean;
-//   /** Alias for event.target. */
-//   readonly srcElement: EventTarget | null;
-//   /** Stops the invocation of event listeners after the current one completes. */
-//   stopImmediatePropagation(): void;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   stopPropagation(): void;
-//   /** The `EventTarget` dispatching the event */
-//   readonly target: EventTarget | null;
-//   /** The millisecond timestamp when the Event object was created. */
-//   readonly timeStamp: number;
-//   /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-//   readonly type: string;
-// }
+interface Event {
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly bubbles: boolean;
+  /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+  cancelBubble: boolean;
+  /** True if the event was created with the cancelable option */
+  readonly cancelable: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly composed: boolean;
+  /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+  composedPath(): [EventTarget?];
+  /** Alias for event.target. */
+  readonly currentTarget: EventTarget | null;
+  /** Is true if cancelable is true and event.preventDefault() has been called. */
+  readonly defaultPrevented: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly eventPhase: number;
+  /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+  readonly isTrusted: boolean;
+  /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+  preventDefault(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  returnValue: boolean;
+  /** Alias for event.target. */
+  readonly srcElement: EventTarget | null;
+  /** Stops the invocation of event listeners after the current one completes. */
+  stopImmediatePropagation(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  stopPropagation(): void;
+  /** The `EventTarget` dispatching the event */
+  readonly target: EventTarget | null;
+  /** The millisecond timestamp when the Event object was created. */
+  readonly timeStamp: number;
+  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+  readonly type: string;
+}
 declare var Event: {
   prototype: Event;
   readonly NONE: 0;
@@ -411,7 +413,13 @@ declare var CloseEvent: {
 };
 
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
-declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<"MessageEvent", MessageEvent>;
+declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<
+  "MessageEvent",
+  {
+    prototype: MessageEvent;
+    new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<any>;
+  }
+>;
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1471,7 +1479,28 @@ declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
   { prototype: DOMException; new (): DOMException }
 >;
 
-interface FormData {}
+interface FormData {
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/append) */
+  append(name: string, value: string | Blob): void;
+  append(name: string, value: string): void;
+  append(name: string, blobValue: Blob, filename?: string): void;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/delete) */
+  delete(name: string): void;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/get) */
+  get(name: string): Bun.FormDataEntryValue | null;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/getAll) */
+  getAll(name: string): Bun.FormDataEntryValue[];
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/has) */
+  has(name: string): boolean;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/set) */
+  set(name: string, value: string | Blob): void;
+  set(name: string, value: string): void;
+  set(name: string, blobValue: Blob, filename?: string): void;
+  forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  entries(): IterableIterator<[string, string]>;
+}
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 interface EventSource {}
@@ -1565,13 +1594,26 @@ declare var URLSearchParams: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface MessageChannel {}
+interface MessageChannel {
+  /**
+   * Returns the first MessagePort object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port1)
+   */
+  readonly port1: MessagePort;
+  /**
+   * Returns the second MessagePort object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port2)
+   */
+  readonly port2: MessagePort;
+}
 declare var MessageChannel: Bun.__internal.UseLibDomIfAvailable<
   "MessageChannel",
   { prototype: MessageChannel; new (): MessageChannel }
 >;
 
-interface MessagePort {}
+interface MessagePort extends Bun.__internal.LibEmptyOrNodeMessagePort {}
 declare var MessagePort: Bun.__internal.UseLibDomIfAvailable<
   "MessagePort",
   {

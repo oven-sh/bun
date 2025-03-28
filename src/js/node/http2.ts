@@ -2506,7 +2506,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+        self.#parser?.emitErrorToAllStreams(errorCode);
       }
       self.close();
     },
@@ -2973,7 +2973,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+        self.#parser?.emitErrorToAllStreams(errorCode);
       }
       self.close();
     },

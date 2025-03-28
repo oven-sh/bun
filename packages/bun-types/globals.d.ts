@@ -66,6 +66,13 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * A WebSocket client implementation
+ *
+ * If `DOM` is included in tsconfig `lib`, this falls back to the default DOM global `WebSocket`.
+ * Otherwise (when outside of a browser environment), this will be the `WebSocket`
+ * implementation from the `ws` package, which Bun implements.
+ */
 declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
 
 interface Crypto {}

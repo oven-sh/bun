@@ -302,6 +302,10 @@ const writableStream = new WritableStream();
 {
   const ws = new WebSocket("ws://www.host.com/path");
   ws.send("asdf");
+
+  new WebSocket("url", {
+    headers: { "Authorization": "my key" },
+  });
 }
 
 atob("asf");

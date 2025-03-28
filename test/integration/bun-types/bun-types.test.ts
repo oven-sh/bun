@@ -102,6 +102,7 @@ describe("@types/bun integration test", () => {
     `;
 
     const importantLines = [
+      `error TS2353: Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.`,
       `error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.`,
       "error TS2769: No overload matches this call.",
       "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number", // This line ends early because we've seen TypeScript emit differing messages in different environments

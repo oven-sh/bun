@@ -13,6 +13,8 @@ const table = {
     'hello.cts': 'commonjs',
     'hello.jsx': 'module',
     'hello.mts': 'module',
+    // files using ES import and no exports will be detected as module
+    "import.cjs": "module",
   },
   esm: {
     'hello.cjs': 'commonjs',
@@ -23,6 +25,8 @@ const table = {
     'hello.cts': 'commonjs',
     'hello.jsx': 'module',
     'hello.mts': 'module',
+    // files using ES import and no exports will be detected as module
+    "import.cjs": "module",
   },
 };
 
@@ -39,6 +43,9 @@ test("detect module type", () => {
         cmd: [bunExe(), "run", join(import.meta.dir, 'module-type-fixture', moduleType, extension)],
         env: bunEnv,
       });
+      if (proc.exitCode !== 0) {
+        throw new Error(`Failed to run ${moduleType} ${extension}: ${proc.stderr.toString('utf8').trim()}`);
+      }
       return `${moduleType} ${extension} -> ${proc.stdout.toString('utf8').trim() === "false" ? "commonjs" : "module"}`;
     });
   }).flat();

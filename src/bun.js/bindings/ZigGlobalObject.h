@@ -502,6 +502,8 @@ public:
 
     JSC::LazyClassStructure m_JSStatsClassStructure;
     JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
+    JSC::LazyClassStructure m_JSStatFSClassStructure;
+    JSC::LazyClassStructure m_JSStatFSBigIntClassStructure;
     JSC::LazyClassStructure m_JSDirentClassStructure;
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }

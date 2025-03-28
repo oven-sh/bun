@@ -120,9 +120,9 @@ pub fn StatType(comptime big: bool) type {
             );
         }
 
-        pub fn init(stat_: bun.Stat) @This() {
+        pub fn init(stat_: *const bun.Stat) @This() {
             return @This(){
-                .value = stat_,
+                .value = stat_.*,
             };
         }
     };
@@ -178,7 +178,7 @@ pub const Stats = union(enum) {
     big: StatsBig,
     small: StatsSmall,
 
-    pub inline fn init(stat_: bun.Stat, big: bool) Stats {
+    pub inline fn init(stat_: *const bun.Stat, big: bool) Stats {
         if (big) {
             return .{ .big = StatsBig.init(stat_) };
         } else {

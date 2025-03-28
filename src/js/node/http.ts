@@ -2121,7 +2121,11 @@ const ServerResponsePrototype = {
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
     }
-    if (handle.aborted || handle.finished) {
+    // Based on your Zig struct, socket_closed is bit 0 (least significant bit)
+    const flags = handle.flags;
+    // socket_closed is bit 0
+    // request_has_completed is bit 1
+    if (!!(flags & 0x01) || !!(flags & 0x02)) {
       // node.js will return true if the handle is closed but the internal state is not
       // and will not throw or emit an error
       return true;

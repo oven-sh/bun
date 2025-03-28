@@ -147,6 +147,9 @@ export default [
       aborted: {
         getter: "getAborted",
       },
+      flags: {
+        getter: "getFlags",
+      },
       finished: {
         getter: "getFinished",
       },

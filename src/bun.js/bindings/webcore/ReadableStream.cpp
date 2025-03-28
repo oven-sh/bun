@@ -148,7 +148,7 @@ std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStrea
 void ReadableStream::lock()
 {
     auto& builtinNames = WebCore::builtinNames(m_globalObject->vm());
-    invokeConstructor(*m_globalObject, builtinNames.ReadableStreamDefaultReaderPrivateName(), [this](auto& args, auto&, auto&) {
+    auto result = invokeConstructor(*m_globalObject, builtinNames.ReadableStreamDefaultReaderPrivateName(), [this](auto& args, auto&, auto&) {
         args.append(readableStream());
     });
 }

@@ -2231,6 +2231,7 @@ pub const Flags = packed struct {
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
+    defer_fail_until_connecting_is_complete: bool = false,
 };
 
 // TODO: reduce the size of this struct
@@ -3085,6 +3086,10 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    // mark that we are connecting
+    this.flags.defer_fail_until_connecting_is_complete = true;
+    // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
+    defer this.completeConnectingProcess();
     if (comptime Environment.allow_assert) {
         // Comparing `ptr` is safe here because it is only done if the vtable pointers are equal,
         // which means they are both mimalloc arenas and therefore have non-undefined context
@@ -3778,6 +3783,20 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     this.closeAndFail(error.Aborted, comptime is_ssl, socket);
 }
 
+fn completeConnectingProcess(this: *HTTPClient) void {
+    if (this.flags.defer_fail_until_connecting_is_complete) {
+        this.flags.defer_fail_until_connecting_is_complete = false;
+        if (this.state.stage == .fail) {
+            const callback = this.result_callback;
+            const result = this.toResult();
+            this.state.reset(this.allocator);
+            this.flags.proxy_tunneling = false;
+
+            callback.run(@fieldParentPtr("client", this), result);
+        }
+    }
+}
+
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
 
@@ -3792,12 +3811,14 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         this.state.fail = err;
         this.state.stage = .fail;
 
-        const callback = this.result_callback;
-        const result = this.toResult();
-        this.state.reset(this.allocator);
-        this.flags.proxy_tunneling = false;
+        if (!this.flags.defer_fail_until_connecting_is_complete) {
+            const callback = this.result_callback;
+            const result = this.toResult();
+            this.state.reset(this.allocator);
+            this.flags.proxy_tunneling = false;
 
-        callback.run(@fieldParentPtr("client", this), result);
+            callback.run(@fieldParentPtr("client", this), result);
+        }
     }
 }
 

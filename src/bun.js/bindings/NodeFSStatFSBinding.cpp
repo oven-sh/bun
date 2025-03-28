@@ -249,7 +249,7 @@ JSC::Structure* createJSBigIntStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalOb
     return structure;
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* globalObject, 
+extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* globalObject,
     int64_t fstype,
     int64_t bsize,
     int64_t blocks,

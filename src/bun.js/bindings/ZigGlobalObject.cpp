@@ -3004,12 +3004,12 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             Bun::initJSBigIntStatsClassStructure(init);
         });
-        
+
     m_JSStatFSClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             Bun::initJSStatFSClassStructure(init);
         });
-        
+
     m_JSStatFSBigIntClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             Bun::initJSBigIntStatFSClassStructure(init);

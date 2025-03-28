@@ -99,6 +99,10 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(events == 0) {
+    // this is the equivalent of us_poll_stop but we still wanna EOF events so we add writable
+    events = LIBUS_SOCKET_WRITABLE;
+  }
   if (us_poll_events(p) != events) {
     p->poll_type =
         us_internal_poll_type(p) |

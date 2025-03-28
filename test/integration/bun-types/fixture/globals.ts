@@ -134,6 +134,7 @@ stuff("asdf" as any as Blob);
 new ReadableStream();
 new WritableStream();
 new Worker("asdfasdf");
+new Worker("asdfasdf").onmessage;
 new File([{} as Blob], "asdf");
 new Crypto();
 new ShadowRealm();

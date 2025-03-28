@@ -283,6 +283,7 @@ const writableStream = new WritableStream();
 {
   const a = new MessageChannel();
   a.port1;
+  new MessageChannel().port1.addEventListener("message", console.log);
 }
 {
   const a = new MessagePort();

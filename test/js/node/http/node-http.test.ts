@@ -23,6 +23,7 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import type { AddressInfo } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -2251,4 +2252,36 @@ it("should support localAddress", async () => {
       http.request(`http://[::1]:${server.address().port}`).end();
     });
   });
+});
+
+it("should not emit/throw error when writing after socket.end", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Connection": "close" });
+
+    res.socket.end();
+    res.on("error", reject);
+    try {
+      const result = res.write("Hello, world!");
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+  });
+  try {
+    await once(server.listen(0), "listening");
+    const url = `http://localhost:${server.address().port}`;
+
+    await fetch(url, {
+      method: "POST",
+      body: Buffer.allocUnsafe(1024 * 1024 * 10),
+    })
+      .then(res => res.bytes())
+      .catch(err => {});
+
+    expect(await promise).toBeTrue();
+  } finally {
+    server.close();
+  }
 });

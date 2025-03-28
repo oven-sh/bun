@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 
 describe("Bun.Cookie validation tests", () => {
   describe("expires validation", () => {
@@ -99,6 +99,7 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+console.log("describe Bun.serve() cookies");
 describe("Bun.serve() cookies", () => {
   const server = Bun.serve({
     port: 0,
@@ -125,6 +126,9 @@ describe("Bun.serve() cookies", () => {
       },
     },
   });
+  afterAll(() => {
+    server.stop();
+  });
 
   test("set-cookie", async () => {
     const res = await fetch(server.url + "/tester", {
@@ -140,7 +144,7 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=test; SameSite=Lax",
+        "test=test; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -162,8 +166,8 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=test; SameSite=Lax",
-        "test2=test2; SameSite=Lax",
+        "test=test; Path=/; SameSite=Lax",
+        "test2=test2; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -177,7 +181,7 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`{}`);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "test=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
       ]
     `);
   });
@@ -203,8 +207,8 @@ describe("Bun.serve() cookies", () => {
     `);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "do_modify=c; SameSite=Lax",
-        "add_cookie=d; SameSite=Lax",
+        "do_modify=c; Path=/; SameSite=Lax",
+        "add_cookie=d; Path=/; SameSite=Lax",
       ]
     `);
   });
@@ -234,8 +238,8 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "do_delete=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-        "do_modify=FIVE; SameSite=Lax",
+        "do_delete=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "do_modify=FIVE; Path=/; SameSite=Lax",
       ]
     `);
     expect(map.toJSON()).toMatchInlineSnapshot(`
@@ -245,4 +249,125 @@ describe("Bun.serve() cookies", () => {
       }
     `);
   });
+});
+
+describe("Bun.serve() cookies 2", () => {
+  const server = Bun.serve({
+    port: 0,
+    routes: {
+      "/": req => {
+        // Access request cookies
+        const cookies = req.cookies;
+
+        // Get a specific cookie
+        const sessionCookie = cookies.get("session");
+        if (sessionCookie != null) {
+          // console.log(sessionCookie);
+        }
+
+        // Check if a cookie exists
+        if (cookies.has("theme")) {
+          // ...
+        }
+
+        // Set a cookie, it will be automatically applied to the response
+        cookies.set("visited", "true");
+
+        console.log(cookies.toSetCookieHeaders());
+
+        return new Response("Hello");
+      },
+      "/redirect": req => {
+        req.cookies.set("redirected", "true");
+        return Response.redirect("/redirect-target");
+      },
+    },
+  });
+  afterAll(() => {
+    server.stop();
+  });
+
+  test("server sets cookie", async () => {
+    const response = await fetch(server.url, {
+      headers: {
+        "Cookie": "abc=def; ghi=jkl",
+      },
+    });
+    expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "visited=true; Path=/; SameSite=Lax",
+      ]
+    `);
+  });
+  test("server sets cookie on redirect", async () => {
+    const response = await fetch(server.url + "/redirect", {
+      headers: {
+        "Cookie": "abc=def; ghi=jkl",
+      },
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/redirect-target");
+    expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "redirected=true; Path=/; SameSite=Lax",
+      ]
+    `);
+  });
+});
+
+describe("cookie path option", () => {
+  const server = Bun.serve({
+    port: 0,
+    routes: {
+      "/x/y": {
+        GET(r) {
+          r.cookies.set("user", "a", { maxAge: 3600, path: "/" });
+          const cookie = r.cookies.toSetCookieHeaders().at(0);
+          return new Response("ok", {
+            headers: { "set-cookie": cookie },
+          });
+        },
+      },
+    },
+  });
+  afterAll(() => server.stop());
+
+  test("cookie path option", async () => {
+    const response = await fetch(server.url + "/x/y");
+    expect(response.status).toBe(200);
+    expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "user=a; Path=/; Max-Age=3600; SameSite=Lax",
+        "user=a; Path=/; Max-Age=3600; SameSite=Lax",
+      ]
+    `);
+  });
+});
+test("delete cookie path option", () => {
+  const map = new Bun.CookieMap();
+  map.delete("a", { path: "/b" });
+  map.delete("b", { path: "" });
+  map.delete("c", {});
+  map.delete("d", { path: "/" });
+  expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
+    [
+      "a=; Path=/b; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "b=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "c=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "d=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+    ]
+  `);
+});
+test("delete cookie invalid path option", () => {
+  const map = new Bun.CookieMap();
+  expect(() => map.delete("a", { path: "\n" })).toThrowErrorMatchingInlineSnapshot(
+    `"Invalid cookie path: contains invalid characters"`,
+  );
+  expect(() => map.delete("a", { domain: "\n" })).toThrowErrorMatchingInlineSnapshot(
+    `"Invalid cookie domain: contains invalid characters"`,
+  );
+  expect(() => map.delete("\n", {})).toThrowErrorMatchingInlineSnapshot(
+    `"Invalid cookie name: contains invalid characters"`,
+  );
 });

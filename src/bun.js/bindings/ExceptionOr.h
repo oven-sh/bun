@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace WebCore {
 
-template<typename T> class ExceptionOr {
+template<typename T> class [[nodiscard]] ExceptionOr {
 public:
     using ReturnType = T;
 

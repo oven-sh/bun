@@ -6536,7 +6536,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream
                 else if (http_result != .pending) {
-                    node_response.maybeStopReadingBody(vm);
+                    node_response.maybeStopReadingBody(vm, node_response.getThisValue());
                 }
             }
         }

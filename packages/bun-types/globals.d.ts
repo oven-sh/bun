@@ -1384,7 +1384,7 @@ interface Uint8ArrayConstructor {
 interface BroadcastChannel {}
 declare var BroadcastChannel: Bun.__internal.UseLibDomIfAvailable<
   "BroadcastChannel",
-  import("node:worker_threads").BroadcastChannel
+  typeof import("node:worker_threads").BroadcastChannel
 >;
 
 declare var URL: Bun.__internal.UseLibDomIfAvailable<
@@ -1434,6 +1434,24 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: AbortSignal;
     new (): AbortSignal;
+    /**
+     * Create an AbortSignal that will be aborted after a timeout
+     * @param ms The timeout in milliseconds
+     * @returns An AbortSignal that will be aborted after the timeout
+     */
+    timeout(ms: number): AbortSignal;
+    /**
+     * Create an immediately-aborted AbortSignal
+     * @param reason The reason for the abort
+     * @returns An AbortSignal that is already aborted
+     */
+    abort(reason?: any): AbortSignal;
+    /**
+     * Create an AbortSignal that will be aborted if any of the signals are aborted
+     * @param signals The signals to combine
+     * @returns An AbortSignal that will be aborted if any of the signals are aborted
+     */
+    any(signals: AbortSignal[]): AbortSignal;
   }
 >;
 

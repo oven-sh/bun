@@ -207,22 +207,20 @@ ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 // https://fetch.spec.whatwg.org/#dom-headers-delete
 ExceptionOr<void> FetchHeaders::remove(const StringView name)
 {
+    ASSERT_WITH_MESSAGE(m_guard == FetchHeaders::Guard::None, "We don't use guards in Bun");
+
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        ++m_updateCounter;
+        m_headers.remove(headerName);
+        return {};
+    }
+
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
-    if (m_guard == FetchHeaders::Guard::Immutable)
-        return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
-    if (m_guard == FetchHeaders::Guard::Request && isForbiddenHeaderName(name))
-        return {};
-    if (m_guard == FetchHeaders::Guard::RequestNoCors && !isNoCORSSafelistedRequestHeaderName(name) && !isPriviledgedNoCORSRequestHeaderName(name))
-        return {};
-    if (m_guard == FetchHeaders::Guard::Response && isForbiddenResponseHeaderName(name))
-        return {};
 
     ++m_updateCounter;
-    m_headers.remove(name);
-
-    if (m_guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(m_headers);
+    m_headers.removeUncommonHeader(name);
 
     return {};
 }
@@ -234,16 +232,23 @@ size_t FetchHeaders::memoryCost() const
 
 ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
-    if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
-    return m_headers.get(name);
+    auto result = m_headers.get(name);
+    if (result.isEmpty()) {
+        if (!isValidHTTPToken(name))
+            return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    }
+
+    return result;
 }
 
 ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 {
-    if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
-    return m_headers.contains(name);
+    bool has = m_headers.contains(name);
+    if (!has) {
+        if (!isValidHTTPToken(name))
+            return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
+    }
+    return has;
 }
 
 ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)

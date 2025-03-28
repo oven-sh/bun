@@ -180,7 +180,7 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
-#include "NodeFSBinding.h"
+#include "NodeFSStatBinding.h"
 #include "NodeDirent.h"
 
 #if !OS(WINDOWS)

@@ -91,7 +91,7 @@ pub const json = MimeType{ .value = "application/json;charset=utf-8", .category 
 pub const transpiled_json = javascript;
 pub const text = MimeType{ .value = "text/plain;charset=utf-8", .category = .html }; // why??
 pub const wasm = MimeType{ .value = "application/wasm", .category = .wasm };
-pub const form_urlencoded = MimeType{ .value = "application/x-www-form-urlencoded", .category = .application };
+pub const form_urlencoded = MimeType{ .value = "application/x-www-form-urlencoded;charset=utf-8", .category = .application };
 
 pub fn init(str_: []const u8, allocator: ?std.mem.Allocator, allocated: ?*bool) MimeType {
     var str = str_;

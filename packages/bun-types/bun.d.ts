@@ -1778,7 +1778,7 @@ declare module "bun" {
      * @example
      * const [user] = await sql`select * from users where id = ${1}`;
      */
-    (strings: string | TemplateStringsArray, ...values: any): SQLQuery;
+    (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
 		/**
 		 * Helper function to allow easy use to insert values into a query
 		 * @example

@@ -3034,7 +3034,7 @@ pub const OverrideMap = struct {
             }
         };
 
-        var ctx: Ctx = .{
+        const ctx: Ctx = .{
             .buf = lockfile.buffers.string_bytes.items,
             .override_deps = this.map.values().ptr,
         };

@@ -2302,34 +2302,7 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const module_type: options.ModuleType = brk: {
-            const ext = lr.path.name.ext;
-            // regular expression /.[cm][jt]s$/
-            if (ext.len == ".cjs".len) {
-                if (strings.eqlComptimeIgnoreLen(ext, ".cjs"))
-                    break :brk .cjs;
-                if (strings.eqlComptimeIgnoreLen(ext, ".mjs"))
-                    break :brk .esm;
-                if (strings.eqlComptimeIgnoreLen(ext, ".cts"))
-                    break :brk .cjs;
-                if (strings.eqlComptimeIgnoreLen(ext, ".mts"))
-                    break :brk .esm;
-            }
-            // regular expression /.[jt]s$/
-            if (ext.len == ".ts".len) {
-                if (strings.eqlComptimeIgnoreLen(ext, ".js") or
-                    strings.eqlComptimeIgnoreLen(ext, ".ts"))
-                {
-                    // Use the package.json module type if it exists
-                    break :brk if (lr.package_json) |pkg|
-                        pkg.module_type
-                    else
-                        .unknown;
-                }
-            }
-            // For JSX TSX and other extensions, let the file contents.
-            break :brk .unknown;
-        };
+        const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
         const pkg_name: ?[]const u8 = if (lr.package_json) |pkg|
             if (pkg.name.len > 0) pkg.name else null
         else

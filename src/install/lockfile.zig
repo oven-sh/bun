@@ -3019,6 +3019,23 @@ pub const OverrideMap = struct {
             null;
     }
 
+    pub fn sort(this: *OverrideMap) void {
+        const Ctx = struct {
+            key_hashes: [*]const PackageNameHash,
+
+            pub fn lessThan(sorter: *const @This(), l: usize, r: usize) bool {
+                const hashes = sorter.key_hashes;
+                return hashes[l] < hashes[r];
+            }
+        };
+
+        var ctx: Ctx = .{
+            .key_hashes = this.map.keys().ptr,
+        };
+
+        this.map.sort(&ctx);
+    }
+
     pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
         this.map.deinit(allocator);
     }
@@ -4305,6 +4322,8 @@ pub const Package = extern struct {
                     Output.prettyErrorln("Overrides changed since last install", .{});
                 }
             } else {
+                from_lockfile.overrides.sort();
+                to_lockfile.overrides.sort();
                 for (
                     from_lockfile.overrides.map.keys(),
                     from_lockfile.overrides.map.values(),
@@ -7092,10 +7111,17 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     for (l.buffers.trees.items) |l_tree| {
         const rel_path, _ = Tree.relativePathAndDepth(l, l_tree.id, &path_buf, &depth_buf, .pkg_path);
         const tree_path = try allocator.dupe(u8, rel_path);
-        for (l_tree.dependencies.get(l_hoisted_deps)) |l_dep_id| {
-            if (l_dep_id == invalid_dependency_id) continue;
+        for (l_tree.dependencies.get(l_hoisted_deps), 0..) |l_dep_id, j| {
+            if (l_dep_id == invalid_dependency_id) {
+                std.debug.print("skipping invalid l dep_id: {d}\n", .{j});
+                continue;
+            }
             const l_pkg_id = l.buffers.resolutions.items[l_dep_id];
-            if (l_pkg_id == invalid_package_id or l_pkg_id >= cut_off_pkg_id) continue;
+            if (l_pkg_id == invalid_package_id or l_pkg_id >= cut_off_pkg_id) {
+                const l_dep = l.buffers.dependencies.items[l_dep_id];
+                std.debug.print("skipping l_dep: {s}, {}, {}\n", .{ l_dep.name.slice(l_string_buf), l_pkg_id == invalid_package_id, l_pkg_id >= cut_off_pkg_id });
+                continue;
+            }
             l_buf[i] = .{
                 .pkg_id = l_pkg_id,
                 .tree_path = tree_path,
@@ -7109,10 +7135,17 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     for (r.buffers.trees.items) |r_tree| {
         const rel_path, _ = Tree.relativePathAndDepth(r, r_tree.id, &path_buf, &depth_buf, .pkg_path);
         const tree_path = try allocator.dupe(u8, rel_path);
-        for (r_tree.dependencies.get(r_hoisted_deps)) |r_dep_id| {
-            if (r_dep_id == invalid_dependency_id) continue;
+        for (r_tree.dependencies.get(r_hoisted_deps), 0..) |r_dep_id, j| {
+            if (r_dep_id == invalid_dependency_id) {
+                std.debug.print("skipping invalid dep_id: {d}\n", .{j});
+                continue;
+            }
             const r_pkg_id = r.buffers.resolutions.items[r_dep_id];
-            if (r_pkg_id == invalid_package_id or r_pkg_id >= cut_off_pkg_id) continue;
+            if (r_pkg_id == invalid_package_id or r_pkg_id >= cut_off_pkg_id) {
+                const r_dep = r.buffers.dependencies.items[r_dep_id];
+                std.debug.print("skipping r_dep: {s}, {}, {}\n", .{ r_dep.name.slice(r_string_buf), r_pkg_id == invalid_package_id, r_pkg_id >= cut_off_pkg_id });
+                continue;
+            }
             r_buf[i] = .{
                 .pkg_id = r_pkg_id,
                 .tree_path = tree_path,

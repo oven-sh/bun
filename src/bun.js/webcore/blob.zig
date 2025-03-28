@@ -1531,17 +1531,6 @@ pub const Blob = struct {
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
-        // PathOrBlob.fromJSNoCopy accepts file descriptors. We don't really
-        // want people passing numbers to `Bun.write`; they should pass
-        // `process.stdout` instead.
-        if (FeatureFlags.breaking_changes_1_3) {
-            if (args.next()) |destination_arg| {
-                if (!destination_arg.isCell()) {
-                    return globalThis.throwInvalidArgumentTypeValue("destination", "path, BunFile, or Blob");
-                }
-            }
-        }
-
         // accept a path or a blob
         var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
         defer {

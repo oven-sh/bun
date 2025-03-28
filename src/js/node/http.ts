@@ -27,6 +27,14 @@ const enum NodeHTTPBodyReadState {
   hasBufferedDataDuringPause = 1 << 3,
 }
 
+// Must be kept in sync with NodeHTTPResponse.Flags
+const enum NodeHTTPResponseFlags {
+  socket_closed = 1 << 0,
+  request_has_completed = 1 << 1,
+
+  closed_or_completed = socket_closed | request_has_completed,
+}
+
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
 const kEmitState = Symbol("emitState");
@@ -2143,29 +2151,25 @@ const ServerResponsePrototype = {
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
     }
-    try {
-      if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-        handle.cork(() => {
-          handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
 
-          // If handle.writeHead throws, we don't want headersSent to be set to true.
-          // So we set it here.
-          this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-          result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
-        });
-      } else {
-        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
-      }
-    } catch (err) {
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
       // node.js will return true if the handle is closed but the internal state is not
       // and will not throw or emit an error
-      if (err?.code === "ERR_STREAM_ALREADY_FINISHED") {
-        return true;
-      }
-      // this are write parameters errors that we should throw see
-      // test/js/node/test/parallel/test-http-res-write-end-dont-take-array.js
-      // test/js/node/test/parallel/test-http-outgoing-write-types.js -
-      throw err;
+      return true;
+    }
+
+    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+      handle.cork(() => {
+        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+
+        // If handle.writeHead throws, we don't want headersSent to be set to true.
+        // So we set it here.
+        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+      });
+    } else {
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
     }
 
     if (result < 0) {

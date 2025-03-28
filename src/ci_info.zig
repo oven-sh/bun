@@ -9,15 +9,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const strings = bun.strings;
 
-var ci_name: ?[]const u8 = null;
-
 pub fn detectCI() ?[]const u8 {
-    const ci = ci_name orelse ci_name: {
-        CI.once.call();
-        break :ci_name ci_name.?;
-    };
-
-    return if (ci.len == 0) null else ci;
+    return CI.once.call(.{});
 }
 
 const CI = enum {
@@ -72,22 +65,18 @@ const CI = enum {
     @"xcode-cloud",
     @"xcode-server",
 
-    pub var once = std.once(struct {
-        pub fn once() void {
-            var name: []const u8 = "";
-            defer ci_name = name;
-
+    pub var once = bun.once(struct {
+        pub fn once() ?[]const u8 {
             if (bun.getenvZ("CI")) |ci| {
                 if (strings.eqlComptime(ci, "false")) {
-                    return;
+                    return null;
                 }
             }
 
             // Special case Heroku
             if (bun.getenvZ("NODE")) |node| {
                 if (strings.containsComptime(node, "/app/.heroku/node/bin/node")) {
-                    name = "heroku";
-                    return;
+                    return "heroku";
                 }
             }
 
@@ -101,8 +90,7 @@ const CI = enum {
                         if (value.len == 0 or bun.strings.eqlLong(env, value, true)) {
                             if (!any) continue :pairs;
 
-                            name = @tagName(Array.Indexer.keyForIndex(i));
-                            return;
+                            return @tagName(Array.Indexer.keyForIndex(i));
                         }
                     }
 
@@ -110,10 +98,11 @@ const CI = enum {
                 }
 
                 if (!any) {
-                    name = @tagName(Array.Indexer.keyForIndex(i));
-                    return;
+                    return @tagName(Array.Indexer.keyForIndex(i));
                 }
             }
+
+            return null;
         }
     }.once);
 

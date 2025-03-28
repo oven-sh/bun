@@ -14,6 +14,8 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const Expect = @import("./expect.zig").Expect;
+const OOM = bun.OOM;
+const detectCI = bun.detectCI;
 
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n";
@@ -95,6 +97,10 @@ pub const Snapshots = struct {
         const name_hash = bun.hash(name_with_counter);
         if (this.values.get(name_hash)) |expected| {
             return expected;
+        }
+
+        if (bun.detectCI() != null) {
+            return error.NewSnapshotInCI;
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
@@ -210,7 +216,7 @@ pub const Snapshots = struct {
         }
     }
 
-    pub fn addInlineSnapshotToWrite(self: *Snapshots, file_id: TestRunner.File.ID, value: InlineSnapshotToWrite) !void {
+    pub fn addInlineSnapshotToWrite(self: *Snapshots, file_id: TestRunner.File.ID, value: InlineSnapshotToWrite) OOM!void {
         const gpres = try self.inline_snapshots_to_write.getOrPut(file_id);
         if (!gpres.found_existing) {
             gpres.value_ptr.* = std.ArrayList(InlineSnapshotToWrite).init(self.allocator);

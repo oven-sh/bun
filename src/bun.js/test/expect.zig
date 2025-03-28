@@ -2953,11 +2953,16 @@ pub const Expect = struct {
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
             const test_file_path = Jest.runner.?.files.get(this.testScope().?.describe.file_id).source.path.text;
+            Jest.runner.?.snapshots.failed += 1;
             return switch (err) {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
+                error.OutOfMemory => globalThis.throwOutOfMemory(),
+                error.NewSnapshotInCI => {
+                    return globalThis.throw("Missing snapshot in CI", .{});
+                },
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             };
         };

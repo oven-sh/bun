@@ -546,10 +546,8 @@ pub fn doPause(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFram
         this.is_data_buffered_during_pause = true;
         this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
     }
-    if (!Environment.isMac) {
-        // TODO: check how to receive FIN with paused socket on macos
-        this.raw_response.pause();
-    }
+
+    this.raw_response.pause();
     return .true;
 }
 

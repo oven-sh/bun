@@ -353,13 +353,22 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     int change_length = 0;
 
     /* Do they differ in readable? */
+    int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
     if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
-
+    int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
     /* Do they differ in writable? */
     if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        if (!is_readable && !is_writable) {
+            // if we are not reading or writing, we need to add writable to receive FIN
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        } else {
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
+    } else if (!is_readable && !is_writable) {
+        // if we are not reading or writing, we need to add writable to receive FIN
+        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
 
     int ret;

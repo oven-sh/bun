@@ -2302,7 +2302,30 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
+        const module_type: options.ModuleType = brk: {
+            const ext = lr.path.name.ext;
+            // regular expression /.[cm][jt]s$/
+            if (ext.len == ".cjs".len and
+                ext[3] == 's' and
+                (ext[2] == 't' or ext[2] == 'j'))
+            {
+                // Use the file extension to determine the module type
+                bun.assert(ext[0] == '.');
+                break :brk switch (ext[ext.len - 3]) {
+                    'c' => .cjs,
+                    'm' => .esm,
+                    else => .unknown,
+                };
+            } else if (ext.len == ".js".len and (ext[1] == 't' or ext[1] == 'j') and ext[2] == 's') {
+                // Use the package.json module type if it exists
+                break :brk if (lr.package_json) |pkg|
+                    pkg.module_type
+                else
+                    .unknown;
+            }
+            // For JSX TSX and other extensions, let the file contents.
+            break :brk .unknown;
+        };
         const pkg_name: ?[]const u8 = if (lr.package_json) |pkg|
             if (pkg.name.len > 0) pkg.name else null
         else

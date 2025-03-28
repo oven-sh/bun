@@ -250,7 +250,7 @@ pub const JSPromise = opaque {
     /// Create a new rejected promise without notifying the VM. Unhandled
     /// rejections created this way will not trigger unhandled rejection handling.
     pub fn dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis: *JSGlobalObject, value: JSValue) JSValue {
-        return rejectedPromise(globalThis, value).toJS();
+        return JSC__JSPromise__rejectedPromiseValue(globalThis, value);
     }
 
     /// Fulfill an existing promise with the value

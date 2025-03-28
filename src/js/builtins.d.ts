@@ -484,7 +484,7 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: ?JSCommonJSModule,
+  parent: JSCommonJSModule | undefined,
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,

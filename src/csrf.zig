@@ -78,7 +78,7 @@ pub fn generate(
     out_buffer: *[512]u8,
 ) ![]u8 {
     // Generate nonce from entropy
-    var nonce: [16]u8 = undefined;
+    var nonce: [16]u8 = .{0} ** 16;
     bun.csprng(&nonce);
 
     // Current timestamp in milliseconds
@@ -86,18 +86,18 @@ pub fn generate(
     const timestamp_u64: u64 = @bitCast(@as(i64, timestamp));
 
     // Write timestamp to out_buffer
-    var timestamp_bytes: [8]u8 = undefined;
+    var timestamp_bytes: [8]u8 = .{0} ** 8;
     std.mem.writeInt(u64, &timestamp_bytes, timestamp_u64, .big);
-    var expires_in_bytes: [8]u8 = undefined;
+    var expires_in_bytes: [8]u8 = .{0} ** 8;
     std.mem.writeInt(u64, &expires_in_bytes, options.expires_in_ms, .big);
     // Prepare payload for signing: timestamp|nonce
-    var payload_buf: [32]u8 = undefined; // 8 (timestamp) + 16 (nonce)
+    var payload_buf: [32]u8 = .{0} ** 32; // 8 (timestamp) + 16 (nonce)
     @memcpy(payload_buf[0..8], &timestamp_bytes);
     @memcpy(payload_buf[8..24], &nonce);
     @memcpy(payload_buf[24..32], &expires_in_bytes);
 
     // Sign the payload
-    var digest_buf: [boring.EVP_MAX_MD_SIZE]u8 = undefined;
+    var digest_buf: [boring.EVP_MAX_MD_SIZE]u8 = .{0} ** boring.EVP_MAX_MD_SIZE;
     const digest = hmac.generate(options.secret, &payload_buf, options.algorithm, &digest_buf) orelse
         return Error.TokenCreationFailed;
 
@@ -122,7 +122,7 @@ pub fn verify(options: VerifyOptions) bool {
     const encoding: TokenFormat = options.encoding;
 
     // Allocate output buffer for decoded data
-    var buf: [boring.EVP_MAX_MD_SIZE + 32]u8 = undefined;
+    var buf: [boring.EVP_MAX_MD_SIZE + 32]u8 = .{0} ** (boring.EVP_MAX_MD_SIZE + 32);
     var token = options.token;
     // check if ends with \0
     if (token.len > 0 and token[token.len - 1] == 0) {
@@ -158,6 +158,9 @@ pub fn verify(options: VerifyOptions) bool {
     if (decoded.len < 64) {
         return false;
     }
+    // We successfully decoded the token but it could be a bad token
+    // base64 and hex can have ambiguity so we need to check for weird cases and reject them
+    // it could also be a handcrafted token that is invalid
 
     // Extract timestamp (first 8 bytes)
     const timestamp = std.mem.readInt(u64, decoded[0..8], .big);
@@ -169,6 +172,10 @@ pub fn verify(options: VerifyOptions) bool {
     {
         // respect the token's expiration time
         if (expires_in > 0) {
+            // handle overflow for invalid expiry, which means bad token
+            if (std.math.maxInt(u64) - timestamp < expires_in) {
+                return false;
+            }
             if (current_time > timestamp + expires_in) {
                 return false;
             }
@@ -178,6 +185,10 @@ pub fn verify(options: VerifyOptions) bool {
         // repect options.max_age_ms
         const expiry = options.max_age_ms;
         if (expiry > 0) {
+            // handle overflow for invalid expiry, which means bad token
+            if (std.math.maxInt(u64) - timestamp < expiry) {
+                return false;
+            }
             if (current_time > timestamp + expiry) {
                 return false;
             }
@@ -188,7 +199,7 @@ pub fn verify(options: VerifyOptions) bool {
     const received_signature = decoded[32..];
 
     // Verify the signature
-    var expected_signature: [boring.EVP_MAX_MD_SIZE]u8 = undefined;
+    var expected_signature: [boring.EVP_MAX_MD_SIZE]u8 = .{0} ** boring.EVP_MAX_MD_SIZE;
     const signature = hmac.generate(options.secret, payload, options.algorithm, &expected_signature) orelse
         return false;
 
@@ -269,7 +280,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
     }
 
     // Buffer for token generation
-    var token_buffer: [512]u8 = undefined;
+    var token_buffer: [512]u8 = .{0} ** 512;
 
     // Generate the token
     const token_bytes = generate(.{

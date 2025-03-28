@@ -27,6 +27,14 @@ const enum NodeHTTPBodyReadState {
   hasBufferedDataDuringPause = 1 << 3,
 }
 
+// Must be kept in sync with NodeHTTPResponse.Flags
+const enum NodeHTTPResponseFlags {
+  socket_closed = 1 << 0,
+  request_has_completed = 1 << 1,
+
+  closed_or_completed = socket_closed | request_has_completed,
+}
+
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
 const kEmitState = Symbol("emitState");
@@ -72,7 +80,13 @@ const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject, validateInteger } = require("internal/validators");
+const {
+  validateFunction,
+  checkIsHttpToken,
+  validateLinkHeaderValue,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
 const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
@@ -343,7 +357,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const req = message?.req;
     if (req && !req.complete) {
       // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy(new ConnResetException("aborted"));
+      req.destroy();
     }
   }
   #onClose() {
@@ -2114,6 +2128,13 @@ const ServerResponsePrototype = {
       } else {
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
+    }
+
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
     }
 
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {

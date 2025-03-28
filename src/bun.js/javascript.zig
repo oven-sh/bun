@@ -74,6 +74,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -900,7 +901,7 @@ pub const VirtualMachine = struct {
 
     is_inside_deferred_task_queue: bool = false,
 
-    // defaults off. .on("message") will set it to true unles overridden
+    // defaults off. .on("message") will set it to true unless overridden
     // process.channel.unref() will set it to false and mark it overridden
     // on disconnect it will be disabled
     channel_ref: bun.Async.KeepAlive = .{},
@@ -908,6 +909,18 @@ pub const VirtualMachine = struct {
     channel_ref_overridden: bool = false,
     // if one disconnect event listener should be ignored
     channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
+
+    /// A set of extensions that exist in the require.extensions map. Keys
+    /// contain the leading '.'. Value is either a loader for built in
+    /// functions, or an index into JSCommonJSExtensions.
+    ///
+    /// `.keys() == transpiler.resolver.opts.extra_cjs_extensions`, so
+    /// mutations in this map must update the resolver.
+    commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.CustomLoader.Packed) = .empty,
+    /// Incremented when the `require.extensions` for a built-in extension is mutated.
+    /// An example is mutating `require.extensions['.js']` to intercept all '.js' files.
+    /// The value is decremented when defaults are restored.
+    has_mutated_built_in_extensions: u32 = 0,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -2367,7 +2380,6 @@ pub const VirtualMachine = struct {
                 .source_code = bun.String.init(""),
                 .specifier = specifier,
                 .source_url = specifier.createIfDifferent(source_url),
-                .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
             };
@@ -2382,7 +2394,6 @@ pub const VirtualMachine = struct {
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
             .source_url = specifier.createIfDifferent(source_url),
-            .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,
         };

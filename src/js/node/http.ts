@@ -2035,6 +2035,7 @@ const ServerResponsePrototype = {
       }
       return this;
     }
+    handle.resume();
 
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);

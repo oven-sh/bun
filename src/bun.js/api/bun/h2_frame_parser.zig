@@ -3248,9 +3248,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         };
 
-        if (!headers_arg.isObject()) {
+        const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
-        }
+        };
 
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
@@ -3266,7 +3266,7 @@ pub const H2FrameParser = struct {
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_arg);
+        }).init(globalObject, headers_obj);
         defer iter.deinit();
 
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
@@ -3420,9 +3420,8 @@ pub const H2FrameParser = struct {
                 return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             }
 
-            break :brk JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
-                if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
-                return error.JSError;
+            break :brk try JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
+                return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             };
         };
 
@@ -3432,8 +3431,7 @@ pub const H2FrameParser = struct {
             data_arg,
             encoding,
         ) orelse {
-            if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
-            return error.JSError;
+            return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
         };
         defer buffer.deinit();
 
@@ -3597,9 +3595,9 @@ pub const H2FrameParser = struct {
         const headers_arg = args_list.ptr[2];
         const sensitive_arg = args_list.ptr[3];
 
-        if (!headers_arg.isObject()) {
+        const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
-        }
+        };
 
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
@@ -3619,7 +3617,7 @@ pub const H2FrameParser = struct {
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_arg);
+        }).init(globalObject, headers_obj);
         defer iter.deinit();
         var header_count: u32 = 0;
 
@@ -3855,7 +3853,7 @@ pub const H2FrameParser = struct {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
                     has_priority = true;
                     weight = weight_js.toInt32();
-                    if (weight < 1 or weight > 256) {
+                    if (weight < 1 or weight > std.math.maxInt(u8)) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
@@ -3864,7 +3862,7 @@ pub const H2FrameParser = struct {
                     stream.weight = @intCast(weight);
                 }
 
-                if (weight < 1 or weight > 256) {
+                if (weight < 1 or weight > std.math.maxInt(u8)) {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                     this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));

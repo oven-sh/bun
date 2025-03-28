@@ -345,7 +345,7 @@ function Install-Rust {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "18.1.8"
+    -Version "19.1.7"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

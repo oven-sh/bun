@@ -5,7 +5,7 @@ declare module "bun" {
     FOO: "FOO";
   }
 }
-expectType<"FOO">(process.env.FOO);
+expectType<"FOO">(Bun.env.FOO);
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -15,7 +15,6 @@ declare global {
     }
   }
 }
-
 expectType<"BAR">(process.env.BAR);
 
 process.env.FOO;

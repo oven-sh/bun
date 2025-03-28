@@ -8076,7 +8076,7 @@ pub const Macro = struct {
             bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
-                if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
                     break :brk replacement.path;
                 }
 
@@ -8454,11 +8454,12 @@ pub const Macro = struct {
                             }
                             return _entry.value_ptr.*;
                         }
-
+                        // SAFETY: tag ensures `value` is an object.
+                        const obj = value.getObject() orelse unreachable;
                         var object_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, value);
+                        }).init(this.global, obj);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);

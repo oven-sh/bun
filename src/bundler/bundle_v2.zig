@@ -1386,7 +1386,7 @@ pub const BundleV2 = struct {
             scbs.items(.ssr_source_index),
         ) |use, source_id, ssr_index| {
             if (use == .client) {
-                // TODO(@paperdave/bake): this file is being generated far too
+                // TODO(@paperclover/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
                 // are live. Tree-shaking figures that out. However,
                 // tree-shaking happens after import binding, which would
@@ -1644,10 +1644,9 @@ pub const BundleV2 = struct {
                     const path = record.path.text;
                     // External dependency
                     if (path.len > 0 and
-
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Aliases.has(path, .node) and
+                        !JSC.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -2756,7 +2755,7 @@ pub const BundleV2 = struct {
             },
             .content = .{
                 .javascript = .{
-                    // TODO(@paperdave): remove this ptrCast when Source Index is fixed
+                    // TODO(@paperclover): remove this ptrCast when Source Index is fixed
                     .files_in_chunk_order = @ptrCast(js_reachable_files),
                     .parts_in_chunk_in_order = js_part_ranges,
                 },
@@ -3006,7 +3005,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
@@ -7115,7 +7114,7 @@ pub const LinkerContext = struct {
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = if (comptime with_code_splitting)
+                var is_file_in_chunk = if (with_code_splitting and v.c.graph.ast.items(.css)[source_index] == null)
                     // when code splitting, include the file in the chunk if ALL of the entry points overlap
                     v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index])
                 else
@@ -10733,7 +10732,7 @@ pub const LinkerContext = struct {
                 for (part.scopes) |scope| {
                     r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
                 }
-                r.number_scope_pool.hive.available = @TypeOf(r.number_scope_pool.hive.available).initFull();
+                r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
             }
         }
 
@@ -14551,7 +14550,7 @@ pub const LinkerContext = struct {
         bun.assert(chunks.len > 0);
 
         {
-            // TODO(@paperdave/bake): instead of running a renamer per chunk, run it per file
+            // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
             debug(" START {d} renamers", .{chunks.len});
             defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
@@ -16002,7 +16001,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,

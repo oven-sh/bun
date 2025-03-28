@@ -62,7 +62,6 @@ const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
-const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
@@ -835,7 +834,7 @@ pub const ServerConfig = struct {
                 var sliced = try key_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.key_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access keyFile path", .{});
                     }
@@ -848,16 +847,16 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -891,7 +890,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("key", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.key = native_array;
                         result.key_count = 1;
@@ -902,12 +901,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.key = native_array;
@@ -927,7 +926,7 @@ pub const ServerConfig = struct {
                 var sliced = try cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.cert_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access certFile path", .{});
                     }
@@ -937,11 +936,11 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "ALPNProtocols")) |protocols| {
-                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
+                if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
                     defer sb.deinit();
                     const sliced = sb.slice();
                     if (sliced.len > 0) {
-                        result.protos = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                        result.protos = try bun.default_allocator.dupeZ(u8, sliced);
                         result.protos_len = sliced.len;
                     }
 
@@ -956,16 +955,16 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -999,7 +998,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("cert", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.cert = native_array;
                         result.cert_count = 1;
@@ -1010,12 +1009,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.cert = native_array;
@@ -1053,7 +1052,7 @@ pub const ServerConfig = struct {
                 var sliced = try ssl_ciphers.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ssl_ciphers = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -1063,7 +1062,7 @@ pub const ServerConfig = struct {
                 var sliced = try server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.server_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -1073,12 +1072,12 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
@@ -1116,7 +1115,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("ca", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.ca = native_array;
                         result.ca_count = 1;
@@ -1127,12 +1126,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.ca = native_array;
@@ -1152,7 +1151,7 @@ pub const ServerConfig = struct {
                 var sliced = try ca_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ca_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Invalid caFile path", .{});
                     }
@@ -1182,7 +1181,7 @@ pub const ServerConfig = struct {
                     var sliced = try dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.dh_params_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                         if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
                             return global.throwInvalidArguments("Invalid dhParamsFile path", .{});
                         }
@@ -1193,7 +1192,7 @@ pub const ServerConfig = struct {
                     var sliced = try passphrase.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.passphrase = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     }
                 }
 
@@ -1326,7 +1325,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try getRoutesObject(global, arg)) |static| {
-                if (!static.isObject()) {
+                const static_obj = static.getObject() orelse {
                     return global.throwInvalidArguments(
                         \\Bun.serve() expects 'routes' to be an object shaped like:
                         \\
@@ -1341,13 +1340,13 @@ pub const ServerConfig = struct {
                         \\
                         \\Learn more at https://bun.sh/docs/api/http
                     , .{});
-                }
+                };
                 args.had_routes_object = true;
 
                 var iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
-                }).init(global, static);
+                }).init(global, static_obj);
                 defer iter.deinit();
 
                 var init_ctx: ServerInitContext = .{
@@ -1863,7 +1862,7 @@ pub const ServerConfig = struct {
     }
 };
 
-const HTTPStatusText = struct {
+pub const HTTPStatusText = struct {
     pub fn get(code: u16) ?[]const u8 {
         return switch (code) {
             100 => "100 Continue",
@@ -2028,6 +2027,28 @@ pub const AnyRequestContext = struct {
         return false;
     }
 
+    pub fn setCookies(self: AnyRequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setCookies(cookie_map);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setCookies(cookie_map);
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
     pub fn enableTimeoutEvents(self: AnyRequestContext) void {
         if (self.tagged_pointer.isNull()) {
             return;
@@ -2174,9 +2195,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // It costs about 655,632 bytes.
         pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback;
 
-        pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-        pub const shim = JSC.Shimmer("Bun", name, @This());
-
         server: ?*ThisServer,
         resp: ?*App.Response,
         /// thread-local default heap allocator
@@ -2186,6 +2204,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         request_weakref: Request.WeakRef = .{},
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
+        cookies: ?*JSC.WebCore.CookieMap = null,
 
         flags: NewFlags(debug_mode) = .{},
 
@@ -2244,6 +2263,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.has_abort_handler = true;
                 resp.onAborted(*RequestContext, RequestContext.onAbort, this);
             }
+        }
+
+        pub fn setCookies(this: *RequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+            if (this.cookies) |cookies| cookies.deref();
+            this.cookies = cookie_map;
+            if (this.cookies) |cookies| cookies.ref();
         }
 
         pub fn setTimeoutHandler(this: *RequestContext) void {
@@ -2799,6 +2824,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.request_body_readable_stream_ref.deinit();
+
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                cookies.deref();
+            }
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
@@ -4261,6 +4291,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.doWriteStatus(status);
             }
 
+            if (this.cookies) |cookies| {
+                this.cookies = null;
+                defer cookies.deref();
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+            }
+
             if (needs_content_type and
                 // do not insert the content type if it is the fallback value
                 // we may not know the content-type when streaming
@@ -4541,22 +4577,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return false;
         }
 
-        pub const Export = shim.exportFunctions(.{
-            .onResolve = onResolve,
-            .onReject = onReject,
-            .onResolveStream = onResolveStream,
-            .onRejectStream = onRejectStream,
-        });
-
         comptime {
+            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
             const jsonResolve = JSC.toJSHostFunction(onResolve);
-            @export(&jsonResolve, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolve, .{ .name = export_prefix ++ "__onResolve" });
             const jsonReject = JSC.toJSHostFunction(onReject);
-            @export(&jsonReject, .{ .name = Export[1].symbol_name });
+            @export(&jsonReject, .{ .name = export_prefix ++ "__onReject" });
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(&jsonResolveStream, .{ .name = Export[2].symbol_name });
+            @export(&jsonResolveStream, .{ .name = export_prefix ++ "__onResolveStream" });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(&jsonRejectStream, .{ .name = Export[3].symbol_name });
+            @export(&jsonRejectStream, .{ .name = export_prefix ++ "__onRejectStream" });
         }
     };
 }
@@ -4875,2313 +4905,8 @@ pub const WebSocketServer = struct {
     }
 };
 
-const Corker = struct {
-    args: []const JSValue = &.{},
-    globalObject: *JSC.JSGlobalObject,
-    this_value: JSC.JSValue = .zero,
-    callback: JSC.JSValue,
-    result: JSValue = .zero,
-
-    pub fn run(this: *Corker) void {
-        const this_value = this.this_value;
-        this.result = this.callback.call(
-            this.globalObject,
-            if (this_value == .zero) .undefined else this_value,
-            this.args,
-        ) catch |err| this.globalObject.takeException(err);
-    }
-};
-
-// Let's keep this 3 pointers wide or less.
-pub const ServerWebSocket = struct {
-    handler: *WebSocketServer.Handler,
-    this_value: JSValue = .zero,
-    flags: Flags = .{},
-    signal: ?*JSC.AbortSignal = null,
-
-    // We pack the per-socket data into this struct below
-    const Flags = packed struct(u64) {
-        ssl: bool = false,
-        closed: bool = false,
-        opened: bool = false,
-        binary_type: JSC.BinaryType = .Buffer,
-        packed_websocket_ptr: u57 = 0,
-
-        inline fn websocket(this: Flags) uws.AnyWebSocket {
-            // Ensure those other bits are zeroed out
-            const that = Flags{ .packed_websocket_ptr = this.packed_websocket_ptr };
-
-            return if (this.ssl) .{
-                .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
-            } else .{
-                .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
-            };
-        }
-    };
-
-    inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
-        return this.flags.websocket();
-    }
-
-    pub usingnamespace JSC.Codegen.JSServerWebSocket;
-    pub usingnamespace bun.New(ServerWebSocket);
-
-    pub fn memoryCost(this: *const ServerWebSocket) usize {
-        if (this.flags.closed) {
-            return @sizeOf(ServerWebSocket);
-        }
-        return this.websocket().memoryCost() + @sizeOf(ServerWebSocket);
-    }
-
-    const log = Output.scoped(.WebSocketServer, false);
-
-    pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
-        log("OnOpen", .{});
-
-        this.flags.packed_websocket_ptr = @truncate(@intFromPtr(ws.raw()));
-        this.flags.closed = false;
-        this.flags.ssl = ws == .ssl;
-
-        // the this value is initially set to whatever the user passed in
-        const value_to_cache = this.this_value;
-
-        var handler = this.handler;
-        const vm = this.handler.vm;
-        handler.active_connections +|= 1;
-        const globalObject = handler.globalObject;
-        const onOpenHandler = handler.onOpen;
-        if (vm.isShuttingDown()) {
-            log("onOpen called after script execution", .{});
-            ws.close();
-            return;
-        }
-
-        this.this_value = .zero;
-        this.flags.opened = false;
-        if (value_to_cache != .zero) {
-            const current_this = this.getThisValue();
-            ServerWebSocket.dataSetCached(current_this, globalObject, value_to_cache);
-        }
-
-        if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
-        const this_value = this.getThisValue();
-        var args = [_]JSValue{this_value};
-
-        const loop = vm.eventLoop();
-        loop.enter();
-        defer loop.exit();
-
-        var corker = Corker{
-            .args = &args,
-            .globalObject = globalObject,
-            .callback = onOpenHandler,
-        };
-        ws.cork(&corker, Corker.run);
-        const result = corker.result;
-        this.flags.opened = true;
-        if (result.toError()) |err_value| {
-            log("onOpen exception", .{});
-
-            if (!this.flags.closed) {
-                this.flags.closed = true;
-                // we un-gracefully close the connection if there was an exception
-                // we don't want any event handlers to fire after this for anything other than error()
-                // https://github.com/oven-sh/bun/issues/1480
-                this.websocket().close();
-                handler.active_connections -|= 1;
-                this_value.unprotect();
-            }
-
-            handler.runErrorCallback(vm, globalObject, err_value);
-        }
-    }
-
-    pub fn getThisValue(this: *ServerWebSocket) JSValue {
-        var this_value = this.this_value;
-        if (this_value == .zero) {
-            this_value = this.toJS(this.handler.globalObject);
-            this_value.protect();
-            this.this_value = this_value;
-        }
-        return this_value;
-    }
-
-    pub fn onMessage(
-        this: *ServerWebSocket,
-        ws: uws.AnyWebSocket,
-        message: []const u8,
-        opcode: uws.Opcode,
-    ) void {
-        log("onMessage({d}): {s}", .{
-            @intFromEnum(opcode),
-            message,
-        });
-        const onMessageHandler = this.handler.onMessage;
-        if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
-        var globalObject = this.handler.globalObject;
-        // This is the start of a task.
-        const vm = this.handler.vm;
-        if (vm.isShuttingDown()) {
-            log("onMessage called after script execution", .{});
-            ws.close();
-            return;
-        }
-
-        const loop = vm.eventLoop();
-        loop.enter();
-        defer loop.exit();
-
-        const arguments = [_]JSValue{
-            this.getThisValue(),
-            switch (opcode) {
-                .text => bun.String.createUTF8ForJS(globalObject, message),
-                .binary => this.binaryToJS(globalObject, message),
-                else => unreachable,
-            },
-        };
-
-        var corker = Corker{
-            .args = &arguments,
-            .globalObject = globalObject,
-            .callback = onMessageHandler,
-        };
-
-        ws.cork(&corker, Corker.run);
-        const result = corker.result;
-
-        if (result.isEmptyOrUndefinedOrNull()) return;
-
-        if (result.toError()) |err_value| {
-            this.handler.runErrorCallback(vm, globalObject, err_value);
-            return;
-        }
-
-        if (result.asAnyPromise()) |promise| {
-            switch (promise.status(globalObject.vm())) {
-                .rejected => {
-                    _ = promise.result(globalObject.vm());
-                    return;
-                },
-
-                else => {},
-            }
-        }
-    }
-
-    pub inline fn isClosed(this: *const ServerWebSocket) bool {
-        return this.flags.closed;
-    }
-
-    pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
-        log("onDrain", .{});
-
-        const handler = this.handler;
-        const vm = handler.vm;
-        if (this.isClosed() or vm.isShuttingDown())
-            return;
-
-        if (handler.onDrain != .zero) {
-            const globalObject = handler.globalObject;
-
-            var corker = Corker{
-                .args = &[_]JSC.JSValue{this.getThisValue()},
-                .globalObject = globalObject,
-                .callback = handler.onDrain,
-            };
-            const loop = vm.eventLoop();
-            loop.enter();
-            defer loop.exit();
-            this.websocket().cork(&corker, Corker.run);
-            const result = corker.result;
-
-            if (result.toError()) |err_value| {
-                handler.runErrorCallback(vm, globalObject, err_value);
-            }
-        }
-    }
-
-    fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) JSC.JSValue {
-        return switch (this.flags.binary_type) {
-            .Buffer => JSC.ArrayBuffer.createBuffer(
-                globalThis,
-                data,
-            ),
-            .Uint8Array => JSC.ArrayBuffer.create(
-                globalThis,
-                data,
-                .Uint8Array,
-            ),
-            else => JSC.ArrayBuffer.create(
-                globalThis,
-                data,
-                .ArrayBuffer,
-            ),
-        };
-    }
-
-    pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
-        log("onPing: {s}", .{data});
-
-        const handler = this.handler;
-        var cb = handler.onPing;
-        const vm = handler.vm;
-        if (cb.isEmptyOrUndefinedOrNull() or vm.isShuttingDown()) return;
-        const globalThis = handler.globalObject;
-
-        // This is the start of a task.
-        const loop = vm.eventLoop();
-        loop.enter();
-        defer loop.exit();
-
-        _ = cb.call(
-            globalThis,
-            .undefined,
-            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
-        ) catch |e| {
-            const err = globalThis.takeException(e);
-            log("onPing error", .{});
-            handler.runErrorCallback(vm, globalThis, err);
-        };
-    }
-
-    pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
-        log("onPong: {s}", .{data});
-
-        const handler = this.handler;
-        var cb = handler.onPong;
-        if (cb.isEmptyOrUndefinedOrNull()) return;
-
-        const globalThis = handler.globalObject;
-        const vm = handler.vm;
-
-        if (vm.isShuttingDown()) return;
-
-        // This is the start of a task.
-        const loop = vm.eventLoop();
-        loop.enter();
-        defer loop.exit();
-
-        _ = cb.call(
-            globalThis,
-            .undefined,
-            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
-        ) catch |e| {
-            const err = globalThis.takeException(e);
-            log("onPong error", .{});
-            handler.runErrorCallback(vm, globalThis, err);
-        };
-    }
-
-    pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
-        log("onClose", .{});
-        var handler = this.handler;
-        const was_closed = this.isClosed();
-        this.flags.closed = true;
-        defer {
-            if (!was_closed) {
-                handler.active_connections -|= 1;
-            }
-        }
-        const signal = this.signal;
-        this.signal = null;
-
-        defer {
-            if (signal) |sig| {
-                sig.pendingActivityUnref();
-                sig.unref();
-            }
-        }
-
-        const vm = handler.vm;
-        if (vm.isShuttingDown()) {
-            return;
-        }
-
-        if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
-            const globalObject = handler.globalObject;
-            const loop = vm.eventLoop();
-
-            loop.enter();
-            defer loop.exit();
-
-            if (signal) |sig| {
-                if (!sig.aborted()) {
-                    sig.signal(handler.globalObject, .ConnectionClosed);
-                }
-            }
-
-            _ = handler.onClose.call(
-                globalObject,
-                .undefined,
-                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
-            ) catch |e| {
-                const err = globalObject.takeException(e);
-                log("onClose error", .{});
-                handler.runErrorCallback(vm, globalObject, err);
-            };
-        } else if (signal) |sig| {
-            const loop = vm.eventLoop();
-
-            loop.enter();
-            defer loop.exit();
-
-            if (!sig.aborted()) {
-                sig.signal(handler.globalObject, .ConnectionClosed);
-            }
-        }
-
-        this.this_value.unprotect();
-    }
-
-    pub fn behavior(comptime ServerType: type, comptime ssl: bool, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
-        return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);
-    }
-
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ServerWebSocket {
-        return globalObject.throw("Cannot construct ServerWebSocket", .{});
-    }
-
-    pub fn finalize(this: *ServerWebSocket) void {
-        log("finalize", .{});
-        this.destroy();
-    }
-
-    pub fn publish(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(4);
-        if (args.len < 1) {
-            log("publish()", .{});
-
-            return globalThis.throw("publish requires at least 1 argument", .{});
-        }
-
-        const app = this.handler.app orelse {
-            log("publish() closed", .{});
-            return JSValue.jsNumber(0);
-        };
-        const flags = this.handler.flags;
-        const ssl = flags.ssl;
-        const publish_to_self = flags.publish_to_self;
-
-        const topic_value = args.ptr[0];
-        const message_value = args.ptr[1];
-        const compress_value = args.ptr[2];
-
-        if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
-            log("publish() topic invalid", .{});
-
-            return globalThis.throw("publish requires a topic string", .{});
-        }
-
-        var topic_slice = try topic_value.toSlice(globalThis, bun.default_allocator);
-        defer topic_slice.deinit();
-        if (topic_slice.len == 0) {
-            return globalThis.throw("publish requires a non-empty topic", .{});
-        }
-
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            return globalThis.throw("publish expects compress to be a boolean", .{});
-        }
-
-        const compress = args.len > 1 and compress_value.toBoolean();
-
-        if (message_value.isEmptyOrUndefinedOrNull()) {
-            return globalThis.throw("publish requires a non-empty message", .{});
-        }
-
-        if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
-            const buffer = array_buffer.slice();
-
-            const result = if (!publish_to_self and !this.isClosed())
-                this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-            else
-                uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
-
-            return JSValue.jsNumber(
-                // if 0, return 0
-                // else return number of bytes sent
-                if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-            );
-        }
-
-        {
-            var js_string = message_value.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-            const view = js_string.view(globalThis);
-            const slice = view.toSlice(bun.default_allocator);
-            defer slice.deinit();
-
-            defer js_string.ensureStillAlive();
-
-            const buffer = slice.slice();
-
-            const result = if (!publish_to_self and !this.isClosed())
-                this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-            else
-                uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
-
-            return JSValue.jsNumber(
-                // if 0, return 0
-                // else return number of bytes sent
-                if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-            );
-        }
-    }
-
-    pub fn publishText(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(4);
-
-        if (args.len < 1) {
-            log("publish()", .{});
-            return globalThis.throw("publish requires at least 1 argument", .{});
-        }
-
-        const app = this.handler.app orelse {
-            log("publish() closed", .{});
-            return JSValue.jsNumber(0);
-        };
-        const flags = this.handler.flags;
-        const ssl = flags.ssl;
-        const publish_to_self = flags.publish_to_self;
-
-        const topic_value = args.ptr[0];
-        const message_value = args.ptr[1];
-        const compress_value = args.ptr[2];
-
-        if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
-            log("publish() topic invalid", .{});
-            return globalThis.throw("publishText requires a topic string", .{});
-        }
-
-        var topic_slice = try topic_value.toSlice(globalThis, bun.default_allocator);
-        defer topic_slice.deinit();
-
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            return globalThis.throw("publishText expects compress to be a boolean", .{});
-        }
-
-        const compress = args.len > 1 and compress_value.toBoolean();
-
-        if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
-            return globalThis.throw("publishText requires a non-empty message", .{});
-        }
-
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
-        const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
-        defer slice.deinit();
-
-        defer js_string.ensureStillAlive();
-
-        const buffer = slice.slice();
-
-        const result = if (!publish_to_self and !this.isClosed())
-            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-        else
-            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
-
-        return JSValue.jsNumber(
-            // if 0, return 0
-            // else return number of bytes sent
-            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-        );
-    }
-
-    pub fn publishBinary(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(4);
-
-        if (args.len < 1) {
-            log("publishBinary()", .{});
-            return globalThis.throw("publishBinary requires at least 1 argument", .{});
-        }
-
-        const app = this.handler.app orelse {
-            log("publish() closed", .{});
-            return JSValue.jsNumber(0);
-        };
-        const flags = this.handler.flags;
-        const ssl = flags.ssl;
-        const publish_to_self = flags.publish_to_self;
-        const topic_value = args.ptr[0];
-        const message_value = args.ptr[1];
-        const compress_value = args.ptr[2];
-
-        if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
-            log("publishBinary() topic invalid", .{});
-            return globalThis.throw("publishBinary requires a topic string", .{});
-        }
-
-        var topic_slice = try topic_value.toSlice(globalThis, bun.default_allocator);
-        defer topic_slice.deinit();
-        if (topic_slice.len == 0) {
-            return globalThis.throw("publishBinary requires a non-empty topic", .{});
-        }
-
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            return globalThis.throw("publishBinary expects compress to be a boolean", .{});
-        }
-
-        const compress = args.len > 1 and compress_value.toBoolean();
-
-        if (message_value.isEmptyOrUndefinedOrNull()) {
-            return globalThis.throw("publishBinary requires a non-empty message", .{});
-        }
-
-        const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
-            return globalThis.throw("publishBinary expects an ArrayBufferView", .{});
-        };
-        const buffer = array_buffer.slice();
-
-        const result = if (!publish_to_self and !this.isClosed())
-            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-        else
-            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
-
-        return JSValue.jsNumber(
-            // if 0, return 0
-            // else return number of bytes sent
-            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-        );
-    }
-
-    pub fn publishBinaryWithoutTypeChecks(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        topic_str: *JSC.JSString,
-        array: *JSC.JSUint8Array,
-    ) bun.JSError!JSC.JSValue {
-        const app = this.handler.app orelse {
-            log("publish() closed", .{});
-            return JSValue.jsNumber(0);
-        };
-        const flags = this.handler.flags;
-        const ssl = flags.ssl;
-        const publish_to_self = flags.publish_to_self;
-
-        var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
-        defer topic_slice.deinit();
-        if (topic_slice.len == 0) {
-            return globalThis.throw("publishBinary requires a non-empty topic", .{});
-        }
-
-        const compress = true;
-
-        const buffer = array.slice();
-        if (buffer.len == 0) {
-            return JSC.JSValue.jsNumber(0);
-        }
-
-        const result = if (!publish_to_self and !this.isClosed())
-            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-        else
-            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
-
-        return JSValue.jsNumber(
-            // if 0, return 0
-            // else return number of bytes sent
-            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-        );
-    }
-
-    pub fn publishTextWithoutTypeChecks(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        topic_str: *JSC.JSString,
-        str: *JSC.JSString,
-    ) bun.JSError!JSC.JSValue {
-        const app = this.handler.app orelse {
-            log("publish() closed", .{});
-            return JSValue.jsNumber(0);
-        };
-        const flags = this.handler.flags;
-        const ssl = flags.ssl;
-        const publish_to_self = flags.publish_to_self;
-
-        var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
-        defer topic_slice.deinit();
-        if (topic_slice.len == 0) {
-            return globalThis.throw("publishBinary requires a non-empty topic", .{});
-        }
-
-        const compress = true;
-
-        const slice = str.toSlice(globalThis, bun.default_allocator);
-        defer slice.deinit();
-        const buffer = slice.slice();
-
-        if (buffer.len == 0) {
-            return JSC.JSValue.jsNumber(0);
-        }
-
-        const result = if (!publish_to_self and !this.isClosed())
-            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-        else
-            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
-
-        return JSValue.jsNumber(
-            // if 0, return 0
-            // else return number of bytes sent
-            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-        );
-    }
-
-    pub fn cork(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-        // Since we're passing the `this` value to the cork function, we need to
-        // make sure the `this` value is up to date.
-        this_value: JSC.JSValue,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        this.this_value = this_value;
-
-        if (args.len < 1) {
-            return globalThis.throwNotEnoughArguments("cork", 1, 0);
-        }
-
-        const callback = args.ptr[0];
-        if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable()) {
-            return globalThis.throwInvalidArgumentTypeValue("cork", "callback", callback);
-        }
-
-        if (this.isClosed()) {
-            return JSValue.jsUndefined();
-        }
-
-        var corker = Corker{
-            .globalObject = globalThis,
-            .this_value = this_value,
-            .callback = callback,
-        };
-        this.websocket().cork(&corker, Corker.run);
-
-        const result = corker.result;
-
-        if (result.isAnyError()) {
-            return globalThis.throwValue(result);
-        }
-
-        return result;
-    }
-
-    pub fn send(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(2);
-
-        if (args.len < 1) {
-            log("send()", .{});
-            return globalThis.throw("send requires at least 1 argument", .{});
-        }
-
-        if (this.isClosed()) {
-            log("send() closed", .{});
-            return JSValue.jsNumber(0);
-        }
-
-        const message_value = args.ptr[0];
-        const compress_value = args.ptr[1];
-
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            return globalThis.throw("send expects compress to be a boolean", .{});
-        }
-
-        const compress = args.len > 1 and compress_value.toBoolean();
-
-        if (message_value.isEmptyOrUndefinedOrNull()) {
-            return globalThis.throw("send requires a non-empty message", .{});
-        }
-
-        if (message_value.asArrayBuffer(globalThis)) |buffer| {
-            switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
-                .backpressure => {
-                    log("send() backpressure ({d} bytes)", .{buffer.len});
-                    return JSValue.jsNumber(-1);
-                },
-                .success => {
-                    log("send() success ({d} bytes)", .{buffer.len});
-                    return JSValue.jsNumber(buffer.slice().len);
-                },
-                .dropped => {
-                    log("send() dropped ({d} bytes)", .{buffer.len});
-                    return JSValue.jsNumber(0);
-                },
-            }
-        }
-
-        {
-            var js_string = message_value.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-            const view = js_string.view(globalThis);
-            const slice = view.toSlice(bun.default_allocator);
-            defer slice.deinit();
-
-            defer js_string.ensureStillAlive();
-
-            const buffer = slice.slice();
-            switch (this.websocket().send(buffer, .text, compress, true)) {
-                .backpressure => {
-                    log("send() backpressure ({d} bytes string)", .{buffer.len});
-                    return JSValue.jsNumber(-1);
-                },
-                .success => {
-                    log("send() success ({d} bytes string)", .{buffer.len});
-                    return JSValue.jsNumber(buffer.len);
-                },
-                .dropped => {
-                    log("send() dropped ({d} bytes string)", .{buffer.len});
-                    return JSValue.jsNumber(0);
-                },
-            }
-        }
-    }
-
-    pub fn sendText(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(2);
-
-        if (args.len < 1) {
-            log("sendText()", .{});
-            return globalThis.throw("sendText requires at least 1 argument", .{});
-        }
-
-        if (this.isClosed()) {
-            log("sendText() closed", .{});
-            return JSValue.jsNumber(0);
-        }
-
-        const message_value = args.ptr[0];
-        const compress_value = args.ptr[1];
-
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            return globalThis.throw("sendText expects compress to be a boolean", .{});
-        }
-
-        const compress = args.len > 1 and compress_value.toBoolean();
-
-        if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
-            return globalThis.throw("sendText expects a string", .{});
-        }
-
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
-        const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
-        defer slice.deinit();
-
-        defer js_string.ensureStillAlive();
-
-        const buffer = slice.slice();
-        switch (this.websocket().send(buffer, .text, compress, true)) {
-            .backpressure => {
-                log("sendText() backpressure ({d} bytes string)", .{buffer.len});
-                return JSValue.jsNumber(-1);
-            },
-            .success => {
-                log("sendText() success ({d} bytes string)", .{buffer.len});
-                return JSValue.jsNumber(buffer.len);
-            },
-            .dropped => {
-                log("sendText() dropped ({d} bytes string)", .{buffer.len});
-                return JSValue.jsNumber(0);
-            },
-        }
-    }
-
-    pub fn sendTextWithoutTypeChecks(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        message_str: *JSC.JSString,
-        compress: bool,
-    ) JSValue {
-        if (this.isClosed()) {
-            log("sendText() closed", .{});
-            return JSValue.jsNumber(0);
-        }
-
-        var string_slice = message_str.toSlice(globalThis, bun.default_allocator);
-        defer string_slice.deinit();
-
-        const buffer = string_slice.slice();
-        switch (this.websocket().send(buffer, .text, compress, true)) {
-            .backpressure => {
-                log("sendText() backpressure ({d} bytes string)", .{buffer.len});
-                return JSValue.jsNumber(-1);
-            },
-            .success => {
-                log("sendText() success ({d} bytes string)", .{buffer.len});
-                return JSValue.jsNumber(buffer.len);
-            },
-            .dropped => {
-                log("sendText() dropped ({d} bytes string)", .{buffer.len});
-                return JSValue.jsNumber(0);
-            },
-        }
-    }
-
-    pub fn sendBinary(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(2);
-
-        if (args.len < 1) {
-            log("sendBinary()", .{});
-            return globalThis.throw("sendBinary requires at least 1 argument", .{});
-        }
-
-        if (this.isClosed()) {
-            log("sendBinary() closed", .{});
-            return JSValue.jsNumber(0);
-        }
-
-        const message_value = args.ptr[0];
-        const compress_value = args.ptr[1];
-
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            return globalThis.throw("sendBinary expects compress to be a boolean", .{});
-        }
-
-        const compress = args.len > 1 and compress_value.toBoolean();
-
-        const buffer = message_value.asArrayBuffer(globalThis) orelse {
-            return globalThis.throw("sendBinary requires an ArrayBufferView", .{});
-        };
-
-        switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
-            .backpressure => {
-                log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
-                return JSValue.jsNumber(-1);
-            },
-            .success => {
-                log("sendBinary() success ({d} bytes)", .{buffer.len});
-                return JSValue.jsNumber(buffer.slice().len);
-            },
-            .dropped => {
-                log("sendBinary() dropped ({d} bytes)", .{buffer.len});
-                return JSValue.jsNumber(0);
-            },
-        }
-    }
-
-    pub fn sendBinaryWithoutTypeChecks(
-        this: *ServerWebSocket,
-        _: *JSC.JSGlobalObject,
-        array_buffer: *JSC.JSUint8Array,
-        compress: bool,
-    ) JSValue {
-        if (this.isClosed()) {
-            log("sendBinary() closed", .{});
-            return JSValue.jsNumber(0);
-        }
-
-        const buffer = array_buffer.slice();
-
-        switch (this.websocket().send(buffer, .binary, compress, true)) {
-            .backpressure => {
-                log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
-                return JSValue.jsNumber(-1);
-            },
-            .success => {
-                log("sendBinary() success ({d} bytes)", .{buffer.len});
-                return JSValue.jsNumber(buffer.len);
-            },
-            .dropped => {
-                log("sendBinary() dropped ({d} bytes)", .{buffer.len});
-                return JSValue.jsNumber(0);
-            },
-        }
-    }
-
-    pub fn ping(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        return sendPing(this, globalThis, callframe, "ping", .ping);
-    }
-
-    pub fn pong(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        return sendPing(this, globalThis, callframe, "pong", .pong);
-    }
-
-    inline fn sendPing(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-        comptime name: string,
-        comptime opcode: uws.Opcode,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(2);
-
-        if (this.isClosed()) {
-            return JSValue.jsNumber(0);
-        }
-
-        if (args.len > 0) {
-            var value = args.ptr[0];
-            if (!value.isEmptyOrUndefinedOrNull()) {
-                if (value.asArrayBuffer(globalThis)) |data| {
-                    const buffer = data.slice();
-
-                    switch (this.websocket().send(buffer, opcode, false, true)) {
-                        .backpressure => {
-                            log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
-                            return JSValue.jsNumber(-1);
-                        },
-                        .success => {
-                            log("{s}() success ({d} bytes)", .{ name, buffer.len });
-                            return JSValue.jsNumber(buffer.len);
-                        },
-                        .dropped => {
-                            log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
-                            return JSValue.jsNumber(0);
-                        },
-                    }
-                } else if (value.isString()) {
-                    var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
-                    defer string_value.deinit();
-                    const buffer = string_value.slice();
-
-                    switch (this.websocket().send(buffer, opcode, false, true)) {
-                        .backpressure => {
-                            log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
-                            return JSValue.jsNumber(-1);
-                        },
-                        .success => {
-                            log("{s}() success ({d} bytes)", .{ name, buffer.len });
-                            return JSValue.jsNumber(buffer.len);
-                        },
-                        .dropped => {
-                            log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
-                            return JSValue.jsNumber(0);
-                        },
-                    }
-                } else {
-                    return globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
-                }
-            }
-        }
-
-        switch (this.websocket().send(&.{}, opcode, false, true)) {
-            .backpressure => {
-                log("{s}() backpressure ({d} bytes)", .{ name, 0 });
-                return JSValue.jsNumber(-1);
-            },
-            .success => {
-                log("{s}() success ({d} bytes)", .{ name, 0 });
-                return JSValue.jsNumber(0);
-            },
-            .dropped => {
-                log("{s}() dropped ({d} bytes)", .{ name, 0 });
-                return JSValue.jsNumber(0);
-            },
-        }
-    }
-
-    pub fn getData(
-        _: *ServerWebSocket,
-        _: *JSC.JSGlobalObject,
-    ) JSValue {
-        log("getData()", .{});
-        return JSValue.jsUndefined();
-    }
-
-    pub fn setData(
-        this: *ServerWebSocket,
-        globalObject: *JSC.JSGlobalObject,
-        value: JSC.JSValue,
-    ) callconv(.C) bool {
-        log("setData()", .{});
-        ServerWebSocket.dataSetCached(this.this_value, globalObject, value);
-        return true;
-    }
-
-    pub fn getReadyState(
-        this: *ServerWebSocket,
-        _: *JSC.JSGlobalObject,
-    ) JSValue {
-        log("getReadyState()", .{});
-
-        if (this.isClosed()) {
-            return JSValue.jsNumber(3);
-        }
-
-        return JSValue.jsNumber(1);
-    }
-
-    pub fn close(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-        // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
-        this_value: JSC.JSValue,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(2);
-        log("close()", .{});
-        this.this_value = this_value;
-
-        if (this.isClosed()) {
-            return .undefined;
-        }
-
-        const code = brk: {
-            if (args.ptr[0] == .zero or args.ptr[0].isUndefined()) {
-                // default exception code
-                break :brk 1000;
-            }
-
-            if (!args.ptr[0].isNumber()) {
-                return globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
-            }
-
-            break :brk args.ptr[0].coerce(i32, globalThis);
-        };
-
-        var message_value: ZigString.Slice = brk: {
-            if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
-            break :brk try args.ptr[1].toSliceOrNull(globalThis);
-        };
-
-        defer message_value.deinit();
-
-        this.flags.closed = true;
-        this.websocket().end(code, message_value.slice());
-        return .undefined;
-    }
-
-    pub fn terminate(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-        // Since terminate() can lead to close() being called, let's always ensure the `this` value is up to date.
-        this_value: JSC.JSValue,
-    ) bun.JSError!JSValue {
-        _ = globalThis;
-        const args = callframe.arguments_old(2);
-        _ = args;
-        log("terminate()", .{});
-
-        this.this_value = this_value;
-
-        if (this.isClosed()) {
-            return .undefined;
-        }
-
-        this.flags.closed = true;
-        this.this_value.unprotect();
-        this.websocket().close();
-
-        return .undefined;
-    }
-
-    pub fn getBinaryType(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-    ) JSValue {
-        log("getBinaryType()", .{});
-
-        return switch (this.flags.binary_type) {
-            .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
-            .Buffer => bun.String.static("nodebuffer").toJS(globalThis),
-            .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
-            else => @panic("Invalid binary type"),
-        };
-    }
-
-    pub fn setBinaryType(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
-        log("setBinaryType()", .{});
-
-        const btype = JSC.BinaryType.fromJSValue(globalThis, value) catch return false;
-        switch (btype orelse
-            // some other value which we don't support
-            .Float64Array) {
-            .ArrayBuffer, .Buffer, .Uint8Array => |val| {
-                this.flags.binary_type = val;
-                return true;
-            },
-            else => {
-                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"", .{}) catch {};
-                return false;
-            },
-        }
-    }
-
-    pub fn getBufferedAmount(
-        this: *ServerWebSocket,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        log("getBufferedAmount()", .{});
-
-        if (this.isClosed()) {
-            return JSValue.jsNumber(0);
-        }
-
-        return JSValue.jsNumber(this.websocket().getBufferedAmount());
-    }
-    pub fn subscribe(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        if (args.len < 1) {
-            return globalThis.throw("subscribe requires at least 1 argument", .{});
-        }
-
-        if (this.isClosed()) {
-            return JSValue.jsBoolean(true);
-        }
-
-        if (!args.ptr[0].isString()) {
-            return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
-        }
-
-        var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
-        defer topic.deinit();
-
-        if (topic.len == 0) {
-            return globalThis.throw("subscribe requires a non-empty topic name", .{});
-        }
-
-        return JSValue.jsBoolean(this.websocket().subscribe(topic.slice()));
-    }
-    pub fn unsubscribe(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        if (args.len < 1) {
-            return globalThis.throw("unsubscribe requires at least 1 argument", .{});
-        }
-
-        if (this.isClosed()) {
-            return JSValue.jsBoolean(true);
-        }
-
-        if (!args.ptr[0].isString()) {
-            return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
-        }
-
-        var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
-        defer topic.deinit();
-
-        if (topic.len == 0) {
-            return globalThis.throw("unsubscribe requires a non-empty topic name", .{});
-        }
-
-        return JSValue.jsBoolean(this.websocket().unsubscribe(topic.slice()));
-    }
-    pub fn isSubscribed(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        if (args.len < 1) {
-            return globalThis.throw("isSubscribed requires at least 1 argument", .{});
-        }
-
-        if (this.isClosed()) {
-            return JSValue.jsBoolean(false);
-        }
-
-        if (!args.ptr[0].isString()) {
-            return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
-        }
-
-        var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
-        defer topic.deinit();
-
-        if (topic.len == 0) {
-            return globalThis.throw("isSubscribed requires a non-empty topic name", .{});
-        }
-
-        return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
-    }
-
-    pub fn getRemoteAddress(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-    ) JSValue {
-        if (this.isClosed()) {
-            return JSValue.jsUndefined();
-        }
-
-        var buf: [64]u8 = [_]u8{0} ** 64;
-        var text_buf: [512]u8 = undefined;
-
-        const address_bytes = this.websocket().getRemoteAddress(&buf);
-        const address: std.net.Address = switch (address_bytes.len) {
-            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
-            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
-            else => return JSValue.jsUndefined(),
-        };
-
-        const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return bun.String.createUTF8ForJS(globalThis, text);
-    }
-};
-
-pub const NodeHTTPResponse = struct {
-    response: uws.AnyResponse,
-    onDataCallback: JSC.Strong = .empty,
-    onWritableCallback: JSC.Strong = .empty,
-    onAbortedCallback: JSC.Strong = .empty,
-
-    ref_count: u32 = 1,
-    js_ref: JSC.Ref = .{},
-    aborted: bool = false,
-    finished: bool = false,
-    ended: bool = false,
-    upgraded: bool = false,
-    is_request_pending: bool = true,
-    body_read_state: BodyReadState = .none,
-    body_read_ref: JSC.Ref = .{},
-    promise: JSC.Strong = .empty,
-    server: AnyServer,
-
-    /// When you call pause() on the node:http IncomingMessage
-    /// We might've already read from the socket.
-    /// So we need to buffer that data.
-    /// This should be pretty uncommon though.
-    buffered_request_body_data_during_pause: bun.ByteList = .{},
-    is_data_buffered_during_pause: bool = false,
-    /// Did we receive the last chunk of data during pause?
-    is_data_buffered_during_pause_last: bool = false,
-
-    upgrade_context: UpgradeCTX = .{},
-
-    const log = bun.Output.scoped(.NodeHTTPResponse, false);
-    pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
-
-    pub const UpgradeCTX = struct {
-        context: ?*uws.uws_socket_context_t = null,
-        // request will be detached when go async
-        request: ?*uws.Request = null,
-
-        // we need to store this, if we wanna to enable async upgrade
-        sec_websocket_key: []const u8 = "",
-        sec_websocket_protocol: []const u8 = "",
-        sec_websocket_extensions: []const u8 = "",
-
-        // this can be called multiple times
-        pub fn deinit(this: *UpgradeCTX) void {
-            const sec_websocket_key = this.sec_websocket_key;
-            const sec_websocket_protocol = this.sec_websocket_protocol;
-            const sec_websocket_extensions = this.sec_websocket_extensions;
-            this.* = .{};
-            if (sec_websocket_extensions.len > 0) bun.default_allocator.free(sec_websocket_extensions);
-            if (sec_websocket_protocol.len > 0) bun.default_allocator.free(sec_websocket_protocol);
-            if (sec_websocket_key.len > 0) bun.default_allocator.free(sec_websocket_key);
-        }
-
-        pub fn preserveWebSocketHeadersIfNeeded(this: *UpgradeCTX) void {
-            if (this.request) |request| {
-                this.request = null;
-
-                const sec_websocket_key = request.header("sec-websocket-key") orelse "";
-                const sec_websocket_protocol = request.header("sec-websocket-protocol") orelse "";
-                const sec_websocket_extensions = request.header("sec-websocket-extensions") orelse "";
-
-                if (sec_websocket_key.len > 0) {
-                    this.sec_websocket_key = bun.default_allocator.dupe(u8, sec_websocket_key) catch bun.outOfMemory();
-                }
-                if (sec_websocket_protocol.len > 0) {
-                    this.sec_websocket_protocol = bun.default_allocator.dupe(u8, sec_websocket_protocol) catch bun.outOfMemory();
-                }
-                if (sec_websocket_extensions.len > 0) {
-                    this.sec_websocket_extensions = bun.default_allocator.dupe(u8, sec_websocket_extensions) catch bun.outOfMemory();
-                }
-            }
-        }
-    };
-
-    pub const BodyReadState = enum(u8) {
-        none = 0,
-        pending = 1,
-        done = 2,
-    };
-
-    extern "C" fn Bun__getNodeHTTPResponseThisValue(c_int, *anyopaque) JSC.JSValue;
-    fn getThisValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
-    }
-
-    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(c_int, *anyopaque) JSC.JSValue;
-    fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPServerSocketThisValue(@intFromBool(this.response == .SSL), this.response.socket());
-    }
-
-    extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, *anyopaque) void;
-
-    pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
-        const upgrade_ctx = this.upgrade_context.context orelse return false;
-        const ws_handler = this.server.webSocketHandler() orelse return false;
-        const socketValue = this.getServerSocketValue();
-
-        defer {
-            this.setOnAbortedHandler();
-            this.upgrade_context.deinit();
-        }
-        data_value.ensureStillAlive();
-
-        const ws = ServerWebSocket.new(.{
-            .handler = ws_handler,
-            .this_value = data_value,
-        });
-
-        var new_socket: ?*uws.Socket = null;
-        defer if (new_socket) |socket| {
-            this.upgraded = true;
-            Bun__setNodeHTTPServerSocketUsSocketValue(socketValue, socket);
-            defer this.js_ref.unref(JSC.VirtualMachine.get());
-            switch (this.response) {
-                .SSL => this.response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
-                .TCP => this.response = uws.AnyResponse.init(uws.NewApp(false).Response.castRes(@alignCast(@ptrCast(socket)))),
-            }
-        };
-
-        if (this.upgrade_context.request) |request| {
-            this.upgrade_context = .{};
-
-            var sec_websocket_protocol_str: ?ZigString.Slice = null;
-            var sec_websocket_extensions_str: ?ZigString.Slice = null;
-
-            const sec_websocket_protocol_value = brk: {
-                if (sec_websocket_protocol.isEmpty()) {
-                    break :brk request.header("sec-websocket-protocol") orelse "";
-                }
-                sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
-                break :brk sec_websocket_protocol_str.?.slice();
-            };
-
-            const sec_websocket_extensions_value = brk: {
-                if (sec_websocket_extensions.isEmpty()) {
-                    break :brk request.header("sec-websocket-extensions") orelse "";
-                }
-                sec_websocket_extensions_str = sec_websocket_protocol.toSlice(bun.default_allocator);
-                break :brk sec_websocket_extensions_str.?.slice();
-            };
-            defer {
-                if (sec_websocket_protocol_str) |str| str.deinit();
-                if (sec_websocket_extensions_str) |str| str.deinit();
-            }
-
-            new_socket = this.response.upgrade(
-                *ServerWebSocket,
-                ws,
-                request.header("sec-websocket-key") orelse "",
-                sec_websocket_protocol_value,
-                sec_websocket_extensions_value,
-                upgrade_ctx,
-            );
-            return true;
-        }
-
-        var sec_websocket_protocol_str: ?ZigString.Slice = null;
-        var sec_websocket_extensions_str: ?ZigString.Slice = null;
-
-        const sec_websocket_protocol_value = brk: {
-            if (sec_websocket_protocol.isEmpty()) {
-                break :brk this.upgrade_context.sec_websocket_protocol;
-            }
-            sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
-            break :brk sec_websocket_protocol_str.?.slice();
-        };
-
-        const sec_websocket_extensions_value = brk: {
-            if (sec_websocket_extensions.isEmpty()) {
-                break :brk this.upgrade_context.sec_websocket_extensions;
-            }
-            sec_websocket_extensions_str = sec_websocket_protocol.toSlice(bun.default_allocator);
-            break :brk sec_websocket_extensions_str.?.slice();
-        };
-        defer {
-            if (sec_websocket_protocol_str) |str| str.deinit();
-            if (sec_websocket_extensions_str) |str| str.deinit();
-        }
-
-        new_socket = this.response.upgrade(
-            *ServerWebSocket,
-            ws,
-            this.upgrade_context.sec_websocket_key,
-            sec_websocket_protocol_value,
-            sec_websocket_extensions_value,
-            upgrade_ctx,
-        );
-        return true;
-    }
-    pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
-        this.upgrade_context.deinit(); // we can discard the upgrade context now
-
-        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
-            const had_ref = this.body_read_ref.has;
-            this.response.clearOnData();
-            this.body_read_ref.unref(vm);
-            this.body_read_state = .done;
-
-            if (had_ref) {
-                this.markRequestAsDoneIfNecessary();
-            }
-
-            this.deref();
-        }
-    }
-
-    pub fn shouldRequestBePending(this: *const NodeHTTPResponse) bool {
-        if (this.aborted) {
-            return false;
-        }
-
-        if (this.ended) {
-            return this.body_read_state == .pending;
-        }
-
-        return true;
-    }
-
-    pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = globalObject; // autofix
-        _ = callframe; // autofix
-        if (this.buffered_request_body_data_during_pause.len > 0) {
-            this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
-        }
-        if (!this.finished) {
-            this.clearOnDataCallback();
-        }
-
-        return .undefined;
-    }
-
-    fn markRequestAsDone(this: *NodeHTTPResponse) void {
-        log("markRequestAsDone()", .{});
-        this.is_request_pending = false;
-
-        this.clearJSValues();
-        this.clearOnDataCallback();
-        this.upgrade_context.deinit();
-
-        this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
-        const server = this.server;
-        this.js_ref.unref(JSC.VirtualMachine.get());
-        this.deref();
-        server.onRequestComplete();
-    }
-
-    fn markRequestAsDoneIfNecessary(this: *NodeHTTPResponse) void {
-        if (this.is_request_pending and !this.shouldRequestBePending()) {
-            this.markRequestAsDone();
-        }
-    }
-
-    pub fn create(
-        any_server_tag: u64,
-        globalObject: *JSC.JSGlobalObject,
-        has_body: *i32,
-        request: *uws.Request,
-        is_ssl: i32,
-        response_ptr: *anyopaque,
-        upgrade_ctx: ?*anyopaque,
-        node_response_ptr: *?*NodeHTTPResponse,
-    ) callconv(.C) JSC.JSValue {
-        const vm = globalObject.bunVM();
-        if ((HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
-            const req_len: usize = brk: {
-                if (request.header("content-length")) |content_length| {
-                    break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
-                }
-
-                break :brk 0;
-            };
-
-            has_body.* = @intFromBool(req_len > 0 or request.header("transfer-encoding") != null);
-        }
-
-        const response = NodeHTTPResponse.new(.{
-            .upgrade_context = .{
-                .context = @ptrCast(upgrade_ctx),
-                .request = request,
-            },
-            .server = AnyServer{ .ptr = AnyServer.Ptr.from(@ptrFromInt(any_server_tag)) },
-            .response = switch (is_ssl != 0) {
-                true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
-                false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
-            },
-            .body_read_state = if (has_body.* != 0) .pending else .none,
-            // 1 - the HTTP response
-            // 1 - the JS object
-            // 1 - the Server handler.
-            // 1 - the onData callback (request bod)
-            .ref_count = if (has_body.* != 0) 4 else 3,
-        });
-        if (has_body.* != 0) {
-            response.body_read_ref.ref(vm);
-        }
-        response.js_ref.ref(vm);
-        const js_this = response.toJS(globalObject);
-        node_response_ptr.* = response;
-        return js_this;
-    }
-
-    pub fn setOnAbortedHandler(this: *NodeHTTPResponse) void {
-        // Don't overwrite WebSocket user data
-        if (!this.upgraded) {
-            this.response.onAborted(*NodeHTTPResponse, onAbort, this);
-            this.response.onTimeout(*NodeHTTPResponse, onTimeout, this);
-        }
-        // detach and
-        this.upgrade_context.preserveWebSocketHeadersIfNeeded();
-    }
-
-    fn isDone(this: *const NodeHTTPResponse) bool {
-        return this.finished or this.ended or this.aborted;
-    }
-
-    pub fn getEnded(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.ended);
-    }
-
-    pub fn getFinished(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.finished);
-    }
-
-    pub fn getAborted(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.aborted);
-    }
-
-    pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        var result: i32 = 0;
-        switch (this.body_read_state) {
-            .none => {},
-            .pending => result |= 1 << 1,
-            .done => result |= 1 << 2,
-        }
-        if (this.buffered_request_body_data_during_pause.len > 0) {
-            result |= 1 << 3;
-        }
-        if (this.is_data_buffered_during_pause_last) {
-            result |= 1 << 2;
-        }
-
-        return JSC.JSValue.jsNumber(result);
-    }
-
-    pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        if (this.finished) {
-            return JSC.JSValue.jsNull();
-        }
-
-        return JSC.JSValue.jsNumber(this.response.getBufferedAmount());
-    }
-
-    pub fn jsRef(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        if (!this.isDone()) {
-            this.js_ref.ref(globalObject.bunVM());
-        }
-        return .undefined;
-    }
-
-    pub fn jsUnref(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        if (!this.isDone()) {
-            this.js_ref.unref(globalObject.bunVM());
-        }
-        return .undefined;
-    }
-
-    fn handleEndedIfNecessary(state: uws.State, globalObject: *JSC.JSGlobalObject) bun.JSError!void {
-        if (!state.isResponsePending()) {
-            return globalObject.ERR_HTTP_HEADERS_SENT("Stream is already ended", .{}).throw();
-        }
-    }
-
-    extern "C" fn NodeHTTPServer__writeHead_http(
-        globalObject: *JSC.JSGlobalObject,
-        statusMessage: [*]const u8,
-        statusMessageLength: usize,
-        headersObjectValue: JSC.JSValue,
-        response: *anyopaque,
-    ) void;
-
-    extern "C" fn NodeHTTPServer__writeHead_https(
-        globalObject: *JSC.JSGlobalObject,
-        statusMessage: [*]const u8,
-        statusMessageLength: usize,
-        headersObjectValue: JSC.JSValue,
-        response: *anyopaque,
-    ) void;
-
-    pub fn writeHead(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.argumentsUndef(3).slice();
-
-        if (this.isDone()) {
-            return globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
-        }
-
-        const state = this.response.state();
-        try handleEndedIfNecessary(state, globalObject);
-
-        const status_code_value = if (arguments.len > 0) arguments[0] else .undefined;
-        const status_message_value = if (arguments.len > 1 and arguments[1] != .null) arguments[1] else .undefined;
-        const headers_object_value = if (arguments.len > 2 and arguments[2] != .null) arguments[2] else .undefined;
-
-        const status_code: i32 = brk: {
-            if (status_code_value != .undefined) {
-                break :brk globalObject.validateIntegerRange(status_code_value, i32, 200, .{
-                    .min = 100,
-                    .max = 599,
-                }) catch return error.JSError;
-            }
-
-            break :brk 200;
-        };
-
-        var stack_fallback = std.heap.stackFallback(256, bun.default_allocator);
-        const allocator = stack_fallback.get();
-        const status_message_slice = if (status_message_value != .undefined)
-            try status_message_value.toSlice(globalObject, allocator)
-        else
-            ZigString.Slice.empty;
-        defer status_message_slice.deinit();
-
-        if (globalObject.hasException()) {
-            return error.JSError;
-        }
-
-        if (state.isHttpStatusCalled()) {
-            return globalObject.ERR_HTTP_HEADERS_SENT("Stream already started", .{}).throw();
-        }
-
-        do_it: {
-            if (status_message_slice.len == 0) {
-                if (HTTPStatusText.get(@intCast(status_code))) |status_message| {
-                    writeHeadInternal(this.response, globalObject, status_message, headers_object_value);
-                    break :do_it;
-                }
-            }
-
-            const message = if (status_message_slice.len > 0) status_message_slice.slice() else "HM";
-            const status_message = std.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }) catch bun.outOfMemory();
-            defer allocator.free(status_message);
-            writeHeadInternal(this.response, globalObject, status_message, headers_object_value);
-            break :do_it;
-        }
-
-        return .undefined;
-    }
-
-    fn writeHeadInternal(response: uws.AnyResponse, globalObject: *JSC.JSGlobalObject, status_message: []const u8, headers: JSC.JSValue) void {
-        log("writeHeadInternal({s})", .{status_message});
-        switch (response) {
-            .TCP => NodeHTTPServer__writeHead_http(globalObject, status_message.ptr, status_message.len, headers, @ptrCast(response.TCP)),
-            .SSL => NodeHTTPServer__writeHead_https(globalObject, status_message.ptr, status_message.len, headers, @ptrCast(response.SSL)),
-        }
-    }
-
-    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments = callframe.arguments_old(1).slice();
-        _ = arguments; // autofix
-        if (this.isDone()) {
-            return .undefined;
-        }
-
-        const state = this.response.state();
-        try handleEndedIfNecessary(state, globalObject);
-
-        this.response.writeContinue();
-        return .undefined;
-    }
-
-    pub const AbortEvent = enum(u8) {
-        none = 0,
-        abort = 1,
-        timeout = 2,
-    };
-
-    fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent) void {
-        if (this.finished) {
-            return;
-        }
-
-        if (event == .abort) {
-            this.aborted = true;
-        }
-
-        this.ref();
-        defer this.deref();
-        defer if (event == .abort) this.markRequestAsDoneIfNecessary();
-
-        const js_this: JSValue = this.getThisValue();
-        if (this.onAbortedCallback.get()) |on_aborted| {
-            defer {
-                if (event == .abort) {
-                    this.onAbortedCallback.deinit();
-                }
-            }
-            const globalThis = JSC.VirtualMachine.get().global;
-            const vm = globalThis.bunVM();
-            const event_loop = vm.eventLoop();
-
-            event_loop.runCallback(on_aborted, globalThis, js_this, &.{
-                JSC.JSValue.jsNumber(@intFromEnum(event)),
-            });
-        }
-
-        if (event == .abort) {
-            this.onDataOrAborted("", true, .abort);
-        }
-    }
-
-    pub fn onAbort(this: *NodeHTTPResponse, response: uws.AnyResponse) void {
-        _ = response; // autofix
-        log("onAbort", .{});
-        this.handleAbortOrTimeout(.abort);
-    }
-
-    pub fn onTimeout(this: *NodeHTTPResponse, response: uws.AnyResponse) void {
-        _ = response; // autofix
-        log("onTimeout", .{});
-        this.handleAbortOrTimeout(.timeout);
-    }
-
-    pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = globalObject; // autofix
-        _ = callframe; // autofix
-        if (this.finished or this.aborted) {
-            return .false;
-        }
-        if (this.body_read_ref.has and !this.onDataCallback.has()) {
-            this.is_data_buffered_during_pause = true;
-            this.response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
-        }
-
-        this.response.pause();
-        return .true;
-    }
-
-    pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = callframe; // autofix
-        return this.drainBufferedRequestBodyFromPause(globalObject) orelse .undefined;
-    }
-
-    fn drainBufferedRequestBodyFromPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
-        if (this.buffered_request_body_data_during_pause.len > 0) {
-            const result = JSC.JSValue.createBuffer(globalObject, this.buffered_request_body_data_during_pause.slice(), bun.default_allocator);
-            this.buffered_request_body_data_during_pause = .{};
-            return result;
-        }
-        return null;
-    }
-
-    pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = callframe; // autofix
-        if (this.finished or this.aborted) {
-            return .false;
-        }
-
-        var result = JSC.JSValue.true;
-        if (this.is_data_buffered_during_pause) {
-            this.response.clearOnData();
-            this.is_data_buffered_during_pause = false;
-        }
-
-        if (this.drainBufferedRequestBodyFromPause(globalObject)) |buffered_data| {
-            result = buffered_data;
-        }
-
-        this.response.@"resume"();
-        return result;
-    }
-
-    fn onRequestComplete(this: *NodeHTTPResponse) void {
-        if (this.finished) {
-            return;
-        }
-        log("onRequestComplete", .{});
-        this.finished = true;
-        this.js_ref.unref(JSC.VirtualMachine.get());
-
-        this.clearJSValues();
-        this.markRequestAsDoneIfNecessary();
-    }
-
-    pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        log("onResolve", .{});
-        const arguments = callframe.arguments_old(2).slice();
-        const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
-        this.promise.deinit();
-        defer this.deref();
-        this.maybeStopReadingBody(globalObject.bunVM());
-
-        if (!this.finished and !this.aborted) {
-            this.clearJSValues();
-            this.response.clearAborted();
-            this.response.clearOnData();
-            this.response.clearOnWritable();
-            this.response.clearTimeout();
-            if (this.response.state().isResponsePending()) {
-                this.response.endWithoutBody(this.response.state().isHttpConnectionClose());
-            }
-            this.onRequestComplete();
-        }
-
-        return .undefined;
-    }
-
-    pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        const arguments = callframe.arguments_old(2).slice();
-        const err = arguments[0];
-        const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
-        this.promise.deinit();
-        this.maybeStopReadingBody(globalObject.bunVM());
-
-        defer this.deref();
-
-        if (!this.finished and !this.aborted) {
-            this.clearJSValues();
-            this.response.clearAborted();
-            this.response.clearOnData();
-            this.response.clearOnWritable();
-            this.response.clearTimeout();
-            if (!this.response.state().isHttpStatusCalled()) {
-                this.response.writeStatus("500 Internal Server Error");
-            }
-            this.response.endStream(this.response.state().isHttpConnectionClose());
-            this.onRequestComplete();
-        }
-
-        _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-        return .undefined;
-    }
-
-    fn clearJSValues(this: *NodeHTTPResponse) void {
-        // Promise is handled separately.
-        this.onWritableCallback.deinit();
-        this.onAbortedCallback.deinit();
-    }
-
-    pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        _ = globalObject; // autofix
-        _ = callframe; // autofix
-        if (this.isDone()) {
-            return .undefined;
-        }
-
-        this.aborted = true;
-        const state = this.response.state();
-        if (state.isHttpEndCalled()) {
-            return .undefined;
-        }
-
-        this.response.clearAborted();
-        this.response.clearOnData();
-        this.response.clearOnWritable();
-        this.response.clearTimeout();
-        this.response.endWithoutBody(true);
-        this.onRequestComplete();
-        return .undefined;
-    }
-
-    fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
-        this.buffered_request_body_data_during_pause.append(bun.default_allocator, chunk) catch bun.outOfMemory();
-        if (last) {
-            this.is_data_buffered_during_pause_last = true;
-            if (this.body_read_ref.has) {
-                this.body_read_ref.unref(JSC.VirtualMachine.get());
-                this.markRequestAsDoneIfNecessary();
-                this.deref();
-            }
-        }
-    }
-
-    fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event: AbortEvent) void {
-        if (last) {
-            this.ref();
-            this.body_read_state = .done;
-        }
-
-        defer {
-            if (last) {
-                if (this.body_read_ref.has) {
-                    this.body_read_ref.unref(JSC.VirtualMachine.get());
-                    this.markRequestAsDoneIfNecessary();
-                    this.deref();
-                }
-
-                this.deref();
-            }
-        }
-
-        if (this.onDataCallback.get()) |callback| {
-            const globalThis = JSC.VirtualMachine.get().global;
-            const event_loop = globalThis.bunVM().eventLoop();
-
-            const bytes: JSC.JSValue = brk: {
-                if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
-                    const buffer = JSC.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len);
-                    this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
-                    if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
-                        var input = array_buffer.slice();
-                        @memcpy(input[0..this.buffered_request_body_data_during_pause.len], this.buffered_request_body_data_during_pause.slice());
-                        @memcpy(input[this.buffered_request_body_data_during_pause.len..], chunk);
-                        break :brk buffer;
-                    }
-                }
-
-                if (this.drainBufferedRequestBodyFromPause(globalThis)) |buffered_data| {
-                    break :brk buffered_data;
-                }
-
-                if (chunk.len > 0) {
-                    break :brk JSC.ArrayBuffer.createBuffer(globalThis, chunk);
-                }
-                break :brk .undefined;
-            };
-
-            event_loop.runCallback(callback, globalThis, .undefined, &.{
-                bytes,
-                JSC.JSValue.jsBoolean(last),
-                JSC.JSValue.jsNumber(@intFromEnum(event)),
-            });
-        }
-    }
-    pub const BUN_DEBUG_REFCOUNT_NAME = "NodeHTTPServerResponse";
-    pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
-        log("onData({d} bytes, is_last = {d})", .{ chunk.len, @intFromBool(last) });
-
-        onDataOrAborted(this, chunk, last, .none);
-    }
-
-    fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool {
-        log("onDrain({d})", .{offset});
-        this.ref();
-        defer this.deref();
-        response.clearOnWritable();
-        if (this.aborted or this.finished) {
-            return false;
-        }
-        const on_writable = this.onWritableCallback.trySwap() orelse return false;
-        const globalThis = JSC.VirtualMachine.get().global;
-        const vm = globalThis.bunVM();
-
-        response.corked(JSC.EventLoop.runCallback, .{ vm.eventLoop(), on_writable, globalThis, .undefined, &.{JSC.JSValue.jsNumberFromUint64(offset)} });
-        if (this.aborted or this.finished) {
-            return false;
-        }
-
-        return true;
-    }
-
-    fn writeOrEnd(
-        this: *NodeHTTPResponse,
-        globalObject: *JSC.JSGlobalObject,
-        arguments: []const JSC.JSValue,
-        comptime is_end: bool,
-    ) bun.JSError!JSC.JSValue {
-        if (this.isDone()) {
-            return globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
-        }
-
-        const state = this.response.state();
-        if (!state.isResponsePending()) {
-            return globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
-        }
-
-        const input_value = if (arguments.len > 0) arguments[0] else .undefined;
-        var encoding_value = if (arguments.len > 1) arguments[1] else .undefined;
-        const callback_value = brk: {
-            if ((encoding_value != .null and encoding_value != .undefined) and encoding_value.isCallable()) {
-                encoding_value = .undefined;
-                break :brk arguments[1];
-            }
-
-            if (arguments.len > 2 and arguments[2] != .undefined) {
-                if (!arguments[2].isCallable()) {
-                    return globalObject.throwInvalidArgumentTypeValue("callback", "function", arguments[2]);
-                }
-
-                break :brk arguments[2];
-            }
-
-            break :brk .undefined;
-        };
-
-        const string_or_buffer: JSC.Node.StringOrBuffer = brk: {
-            if (input_value == .null or input_value == .undefined) {
-                break :brk JSC.Node.StringOrBuffer.empty;
-            }
-
-            var encoding: JSC.Node.Encoding = .utf8;
-            if (encoding_value != .undefined and encoding_value != .null) {
-                if (!encoding_value.isString()) {
-                    return globalObject.throwInvalidArgumentTypeValue("encoding", "string", encoding_value);
-                }
-
-                encoding = JSC.Node.Encoding.fromJS(encoding_value, globalObject) orelse {
-                    return globalObject.throwInvalidArguments("Invalid encoding", .{});
-                };
-            }
-
-            const result = JSC.Node.StringOrBuffer.fromJSWithEncoding(globalObject, bun.default_allocator, input_value, encoding) catch |err| return err;
-            break :brk result orelse {
-                return globalObject.throwInvalidArgumentTypeValue("input", "string or buffer", input_value);
-            };
-        };
-        defer string_or_buffer.deinit();
-
-        if (globalObject.hasException()) {
-            return error.JSError;
-        }
-
-        const bytes = string_or_buffer.slice();
-
-        if (comptime is_end) {
-            log("end('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
-        } else {
-            log("write('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
-        }
-
-        if (is_end) {
-            // Discard the body read ref if it's pending and no onData callback is set at this point.
-            // This is the equivalent of req._dump().
-            if (this.body_read_ref.has and this.body_read_state == .pending and !this.onDataCallback.has()) {
-                this.body_read_ref.unref(JSC.VirtualMachine.get());
-                this.deref();
-                this.body_read_state = .none;
-            }
-
-            this.response.clearAborted();
-            this.response.clearOnWritable();
-            this.response.clearTimeout();
-            this.ended = true;
-            if (!state.isHttpWriteCalled() or bytes.len > 0) {
-                this.response.end(bytes, state.isHttpConnectionClose());
-            } else {
-                this.response.endStream(state.isHttpConnectionClose());
-            }
-            this.onRequestComplete();
-
-            return JSC.JSValue.jsNumberFromUint64(bytes.len);
-        } else {
-            switch (this.response.write(bytes)) {
-                .want_more => |written| {
-                    this.response.clearOnWritable();
-                    this.onWritableCallback.clearWithoutDeallocation();
-                    return JSC.JSValue.jsNumberFromUint64(written);
-                },
-                .backpressure => |written| {
-                    if (callback_value != .undefined) {
-                        this.onWritableCallback.set(globalObject, callback_value.withAsyncContextIfNeeded(globalObject));
-                        this.response.onWritable(*NodeHTTPResponse, onDrain, this);
-                    }
-                    return JSC.JSValue.jsNumberFromInt64(-@as(i64, @intCast(written)));
-                },
-            }
-        }
-    }
-
-    pub fn setOnWritable(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        if (this.isDone() or value == .undefined) {
-            this.onWritableCallback.clearWithoutDeallocation();
-            return true;
-        }
-
-        this.onWritableCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
-        return true;
-    }
-
-    pub fn getOnWritable(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.onWritableCallback.get() orelse .undefined;
-    }
-
-    pub fn getOnAbort(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.onAbortedCallback.get() orelse .undefined;
-    }
-
-    pub fn setOnAbort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        if (this.isDone() or value == .undefined) {
-            this.onAbortedCallback.clearWithoutDeallocation();
-            return true;
-        }
-
-        this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
-        return true;
-    }
-
-    pub fn getOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.onDataCallback.get() orelse .undefined;
-    }
-
-    fn clearOnDataCallback(this: *NodeHTTPResponse) void {
-        if (this.body_read_state != .none) {
-            this.onDataCallback.deinit();
-            if (!this.aborted)
-                this.response.clearOnData();
-            if (this.body_read_state != .done) {
-                this.body_read_state = .done;
-                if (this.body_read_ref.has) {
-                    this.deref();
-                }
-            }
-        }
-    }
-
-    pub fn setOnData(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        if (value == .undefined or this.ended or this.aborted or this.body_read_state == .none or this.is_data_buffered_during_pause_last) {
-            this.onDataCallback.deinit();
-            defer {
-                if (this.body_read_ref.has) {
-                    this.body_read_ref.unref(globalObject.bunVM());
-                    this.deref();
-                }
-            }
-            switch (this.body_read_state) {
-                .pending, .done => {
-                    if (!this.finished and !this.aborted) {
-                        this.response.clearOnData();
-                    }
-                    this.body_read_state = .done;
-                },
-                .none => {},
-            }
-            return true;
-        }
-
-        this.onDataCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
-        this.response.onData(*NodeHTTPResponse, onData, this);
-        this.is_data_buffered_during_pause = false;
-
-        if (!this.body_read_ref.has) {
-            this.ref();
-            this.body_read_ref.ref(globalObject.bunVM());
-        }
-
-        return true;
-    }
-
-    pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(3).slice();
-
-        return writeOrEnd(this, globalObject, arguments, false);
-    }
-
-    pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(3).slice();
-        return writeOrEnd(this, globalObject, arguments, true);
-    }
-
-    fn handleCorked(globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, result: *JSValue, is_exception: *bool) void {
-        result.* = function.call(globalObject, .undefined, &.{}) catch |err| {
-            result.* = globalObject.takeException(err);
-            is_exception.* = true;
-            return;
-        };
-    }
-
-    export fn NodeHTTPResponse__setTimeout(this: *NodeHTTPResponse, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bool {
-        if (!seconds.isNumber()) {
-            globalThis.throwInvalidArgumentTypeValue("timeout", "number", seconds) catch {};
-            return false;
-        }
-
-        if (this.finished or this.aborted) {
-            return false;
-        }
-
-        this.response.timeout(@intCast(@min(seconds.to(c_uint), 255)));
-        return true;
-    }
-
-    pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(1).slice();
-        if (arguments.len == 0) {
-            return globalObject.throwNotEnoughArguments("cork", 1, 0);
-        }
-
-        if (!arguments[0].isCallable()) {
-            return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
-        }
-
-        if (this.finished or this.aborted) {
-            return globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
-        }
-
-        var result: JSC.JSValue = .zero;
-        var is_exception: bool = false;
-        this.ref();
-        defer this.deref();
-
-        this.response.corked(handleCorked, .{ globalObject, arguments[0], &result, &is_exception });
-
-        if (is_exception) {
-            if (result != .zero) {
-                return globalObject.throwValue(result);
-            } else {
-                return globalObject.throw("unknown error", .{});
-            }
-        }
-
-        if (result == .zero) {
-            return .undefined;
-        }
-
-        return result;
-    }
-    pub fn finalize(this: *NodeHTTPResponse) void {
-        this.clearJSValues();
-        this.deref();
-    }
-
-    pub fn deinit(this: *NodeHTTPResponse) void {
-        bun.debugAssert(!this.body_read_ref.has);
-        bun.debugAssert(!this.js_ref.has);
-        bun.debugAssert(!this.is_request_pending);
-        bun.debugAssert(this.aborted or this.finished);
-
-        this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
-        this.js_ref.unref(JSC.VirtualMachine.get());
-        this.body_read_ref.unref(JSC.VirtualMachine.get());
-        this.onAbortedCallback.deinit();
-        this.onDataCallback.deinit();
-        this.onWritableCallback.deinit();
-        this.promise.deinit();
-        this.destroy();
-    }
-
-    comptime {
-        @export(&create, .{ .name = "NodeHTTPResponse__createForJS" });
-    }
-};
+pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
+pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
 
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
@@ -7553,9 +5278,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (arguments[0].as(Request)) |request| {
                 _ = request.request_context.setTimeout(value);
             } else if (arguments[0].as(NodeHTTPResponse)) |response| {
-                if (!response.finished) {
-                    _ = response.response.timeout(@intCast(@min(value, 255)));
-                }
+                response.setTimeout(@truncate(value % 255));
             } else {
                 return this.globalThis.throwInvalidArguments("timeout() requires a Request object", .{});
             }
@@ -7633,7 +5356,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
-                if (nodeHttpResponse.aborted or nodeHttpResponse.ended) {
+                if (nodeHttpResponse.flags.ended or nodeHttpResponse.flags.socket_closed) {
                     return JSC.jsBoolean(false);
                 }
 
@@ -7702,8 +5425,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
 
                             // we must write the status first so that 200 OK isn't written
-                            nodeHttpResponse.response.writeStatus("101 Switching Protocols");
-                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.response.socket());
+                            nodeHttpResponse.raw_response.writeStatus("101 Switching Protocols");
+                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.raw_response.socket());
                         }
 
                         if (globalThis.hasException()) {
@@ -7995,6 +5718,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
+
+            if (this.config.onRequest == .zero) {
+                return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
+            }
+
             const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
@@ -8080,6 +5808,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var request = Request.new(existing_request);
 
+            bun.assert(this.config.onRequest != .zero); // confirmed above
             const response_value = this.config.onRequest.call(
                 this.globalThis,
                 this.jsValueAssertAlive(),
@@ -8237,10 +5966,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;
-                    var len: i32 = 1024;
-                    listener.socket().remoteAddress(&buf, &len);
-                    if (len > 0) {
-                        this.cached_hostname = bun.String.createUTF8(buf[0..@as(usize, @intCast(len))]);
+
+                    if (listener.socket().remoteAddress(buf[0..1024])) |addr| {
+                        if (addr.len > 0) {
+                            this.cached_hostname = bun.String.createUTF8(addr);
+                        }
                     }
                 }
 
@@ -8754,7 +6484,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .pending => {
                             globalThis.handleRejectedPromises();
                             if (node_http_response) |node_response| {
-                                if (node_response.finished or node_response.aborted or node_response.upgraded) {
+                                if (node_response.flags.request_has_completed or node_response.flags.socket_closed or node_response.flags.upgraded) {
                                     strong_promise.deinit();
                                     break :brk .{ .success = {} };
                                 }
@@ -8785,12 +6515,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
 
                     if (node_http_response) |node_response| {
-                        if (!node_response.finished and node_response.response.state().isResponsePending()) {
-                            if (node_response.response.state().isHttpStatusCalled()) {
-                                node_response.response.writeStatus("500 Internal Server Error");
-                                node_response.response.endWithoutBody(true);
+                        if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                            if (node_response.raw_response.state().isHttpStatusCalled()) {
+                                node_response.raw_response.writeStatus("500 Internal Server Error");
+                                node_response.raw_response.endWithoutBody(true);
                             } else {
-                                node_response.response.endStream(true);
+                                node_response.raw_response.endStream(true);
                             }
                         }
                         node_response.onRequestComplete();
@@ -8801,7 +6531,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.finished and node_response.response.state().isResponsePending()) {
+                if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
                     node_response.setOnAbortedHandler();
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream
@@ -8824,6 +6554,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             NodeHTTPServer__onRequest_https
         else
             NodeHTTPServer__onRequest_http;
+
+        pub fn setUsingCustomExpectHandler(this: *ThisServer, value: bool) void {
+            NodeHTTP_setUsingCustomExpectHandler(ssl_enabled, this.app.?, value);
+        }
 
         var did_send_idletimeout_warning_once = false;
         fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
@@ -9339,7 +7073,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
-                NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
+                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
             } else if (this.config.onRequest != .zero and !@"has /*") {
                 app.any("/*", *ThisServer, this, onRequest);
             }
@@ -9510,6 +7244,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 route_list_value = this.setRoutes();
             }
 
+            if (this.config.onNodeHTTPRequest != .zero) {
+                this.setUsingCustomExpectHandler(true);
+            }
+
             switch (this.config.address) {
                 .tcp => |tcp| {
                     var host: ?[*:0]const u8 = null;
@@ -9612,7 +7350,7 @@ pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, tru
 pub const AnyServer = struct {
     ptr: Ptr,
 
-    const Ptr = bun.TaggedPointerUnion(.{
+    pub const Ptr = bun.TaggedPointerUnion(.{
         HTTPServer,
         HTTPSServer,
         DebugHTTPServer,
@@ -9882,7 +7620,9 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
-extern fn NodeHTTP_assignOnCloseFunction(c_int, *anyopaque) void;
+extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
+
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
     const err_code = BoringSSL.ERR_get_error();

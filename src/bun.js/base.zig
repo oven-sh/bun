@@ -396,6 +396,7 @@ pub const ArrayBuffer = extern struct {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
+    // TODO: this can throw an error! should use JSError!JSValue
     pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSC.JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {
@@ -978,8 +979,6 @@ pub fn DOMCall(
         pub const is_dom_call = true;
         const Slowpath = @field(Container, functionName);
         const SlowpathType = @TypeOf(@field(Container, functionName));
-        pub const shim = JSC.Shimmer(className, functionName, @This());
-        pub const name = class_name ++ "__" ++ functionName;
 
         // Zig doesn't support @frameAddress(1)
         // so we have to add a small wrapper fujnction
@@ -995,18 +994,18 @@ pub fn DOMCall(
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
+        const PutFnType = *const fn (globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.c) void;
+        const put_fn = @extern(PutFnType, .{ .name = className ++ "__" ++ functionName ++ "__put" });
 
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-            shim.cppFn("put", .{ globalObject, value });
+            put_fn(globalObject, value);
         }
 
         pub const effect = dom_effect;
 
-        pub const Extern = [_][]const u8{"put"};
-
         comptime {
-            @export(&slowpath, .{ .name = shim.symbolName("slowpath") });
-            @export(&fastpath, .{ .name = shim.symbolName("fastpath") });
+            @export(&slowpath, .{ .name = className ++ "__" ++ functionName ++ "__slowpath" });
+            @export(&fastpath, .{ .name = className ++ "__" ++ functionName ++ "__fastpath" });
         }
     };
 }
@@ -1064,7 +1063,7 @@ pub fn wrapInstanceMethod(
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                        args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
@@ -1072,7 +1071,7 @@ pub fn wrapInstanceMethod(
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                                args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                                     iter.deinit();
                                     return globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 };
@@ -1206,14 +1205,14 @@ pub fn wrapStaticMethod(
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                        args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
+                            args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
                                 if (arg == .undefined) {
                                     break :brk null;
                                 }
@@ -1227,7 +1226,7 @@ pub fn wrapStaticMethod(
                     },
                     JSC.Node.BlobOrStringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                            args[i] = try JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                                 iter.deinit();
                                 return globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                             };

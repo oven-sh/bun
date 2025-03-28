@@ -2485,7 +2485,7 @@ pub const Arguments = struct {
             };
 
             const buffer_value = arguments.next();
-            const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
+            const buffer = try StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);

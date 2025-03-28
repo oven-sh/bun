@@ -538,9 +538,7 @@ pub fn onTimeout(this: *NodeHTTPResponse, _: uws.AnyResponse) void {
     this.handleAbortOrTimeout(.timeout, .zero);
 }
 
-pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = globalObject; // autofix
-    _ = callframe; // autofix
+pub fn doPause(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (this.flags.request_has_completed or this.flags.socket_closed) {
         return .false;
     }
@@ -549,12 +547,12 @@ pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callf
         this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
     }
 
-    this.raw_response.pause();
+    // TODO: check how to receive FIN with paused socket
+    // this.raw_response.pause();
     return .true;
 }
 
-pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = callframe; // autofix
+pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return this.drainBufferedRequestBodyFromPause(globalObject) orelse .undefined;
 }
 

@@ -2035,6 +2035,8 @@ const ServerResponsePrototype = {
       }
       return this;
     }
+
+    // We dont wanna a paused socket when we call end, so is important to resume the socket
     handle.resume();
 
     const headerState = this[headerStateSymbol];

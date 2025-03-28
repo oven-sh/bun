@@ -167,12 +167,6 @@ pub fn verify(options: VerifyOptions) bool {
 
     // Check if token has expired
     const current_time = @as(u64, @bitCast(std.time.milliTimestamp()));
-    if (current_time < timestamp and timestamp - current_time > 5 * 60 * 1000) {
-        // give some margin to check to a invalid token 5 minutes sounds plausable for server time difference
-        // we will still check expiry and the signature so should be fine
-        // this is meant to just short circuit the check for a bad token
-        return false;
-    }
     // Extract expires_in (last 8 bytes)
     const expires_in = std.mem.readInt(u64, decoded[24..32], .big);
     {

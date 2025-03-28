@@ -1111,7 +1111,7 @@ export async function runBunInstall(
   if (!options?.allowWarnings) {
     expect(err).not.toContain("warn:");
   }
-  if ((options?.savesLockfile ?? true) && !production) {
+  if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
   let out = await new Response(stdout).text();
@@ -1217,7 +1217,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
-  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
 
 declare module "bun:test" {

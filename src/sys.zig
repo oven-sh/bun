@@ -1835,11 +1835,11 @@ pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
         return null;
     }
 
-    return closeAllowingStdoutAndStderr(fd);
+    return closeAllowingStdinStdoutAndStderr(fd);
 }
 
-pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
-    return bun.FDImpl.decode(fd).closeAllowingStdoutAndStderr();
+pub fn closeAllowingStdinStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
+    return bun.FDImpl.decode(fd).closeAllowingStdinStdoutAndStderr();
 }
 
 pub const max_count = switch (builtin.os.tag) {

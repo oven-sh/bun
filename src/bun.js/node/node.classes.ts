@@ -314,6 +314,4 @@ export default [
       Stats: { getter: "getStats" },
     },
   }),
-  // StatFs and BigIntStatFs are now implemented in C++ 
-  // in src/bun.js/bindings/NodeFSStatFSBinding.cpp
 ];

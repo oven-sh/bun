@@ -27,6 +27,14 @@ const enum NodeHTTPBodyReadState {
   hasBufferedDataDuringPause = 1 << 3,
 }
 
+// Must be kept in sync with NodeHTTPResponse.Flags
+const enum NodeHTTPResponseFlags {
+  socket_closed = 1 << 0,
+  request_has_completed = 1 << 1,
+
+  closed_or_completed = socket_closed | request_has_completed,
+}
+
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
 const kEmitState = Symbol("emitState");
@@ -2121,15 +2129,14 @@ const ServerResponsePrototype = {
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
     }
-    // Based on your Zig struct, socket_closed is bit 0 (least significant bit)
+
     const flags = handle.flags;
-    // socket_closed is bit 0
-    // request_has_completed is bit 1
-    if (!!(flags & 0x01) || !!(flags & 0x02)) {
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
       // node.js will return true if the handle is closed but the internal state is not
       // and will not throw or emit an error
       return true;
     }
+
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);

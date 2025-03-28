@@ -1505,7 +1505,6 @@ pub const Blob = struct {
         return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
     }
 
-
     pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);

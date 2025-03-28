@@ -1111,7 +1111,7 @@ export async function runBunInstall(
   if (!options?.allowWarnings) {
     expect(err).not.toContain("warn:");
   }
-  if ((options?.savesLockfile ?? true) && !production) {
+  if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
   let out = await new Response(stdout).text();

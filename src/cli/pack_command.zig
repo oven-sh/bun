@@ -36,6 +36,7 @@ const LogLevel = PackageManager.Options.LogLevel;
 const FileDescriptor = bun.FileDescriptor;
 const Publish = bun.CLI.PublishCommand;
 const Dependency = Install.Dependency;
+const CowString = bun.ptr.CowString;
 
 pub const PackCommand = struct {
     pub const Context = struct {
@@ -330,7 +331,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.flags.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
+                        switch (glob.walk.matchImpl(allocator, include.glob.slice(), match_path)) {
                             .match => included = true,
                             .negate_no_match, .negate_match => unreachable,
                             else => {},
@@ -347,7 +348,7 @@ pub const PackCommand = struct {
                         const match_path = if (exclude.flags.@"leading **/") entry_name else entry_subpath;
                         // NOTE: These patterns have `!` so `.match` logic is
                         // inverted here
-                        switch (glob.walk.matchImpl(allocator, exclude.glob, match_path)) {
+                        switch (glob.walk.matchImpl(allocator, exclude.glob.slice(), match_path)) {
                             .negate_no_match => included = false,
                             else => {},
                         }
@@ -1140,10 +1141,10 @@ pub const PackCommand = struct {
                 if (pattern.flags.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.flags.rel_path) rel else entry_name;
-                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob, match_path)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob.slice(), match_path)) {
                     .match => {
                         ignored = true;
-                        ignore_pattern = pattern.glob;
+                        ignore_pattern = pattern.glob.slice();
                         ignore_kind = ignore.kind;
                     },
                     .negate_no_match => ignored = false,
@@ -2167,7 +2168,7 @@ pub const PackCommand = struct {
     /// A glob pattern used to ignore or include files in the project tree.
     /// Might come from .npmignore, .gitignore, or `files` in package.json
     const Pattern = struct {
-        glob: []const u8,
+        glob: CowString,
         flags: Flags,
 
         const Flags = packed struct {
@@ -2233,7 +2234,7 @@ pub const PackCommand = struct {
             }
 
             return .{
-                .glob = buf[0..end],
+                .glob = CowString.initOwned(buf[0..end], allocator),
                 .flags = .{
                     .rel_path = has_leading_or_middle_slash,
                     .@"leading **/" = @"has leading **/, (could start with '!')",
@@ -2245,9 +2246,9 @@ pub const PackCommand = struct {
 
         /// Invert a negated pattern to a positive pattern
         pub fn asPositive(this: *const Pattern) Pattern {
-            bun.assertWithLocation(this.flags.negated and this.glob.len > 0, @src());
+            bun.assertWithLocation(this.flags.negated and this.glob.length() > 0, @src());
             return Pattern{
-                .glob = this.glob[1..], // remove the leading `!`
+                .glob = this.glob.borrowSubslice(1, null), // remove the leading `!`
                 .flags = .{
                     .rel_path = this.flags.rel_path,
                     .dirs_only = this.flags.dirs_only,
@@ -2258,7 +2259,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: Pattern, allocator: std.mem.Allocator) void {
-            allocator.free(this.glob);
+            this.glob.deinit(allocator);
         }
     };
 
@@ -2373,7 +2374,7 @@ pub const PackCommand = struct {
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
             for (this.list) |pattern_info| {
-                allocator.free(pattern_info.glob);
+                pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
         }

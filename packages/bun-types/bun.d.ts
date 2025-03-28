@@ -3812,7 +3812,7 @@ declare module "bun" {
     tls?: TLSOptions | TLSOptions[];
   }
 
-  interface TLSBasicFetchServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
+  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
@@ -4295,7 +4295,7 @@ declare module "bun" {
    */
   type Serve<WebSocketDataType = undefined> =
     | ServeOptions
-    | TLSBasicFetchServeOptions
+    | TLSServeOptions
     | UnixServeOptions
     | UnixTLSServeOptions
     | WebSocketServeOptions<WebSocketDataType>

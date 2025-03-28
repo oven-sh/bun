@@ -188,15 +188,6 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn _onReadChunk(this: *PosixBufferedReader, chunk: []u8, hasMore: ReadState) bool {
-        if (hasMore == .eof) {
-            this.flags.received_eof = true;
-        }
-        this.count += chunk.len;
-
-        return this.vtable.onReadChunk(chunk, hasMore);
-    }
-
     pub fn getFd(this: *PosixBufferedReader) bun.FileDescriptor {
         return this.handle.getFd();
     }

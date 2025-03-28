@@ -71,7 +71,7 @@ test("fetch() with subclass containing invalid HTTP headers throws without crash
 
   const request = new MyRequest("https://example.com", {}, "https://example.com");
   expect(request.method).toBe("POST");
-  expect(() => fetch(request)).toThrow("Invalid header name");
+  expect(() => fetch(request)).toThrow("Header name must be a valid HTTP token");
 
   // quick gc test
   for (let i = 0; i < 1e4; i++) {
@@ -80,5 +80,5 @@ test("fetch() with subclass containing invalid HTTP headers throws without crash
     } catch (e) {}
   }
 
-  expect(() => fetch(request)).toThrow("Invalid header name");
+  expect(() => fetch(request)).toThrow("Header name must be a valid HTTP token");
 });

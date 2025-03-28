@@ -74,6 +74,11 @@ enum ExceptionCode {
 
     InvalidThisError,
     InvalidURLError,
+
+    // http
+    InvalidHTTPTokenError,
+    InvalidHTTPHeaderValueError,
+    InvalidCharError,
 };
 
 } // namespace WebCore

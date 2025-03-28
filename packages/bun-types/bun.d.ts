@@ -3586,7 +3586,7 @@ declare module "bun" {
     id?: string | null;
   }
 
-  interface BasicFetchServeOptions extends GenericServeOptions {
+  interface SimpleServeOptions extends GenericServeOptions {
     /**
      * What port should the server listen on?
      * @default process.env.PORT || "3000"
@@ -3812,7 +3812,7 @@ declare module "bun" {
     tls?: TLSOptions | TLSOptions[];
   }
 
-  interface TLSBasicFetchServeOptions extends BasicFetchServeOptions, TLSOptionsAsDeprecated {
+  interface TLSBasicFetchServeOptions extends SimpleServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
@@ -4294,7 +4294,7 @@ declare module "bun" {
    * The type of options that can be passed to {@link serve}
    */
   type Serve<WebSocketDataType = undefined> =
-    | BasicFetchServeOptions
+    | SimpleServeOptions
     | TLSBasicFetchServeOptions
     | UnixServeOptions
     | UnixTLSServeOptions

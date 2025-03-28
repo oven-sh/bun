@@ -134,6 +134,20 @@ We recommend adding `./build/debug` to your `$PATH` so that you can run `bun-deb
 $ bun-debug
 ```
 
+## Running debug builds
+
+The `bd` package.json script compiles and runs a debug build of Bun without printing the output of the build process if it fails.
+
+1. Builds a debug build of Bun
+2. Only prints the output of the build process if it fails
+3. Runs it passing through any arguments
+
+```sh
+$ bun bd <args>
+$ bun bd test foo.test.ts
+$ bun bd ./foo.ts
+```
+
 ## Code generation scripts
 
 Several code generation scripts are used during Bun's build process. These are run automatically when changes are made to certain files.

@@ -680,6 +680,7 @@ pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
 }
 
 fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
+    log("onBufferRequestBodyWhilePaused({d}, {})", .{ chunk.len, last });
     this.buffered_request_body_data_during_pause.append(bun.default_allocator, chunk) catch bun.outOfMemory();
     if (last) {
         this.is_data_buffered_during_pause_last = true;
@@ -692,6 +693,7 @@ fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, la
 }
 
 fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event: AbortEvent) void {
+    log("onDataOrAborted({d}, {})", .{ chunk.len, last });
     if (last) {
         this.ref();
         this.body_read_state = .done;

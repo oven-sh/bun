@@ -1,6 +1,7 @@
 ---
 description: JavaScript class implemented in C++
 globs: *.cpp
+alwaysApply: false
 ---
 
 # Implementing JavaScript classes in C++
@@ -309,7 +310,7 @@ If there's only a class, use `JSC::LazyProperty<JSGlobalObject, Structure>` inst
    init.set(Bun::initMyStructure(init.vm, reinterpret_cast<Zig::GlobalObject\*>(init.owner)));
    });
 
-````
+```
 
 Then, implement the function that creates the structure:
 ```c++
@@ -326,7 +327,7 @@ Structure* setupX509CertificateStructure(JSC::VM &vm, Zig::GlobalObject* globalO
     init.setStructure(structure);
     init.setConstructor(constructor);
 }
-````
+```
 
 Then, use the structure by calling `globalObject.m_myStructureName.get(globalObject)`
 

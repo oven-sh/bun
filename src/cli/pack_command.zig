@@ -1065,7 +1065,7 @@ pub const PackCommand = struct {
         if (dir_depth == 1) {
             // first, check files that can never be ignored. project root
             // directory only
-            if (isUnconditionallyIncludedFile(entry_name)) {
+            if (isUnconditionallyIncludedFile(entry_name) or isSpecialFileOrVariant(entry_name, "CHANGELOG")) {
                 return null;
             }
 
@@ -2448,20 +2448,27 @@ pub const PackCommand = struct {
     /// Some files are always packed, even if they are explicitly ignored or not
     /// included in package.json "files".
     fn isUnconditionallyIncludedFile(filename: []const u8) bool {
-        // TODO: should this be case insensitive on all platforms?
-        const eql = comptime if (Environment.isLinux)
-            strings.eqlComptime
-        else
-            strings.eqlCaseInsensitiveASCIIICheckLength;
+        return filename.len > 5 and (stringsEql(filename, "package.json") or
+            isSpecialFileOrVariant(filename, "LICENSE") or
+            isSpecialFileOrVariant(filename, "README"));
+    }
 
-        return filename.len > 5 and (eql(filename, "package.json") or
-            eql(filename, "LICENSE") or
-            eql(filename, "LICENCE") or
-            eql(filename, "README") or
-            filename.len > "README.".len and eql(filename[0.."README.".len], "README."));
-        //or
-        // eql(filename, "CHANGELOG") or
-        // filename.len > "CHANGELOG.".len and eql(filename[0.."CHANGELOG.".len], "CHANGELOG."));
+    // TODO: should this be case insensitive on all platforms?
+    const stringsEql = if (Environment.isLinux)
+        strings.eqlComptime
+    else
+        strings.eqlCaseInsensitiveASCIIICheckLength;
+
+    fn isSpecialFileOrVariant(filename: []const u8, comptime name: []const u8) callconv(bun.callconv_inline) bool {
+        return switch (filename.len) {
+            inline 0...name.len - 1 => false,
+            inline name.len => stringsEql(filename, name),
+            inline name.len + 1 => false,
+            else => blk: {
+                bun.unsafeAssert(filename.len > name.len + 1);
+                break :blk filename[name.len] == '.' and stringsEql(filename[0..name.len], name);
+            },
+        };
     }
 };
 
@@ -2474,14 +2481,6 @@ pub const bindings = struct {
     const String = bun.String;
     const JSArray = JSC.JSArray;
     const JSObject = JSC.JSObject;
-
-    // pub fn generate(global: *JSGlobalObject) JSValue {
-    //     const obj = JSValue.createEmptyObject(global, 1);
-
-    //     const readTarEntries = ZigString.static("readTarEntries");
-    //     obj.put(global, readTarEntries, JSC.createCallback(global, readTarEntries, 1, jsReadTarEntries));
-    //     return obj;
-    // }
 
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();

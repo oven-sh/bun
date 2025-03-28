@@ -930,7 +930,32 @@ describe("files", () => {
       { "pathname": "package/lib/index.js" },
     ]);
   });
-  test("cannot exclude LICENSE", async () => {
+
+  test(".npmignore cannot exclude CHANGELOG", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-changelog",
+          version: "1.1.2",
+        }),
+      ),
+      write(join(packageDir, ".npmignore"), "CHANGELOG\nCHANGELOG.*"),
+      write(join(packageDir, "CHANGELOG"), "hello"),
+      write(join(packageDir, "CHANGELOG.md"), "hello"),
+      write(join(packageDir, "CHANGELOG.txt"), "hello"),
+    ]);
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/CHANGELOG" },
+      { "pathname": "package/CHANGELOG.md" },
+      { "pathname": "package/CHANGELOG.txt" },
+    ]);
+  });
+
+  test("'files' field cannot exclude LICENSE", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -952,6 +977,24 @@ describe("files", () => {
       { "pathname": "package/lib/index.js" },
     ]);
   });
+
+  test(".npmignore cannot exclude LICENSE", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-license",
+          version: "1.1.2",
+        }),
+      ),
+      write(join(packageDir, ".npmignore"), "LICENSE"),
+      write(join(packageDir, "LICENSE"), "hello"),
+    ]);
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-license-1.1.2.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/LICENSE" }]);
+  });
+
   test("can include files and directories", async () => {
     await Promise.all([
       write(

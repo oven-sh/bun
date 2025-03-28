@@ -423,7 +423,10 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
-        event.events = events;
+        if(!(events & LIBUS_SOCKET_READABLE)) {
+            // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
+            events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+        }
         event.data.ptr = p;
         int rc;
         do {

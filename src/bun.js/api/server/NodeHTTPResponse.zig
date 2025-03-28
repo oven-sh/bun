@@ -546,9 +546,10 @@ pub fn doPause(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFram
         this.is_data_buffered_during_pause = true;
         this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
     }
-
-    // TODO: check how to receive FIN with paused socket
-    // this.raw_response.pause();
+    if (!Environment.isMac) {
+        // TODO: check how to receive FIN with paused socket on macos
+        this.raw_response.pause();
+    }
     return .true;
 }
 
@@ -668,7 +669,7 @@ pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
     if (state.isHttpEndCalled()) {
         return .undefined;
     }
-
+    this.raw_response.@"resume"();
     this.raw_response.clearOnData();
     this.raw_response.clearOnWritable();
     this.raw_response.clearTimeout();
@@ -989,6 +990,8 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
 
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).slice();
+    //We dont wanna a paused socket when we call end, so is important to resume the socket
+    this.raw_response.@"resume"();
     return writeOrEnd(this, globalObject, arguments, callframe.this(), true);
 }
 

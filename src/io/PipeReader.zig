@@ -802,15 +802,15 @@ pub const WindowsBufferedReader = struct {
         return this.flags.has_inflight_read;
     }
 
-    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) void {
+    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) bool {
         if (this.maxbuf) |m| m.onReadBytes(buf.len);
         this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;
         }
 
-        const onReadChunkFn = this.vtable.onReadChunk orelse return;
-        _ = onReadChunkFn(this.parent, buf, hasMore);
+        const onReadChunkFn = this.vtable.onReadChunk orelse return true;
+        return onReadChunkFn(this.parent, buf, hasMore);
     }
 
     fn finish(this: *WindowsOutputReader) void {

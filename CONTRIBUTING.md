@@ -136,11 +136,7 @@ $ bun-debug
 
 ## Running debug builds
 
-The `bd` package.json script compiles and runs a debug build of Bun without printing the output of the build process if it fails.
-
-1. Builds a debug build of Bun
-2. Only prints the output of the build process if it fails
-3. Runs it passing through any arguments
+The `bd` package.json script compiles and runs a debug build of Bun, only printing the output of the build process if it fails.
 
 ```sh
 $ bun bd <args>

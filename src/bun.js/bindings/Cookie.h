@@ -19,7 +19,7 @@ struct CookieInit {
     String name = String();
     String value = String();
     String domain = String();
-    String path = String();
+    String path = "/"_s;
 
     int64_t expires = emptyExpiresAtValue;
     bool secure = false;
@@ -37,35 +37,54 @@ class Cookie : public RefCounted<Cookie> {
 public:
     ~Cookie();
     static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
-    static Ref<Cookie> create(const String& name, const String& value,
+    static ExceptionOr<Ref<Cookie>> create(const String& name, const String& value,
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
-    static Ref<Cookie> create(const CookieInit& init)
+    static ExceptionOr<Ref<Cookie>> create(const CookieInit& init)
     {
+        if (!isValidCookieName(init.name)) {
+            return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
+        }
+        if (!isValidCookiePath(init.path)) {
+            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        }
+        if (!isValidCookieDomain(init.domain)) {
+            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+        }
+
         return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
     }
 
     static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
-    static Ref<Cookie> from(const String& name, const String& value,
-        const String& domain, const String& path,
-        int64_t expires, bool secure, CookieSameSite sameSite,
-        bool httpOnly, double maxAge, bool partitioned);
 
     static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
 
     const String& name() const { return m_name; }
-    void setName(const String& name) { m_name = name; }
 
     const String& value() const { return m_value; }
     void setValue(const String& value) { m_value = value; }
 
     const String& domain() const { return m_domain; }
-    void setDomain(const String& domain) { m_domain = domain; }
+    ExceptionOr<void> setDomain(const String& domain)
+    {
+        if (!isValidCookieDomain(domain)) {
+            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+        }
+        m_domain = domain;
+        return {};
+    }
 
     const String& path() const { return m_path; }
-    void setPath(const String& path) { m_path = path; }
+    ExceptionOr<void> setPath(const String& path)
+    {
+        if (!isValidCookiePath(path)) {
+            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        }
+        m_path = path;
+        return {};
+    }
 
     int64_t expires() const { return m_expires; }
     void setExpires(int64_t ms) { m_expires = ms; }
@@ -92,6 +111,11 @@ public:
     String toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
+
+    static bool isValidCookieName(const String& name);
+    static bool isValidCookieValue(const String& value); // values are uri component encoded, so this isn't needed
+    static bool isValidCookiePath(const String& path);
+    static bool isValidCookieDomain(const String& domain);
 
 private:
     Cookie(const String& name, const String& value,

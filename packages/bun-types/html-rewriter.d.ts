@@ -147,6 +147,8 @@ declare namespace HTMLRewriterTypes {
  * });
  * rewriter.transform(await fetch("https://remix.run"));
  * ```
+ *
+ * @category HTML Manipulation
  */
 declare class HTMLRewriter {
   constructor();

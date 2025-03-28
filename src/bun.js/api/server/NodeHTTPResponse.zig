@@ -932,9 +932,6 @@ fn clearOnDataCallback(this: *NodeHTTPResponse) void {
             this.raw_response.clearOnData();
         if (this.body_read_state != .done) {
             this.body_read_state = .done;
-            if (this.body_read_ref.has) {
-                this.deref();
-            }
         }
     }
 }

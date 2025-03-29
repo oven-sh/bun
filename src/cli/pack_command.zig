@@ -2451,6 +2451,7 @@ pub const PackCommand = struct {
     fn isUnconditionallyIncludedFile(filename: []const u8) bool {
         return filename.len > 5 and (stringsEql(filename, "package.json") or
             isSpecialFileOrVariant(filename, "LICENSE") or
+            isSpecialFileOrVariant(filename, "LICENCE") or // THIS IS SPELLED DIFFERENTLY
             isSpecialFileOrVariant(filename, "README"));
     }
 

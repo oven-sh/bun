@@ -23,6 +23,8 @@ const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;
+const analyze_transpiled_module = @import("analyze_transpiled_module.zig");
+const ModuleInfo = analyze_transpiled_module.ModuleInfo;
 
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
@@ -700,8 +702,37 @@ fn NewPrinter(
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
         was_lazy_export: bool = false,
+        module_info: if (!may_have_module_info) void else ?*ModuleInfo = if (!may_have_module_info) {} else null,
 
         const Printer = @This();
+
+        const may_have_module_info = is_bun_platform and !rewrite_esm_to_cjs;
+        const TopLevelAndIsExport = if (!may_have_module_info) struct {} else struct {
+            is_export: bool = false,
+            is_top_level: ?ModuleInfo.VarKind = null,
+        };
+        const TopLevel = if (!may_have_module_info) struct {
+            pub inline fn init(_: IsTopLevel) @This() {
+                return .{};
+            }
+            pub inline fn subVar(_: @This()) @This() {
+                return .{};
+            }
+        } else struct {
+            is_top_level: IsTopLevel = .no,
+            pub inline fn init(is_top_level: IsTopLevel) @This() {
+                return .{ .is_top_level = is_top_level };
+            }
+            pub fn subVar(self: @This()) @This() {
+                if (self.is_top_level == .no) return @This().init(.no);
+                return @This().init(.var_only);
+            }
+        };
+        const IsTopLevel = enum { yes, var_only, no };
+        inline fn moduleInfo(self: *const @This()) ?*ModuleInfo {
+            if (!may_have_module_info) return null;
+            return self.module_info;
+        }
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
         pub const Error = error{};
@@ -1008,6 +1039,7 @@ fn NewPrinter(
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
                 },
                 else => {
+                    if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
                 },
             }
@@ -1023,7 +1055,9 @@ fn NewPrinter(
 
             if (import.star_name_loc != null) {
                 p.print("var ");
-                p.printSymbol(import.namespace_ref);
+                const name = p.renamer.nameForSymbol(import.namespace_ref);
+                p.printIdentifier(name);
+                if (p.moduleInfo()) |mi| mi.addVar(mi.str(name) catch bun.outOfMemory(), .declared) catch bun.outOfMemory();
                 p.printSpace();
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
@@ -1046,7 +1080,9 @@ fn NewPrinter(
 
             if (import.default_name) |default| {
                 p.print("var ");
-                p.printSymbol(default.ref.?);
+                const default_name = p.renamer.nameForSymbol(default.ref.?);
+                p.printIdentifier(default_name);
+                if (p.moduleInfo()) |mi| mi.addVar(mi.str(default_name) catch bun.outOfMemory(), .declared) catch bun.outOfMemory();
                 if (comptime Statement == void) {
                     p.@"print = "();
                     p.printRequireOrImportExpr(
@@ -1084,7 +1120,11 @@ fn NewPrinter(
                         }
                     }
 
-                    p.printClauseItemAs(item, .@"var");
+                    p.printVarClauseItem(item);
+                    if (p.moduleInfo()) |mi| {
+                        const varname = p.renamer.nameForSymbol(item.name.ref.?);
+                        mi.addVar(mi.str(varname) catch bun.outOfMemory(), .declared) catch bun.outOfMemory();
+                    }
                 }
 
                 if (!import.is_single_line) {
@@ -1156,26 +1196,26 @@ fn NewPrinter(
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc);
+                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc, .{});
                     p.printNewline();
                 },
                 else => {
                     p.printNewline();
                     p.indent();
-                    p.printStmt(stmt) catch unreachable;
+                    p.printStmt(stmt, .{}) catch bun.outOfMemory();
                     p.unindent();
                 },
             }
         }
 
-        pub fn printBlockBody(p: *Printer, stmts: []const Stmt) void {
+        pub fn printBlockBody(p: *Printer, stmts: []const Stmt, tlmtlo: TopLevel) void {
             for (stmts) |stmt| {
                 p.printSemicolonIfNeeded();
-                p.printStmt(stmt) catch unreachable;
+                p.printStmt(stmt, tlmtlo) catch bun.outOfMemory();
             }
         }
 
-        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
+        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc, tlmtlo: TopLevel) void {
             p.addSourceMapping(loc);
             p.print("{");
             if (stmts.len > 0) {
@@ -1183,7 +1223,7 @@ fn NewPrinter(
                 p.printNewline();
 
                 p.indent();
-                p.printBlockBody(stmts);
+                p.printBlockBody(stmts, tlmtlo);
                 p.unindent();
 
                 p.printIndent();
@@ -1202,8 +1242,8 @@ fn NewPrinter(
             p.printNewline();
 
             p.indent();
-            p.printBlockBody(prepend);
-            p.printBlockBody(stmts);
+            p.printBlockBody(prepend, .{});
+            p.printBlockBody(stmts, .{});
             p.unindent();
             p.needs_semicolon = false;
 
@@ -1211,7 +1251,7 @@ fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set) void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set, tlm: TopLevelAndIsExport) void {
             p.print(keyword);
             p.printSpace();
             var decls = decls_;
@@ -1319,7 +1359,7 @@ fn NewPrinter(
                             .is_single_line = true,
                         };
                         const binding = Binding.init(&b_object, target_e_dot.target.loc);
-                        p.printBinding(binding);
+                        p.printBinding(binding, tlm);
                     }
 
                     p.printWhitespacer(ws(" = "));
@@ -1335,7 +1375,7 @@ fn NewPrinter(
             }
 
             {
-                p.printBinding(decls[0].binding);
+                p.printBinding(decls[0].binding, tlm);
 
                 if (decls[0].value) |value| {
                     p.printWhitespacer(ws(" = "));
@@ -1347,7 +1387,7 @@ fn NewPrinter(
                 p.print(",");
                 p.printSpace();
 
-                p.printBinding(decl.binding);
+                p.printBinding(decl.binding, tlm);
 
                 if (decl.value) |value| {
                     p.printWhitespacer(ws(" = "));
@@ -1421,7 +1461,7 @@ fn NewPrinter(
                     p.print("...");
                 }
 
-                p.printBinding(arg.binding);
+                p.printBinding(arg.binding, .{});
 
                 if (arg.default) |default| {
                     p.printWhitespacer(ws(" = "));
@@ -1437,7 +1477,7 @@ fn NewPrinter(
         pub fn printFunc(p: *Printer, func: G.Fn) void {
             p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             p.printSpace();
-            p.printBlock(func.body.loc, func.body.stmts, null);
+            p.printBlock(func.body.loc, func.body.stmts, null, .{});
         }
 
         pub fn printClass(p: *Printer, class: G.Class) void {
@@ -1461,7 +1501,7 @@ fn NewPrinter(
                 if (item.kind == .class_static_block) {
                     p.print("static");
                     p.printSpace();
-                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice(), null);
+                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice(), null, .{});
                     p.printNewline();
                     continue;
                 }
@@ -1702,12 +1742,14 @@ fn NewPrinter(
                             if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
                             if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("globalThis.Bun.jest(import.meta.path)");
                             }
                         }
@@ -1929,45 +1971,28 @@ fn NewPrinter(
             p.print(quote);
         }
 
-        fn printClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, .import);
-        }
-
         fn printExportClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, .@"export");
-        }
-
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime as == .import) {
-                if (strings.eql(name, item.alias)) {
-                    p.printIdentifier(name);
-                } else {
-                    p.printClauseAlias(item.alias);
-                    p.print(" as ");
-                    p.addSourceMapping(item.alias_loc);
-                    p.printIdentifier(name);
-                }
-            } else if (comptime as == .@"var") {
+            p.printIdentifier(name);
+
+            if (!strings.eql(name, item.alias)) {
+                p.print(" as ");
+                p.addSourceMapping(item.alias_loc);
                 p.printClauseAlias(item.alias);
+            }
+        }
 
-                if (!strings.eql(name, item.alias)) {
-                    p.print(":");
-                    p.printSpace();
+        fn printVarClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
+            const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-                    p.printIdentifier(name);
-                }
-            } else if (comptime as == .@"export") {
+            p.printClauseAlias(item.alias);
+
+            if (!strings.eql(name, item.alias)) {
+                p.print(":");
+                p.printSpace();
+
                 p.printIdentifier(name);
-
-                if (!strings.eql(name, item.alias)) {
-                    p.print(" as ");
-                    p.addSourceMapping(item.alias_loc);
-                    p.printClauseAlias(item.alias);
-                }
-            } else {
-                @compileError("Unknown as");
             }
         }
 
@@ -2081,6 +2106,7 @@ fn NewPrinter(
                         p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta");
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
@@ -2106,6 +2132,7 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                         }
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.main");
                     } else {
                         bun.debugAssert(p.options.module_type != .internal_bake_dev);
@@ -2608,7 +2635,7 @@ fn NewPrinter(
                     }
 
                     if (!wasPrinted) {
-                        p.printBlock(e.body.loc, e.body.stmts, null);
+                        p.printBlock(e.body.loc, e.body.stmts, null, .{});
                     }
 
                     if (wrap) {
@@ -3581,13 +3608,19 @@ fn NewPrinter(
             p.printExpr(initial, .comma, ExprFlag.None());
         }
 
-        pub fn printBinding(p: *Printer, binding: Binding) void {
+        pub fn printBinding(p: *Printer, binding: Binding, tlm: TopLevelAndIsExport) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |b| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(binding.loc);
-                    p.printSymbol(b.ref);
+                    const local_name = p.renamer.nameForSymbol(b.ref);
+                    p.printIdentifier(local_name);
+
+                    if (p.moduleInfo()) |mi| {
+                        if (tlm.is_top_level) |vk| mi.addVar(mi.str(local_name) catch bun.outOfMemory(), vk) catch bun.outOfMemory();
+                        if (tlm.is_export) mi.addExportInfoLocal(mi.str(local_name) catch bun.outOfMemory(), mi.str(local_name) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    }
                 },
                 .b_array => |b| {
                     p.print("[");
@@ -3614,7 +3647,7 @@ fn NewPrinter(
                                 p.print("...");
                             }
 
-                            p.printBinding(item.binding);
+                            p.printBinding(item.binding, tlm);
 
                             p.maybePrintDefaultBindingValue(item);
 
@@ -3661,7 +3694,7 @@ fn NewPrinter(
                                     p.print("]:");
                                     p.printSpace();
 
-                                    p.printBinding(property.value);
+                                    p.printBinding(property.value, tlm);
                                     p.maybePrintDefaultBindingValue(property);
                                     continue;
                                 }
@@ -3686,6 +3719,10 @@ fn NewPrinter(
                                                 switch (property.value.data) {
                                                     .b_identifier => |id| {
                                                         if (str.eql(string, p.renamer.nameForSymbol(id.ref))) {
+                                                            if (p.moduleInfo()) |mi| {
+                                                                if (tlm.is_top_level) |vk| mi.addVar(mi.str(str.data) catch bun.outOfMemory(), vk) catch bun.outOfMemory();
+                                                                if (tlm.is_export) mi.addExportInfoLocal(mi.str(str.data) catch bun.outOfMemory(), mi.str(str.data) catch bun.outOfMemory()) catch bun.outOfMemory();
+                                                            }
                                                             p.maybePrintDefaultBindingValue(property);
                                                             continue;
                                                         }
@@ -3703,6 +3740,11 @@ fn NewPrinter(
                                             switch (property.value.data) {
                                                 .b_identifier => |id| {
                                                     if (strings.utf16EqlString(str.slice16(), p.renamer.nameForSymbol(id.ref))) {
+                                                        if (p.moduleInfo()) |mi| {
+                                                            const str8 = str.slice(p.options.allocator);
+                                                            if (tlm.is_top_level) |vk| mi.addVar(mi.str(str8) catch bun.outOfMemory(), vk) catch bun.outOfMemory();
+                                                            if (tlm.is_export) mi.addExportInfoLocal(mi.str(str8) catch bun.outOfMemory(), mi.str(str8) catch bun.outOfMemory()) catch bun.outOfMemory();
+                                                        }
                                                         p.maybePrintDefaultBindingValue(property);
                                                         continue;
                                                     }
@@ -3722,7 +3764,7 @@ fn NewPrinter(
                                 p.printSpace();
                             }
 
-                            p.printBinding(property.value);
+                            p.printBinding(property.value, tlm);
                             p.maybePrintDefaultBindingValue(property);
                         }
 
@@ -3748,7 +3790,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printStmt(p: *Printer, stmt: Stmt) !void {
+        pub fn printStmt(p: *Printer, stmt: Stmt, tlmtlo: TopLevel) !void {
             const prev_stmt_tag = p.prev_stmt_tag;
 
             defer {
@@ -3783,8 +3825,14 @@ fn NewPrinter(
                     }
 
                     p.addSourceMapping(name.loc);
-                    p.printSymbol(nameRef);
+                    const local_name = p.renamer.nameForSymbol(nameRef);
+                    p.printIdentifier(local_name);
                     p.printFunc(s.func);
+
+                    if (p.moduleInfo()) |mi| {
+                        if (tlmtlo.is_top_level == .yes) try mi.addVar(try mi.str(local_name), .lexical);
+                        if (s.func.flags.contains(.is_export)) try mi.addExportInfoLocal(try mi.str(local_name), try mi.str(local_name));
+                    }
 
                     // if (rewrite_esm_to_cjs and s.func.flags.contains(.is_export)) {
                     //     p.printSemicolonAfterStatement();
@@ -3813,6 +3861,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
                     const nameRef = s.class.class_name.?.ref.?;
+                    const nameStr = p.renamer.nameForSymbol(nameRef);
                     if (s.is_export) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");
@@ -3821,8 +3870,13 @@ fn NewPrinter(
 
                     p.print("class ");
                     p.addSourceMapping(s.class.class_name.?.loc);
-                    p.printSymbol(nameRef);
+                    p.printIdentifier(nameStr);
                     p.printClass(s.class);
+
+                    if (p.moduleInfo()) |mi| {
+                        if (s.is_export) try mi.addExportInfoLocal(try mi.str(nameStr), try mi.str(nameStr));
+                        if (tlmtlo.is_top_level == .yes) try mi.addVar(try mi.str(nameStr), .lexical);
+                    }
 
                     if (rewrite_esm_to_cjs and s.is_export) {
                         p.printSemicolonAfterStatement();
@@ -3859,6 +3913,10 @@ fn NewPrinter(
                             p.export_default_start = p.writer.written;
                             p.printExpr(expr, .comma, ExprFlag.None());
                             p.printSemicolonAfterStatement();
+                            if (p.moduleInfo()) |mi| {
+                                try mi.addExportInfoLocal(try mi.str("default"), .star_default);
+                                try mi.addVar(.star_default, .lexical);
+                            }
                             return;
                         },
 
@@ -3879,20 +3937,26 @@ fn NewPrinter(
                                         p.maybePrintSpace();
                                     }
 
-                                    if (func.func.name) |name| {
-                                        p.printSymbol(name.ref.?);
-                                    }
+                                    const func_name: ?[]const u8 = if (func.func.name) |f| p.renamer.nameForSymbol(f.ref.?) else null;
+                                    if (func_name) |f| p.printIdentifier(f);
 
                                     p.printFunc(func.func);
 
                                     p.printNewline();
+
+                                    if (p.moduleInfo()) |mi| {
+                                        const local_name: analyze_transpiled_module.StringID = if (func_name) |f| try mi.str(f) else .star_default;
+                                        try mi.addExportInfoLocal(try mi.str("default"), local_name);
+                                        try mi.addVar(local_name, .lexical);
+                                    }
                                 },
                                 .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
 
-                                    if (class.class.class_name) |name| {
+                                    const class_name: ?[]const u8 = if (class.class.class_name) |f| p.renamer.nameForSymbol(f.ref.?) else null;
+                                    if (class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse Output.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
+                                        p.printIdentifier(name);
                                     } else {
                                         p.print("class");
                                     }
@@ -3900,6 +3964,12 @@ fn NewPrinter(
                                     p.printClass(class.class);
 
                                     p.printNewline();
+
+                                    if (p.moduleInfo()) |mi| {
+                                        const local_name: analyze_transpiled_module.StringID = if (class_name) |f| try mi.str(f) else .star_default;
+                                        try mi.addExportInfoLocal(try mi.str("default"), local_name);
+                                        try mi.addVar(local_name, .lexical);
+                                    }
                                 },
                                 else => {
                                     Output.panic("Internal error: unexpected export default stmt data {any}", .{s});
@@ -3918,19 +3988,28 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
 
-                    if (s.alias != null)
-                        p.printWhitespacer(comptime ws("export *").append(" as "))
-                    else
-                        p.printWhitespacer(comptime ws("export * from "));
-
                     if (s.alias) |alias| {
+                        p.printWhitespacer(comptime ws("export *").append(" as "));
                         p.printClauseAlias(alias.original_name);
                         p.print(" ");
                         p.printWhitespacer(ws("from "));
+                    } else {
+                        p.printWhitespacer(comptime ws("export * from "));
                     }
 
-                    p.printImportRecordPath(p.importRecord(s.import_record_index));
+                    const irp = try p.fmtImportRecordPath(p.importRecord(s.import_record_index));
+                    p.printStringLiteralUTF8(irp, false);
                     p.printSemicolonAfterStatement();
+
+                    if (p.moduleInfo()) |mi| {
+                        const irp_id = try mi.str(irp);
+                        try mi.requestModule(irp_id, .none);
+                        if (s.alias) |alias| {
+                            try mi.addExportInfoNamespace(try mi.str(alias.original_name), irp_id);
+                        } else {
+                            try mi.addExportInfoStar(irp_id);
+                        }
+                    }
                 },
                 .s_export_clause => |s| {
                     if (rewrite_esm_to_cjs) {
@@ -4080,7 +4159,12 @@ fn NewPrinter(
                             p.printIndent();
                         }
 
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
                         p.printExportClauseItem(item);
+
+                        if (p.moduleInfo()) |mi| {
+                            try mi.addExportInfoLocal(try mi.str(item.alias), try mi.str(name));
+                        }
                     }
 
                     if (!s.is_single_line) {
@@ -4133,29 +4217,30 @@ fn NewPrinter(
                     }
 
                     p.printWhitespacer(ws("} from "));
-                    p.printImportRecordPath(import_record);
+                    const irp = try p.fmtImportRecordPath(import_record);
+                    p.printStringLiteralUTF8(irp, false);
                     p.printSemicolonAfterStatement();
+
+                    if (p.moduleInfo()) |mi| {
+                        const irp_id = try mi.str(irp);
+                        try mi.requestModule(irp_id, .none);
+                        for (s.items) |item| {
+                            // how could this be renamed, it's in `export from`?
+                            const name = p.renamer.nameForSymbol(item.name.ref.?);
+                            try mi.addExportInfoIndirect(try mi.str(item.alias), try mi.str(name), irp_id);
+                        }
+                    }
                 },
                 .s_local => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
                     switch (s.kind) {
-                        .k_const => {
-                            p.printDeclStmt(s.is_export, "const", s.decls.slice());
-                        },
-                        .k_let => {
-                            p.printDeclStmt(s.is_export, "let", s.decls.slice());
-                        },
-                        .k_var => {
-                            p.printDeclStmt(s.is_export, "var", s.decls.slice());
-                        },
-                        .k_using => {
-                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
-                        },
-                        .k_await_using => {
-                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
-                        },
+                        .k_const => p.printDeclStmt(s.is_export, "const", s.decls.slice(), tlmtlo),
+                        .k_let => p.printDeclStmt(s.is_export, "let", s.decls.slice(), tlmtlo),
+                        .k_var => p.printDeclStmt(s.is_export, "var", s.decls.slice(), tlmtlo),
+                        .k_using => p.printDeclStmt(s.is_export, "using", s.decls.slice(), tlmtlo),
+                        .k_await_using => p.printDeclStmt(s.is_export, "await using", s.decls.slice(), tlmtlo),
                     }
                 },
                 .s_if => |s| {
@@ -4170,13 +4255,13 @@ fn NewPrinter(
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc);
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc, .{});
                             p.printSpace();
                         },
                         else => {
                             p.printNewline();
                             p.indent();
-                            p.printStmt(s.body) catch unreachable;
+                            p.printStmt(s.body, .{}) catch unreachable;
                             p.printSemicolonIfNeeded();
                             p.unindent();
                             p.printIndent();
@@ -4264,7 +4349,7 @@ fn NewPrinter(
                     p.addSourceMapping(stmt.loc);
                     p.print("try");
                     p.printSpace();
-                    p.printBlock(s.body_loc, s.body, null);
+                    p.printBlock(s.body_loc, s.body, null, tlmtlo.subVar());
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
@@ -4273,18 +4358,18 @@ fn NewPrinter(
                         if (catch_.binding) |binding| {
                             p.printSpace();
                             p.print("(");
-                            p.printBinding(binding);
+                            p.printBinding(binding, .{});
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.body_loc, catch_.body, null);
+                        p.printBlock(catch_.body_loc, catch_.body, null, tlmtlo.subVar());
                     }
 
                     if (s.finally) |finally| {
                         p.printSpace();
                         p.print("finally");
                         p.printSpace();
-                        p.printBlock(finally.loc, finally.stmts, null);
+                        p.printBlock(finally.loc, finally.stmts, null, tlmtlo.subVar());
                     }
 
                     p.printNewline();
@@ -4351,7 +4436,7 @@ fn NewPrinter(
                             switch (c.body[0].data) {
                                 .s_block => {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc);
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc, .{});
                                     p.printNewline();
                                     continue;
                                 },
@@ -4363,7 +4448,7 @@ fn NewPrinter(
                         p.indent();
                         for (c.body) |st| {
                             p.printSemicolonIfNeeded();
-                            p.printStmt(st) catch unreachable;
+                            p.printStmt(st, .{}) catch unreachable;
                         }
                         p.unindent();
                     }
@@ -4422,7 +4507,7 @@ fn NewPrinter(
                                     p.print(",");
                                     p.printSpace();
                                     for (s.items, 0..) |item, i| {
-                                        p.printClauseItemAs(item, .@"var");
+                                        p.printVarClauseItem(item);
 
                                         if (i < s.items.len - 1) {
                                             p.print(",");
@@ -4432,7 +4517,7 @@ fn NewPrinter(
                                 }
                             } else {
                                 for (s.items, 0..) |item, i| {
-                                    p.printClauseItemAs(item, .@"var");
+                                    p.printVarClauseItem(item);
 
                                     if (i < s.items.len - 1) {
                                         p.print(",");
@@ -4464,10 +4549,19 @@ fn NewPrinter(
 
                     var item_count: usize = 0;
 
+                    const import_record_path = try p.fmtImportRecordPath(record);
+
                     if (s.default_name) |name| {
                         p.print(" ");
-                        p.printSymbol(name.ref.?);
+                        const local_name = p.renamer.nameForSymbol(name.ref.?);
+                        p.printIdentifier(local_name);
                         item_count += 1;
+
+                        if (p.moduleInfo()) |mi| {
+                            const local_name_id = try mi.str(local_name);
+                            try mi.addVar(local_name_id, .lexical);
+                            try mi.addImportInfoSingle(try mi.str(import_record_path), try mi.str("default"), local_name_id, false);
+                        }
                     }
 
                     if (s.items.len > 0) {
@@ -4496,7 +4590,22 @@ fn NewPrinter(
                                 p.printIndent();
                             }
 
-                            p.printClauseItem(item);
+                            const local_name = p.renamer.nameForSymbol(item.name.ref.?);
+                            if (strings.eql(local_name, item.alias)) {
+                                p.printIdentifier(local_name);
+                            } else {
+                                p.printClauseAlias(item.alias);
+                                p.print(" as ");
+                                p.addSourceMapping(item.alias_loc);
+                                p.printIdentifier(local_name);
+                            }
+
+                            if (p.moduleInfo()) |mi| {
+                                const symbol = p.symbols().get(item.name.ref.?).?;
+                                const local_name_id = try mi.str(local_name);
+                                try mi.addVar(local_name_id, .lexical);
+                                try mi.addImportInfoSingle(try mi.str(import_record_path), try mi.str(item.alias), local_name_id, symbol.use_count_as_type > 0 and symbol.use_count_estimate <= symbol.use_count_as_type);
+                            }
                         }
 
                         if (!s.is_single_line) {
@@ -4516,10 +4625,17 @@ fn NewPrinter(
                         }
                         p.printSpace();
 
+                        const local_name = p.renamer.nameForSymbol(s.namespace_ref);
+
                         p.printWhitespacer(ws("* as"));
                         p.print(" ");
-                        p.printSymbol(s.namespace_ref);
+                        p.printIdentifier(local_name);
                         item_count += 1;
+
+                        if (p.moduleInfo()) |mi| {
+                            try mi.addVar(try mi.str(local_name), .lexical);
+                            try mi.addImportInfoNamespace(try mi.str(import_record_path), try mi.str(local_name));
+                        }
                     }
 
                     if (item_count > 0) {
@@ -4531,34 +4647,48 @@ fn NewPrinter(
                         p.printWhitespacer(ws("from "));
                     }
 
-                    p.printImportRecordPath(record);
+                    p.printStringLiteralUTF8(import_record_path, false);
 
                     // backwards compatibility: previously, we always stripped type
-                    if (comptime is_bun_platform) if (record.loader) |loader| switch (loader) {
-                        .jsx => p.printWhitespacer(ws(" with { type: \"jsx\" }")),
-                        .js => p.printWhitespacer(ws(" with { type: \"js\" }")),
-                        .ts => p.printWhitespacer(ws(" with { type: \"ts\" }")),
-                        .tsx => p.printWhitespacer(ws(" with { type: \"tsx\" }")),
-                        .css => p.printWhitespacer(ws(" with { type: \"css\" }")),
-                        .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
-                        .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
-                        .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
-                        .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
-                        .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
-                        .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
-                        .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
-                        .dataurl => p.printWhitespacer(ws(" with { type: \"dataurl\" }")),
-                        .text => p.printWhitespacer(ws(" with { type: \"text\" }")),
-                        .bunsh => p.printWhitespacer(ws(" with { type: \"sh\" }")),
-                        // sqlite_embedded only relevant when bundling
-                        .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
-                        .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                    var fetch_parameters: ModuleInfo.FetchParameters = .none;
+                    if (comptime is_bun_platform) if (record.loader) |loader| {
+                        const str: []const u8 = switch (loader) {
+                            .jsx => "jsx",
+                            .js => "js",
+                            .ts => "ts",
+                            .tsx => "tsx",
+                            .css => "css",
+                            .file => "file",
+                            .json => "json",
+                            .jsonc => "jsonc",
+                            .toml => "toml",
+                            .wasm => "wasm",
+                            .napi => "napi",
+                            .base64 => "base64",
+                            .dataurl => "dataurl",
+                            .text => "text",
+                            .bunsh => "sh",
+                            // sqlite_embedded only relevant when bundling
+                            .sqlite, .sqlite_embedded => "sqlite",
+                            .html => "html",
+                        };
+                        p.printWhitespacer(ws(" with { type: \""));
+                        p.print(str);
+                        p.printWhitespacer(ws("\" }"));
+
+                        if (p.moduleInfo()) |mi| {
+                            fetch_parameters = switch (loader) {
+                                .json => .json,
+                                else => ModuleInfo.FetchParameters.hostDefined(try mi.str(str)),
+                            };
+                        }
                     };
+                    if (p.moduleInfo()) |mi| try mi.requestModule(try mi.str(import_record_path), fetch_parameters);
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
                     p.printIndent();
-                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc);
+                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc, .{});
                     p.printNewline();
                 },
                 .s_debugger => {
@@ -4642,22 +4772,16 @@ fn NewPrinter(
             p.print("module.exports");
         }
 
-        pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
-            if (comptime is_json)
-                unreachable;
+        pub fn fmtImportRecordPath(p: *Printer, import_record: *const ImportRecord) ![]const u8 {
+            if (comptime is_json) unreachable;
 
-            const quote = bestQuoteCharForString(u8, import_record.path.text, false);
             if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
-                p.print(quote);
-                p.printStringCharactersUTF8(import_record.path.namespace, quote);
-                p.print(":");
-                p.printStringCharactersUTF8(import_record.path.text, quote);
-                p.print(quote);
-            } else {
-                p.print(quote);
-                p.printStringCharactersUTF8(import_record.path.text, quote);
-                p.print(quote);
+                return try std.fmt.allocPrint(p.options.allocator, "{s}:{s}", .{ import_record.path.namespace, import_record.path.text });
             }
+            return import_record.path.text;
+        }
+        pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
+            p.printStringLiteralUTF8(p.fmtImportRecordPath(import_record) catch bun.outOfMemory(), false);
         }
 
         pub fn printBundledImport(p: *Printer, record: ImportRecord, s: *S.Import) void {
@@ -4833,21 +4957,11 @@ fn NewPrinter(
                 },
                 .s_local => |s| {
                     switch (s.kind) {
-                        .k_var => {
-                            p.printDecls("var", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_let => {
-                            p.printDecls("let", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_const => {
-                            p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_using => {
-                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
-                        .k_await_using => {
-                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
-                        },
+                        .k_var => p.printDecls("var", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_let => p.printDecls("let", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_const => p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_using => p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
+                        .k_await_using => p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }), .{}),
                     }
                 },
                 // for(;)
@@ -4869,7 +4983,7 @@ fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc);
+                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc, .{});
 
                     if (s.no != null) {
                         p.printSpace();
@@ -4884,7 +4998,7 @@ fn NewPrinter(
                         p.printNewline();
 
                         p.indent();
-                        p.printStmt(s.yes) catch unreachable;
+                        p.printStmt(s.yes, .{}) catch bun.outOfMemory();
                         p.unindent();
                         p.needs_semicolon = false;
 
@@ -4899,7 +5013,7 @@ fn NewPrinter(
                     } else {
                         p.printNewline();
                         p.indent();
-                        p.printStmt(s.yes) catch unreachable;
+                        p.printStmt(s.yes, .{}) catch bun.outOfMemory();
                         p.unindent();
 
                         if (s.no != null) {
@@ -4918,7 +5032,7 @@ fn NewPrinter(
                 switch (no_block.data) {
                     .s_block => {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null);
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null, .{});
                         p.printNewline();
                     },
                     .s_if => {
@@ -4927,7 +5041,7 @@ fn NewPrinter(
                     else => {
                         p.printNewline();
                         p.indent();
-                        p.printStmt(no_block) catch unreachable;
+                        p.printStmt(no_block, .{}) catch bun.outOfMemory();
                         p.unindent();
                     },
                 }
@@ -5008,11 +5122,14 @@ fn NewPrinter(
             }
         }
 
-        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
+        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl, tlmtlo: TopLevel) void {
             if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
-            p.printDecls(keyword, decls, ExprFlag.None());
+            p.printDecls(keyword, decls, ExprFlag.None(), if (may_have_module_info) .{
+                .is_export = is_export and !rewrite_esm_to_cjs,
+                .is_top_level = if (comptime std.mem.eql(u8, keyword, "var")) if (tlmtlo.is_top_level == .no) null else .declared else if (tlmtlo.is_top_level == .yes) .lexical else null,
+            } else .{});
             p.printSemicolonAfterStatement();
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
                 for (decls) |decl| {
@@ -5057,7 +5174,7 @@ fn NewPrinter(
                             p.print("}");
                         },
                         else => {
-                            p.printBinding(decl.binding);
+                            p.printBinding(decl.binding, .{});
                         },
                     }
                     p.print(")");
@@ -5388,7 +5505,7 @@ fn NewPrinter(
                 p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
                 p.print(" => {\n");
                 p.indent();
-                p.printBlockBody(func.body.stmts);
+                p.printBlockBody(func.body.stmts, .init(.no));
                 p.unindent();
                 p.printIndent();
                 p.print("}, ");
@@ -5874,6 +5991,7 @@ pub fn printAst(
     comptime ascii_only: bool,
     opts: Options,
     comptime generate_source_map: bool,
+    module_info: ?*@import("analyze_transpiled_module.zig").ModuleInfo,
 ) !usize {
     var renamer: rename.Renamer = undefined;
     var no_op_renamer: rename.NoOpRenamer = undefined;
@@ -5973,6 +6091,11 @@ pub fn printAst(
         }
     }
     printer.was_lazy_export = tree.has_lazy_export;
+    if (module_info != null) bun.assert(PrinterType.may_have_module_info);
+    const have_module_info = PrinterType.may_have_module_info and module_info != null;
+
+    if (have_module_info) printer.module_info = module_info;
+
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -5996,12 +6119,16 @@ pub fn printAst(
         //
         // This is never a symbol collision because `uses_require_ref` means
         // `require` must be an unbound variable.
+        if (printer.moduleInfo()) |mi| {
+            mi.flags.contains_import_meta = true;
+            try mi.addVar(try mi.str("require"), .declared);
+        }
         printer.print("var {require}=import.meta;");
     }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }
@@ -6009,23 +6136,24 @@ pub fn printAst(
         }
     }
 
-    if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
+    if (have_module_info) {
+        try module_info.?.finalize();
+    }
+
+    var sourcemap: []const u8 = "";
+    if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
             const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
-            if (opts.runtime_transpiler_cache) |cache| {
-                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
-            }
+            sourcemap = source_maps_chunk.buffer.list.items;
 
             try handler.onSourceMapChunk(source_maps_chunk, source.*);
-        } else {
-            if (opts.runtime_transpiler_cache) |cache| {
-                cache.put(printer.writer.ctx.getWritten(), "");
-            }
         }
-    } else if (comptime generate_source_map) {
-        if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
-        }
+    }
+    if (opts.runtime_transpiler_cache) |cache| {
+        var srlz_res = std.ArrayList(u8).init(bun.default_allocator);
+        defer srlz_res.deinit();
+        if (have_module_info) try module_info.?.asDeserialized().serialize(srlz_res.writer());
+        cache.put(printer.writer.ctx.getWritten(), sourcemap, srlz_res.items);
     }
 
     try printer.writer.done();
@@ -6187,7 +6315,7 @@ pub fn printWithWriterAndPlatform(
 
         for (parts) |part| {
             for (part.stmts) |stmt| {
-                printer.printStmt(stmt) catch |err| {
+                printer.printStmt(stmt, PrinterType.TopLevel.init(.yes)) catch |err| {
                     return .{ .err = err };
                 };
                 if (printer.writer.getError()) {} else |err| {
@@ -6258,7 +6386,7 @@ pub fn printCommonJS(
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
             }

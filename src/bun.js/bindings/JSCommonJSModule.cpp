@@ -1273,7 +1273,7 @@ void JSCommonJSModule::evaluate(
         }
     }
 
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (this->hasEvaluated)
         return;
@@ -1326,7 +1326,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             source.source_code = Bun::toStringRef(concat);
         }
 
-        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, isBuiltIn);
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(
             vm,

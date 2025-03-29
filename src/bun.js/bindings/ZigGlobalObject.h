@@ -398,6 +398,7 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
     LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
+    LazyProperty<JSGlobalObject, JSCell> m_moduleRunMainFunction;
     LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
@@ -552,6 +553,7 @@ public:
     LazyClassStructure m_JSHmacClassStructure;
     LazyClassStructure m_JSHashClassStructure;
     LazyClassStructure m_JSECDHClassStructure;
+    LazyClassStructure m_JSCipherClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -631,6 +633,8 @@ public:
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
+    // De-optimization once `require("module").runMain` is written to
+    bool hasOverriddenModuleRunMain = false;
 
     WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);

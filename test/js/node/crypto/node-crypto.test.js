@@ -548,6 +548,26 @@ it("createDecipheriv should validate iv and password", () => {
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
 });
 
+it("Cipheriv.update throws expected error for invalid data", () => {
+  const key = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  expect(() => {
+    cipher.update(["c", "d"]);
+  }).toThrow(
+    'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Array',
+  );
+});
+
+it("verifyOneShot should not accept strings for signatures", () => {
+  const data = Buffer.alloc(1);
+  expect(() => {
+    crypto.verify(null, data, "test", "oops");
+  }).toThrow(
+    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+  );
+});
+
 it("x25519", () => {
   // Generate Alice's keys
   const alice = crypto.generateKeyPairSync("x25519", {

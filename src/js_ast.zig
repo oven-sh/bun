@@ -2407,12 +2407,6 @@ pub const E = struct {
         }
 
         pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
-            if (Expr.Data.Store.memory_allocator) |mem| {
-                if (mem == GlobalStoreHandle.global_store_ast) {
-                    return str.string(allocator);
-                }
-            }
-
             if (str.isUTF8()) {
                 return allocator.dupe(u8, str.string(allocator) catch unreachable);
             }
@@ -8353,11 +8347,12 @@ pub const Macro = struct {
                             }
                             return _entry.value_ptr.*;
                         }
-
+                        // SAFETY: tag ensures `value` is an object.
+                        const obj = value.getObject() orelse unreachable;
                         var object_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, value);
+                        }).init(this.global, obj);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);
@@ -8761,32 +8756,6 @@ pub const ServerComponentBoundary = struct {
             }
         };
     };
-};
-
-pub const GlobalStoreHandle = struct {
-    prev_memory_allocator: ?*ASTMemoryAllocator = null,
-
-    var global_store_ast: ?*ASTMemoryAllocator = null;
-    var global_store_threadsafe: std.heap.ThreadSafeAllocator = undefined;
-
-    pub fn get() ?*ASTMemoryAllocator {
-        if (global_store_ast == null) {
-            var global = bun.default_allocator.create(ASTMemoryAllocator) catch unreachable;
-            global.allocator = bun.default_allocator;
-            global.bump_allocator = bun.default_allocator;
-            global_store_ast = global;
-        }
-
-        const prev = Stmt.Data.Store.memory_allocator;
-        Stmt.Data.Store.memory_allocator = global_store_ast;
-        Expr.Data.Store.memory_allocator = global_store_ast;
-        return prev;
-    }
-
-    pub fn unget(handle: ?*ASTMemoryAllocator) void {
-        Stmt.Data.Store.memory_allocator = handle;
-        Expr.Data.Store.memory_allocator = handle;
-    }
 };
 
 extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;

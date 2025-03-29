@@ -3,7 +3,7 @@
 
 #include "root.h"
 
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCJSValue.h"

@@ -344,7 +344,7 @@ pub const ThreadPool = struct {
             worker.ast_memory_allocator.push();
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                worker.heap.gc(true);
+                worker.heap.helpCatchMemoryIssues();
             }
 
             return worker;
@@ -352,7 +352,7 @@ pub const ThreadPool = struct {
 
         pub fn unget(this: *Worker) void {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.heap.gc(true);
+                this.heap.helpCatchMemoryIssues();
             }
 
             this.ast_memory_allocator.pop();
@@ -1345,8 +1345,7 @@ pub const BundleV2 = struct {
             }
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
-                bun.Mimalloc.mi_collect(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
 
             module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
@@ -2194,7 +2193,7 @@ pub const BundleV2 = struct {
         defer load.deinit();
         defer {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
         }
         const log = this.transpiler.log;
@@ -2312,7 +2311,7 @@ pub const BundleV2 = struct {
 
         defer {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
         }
 
@@ -6661,7 +6660,7 @@ pub const LinkerContext = struct {
     fn checkForMemoryCorruption(this: *LinkerContext) void {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        this.parse_graph.heap.gc(true);
+        this.parse_graph.heap.helpCatchMemoryIssues();
     }
 
     const JSChunkKeyFormatter = struct {
@@ -7114,7 +7113,7 @@ pub const LinkerContext = struct {
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = if (comptime with_code_splitting)
+                var is_file_in_chunk = if (with_code_splitting and v.c.graph.ast.items(.css)[source_index] == null)
                     // when code splitting, include the file in the chunk if ALL of the entry points overlap
                     v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index])
                 else

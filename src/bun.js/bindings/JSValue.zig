@@ -399,11 +399,13 @@ pub const JSValue = enum(i64) {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
 
+    // TODO: use JSError! `toInt32` can throw
     extern fn JSC__JSValue__coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32;
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
         return JSC__JSValue__coerceToInt32(this, globalThis);
     }
 
+    // TODO: use  JSError! `toInt32` can throw
     extern fn JSC__JSValue__coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) i64;
     pub fn coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) i64 {
         return JSC__JSValue__coerceToInt64(this, globalThis);
@@ -485,6 +487,22 @@ pub const JSValue = enum(i64) {
             return error.JSError;
         }
         return result;
+    }
+
+    // ECMA-262 20.1.2.3 Number.isInteger
+    pub fn isInteger(this: JSValue) bool {
+        if (this.isInt32()) {
+            return true;
+        }
+
+        if (this.isDouble()) {
+            const num = this.asDouble();
+            if (std.math.isFinite(num) and @trunc(num) == num) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // https://tc39.es/ecma262/#sec-number.issafeinteger
@@ -1473,7 +1491,7 @@ pub const JSValue = enum(i64) {
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
     pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
-        return bun.String.fromJS2(this, globalObject);
+        return bun.String.fromJS(this, globalObject);
     }
 
     extern fn JSC__JSValue__toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool;
@@ -1541,7 +1559,7 @@ pub const JSValue = enum(i64) {
     /// Convert a JSValue to a string, potentially calling `toString` on the
     /// JSValue in JavaScript. Can throw an error.
     pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
-        const str = try bun.String.fromJS2(this, global);
+        const str = try bun.String.fromJS(this, global);
         defer str.deref();
 
         // This keeps the WTF::StringImpl alive if it was originally a latin1
@@ -1573,14 +1591,14 @@ pub const JSValue = enum(i64) {
 
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
-        const str = try bun.String.fromJS2(this, globalThis);
+        const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!ZigString.Slice {
-        const str = try bun.String.fromJS2(this, globalThis);
+        const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(allocator);
     }
@@ -1597,9 +1615,9 @@ pub const JSValue = enum(i64) {
     /// On exception or out of memory, this returns null.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
-    pub fn toSliceCloneZ(this: JSValue, globalThis: *JSGlobalObject) ?[:0]u8 {
-        var str = bun.String.tryFromJS(this, globalThis) orelse return null;
-        return str.toOwnedSliceZ(bun.default_allocator) catch return null;
+    pub fn toSliceCloneZ(this: JSValue, globalThis: *JSGlobalObject) JSError!?[:0]u8 {
+        var str = try bun.String.fromJS(this, globalThis);
+        return try str.toOwnedSliceZ(bun.default_allocator);
     }
 
     /// On exception or out of memory, this returns null, to make exception checks clearer.
@@ -1619,9 +1637,12 @@ pub const JSValue = enum(i64) {
     ///
     /// For values that are already objects, this is effectively a reinterpret
     /// cast.
-    extern fn JSC__JSValue__toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject;
-    pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
-        return JSC__JSValue__toObject(this, globalThis);
+    ///
+    /// ## References
+    /// - [ECMA-262 7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
+    extern fn JSC__JSValue__toObject(this: JSValue, globalThis: *JSGlobalObject) ?*JSObject;
+    pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) JSError!*JSObject {
+        return JSC__JSValue__toObject(this, globalThis) orelse error.JSError;
     }
 
     /// Statically cast a value to a JSObject.
@@ -1952,7 +1973,7 @@ pub const JSValue = enum(i64) {
             return globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
         }
 
-        return StringMap.fromJS(globalThis, this) orelse {
+        return try StringMap.fromJS(globalThis, this) orelse {
             const one_of = struct {
                 pub const list = brk: {
                     var str: []const u8 = "'";
@@ -1970,9 +1991,8 @@ pub const JSValue = enum(i64) {
 
                 pub const label = property_name ++ " must be one of " ++ list;
             }.label;
-            if (!globalThis.hasException())
-                return globalThis.throwInvalidArguments(one_of, .{});
-            return error.JSError;
+
+            return globalThis.throwInvalidArguments(one_of, .{});
         };
     }
 
@@ -2051,13 +2071,13 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?*JSC.JSObject {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
-            if (!prop.jsTypeLoose().isObject()) {
+            const obj = prop.getObject() orelse {
                 return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-            }
+            };
 
-            return prop;
+            return obj;
         }
 
         return null;

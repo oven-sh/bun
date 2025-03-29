@@ -11,8 +11,8 @@ function uafTest(fixture, iterations = 2) {
       const { exited } = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dir, fixture)],
         env: bunEnv,
-        stdout: "ignore",
-        stderr: "ignore",
+        stdout: "inherit",
+        stderr: "inherit",
         stdin: "ignore",
       });
       const exitCode = await exited;

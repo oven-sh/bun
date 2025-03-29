@@ -1,13 +1,14 @@
 ---
 description: JavaScript class implemented in C++
 globs: *.cpp
+alwaysApply: false
 ---
 
 # Implementing JavaScript classes in C++
 
 If there is a publicly accessible Constructor and Prototype, then there are 3 classes:
 
-- IF there are C++ class members we need a destructor, so `class Foo : public JSC::DestructibleObject`, if no C++ class fields (only JS properties) then we don't need a class at all usually. We can instead use JSC::constructEmptyObject(vm, structure) and `putDirectOffset` like in [NodeFSBinding.cpp](mdc:src/bun.js/bindings/NodeFSBinding.cpp).
+- IF there are C++ class members we need a destructor, so `class Foo : public JSC::DestructibleObject`, if no C++ class fields (only JS properties) then we don't need a class at all usually. We can instead use JSC::constructEmptyObject(vm, structure) and `putDirectOffset` like in [NodeFSStatBinding.cpp](mdc:src/bun.js/bindings/NodeFSStatBinding.cpp).
 - class FooPrototype : public JSC::JSNonFinalObject
 - class FooConstructor : public JSC::InternalFunction
 
@@ -18,6 +19,7 @@ If there are C++ fields on the Foo class, the Foo class will need an iso subspac
 Usually you'll need to #include "root.h" at the top of C++ files or you'll get lint errors.
 
 Generally, defining the subspace looks like this:
+
 ```c++
 
 class Foo : public JSC::DestructibleObject {
@@ -45,6 +47,7 @@ It's better to put it in the .cpp file instead of the .h file, when possible.
 ## Defining properties
 
 Define properties on the prototype. Use a const HashTableValues like this:
+
 ```C++
 static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail);
 static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost);
@@ -158,6 +161,7 @@ void JSX509CertificatePrototype::finishCreation(VM& vm)
 ```
 
 ### Getter definition:
+
 ```C++
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_ca, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -212,7 +216,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToJSON, (JSGlobalObject * glo
 }
 ```
 
-
 ### Constructor definition
 
 ```C++
@@ -259,7 +262,6 @@ private:
 };
 ```
 
-
 ### Structure caching
 
 If there's a class, prototype, and constructor:
@@ -279,6 +281,7 @@ void GlobalObject::finishCreation(VM& vm) {
 ```
 
 Then, implement the function that creates the structure:
+
 ```c++
 void setupX509CertificateClassStructure(LazyClassStructure::Initializer& init)
 {
@@ -301,11 +304,12 @@ If there's only a class, use `JSC::LazyProperty<JSGlobalObject, Structure>` inst
 1. Add the `JSC::LazyProperty<JSGlobalObject, Structure>` to @ZigGlobalObject.h
 2. Initialize the class structure in @ZigGlobalObject.cpp in `void GlobalObject::finishCreation(VM& vm)`
 3. Visit the lazy property in visitChildren in @ZigGlobalObject.cpp in `void GlobalObject::visitChildrenImpl`
-void GlobalObject::finishCreation(VM& vm) {
-// ...
+   void GlobalObject::finishCreation(VM& vm) {
+   // ...
    this.m_myLazyProperty.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-        init.set(Bun::initMyStructure(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
-    });
+   init.set(Bun::initMyStructure(init.vm, reinterpret_cast<Zig::GlobalObject\*>(init.owner)));
+   });
+
 ```
 
 Then, implement the function that creates the structure:
@@ -316,7 +320,7 @@ Structure* setupX509CertificateStructure(JSC::VM &vm, Zig::GlobalObject* globalO
     auto* prototypeStructure = JSX509CertificatePrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
     auto* prototype = JSX509CertificatePrototype::create(init.vm, init.global, prototypeStructure);
 
-    // If there is no prototype or it only has 
+    // If there is no prototype or it only has
 
     auto* structure = JSX509Certificate::createStructure(init.vm, init.global, prototype);
     init.setPrototype(prototype);
@@ -324,7 +328,6 @@ Structure* setupX509CertificateStructure(JSC::VM &vm, Zig::GlobalObject* globalO
     init.setConstructor(constructor);
 }
 ```
-
 
 Then, use the structure by calling `globalObject.m_myStructureName.get(globalObject)`
 
@@ -378,12 +381,14 @@ extern "C" JSC::EncodedJSValue Bun__JSBigIntStatsObjectConstructor(Zig::GlobalOb
 ```
 
 Zig:
+
 ```zig
 extern "c" fn Bun__JSBigIntStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 pub const getBigIntStatsConstructor =  Bun__JSBigIntStatsObjectConstructor;
 ```
 
-To create an object (instance) of a JS class defined in C++ from Zig, follow the __toJS convention like this:
+To create an object (instance) of a JS class defined in C++ from Zig, follow the \_\_toJS convention like this:
+
 ```c++
 // X509* is whatever we need to create the object
 extern "C" EncodedJSValue Bun__X509__toJS(Zig::GlobalObject* globalObject, X509* cert)
@@ -395,12 +400,13 @@ extern "C" EncodedJSValue Bun__X509__toJS(Zig::GlobalObject* globalObject, X509*
 ```
 
 And from Zig:
+
 ```zig
 const X509 = opaque {
-    // ... class 
+    // ... class
 
     extern fn Bun__X509__toJS(*JSC.JSGlobalObject, *X509) JSC.JSValue;
-    
+
     pub fn toJS(this: *X509, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return Bun__X509__toJS(globalObject, this);
     }

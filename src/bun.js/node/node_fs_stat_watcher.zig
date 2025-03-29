@@ -24,7 +24,7 @@ const StatsBig = bun.JSC.Node.StatsBig;
 
 const log = bun.Output.scoped(.StatWatcher, false);
 
-fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
+fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
         return StatsBig.init(stats).toJS(globalThis);
     } else {
@@ -376,7 +376,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
@@ -389,7 +389,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
@@ -428,7 +428,7 @@ pub const StatWatcher = struct {
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
         _ = StatWatcher.listenerGetCached(this.js_this).?.call(

@@ -339,11 +339,33 @@ function execFile(file, args, options, callback) {
     }, options.timeout).unref();
   }
 
+  let stdoutLen = 0,
+    stderrLen = 0;
   if (child.stdout) {
     if (encoding) child.stdout.setEncoding(encoding);
 
     child.stdout.on("data", function onDataStdout(chunk) {
-      $arrayPush(_stdout, chunk);
+      // Do not need to count the length
+      if (options.maxBuffer === Infinity) {
+        $arrayPush(_stdout, chunk);
+        return;
+      }
+      const encoding = child.stdout.readableEncoding;
+      const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
+      const slice = encoding
+        ? (buf, ...args) => String.prototype.slice.$call(buf, ...args)
+        : (buf, ...args) => buf.slice(...args);
+      stdoutLen += length;
+
+      if (stdoutLen > options.maxBuffer) {
+        const truncatedLen = options.maxBuffer - (stdoutLen - length);
+        $arrayPush(_stdout, slice(chunk, 0, truncatedLen));
+
+        ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
+        kill();
+      } else {
+        $arrayPush(_stdout, chunk);
+      }
     });
   }
 
@@ -351,7 +373,27 @@ function execFile(file, args, options, callback) {
     if (encoding) child.stderr.setEncoding(encoding);
 
     child.stderr.on("data", function onDataStderr(chunk) {
-      $arrayPush(_stderr, chunk);
+      // Do not need to count the length
+      if (options.maxBuffer === Infinity) {
+        $arrayPush(_stderr, chunk);
+        return;
+      }
+      const encoding = child.stderr.readableEncoding;
+      const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
+      const slice = encoding
+        ? (buf, ...args) => String.prototype.slice.$call(buf, ...args)
+        : (buf, ...args) => buf.slice(...args);
+      stderrLen += length;
+
+      if (stderrLen > options.maxBuffer) {
+        const truncatedLen = options.maxBuffer - (stderrLen - length);
+        $arrayPush(_stderr, slice(chunk, 0, truncatedLen));
+
+        ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
+        kill();
+      } else {
+        $arrayPush(_stderr, chunk);
+      }
     });
   }
 

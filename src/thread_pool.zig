@@ -702,6 +702,8 @@ pub const Thread = struct {
             Output.flush();
 
             self.drainIdleEvents();
+
+            bun.Mimalloc.mi_collect(false);
         }
     }
 

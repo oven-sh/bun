@@ -186,7 +186,7 @@ pub const Arena = struct {
     }
 
     pub fn init() !Arena {
-        const arena = Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
+        const arena = Arena{ .heap = mimalloc.mi_heap_new_ex(0, true, null) orelse return error.OutOfMemory };
         // if (comptime Environment.isDebug) {
         //     ArenaRegistry.register(arena);
         // }

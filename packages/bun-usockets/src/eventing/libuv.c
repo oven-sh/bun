@@ -99,7 +99,7 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
   uv_unref((uv_handle_t *)p->uv_p);
-  uv_poll_start(p->uv_p, events, poll_cb);
+  uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
@@ -112,7 +112,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
-    uv_poll_start(p->uv_p, events, poll_cb);
+    uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
   }
 }
 

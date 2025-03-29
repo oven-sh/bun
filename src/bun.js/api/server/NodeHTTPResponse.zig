@@ -107,6 +107,7 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     if (socketValue == .zero) {
         return false;
     }
+    this.raw_response.@"resume"();
 
     defer {
         this.setOnAbortedHandler();

@@ -1749,7 +1749,7 @@ pub fn getExited(
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
         },
         else => {
             if (!this.exit_promise.has()) {

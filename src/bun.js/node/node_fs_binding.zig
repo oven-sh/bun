@@ -71,7 +71,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 const signal = args.signal orelse break :check_early_abort;
                 if (signal.reasonIfAborted(globalObject)) |reason| {
                     deinit = true;
-                    return JSC.JSPromise.rejectedPromiseValue(globalObject, reason.toJS(globalObject));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, reason.toJS(globalObject));
                 }
             }
 

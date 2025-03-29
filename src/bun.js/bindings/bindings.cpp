@@ -5272,6 +5272,8 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue e
     scope.throwException(arg1, exception);
 }
 
+/// **DEPRECATED** This function does not notify the VM about the rejection,
+/// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue1)
 {

@@ -10,7 +10,8 @@
 /// Version 11: Fix \uFFFF printing regression
 /// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
 /// Version 13: Hoist `import.meta.require` definition, see #15738
-const expected_version = 13;
+/// Version 14: Emits utf-16 files in rare cases
+const expected_version = 14;
 
 const bun = @import("root").bun;
 const std = @import("std");
@@ -633,7 +634,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.createLatin1(output_code_bytes);
+        const output_code = bun.String.createLatin1OrUTF8(output_code_bytes);
         this.output_code = output_code;
 
         toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {
@@ -641,6 +642,6 @@ pub const RuntimeTranspilerCache = struct {
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.latin1().len});
+            debug("put() = {d} bytes", .{output_code.length()});
     }
 };

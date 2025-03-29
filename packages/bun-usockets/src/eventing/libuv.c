@@ -86,6 +86,10 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
 }
 
 void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(events == 0) {
+    // this is the equivalent of us_poll_stop but we still wanna EOF events so we add writable
+    events = LIBUS_SOCKET_WRITABLE;
+  }
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
@@ -108,7 +112,6 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
-    
     uv_poll_start(p->uv_p, events, poll_cb);
   }
 }

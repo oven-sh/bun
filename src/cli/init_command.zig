@@ -757,14 +757,15 @@ pub const InitCommand = struct {
         }
 
         write_package_json: {
-            if (package_json_file == null) {
-                package_json_file = try std.fs.cwd().createFileZ("package.json", .{});
-            }
-            const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+            var file = package_json_file orelse try std.fs.cwd().createFileZ("package.json", .{});
+            defer file.close();
+            var buffer_writer = try JSPrinter.BufferWriter.init(bun.default_allocator);
+            buffer_writer.append_newline = true;
+            var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-            const written = JSPrinter.printJSON(
-                @TypeOf(package_json_writer),
-                package_json_writer,
+            _ = JSPrinter.printJSON(
+                @TypeOf(&package_json_writer),
+                &package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
                 .{ .mangled_props = null },
@@ -773,9 +774,18 @@ pub const InitCommand = struct {
                 package_json_file = null;
                 break :write_package_json;
             };
-
-            std.posix.ftruncate(package_json_file.?.handle, written + 1) catch {};
-            package_json_file.?.close();
+            const fd = bun.toFD(file);
+            const written = package_json_writer.ctx.getWritten();
+            bun.sys.File.writeAll(.{ .handle = fd }, written).unwrap() catch |err| {
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                package_json_file = null;
+                break :write_package_json;
+            };
+            bun.sys.ftruncate(fd, @intCast(written.len)).unwrap() catch |err| {
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                package_json_file = null;
+                break :write_package_json;
+            };
         }
 
         if (steps.write_gitignore) {

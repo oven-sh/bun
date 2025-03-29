@@ -1,4 +1,5 @@
 /**
+ * Bun's fast, Jest-compatible testing framework.
  *
  * To run tests, run `bun test`
  *
@@ -12,11 +13,14 @@
  * ```bash
  * $ bun test <filename>
  * ```
+ *
+ * @see [Documentation](https://bun.sh/docs/cli/test)
  */
 declare module "bun:test" {
   /**
    * -- Mocks --
    *
+   * @see [Bun Docs - Mocks](https://bun.sh/docs/test/mocks)
    * @category Testing
    */
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
@@ -92,10 +96,45 @@ declare module "bun:test" {
   export function setSystemTime(now?: Date | number): ThisType<void>;
 
   interface Jest {
+    /**
+     * Restores all mocks and replaced properties back to their original value.
+     * Equivalent to calling {@link JestMock.MockInstance.mockRestore
+     * .mockRestore()} on every mocked function and {@link mock.restore
+     * .restore()} on every replaced property.
+     */
     restoreAllMocks(): void;
+    /**
+     * Clears the `mock.calls`, `mock.instances`, `mock.contexts` and
+     * `mock.results` properties of all mocks. Equivalent to calling
+     * {@link JestMock.MockInstance.mockClear .mockClear()} on every mocked
+     * function.
+     *
+     * @see {@link JestMock.MockFunctionState}
+     */
     clearAllMocks(): void;
+    /**
+     * Returns a new, unused {@link Mock mock function}. Optionally takes a mock
+     * implementation.
+     *
+     * @see [Bun Docs - Mocks](https://bun.sh/docs/test/mocks)
+     */
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    /**
+     * Set the current system time used by fake timers.
+     *
+     * Simulates a user changing the system clock while your program is running.
+     * It affects the current time but it does not in itself cause e.g. timers
+     * to fire; they will fire exactly as they would have done without the call
+     * to {@link jest.setSystemTime()}.
+     */
     setSystemTime(now?: number | Date): void;
+    /**
+     * Set the default timeout interval (in milliseconds) for all tests and
+     * before/after hooks in the test file.
+     *
+     * This only affects the test file from which this function is called. The
+     * default timeout interval is 5 seconds if this method is not called.
+     */
     setTimeout(milliseconds: number): void;
   }
   export const jest: Jest;
@@ -146,6 +185,40 @@ declare module "bun:test" {
     type SpiedSetter<T> = JestMock.SpiedSetter<T>;
   }
 
+  /**
+   * Creates a {@link Mock} that tracks calls to `obj.methodOrPropertyValue`
+   * without replacing it.
+   *
+   * @example
+   * ```ts
+   * import { test, expect, spyOn } from "bun:test";
+   *
+   * const ringo = {
+   *   name: "Ringo",
+   *   sayHi() {
+   *     console.log(`Hello I'm ${this.name}`);
+   *   },
+   * };
+   *
+   * const spy = spyOn(ringo, "sayHi");
+   *
+   * test("spyon", () => {
+   *   expect(spy).toHaveBeenCalledTimes(0);
+   *   ringo.sayHi();
+   *   expect(spy).toHaveBeenCalledTimes(1);
+   * });
+   * ```
+   *
+   * @param obj                   The object to spy on
+   * @param methodOrPropertyValue the method or property value on `obj` to track
+   *                              calls on.
+   *
+   * @returns a new {@link Mock}, using `obj.methodOrPropertyValue` as it's
+   * implementation.
+   *
+   * @see [Bun Docs - `.spyOn()`](https://bun.sh/docs/test/mocks#spyon)
+   * @see jest.fn
+   */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
@@ -189,13 +262,21 @@ declare module "bun:test" {
      *
      * @param label the label for the tests
      * @param fn the function that defines the tests
+     *
+     * @see {@link skipIf} to conditionally skip tests
      */
     skip(label: string, fn: () => void): void;
     /**
      * Marks this group of tests as to be written or to be fixed.
      *
+     * Tests marked as `todo` will only be run when the `--todo` flag is
+     * passed. When writing tests for code that runs but doesn't work yet,
+     * consider using {@link test.failing}.
+     *
      * @param label the label for the tests
      * @param fn the function that defines the tests
+     *
+     * @see {@link todoIf} to conditionally mark tests as `todo`
      */
     todo(label: string, fn?: () => void): void;
     /**
@@ -305,8 +386,9 @@ declare module "bun:test" {
    */
   export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   /**
-   * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
-   * override this value. The default timeout is 5000ms (5 seconds).
+   * Sets the default timeout for all tests in the current file. If a test
+   * specifies a timeout, it will override this value. The default timeout is
+   * 5000ms (5 seconds).
    *
    * @param milliseconds the number of milliseconds for the default timeout
    */
@@ -330,7 +412,8 @@ declare module "bun:test" {
      */
     retry?: number;
     /**
-     * Sets the number of times to repeat the test, regardless of whether it passed or failed.
+     * Sets the number of times to repeat the test, regardless of whether it
+     * passed or failed.
      *
      * @default 0
      */
@@ -358,6 +441,7 @@ declare module "bun:test" {
    * @param options the test timeout or options
    *
    * @category Testing
+   * @see [Bun Docs - Writing Tests](https://bun.sh/docs/test/writing)
    */
   export interface Test {
     (
@@ -416,24 +500,50 @@ declare module "bun:test" {
     /**
      * Marks this test as failing.
      *
-     * Use `test.failing` when you are writing a test and expecting it to fail.
+     * Use {@link test.failing} when you are writing a test and expecting it to fail.
      * These tests will behave the other way normal tests do. If failing test
      * will throw any errors then it will pass. If it does not throw it will
-     * fail.
+     * fail. This is handy for writing tests for code with known bugs, when
+     * you want to make sure tests are updated when those bugs get fixed.
      *
-     * `test.failing` is very similar to {@link test.todo} except that it always
+     * {@link test.failing} is similar to {@link test.todo} except that it always
      * runs, regardless of the `--todo` flag.
+     *
+     * @example
+     * ```ts
+     * import { it, expect } from 'bun:test';
+     *
+     * function add(a, b) {
+     *   // TODO: fully implement
+     *   return a;
+     * }
+     *
+     * it('add(0, 0) == 0', () => {
+     *   expect(add(0, 0)).toBe(0);
+     * });
+     *
+     * // FIXME: not working yet
+     * it.failing('add(1, 1) == 2', () => {
+     *   expect(add(1, 1)).toBe(2);
+     * });
+     * ```
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param options A timeout (in milliseconds) or options object.
      */
-    failing(label: string, fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+    failing(
+      label: string,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ): void;
     /**
      * Runs this test, if `condition` is true.
      *
-     * This is the opposite of `test.skipIf()`.
+     * This is the opposite of {@link test.skipIf `test.skipIf()`}.
      *
      * @param condition if the test should run
+     * @returns a test function with the same signature as {@link test}
      */
     if(
       condition: boolean,
@@ -445,7 +555,10 @@ declare module "bun:test" {
     /**
      * Skips this test, if `condition` is true.
      *
+     * This is the opposite of {@link test.if `test.if()`}.
+     *
      * @param condition if the test should be skipped
+     * @returns a test function with the same signature as {@link test}
      */
     skipIf(
       condition: boolean,
@@ -458,6 +571,7 @@ declare module "bun:test" {
      * Marks this test as to be written or to be fixed, if `condition` is true.
      *
      * @param condition if the test should be marked TODO
+     * @returns a test function with the same signature as {@link test}
      */
     todoIf(
       condition: boolean,
@@ -606,12 +720,45 @@ declare module "bun:test" {
     unreachable(msg?: string | Error): never;
 
     /**
-     * Ensures that an assertion is made
+     * Ensures that at least one assertion is made during a test.
+     *
+     * @example
+     * ```ts
+     * test('Callback is called', async () => {
+     *   expect.hasAssertions();
+     *   const cb = (state: any) => expect(state).toHaveProperty('ready');
+     *   await loadState(cb);
+     * });
+     * ```
+     *
+     * @see {@link assertions} to ensure a specific number of assertions are
+     * made.
      */
     hasAssertions(): void;
 
     /**
-     * Ensures that a specific number of assertions are made
+     * Ensures that a specific number of assertions are made during a test.
+     *
+     * This is often useful when testing asynchronous code, in order to make
+     * sure that assertions in a callback actually got called.
+     *
+     * @example
+     * ```ts
+     * test('doAsync calls both callbacks', () => {
+     *   expect.assertions(2);
+     *   function callback1(data) {
+     *     expect(data).toBeTruthy();
+     *   }
+     *   function callback2(data) {
+     *     expect(data).toBeTruthy();
+     *   }
+     *
+     *   doAsync(callback1, callback2);
+     * });
+     * ```
+     *
+     * @see {@link hasAssertions} to ensure at least one assertion is made,
+     * without specifying a number.
      */
     assertions(neededAssertions: number): void;
   }

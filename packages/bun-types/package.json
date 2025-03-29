@@ -15,8 +15,8 @@
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
-    "@types/node": "22.13.14",
-    "@types/ws": "8.18.0"
+    "@types/node": "^22",
+    "@types/ws": "^8"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.5.3",

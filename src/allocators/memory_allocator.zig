@@ -65,16 +65,11 @@ const CAllocator = struct {
     }
 
     fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
-        if (new_len <= buf.len) {
-            return true;
-        }
+        return mimalloc.mi_expand(buf.ptr, new_len) != null;
+    }
 
-        const full_len = alignedAllocSize(buf.ptr);
-        if (new_len <= full_len) {
-            return true;
-        }
-
-        return false;
+    fn remap(_: *anyopaque, buf: []u8, alignment: mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
+        return @ptrCast(mimalloc.mi_realloc_aligned(buf.ptr, new_len, alignment.toByteUnits()));
     }
 
     const free = mimalloc_free;
@@ -82,13 +77,13 @@ const CAllocator = struct {
 
 pub const c_allocator = Allocator{
     // This ptr can be anything. But since it's not nullable, we should set it to something.
-    .ptr = @constCast(c_allocator_vtable),
+    .ptr = memory_allocator_tags.default_allocator_tag_ptr,
     .vtable = c_allocator_vtable,
 };
 const c_allocator_vtable = &Allocator.VTable{
     .alloc = &CAllocator.alloc,
     .resize = &CAllocator.resize,
-    .remap = &std.mem.Allocator.noRemap,
+    .remap = &CAllocator.remap,
     .free = &CAllocator.free,
 };
 
@@ -139,8 +134,22 @@ const ZAllocator = struct {
     const free = mimalloc_free;
 };
 
+const memory_allocator_tags = struct {
+    const default_allocator_tag: usize = 0xd3f4110c4701; // "d3f4110c4701" (DEFAULT ALLOCATOR in 1337 speak)
+    pub const default_allocator_tag_ptr: *anyopaque = @ptrFromInt(default_allocator_tag);
+
+    const z_allocator_tag: usize = 0x2a11043470123; // "z4110c4701" (Z ALLOCATOR in 1337 speak)
+    pub const z_allocator_tag_ptr: *anyopaque = @ptrFromInt(z_allocator_tag);
+
+    const huge_allocator_tag: usize = 0x49e411034701;
+    pub const huge_allocator_tag_ptr: *anyopaque = @ptrFromInt(huge_allocator_tag);
+
+    const auto_allocator_tag: usize = 0xdeadfa12;
+    pub const auto_allocator_tag_ptr: *anyopaque = @ptrFromInt(auto_allocator_tag);
+};
+
 pub const z_allocator = Allocator{
-    .ptr = undefined,
+    .ptr = memory_allocator_tags.z_allocator_tag_ptr,
     .vtable = &z_allocator_vtable,
 };
 const z_allocator_vtable = Allocator.VTable{
@@ -197,7 +206,7 @@ const HugeAllocator = struct {
 };
 
 pub const huge_allocator = Allocator{
-    .ptr = undefined,
+    .ptr = memory_allocator_tags.huge_allocator_tag_ptr,
     .vtable = &huge_allocator_vtable,
 };
 const huge_allocator_vtable = Allocator.VTable{
@@ -266,7 +275,7 @@ const AutoSizeAllocator = struct {
 };
 
 pub const auto_allocator = Allocator{
-    .ptr = undefined,
+    .ptr = memory_allocator_tags.auto_allocator_tag_ptr,
     .vtable = &auto_allocator_vtable,
 };
 const auto_allocator_vtable = Allocator.VTable{

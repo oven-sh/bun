@@ -1177,6 +1177,10 @@ pub const VirtualMachine = struct {
             }
         }
 
+        if (map.get("NODE_PRESERVE_SYMLINKS")) |_| {
+            this.transpiler.resolver.opts.preserve_symlinks = true;
+        }
+
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
@@ -2077,6 +2081,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
         vm.transpiler.resolver.prefer_module_field = false;
+        vm.transpiler.resolver.opts.preserve_symlinks = opts.args.preserve_symlinks orelse false;
 
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,

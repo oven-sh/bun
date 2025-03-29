@@ -1,4 +1,4 @@
-import { expectType } from "./utilities.test";
+import { expectType } from "./utilities";
 
 async function* listReleases() {
   for (let page = 1; ; page++) {

@@ -1,5 +1,12 @@
-import { FileSink, NullSubprocess, PipedSubprocess, ReadableSubprocess, SyncSubprocess, WritableSubprocess } from "bun";
-import * as tsd from "./utilities.test";
+import type {
+  FileSink,
+  NullSubprocess,
+  PipedSubprocess,
+  ReadableSubprocess,
+  SyncSubprocess,
+  WritableSubprocess,
+} from "bun";
+import * as tsd from "./utilities";
 
 Bun.spawn(["echo", "hello"]);
 

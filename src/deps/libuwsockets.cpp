@@ -1593,33 +1593,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
                    { cb(ctx); });
   }
 
-  void uws_res_write_headers(int ssl, uws_res_r res, const StringPointer *names,
-                             const StringPointer *values, size_t count,
-                             const char *buf) nonnull_fn_decl;
-  void uws_res_write_headers(int ssl, uws_res_r res, const StringPointer *names,
-                             const StringPointer *values, size_t count,
-                             const char *buf)
-  {
-    if (ssl)
-    {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      for (size_t i = 0; i < count; i++)
-      {
-        uwsRes->writeHeader(stringViewFromC(&buf[names[i].off], names[i].len),
-                            stringViewFromC(&buf[values[i].off], values[i].len));
-      }
-    }
-    else
-    {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      for (size_t i = 0; i < count; i++)
-      {
-        uwsRes->writeHeader(stringViewFromC(&buf[names[i].off], names[i].len),
-                            stringViewFromC(&buf[values[i].off], values[i].len));
-      }
-    }
-  }
-
   void uws_res_uncork(int ssl, uws_res_r res)
   {
     if (ssl)

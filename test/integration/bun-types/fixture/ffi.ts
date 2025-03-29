@@ -1,5 +1,5 @@
-import { CString, dlopen, FFIType, JSCallback, Pointer, read, suffix } from "bun:ffi";
-import * as tsd from "./utilities.test";
+import { dlopen, FFIType, JSCallback, read, suffix, type CString, type Pointer } from "bun:ffi";
+import * as tsd from "./utilities";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
 // you don't have to use "suffix", it's just there for convenience

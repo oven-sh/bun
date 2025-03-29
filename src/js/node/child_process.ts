@@ -285,24 +285,6 @@ function execFile(file, args, options, callback) {
       stderr = BufferConcat(_stderr);
     }
 
-    if (ex?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-      // maxbuf; limit stdout & stderr
-      if (typeof stdout === "string") {
-        const truncatedLen = options.maxBuffer; // this clearly isn't correct but it's how node does it
-        stdout = StringPrototypeSlice.$call(stdout, 0, truncatedLen);
-      } else {
-        const truncatedLen = options.maxBuffer;
-        stdout = stdout.slice(0, truncatedLen);
-      }
-      if (typeof stderr === "string") {
-        const truncatedLen = options.maxBuffer;
-        stderr = StringPrototypeSlice.$call(stderr, 0, truncatedLen);
-      } else {
-        const truncatedLen = options.maxBuffer;
-        stderr = stderr.slice(0, truncatedLen);
-      }
-    }
-
     if (!ex && code === 0 && signal === null) {
       callback(null, stdout, stderr);
       return;
@@ -1042,19 +1024,11 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #handleOnExit(exitCode, signalCode, err, reason) {
+  #handleOnExit(exitCode, signalCode, err) {
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
       this.exitCode = exitCode;
-    }
-
-    if (err == null && reason != null) {
-      if (reason === "max-buffer-stdout") {
-        err = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout maxBuffer length exceeded");
-      } else if (reason === "max-buffer-stderr") {
-        err = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr maxBuffer length exceeded");
-      }
     }
 
     // Drain stdio streams

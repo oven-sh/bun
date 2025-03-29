@@ -3813,8 +3813,6 @@ declare module "bun" {
     tls?: TLSOptions | TLSOptions[];
   }
 
-  type ExitReason = "timeout" | "max-buffer-stdout" | "max-buffer-stderr";
-
   interface ErrorLike extends Error {
     code?: string;
     errno?: number;
@@ -6476,7 +6474,6 @@ declare module "bun" {
          * If an error occurred in the call to waitpid2, this will be the error.
          */
         error?: ErrorLike,
-        reason?: ExitReason,
       ): void | Promise<void>;
 
       /**

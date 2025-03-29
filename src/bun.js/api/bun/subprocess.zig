@@ -1616,8 +1616,6 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 else
                     .undefined;
 
-            const exit_reason: JSValue = this.getExitReason();
-
             const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
             this_value.ensureStillAlive();
 
@@ -1626,7 +1624,6 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 this.getExitCode(globalThis),
                 this.getSignalCode(globalThis),
                 waitpid_value,
-                exit_reason,
             };
 
             if (!did_update_has_pending_activity) {
@@ -1641,17 +1638,6 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 &args,
             );
         }
-    }
-}
-
-fn getExitReason(this: *Subprocess) JSValue {
-    if (this.event_loop_timer.state == .FIRED) {
-        return bun.String.static("timeout").toJS(this.globalThis);
-    } else if (this.exited_due_to_maxbuf) |maxbuf| switch (maxbuf) {
-        .stdout => return bun.String.static("max-buffer-stdout").toJS(this.globalThis),
-        .stderr => return bun.String.static("max-buffer-stderr").toJS(this.globalThis),
-    } else {
-        return .undefined;
     }
 }
 

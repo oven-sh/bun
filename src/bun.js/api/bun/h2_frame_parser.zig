@@ -1141,18 +1141,27 @@ pub const H2FrameParser = struct {
     fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) bool {
         this.usedWindowSize += payloadSize;
         if (this.usedWindowSize >= this.windowSize) {
-            var increment_size: u32 = WINDOW_INCREMENT_SIZE;
-            var new_size = this.windowSize +| increment_size;
+            const increment_size: u32 = WINDOW_INCREMENT_SIZE;
+            const new_size = this.windowSize +| increment_size;
             if (new_size > MAX_WINDOW_SIZE) {
-                new_size = MAX_WINDOW_SIZE;
-                increment_size = this.windowSize -| MAX_WINDOW_SIZE;
-            }
-            if (new_size == this.windowSize) {
-                this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                // A sender MUST NOT allow a flow-control window to exceed 2^31-1 octets.
+                // If a sender receives a WINDOW_UPDATE that causes a flow-control window to exceed this maximum, it MUST terminate either the stream or the connection, as appropriate.
+                // For streams, the sender sends a RST_STREAM with an error code of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with an error code of FLOW_CONTROL_ERROR is sent.
+                if (stream) |s| {
+                    this.endStream(
+                        s,
+                        .FLOW_CONTROL_ERROR,
+                        true,
+                    );
+                } else {
+                    this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                }
                 return false;
             }
-            this.windowSize = new_size;
+
             this.sendWindowUpdate(0, UInt31WithReserved.from(increment_size));
+            this.windowSize = this.localSettings.initialWindowSize;
+            this.usedWindowSize = 0;
         }
 
         if (stream) |s| {
@@ -1196,7 +1205,7 @@ pub const H2FrameParser = struct {
         this.localSettings = settings;
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
-        _ = this.ajustWindowSize(null, @intCast(buffer.len));
+        _ = this.ajustWindowSize(null, @intCast(settingsHeader.length));
         return true;
     }
 
@@ -1229,7 +1238,7 @@ pub const H2FrameParser = struct {
         _ = this.write(&buffer);
     }
 
-    pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
+    pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode, emitError: bool) void {
         log("HTTP_FRAME_RST_STREAM id: {} code: {}", .{ stream.id, @intFromEnum(rstCode) });
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
@@ -1252,10 +1261,12 @@ pub const H2FrameParser = struct {
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
         stream.freeResources(this, false);
-        if (rstCode == .NO_ERROR) {
-            this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-        } else {
-            this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
+        if (emitError) {
+            if (rstCode == .NO_ERROR) {
+                this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+            } else {
+                this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
+            }
         }
 
         _ = this.write(&buffer);
@@ -1318,7 +1329,7 @@ pub const H2FrameParser = struct {
         if (alt.len > 0) {
             _ = this.write(alt);
         }
-        _ = this.ajustWindowSize(null, @intCast(frame.length + FrameHeader.byteSize));
+        _ = this.ajustWindowSize(null, @intCast(frame.length));
     }
 
     pub fn sendPing(this: *H2FrameParser, ack: bool, payload: []const u8) void {
@@ -1360,7 +1371,7 @@ pub const H2FrameParser = struct {
         _ = settingsHeader.write(@TypeOf(writer), writer);
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&preface_buffer);
-        _ = this.ajustWindowSize(null, @intCast(preface_buffer.len));
+        _ = this.ajustWindowSize(null, @intCast(preface_buffer.len - FrameHeader.byteSize));
     }
 
     pub fn sendSettingsACK(this: *H2FrameParser) void {
@@ -1377,7 +1388,7 @@ pub const H2FrameParser = struct {
         };
         _ = settingsHeader.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
-        _ = this.ajustWindowSize(null, @intCast(buffer.len));
+        _ = this.ajustWindowSize(null, @intCast(settingsHeader.length));
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
@@ -1753,6 +1764,7 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             const windowSizeIncrement = UInt31WithReserved.fromBytes(payload);
+
             this.readBuffer.reset();
             // we automatically send a window update when receiving one if we are a client
             if (!this.isServer) {
@@ -1760,9 +1772,21 @@ pub const H2FrameParser = struct {
             }
             if (stream) |s| {
                 s.windowSize += windowSizeIncrement.uint31;
+
+                if (s.windowSize > MAX_WINDOW_SIZE) {
+                    this.endStream(
+                        s,
+                        .FLOW_CONTROL_ERROR,
+                        true,
+                    );
+                }
             } else {
                 this.windowSize += windowSizeIncrement.uint31;
+                if (this.windowSize > MAX_WINDOW_SIZE) {
+                    this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                }
             }
+
             log("windowSizeIncrement stream {} value {}", .{ frame.streamIdentifier, windowSizeIncrement.uint31 });
             return content.end;
         }
@@ -1799,7 +1823,7 @@ pub const H2FrameParser = struct {
                 if (this.maxRejectedStreams <= this.rejectedStreams) {
                     this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
                 } else {
-                    this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
+                    this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM, true);
                 }
                 if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
                 return null;
@@ -2286,6 +2310,11 @@ pub const H2FrameParser = struct {
                 var unit: SettingsPayloadUnit = undefined;
                 SettingsPayloadUnit.from(&unit, payload[i .. i + settingByteSize], 0, true);
                 remoteSettings.updateWith(unit);
+                if (remoteSettings.initialWindowSize > MAX_WINDOW_SIZE) {
+                    // Values above the maximum flow-control window size of 2^31-1 MUST be treated as a connection error (Section 5.4.1) of type FLOW_CONTROL_ERROR.
+                    this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                    return content.end;
+                }
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
@@ -2698,7 +2727,6 @@ pub const H2FrameParser = struct {
             };
             _ = frame.write(@TypeOf(writer), writer);
             _ = this.write(&buffer);
-            _ = this.ajustWindowSize(null, @intCast(FrameHeader.byteSize));
             return .undefined;
         }
 
@@ -2728,7 +2756,7 @@ pub const H2FrameParser = struct {
             if (slice.len > 0) {
                 _ = this.write(slice);
             }
-            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
+            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)));
         } else if (origin_arg.isArray()) {
             var buffer: [FrameHeader.byteSize + 16384]u8 = undefined;
             @memset(&buffer, 0);
@@ -2765,7 +2793,7 @@ pub const H2FrameParser = struct {
             stream.reset();
             _ = frame.write(@TypeOf(writer), writer);
             _ = this.write(buffer[0..total_length]);
-            _ = this.ajustWindowSize(null, total_length);
+            _ = this.ajustWindowSize(null, frame.length);
         }
         return .undefined;
     }
@@ -3033,7 +3061,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid ErrorCode", .{});
         }
 
-        this.endStream(stream, @enumFromInt(error_code));
+        this.endStream(stream, @enumFromInt(error_code), true);
 
         return JSC.JSValue.jsBoolean(true);
     }

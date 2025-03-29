@@ -382,7 +382,7 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSValue ffree = callFrame->argument(6);
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
-    object->putDirect(vm, Identifier::fromString(vm, "type"_s), type, 0);
+    object->putDirect(vm, vm.propertyNames->type, type, 0);
     object->putDirect(vm, Identifier::fromString(vm, "bsize"_s), bsize, 0);
     object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
     object->putDirect(vm, Identifier::fromString(vm, "bfree"_s), bfree, 0);

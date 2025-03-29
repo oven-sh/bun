@@ -1,5 +1,5 @@
-import { Changes, Database } from "bun:sqlite";
-import { expectType } from "./utilities.test";
+import { type Changes, Database } from "bun:sqlite";
+import { expectType } from "./utilities";
 
 const db = new Database(":memory:");
 const query1 = db.query<

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { expectType } from "./utilities.test";
+import { expectType } from "./utilities";
 
 const spy = spyOn(console, "log");
 expectType<any[][]>(spy.mock.calls);
@@ -93,8 +93,8 @@ const data = [
   ["a", true, 5],
   ["b", false, "asdf"],
 ];
-test.each(data)("test.each", (...args) => {
-  expectType<string | number | boolean>(args[0]);
+test.each(data)("test.each", arg => {
+  expectType<string | number | boolean>(arg);
 });
 describe.each(data)("test.each", (a, b, c) => {
   expectType<string | number | boolean>(a);

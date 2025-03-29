@@ -4,7 +4,7 @@ constants.O_APPEND;
 
 import * as fs from "fs";
 import { exists } from "fs/promises";
-import * as tsd from "./utilities.test";
+import * as tsd from "./utilities";
 
 tsd.expectType<Promise<boolean>>(exists("/etc/passwd"));
 tsd.expectType<Promise<boolean>>(fs.promises.exists("/etc/passwd"));

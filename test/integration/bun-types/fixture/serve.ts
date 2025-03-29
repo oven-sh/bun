@@ -10,8 +10,10 @@ Bun.serve({
     console.log(req.url); // => http://localhost:3000/
     return new Response("Hello World");
   },
-  keyFile: "ca.pem",
-  certFile: "cert.pem",
+  tls: {
+    key: "ca.pem",
+    cert: "cert.pem",
+  },
 });
 
 Bun.serve({
@@ -34,9 +36,7 @@ Bun.serve({
   },
 });
 
-Bun.serve<{
-  name: string;
-}>({
+Bun.serve({
   fetch(req, server) {
     const url = new URL(req.url);
     if (url.pathname === "/chat") {
@@ -58,7 +58,7 @@ Bun.serve<{
   },
 
   websocket: {
-    open(ws) {
+    open(ws: Bun.ServerWebSocket<{ name: string }>) {
       console.log("WebSocket opened");
       ws.subscribe("the-group-chat");
     },
@@ -111,33 +111,113 @@ Bun.serve({
   },
 });
 
+// Bun.serve({
+//   unix: "/tmp/bun.sock",
+//   fetch(req, server) {
+//     server.upgrade(req);
+//     if (Math.random() > 0.5) return undefined;
+//     return new Response();
+//   },
+//   websocket: { message() {} },
+// });
+
+// Bun.serve({
+//   unix: "/tmp/bun.sock",
+//   fetch(req, server) {
+//     server.upgrade(req);
+//     if (Math.random() > 0.5) return undefined;
+//     return new Response();
+//   },
+//   websocket: { message() {} },
+//   tls: {},
+// });
+
 Bun.serve({
-  unix: "/tmp/bun.sock",
-  fetch(req, server) {
-    server.upgrade(req);
-    if (Math.random() > 0.5) return undefined;
-    return new Response();
+  routes: {
+    "/:test": req => {
+      return new Response(req.params.test);
+    },
   },
-  websocket: { message() {} },
+
+  fetch: (req, server) => {
+    if (!server.upgrade(req)) {
+      return new Response("not upgraded");
+    }
+  },
+
+  websocket: {
+    message: ws => {
+      ws.data;
+      ws.send(" ");
+    },
+  },
 });
 
 Bun.serve({
-  unix: "/tmp/bun.sock",
-  fetch() {
-    return new Response();
+  routes: {
+    "/:test": req => {
+      return new Response(req.params.test);
+    },
   },
-  tls: {},
+
+  fetch: (req, server) => {
+    return new Response("cool");
+  },
 });
 
 Bun.serve({
-  unix: "/tmp/bun.sock",
-  fetch(req, server) {
-    server.upgrade(req);
-    if (Math.random() > 0.5) return undefined;
-    return new Response();
+  fetch: (req, server) => {
+    return new Response("cool");
   },
-  websocket: { message() {} },
-  tls: {},
+});
+
+Bun.serve({
+  routes: {
+    "/:test": req => {
+      return new Response(req.params.test);
+    },
+  },
+});
+
+Bun.serve({
+  fetch: () => new Response("ok"),
+  websocket: {
+    message: ws => {
+      //
+    },
+  },
+});
+
+Bun.serve({
+  websocket: {
+    message: () => {
+      //
+    },
+  },
+  fetch: (req, server) => {
+    if (server.upgrade(req)) {
+      return;
+    }
+
+    return new Response("not upgraded");
+  },
+});
+
+Bun.serve({
+  websocket: {
+    message: () => {
+      //
+    },
+  },
+  routes: {
+    "/ws": (req, server) => {
+      if (server.upgrade(req)) {
+        return;
+      }
+
+      return new Response("not upgraded");
+    },
+  },
 });
 
 Bun.serve({

@@ -40,7 +40,6 @@ declare module "bun" {
   type SignalsListener = (signal: NodeJS.Signals) => void;
   type BlobPart = string | Blob | BufferSource;
   type TimerHandler = (...args: any[]) => void;
-
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
@@ -3813,6 +3812,14 @@ declare module "bun" {
     tls?: TLSOptions | TLSOptions[];
   }
 
+  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
+  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
   interface ErrorLike extends Error {
     code?: string;
     errno?: number;
@@ -4011,14 +4018,6 @@ declare module "bun" {
      * @deprecated `Use .tls.secureOptions` instead
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
-  }
-
-  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
-  }
-
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
   }
 
   interface SocketAddress {

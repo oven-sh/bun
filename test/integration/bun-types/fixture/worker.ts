@@ -1,5 +1,5 @@
 import { Worker as NodeWorker } from "node:worker_threads";
-import * as tsd from "./utilities.test";
+import * as tsd from "./utilities";
 
 const webWorker = new Worker("./worker.js");
 
@@ -18,6 +18,7 @@ webWorker.postMessage("asdf", []);
 webWorker.terminate();
 webWorker.addEventListener("close", () => {});
 webWorker.removeEventListener("sadf", () => {});
+
 // these methods don't exist if lib.dom.d.ts is present
 webWorker.ref();
 webWorker.unref();

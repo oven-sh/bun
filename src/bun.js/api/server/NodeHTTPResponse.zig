@@ -532,7 +532,6 @@ pub fn onTimeout(this: *NodeHTTPResponse, _: uws.AnyResponse) void {
     this.handleAbortOrTimeout(.timeout, .zero);
 }
 
-
 pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
     _ = globalObject; // autofix
     _ = callframe; // autofix
@@ -681,7 +680,6 @@ fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, la
         }
     }
 }
-
 
 fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event: AbortEvent, thisValue: JSC.JSValue) void {
     if (last) {

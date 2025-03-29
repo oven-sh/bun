@@ -9,6 +9,8 @@
     "@types/puppeteer": "7.0.4"
   },
   "dependencies": {
+    "@astrojs/node": "9.1.3",
+    "astro": "5.5.5",
     "@azure/service-bus": "7.9.4",
     "@duckdb/node-api": "1.1.3-alpha.7",
     "@electric-sql/pglite": "0.2.17",

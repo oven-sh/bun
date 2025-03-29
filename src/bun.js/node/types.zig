@@ -1212,6 +1212,7 @@ pub const ArgumentsSlice = struct {
         this.remaining = this.remaining[1..];
     }
 
+    /// Peek the next argument without eating it
     pub fn next(this: *ArgumentsSlice) ?JSC.JSValue {
         if (this.remaining.len == 0) {
             return null;

@@ -1027,7 +1027,6 @@ pub const Test = struct {
     }
 
     pub fn make(comptime testName: string, data: anytype) !Router {
-        std.testing.refAllDecls(@import("./bun.js/bindings/exports.zig"));
         try makeTest(testName, data);
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);

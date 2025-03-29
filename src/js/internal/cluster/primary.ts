@@ -152,6 +152,10 @@ cluster.fork = function (env) {
     cluster.emit("exit", worker, exitCode, signalCode);
   });
 
+  worker.process.once("close", () => {
+    worker.process.channel = null;
+    // this shouldn't be necessary, but sometimes on linux 'close' is emitted before 'disconnect'
+  });
   worker.process.once("disconnect", () => {
     worker.process.channel = null;
     /*

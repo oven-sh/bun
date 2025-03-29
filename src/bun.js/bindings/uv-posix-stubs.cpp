@@ -830,12 +830,6 @@ UV_EXTERN int uv_has_ref(const uv_handle_t*)
     __builtin_unreachable();
 }
 
-UV_EXTERN uint64_t uv_hrtime(void)
-{
-    __bun_throw_not_implemented("uv_hrtime");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_idle_init(uv_loop_t*, uv_idle_t* idle)
 {
     __bun_throw_not_implemented("uv_idle_init");
@@ -1063,51 +1057,9 @@ UV_EXTERN int uv_metrics_info(uv_loop_t* loop, uv_metrics_t* metrics)
     __builtin_unreachable();
 }
 
-UV_EXTERN void uv_mutex_destroy(uv_mutex_t* handle)
-{
-    __bun_throw_not_implemented("uv_mutex_destroy");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_mutex_init(uv_mutex_t* handle)
-{
-    __bun_throw_not_implemented("uv_mutex_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_mutex_init_recursive(uv_mutex_t* handle)
-{
-    __bun_throw_not_implemented("uv_mutex_init_recursive");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_mutex_lock(uv_mutex_t* handle)
-{
-    __bun_throw_not_implemented("uv_mutex_lock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_mutex_trylock(uv_mutex_t* handle)
-{
-    __bun_throw_not_implemented("uv_mutex_trylock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_mutex_unlock(uv_mutex_t* handle)
-{
-    __bun_throw_not_implemented("uv_mutex_unlock");
-    __builtin_unreachable();
-}
-
 UV_EXTERN uint64_t uv_now(const uv_loop_t*)
 {
     __bun_throw_not_implemented("uv_now");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_once(uv_once_t* guard, void (*callback)(void))
-{
-    __bun_throw_not_implemented("uv_once");
     __builtin_unreachable();
 }
 

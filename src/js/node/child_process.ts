@@ -241,6 +241,7 @@ function execFile(file, args, options, callback) {
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
     signal: options.signal,
+    maxBuffer: options.maxBuffer,
   });
 
   let encoding;
@@ -270,16 +271,15 @@ function execFile(file, args, options, callback) {
 
     if (!callback) return;
 
-    const readableEncoding = child?.stdout?.readableEncoding;
     // merge chunks
     let stdout;
     let stderr;
-    if (encoding || (child.stdout && readableEncoding)) {
+    if (child.stdout?.readableEncoding) {
       stdout = ArrayPrototypeJoin.$call(_stdout, "");
     } else {
       stdout = BufferConcat(_stdout);
     }
-    if (encoding || (child.stderr && readableEncoding)) {
+    if (child.stderr?.readableEncoding) {
       stderr = ArrayPrototypeJoin.$call(_stderr, "");
     } else {
       stderr = BufferConcat(_stderr);
@@ -339,83 +339,62 @@ function execFile(file, args, options, callback) {
     }, options.timeout).unref();
   }
 
-  const onData = (array, kind) => {
-    let total = 0;
-    let encodedLength;
-    return encoding
-      ? function onDataEncoded(chunk) {
-          total += chunk.length;
-
-          if (total > maxBuffer) {
-            const out = child[kind];
-            const encoding = out.readableEncoding;
-            const actualLen = Buffer.byteLength(chunk, encoding);
-            if (encodedLength === undefined) {
-              encodedLength = 0;
-
-              for (let i = 0, length = array.length; i < length; i++) {
-                encodedLength += Buffer.byteLength(array[i], encoding);
-              }
-            }
-
-            encodedLength += actualLen;
-
-            if (encodedLength > maxBuffer) {
-              const joined = ArrayPrototypeJoin.$call(array, "");
-              let combined = joined + chunk;
-              combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
-              array.length = 1;
-              array[0] = combined;
-              ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
-              kill();
-            } else {
-              const val = ArrayPrototypeJoin.$call(array, "") + chunk;
-              array.length = 1;
-              array[0] = val;
-            }
-          } else {
-            $arrayPush(array, chunk);
-          }
-        }
-      : function onDataRaw(chunk) {
-          total += chunk.length;
-
-          if (total > maxBuffer) {
-            const truncatedLen = maxBuffer - (total - chunk.length);
-            $arrayPush(array, chunk.slice(0, truncatedLen));
-
-            ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
-            kill();
-          } else {
-            $arrayPush(array, chunk);
-          }
-        };
-  };
-
+  let stdoutLen = 0,
+    stderrLen = 0;
   if (child.stdout) {
     if (encoding) child.stdout.setEncoding(encoding);
 
-    child.stdout.on(
-      "data",
-      maxBuffer === Infinity
-        ? function onUnlimitedSizeBufferedData(chunk) {
-            $arrayPush(_stdout, chunk);
-          }
-        : onData(_stdout, "stdout"),
-    );
+    child.stdout.on("data", function onDataStdout(chunk) {
+      // Do not need to count the length
+      if (options.maxBuffer === Infinity) {
+        $arrayPush(_stdout, chunk);
+        return;
+      }
+      const encoding = child.stdout.readableEncoding;
+      const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
+      const slice = encoding
+        ? (buf, ...args) => String.prototype.slice.$call(buf, ...args)
+        : (buf, ...args) => buf.slice(...args);
+      stdoutLen += length;
+
+      if (stdoutLen > options.maxBuffer) {
+        const truncatedLen = options.maxBuffer - (stdoutLen - length);
+        $arrayPush(_stdout, slice(chunk, 0, truncatedLen));
+
+        ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
+        kill();
+      } else {
+        $arrayPush(_stdout, chunk);
+      }
+    });
   }
 
   if (child.stderr) {
     if (encoding) child.stderr.setEncoding(encoding);
 
-    child.stderr.on(
-      "data",
-      maxBuffer === Infinity
-        ? function onUnlimitedSizeBufferedData(chunk) {
-            $arrayPush(_stderr, chunk);
-          }
-        : onData(_stderr, "stderr"),
-    );
+    child.stderr.on("data", function onDataStderr(chunk) {
+      // Do not need to count the length
+      if (options.maxBuffer === Infinity) {
+        $arrayPush(_stderr, chunk);
+        return;
+      }
+      const encoding = child.stderr.readableEncoding;
+      const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
+      const slice = encoding
+        ? (buf, ...args) => String.prototype.slice.$call(buf, ...args)
+        : (buf, ...args) => buf.slice(...args);
+      stderrLen += length;
+
+      if (stderrLen > options.maxBuffer) {
+        const truncatedLen = options.maxBuffer - (stderrLen - length);
+        $arrayPush(_stderr, slice(chunk, 0, truncatedLen));
+
+        ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
+        kill();
+      } else {
+        $arrayPush(_stderr, chunk);
+      }
+    });
   }
 
   child.addListener("close", exitHandler);
@@ -563,6 +542,7 @@ function spawnSync(file, args, options) {
       exitCode,
       signalCode,
       exitedDueToTimeout,
+      exitedDueToMaxBuffer,
       pid,
     } = Bun.spawnSync({
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
@@ -577,6 +557,7 @@ function spawnSync(file, args, options) {
       argv0: options.args[0],
       timeout: options.timeout,
       killSignal: options.killSignal,
+      maxBuffer: options.maxBuffer,
     });
   } catch (err) {
     error = err;
@@ -616,6 +597,15 @@ function spawnSync(file, args, options) {
       "ETIMEDOUT",
     );
   }
+  if (exitedDueToMaxBuffer && error == null) {
+    result.error = new SystemError(
+      "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
+      options.file,
+      "spawnSync " + options.file,
+      enobufsErrorCode(),
+      "ENOBUFS",
+    );
+  }
 
   if (result.error) {
     result.error.syscall = "spawnSync " + options.file;
@@ -625,6 +615,7 @@ function spawnSync(file, args, options) {
   return result;
 }
 const etimedoutErrorCode = $newZigFunction("node_util_binding.zig", "etimedoutErrorCode", 0);
+const enobufsErrorCode = $newZigFunction("node_util_binding.zig", "enobufsErrorCode", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1310,20 +1301,20 @@ class ChildProcess extends EventEmitter {
         cwd: options.cwd || undefined,
         env: env,
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
-        onExit: (handle, exitCode, signalCode, err) => {
+        onExit: (handle, exitCode, signalCode, err, reason) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
-          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid, reason);
 
           if (hasSocketsToEagerlyLoad) {
             process.nextTick(() => {
               this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid, reason);
             });
           }
 
           process.nextTick(
-            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
+            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err, reason),
             exitCode,
             signalCode,
             err,
@@ -1336,6 +1327,7 @@ class ChildProcess extends EventEmitter {
         argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+        maxBuffer: options.maxBuffer,
       });
       this.pid = this.#handle.pid;
 
@@ -1348,6 +1340,15 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
+        this.channel = new Control();
+        Object.defineProperty(this, "_channel", {
+          get() {
+            return this.channel;
+          },
+          set(value) {
+            this.channel = value;
+          },
+        });
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
@@ -1416,8 +1417,8 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
-    this.#maybeClose();
     process.nextTick(() => this.emit("disconnect"));
+    process.nextTick(() => this.#maybeClose());
   }
   #disconnect() {
     if (!this.connected) {
@@ -1425,6 +1426,7 @@ class ChildProcess extends EventEmitter {
       return;
     }
     this.#handle.disconnect();
+    this.channel = null;
   }
 
   kill(sig?) {
@@ -1609,6 +1611,12 @@ function abortChildProcess(child, killSignal, reason) {
     }
   } catch (err) {
     child.emit("error", err);
+  }
+}
+
+class Control extends EventEmitter {
+  constructor() {
+    super();
   }
 }
 
@@ -1881,12 +1889,6 @@ function genericNodeError(message, errorProperties) {
 //   },
 //   TypeError
 // );
-
-function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
-  const err = Error(`${stdio} maxBuffer length exceeded`);
-  err.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-  return err;
-}
 
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);

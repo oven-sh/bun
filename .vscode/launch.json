@@ -1118,7 +1118,11 @@
       "request": "attach",
       "name": "rr",
       "trace": "Off",
-      "setupCommands": ["handle SIGPWR nostop noprint pass"],
+      "setupCommands": [
+        "handle SIGPWR nostop noprint pass",
+        "source ${workspaceFolder}/misctools/gdb/std_gdb_pretty_printers.py",
+        "source ${workspaceFolder}/misctools/gdb/zig_gdb_pretty_printers.py",
+      ],
     },
   ],
   "inputs": [

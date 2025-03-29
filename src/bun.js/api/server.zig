@@ -6531,12 +6531,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
-                    node_response.setOnAbortedHandler();
-                }
-                // If we ended the response without attaching an ondata handler, we discard the body read stream
-                else if (http_result != .pending) {
-                    node_response.maybeStopReadingBody(vm);
+                if (!node_response.flags.upgraded) {
+                    if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                        node_response.setOnAbortedHandler();
+                    }
+                    // If we ended the response without attaching an ondata handler, we discard the body read stream
+                    else if (http_result != .pending) {
+                        node_response.maybeStopReadingBody(vm, node_response.getThisValue());
+                    }
                 }
             }
         }

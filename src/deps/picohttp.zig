@@ -13,6 +13,8 @@ const fmt = std.fmt;
 
 const assert = bun.assert;
 
+pub const ChunkedDecoder = c.ChunkedDecoder;
+
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
@@ -369,5 +371,3 @@ pub const Headers = struct {
         };
     }
 };
-
-pub usingnamespace c;

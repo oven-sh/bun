@@ -13,15 +13,13 @@ pub const ResolvedSource = extern struct {
 
     is_commonjs_module: bool = false,
 
-    /// When .tag is .common_js_custom_extension, this is special-cased to hold
-    /// the index of the extension, since the module is stored in a WriteBarrier.
-    cjs_custom_extension_index: u32 = 0,
+    hash: u32 = 0,
 
     allocator: ?*anyopaque = null,
 
     jsvalue_for_export: JSValue = .zero,
 
-    tag: Tag = .javascript,
+    tag: Tag = Tag.javascript,
 
     /// This is for source_code
     source_code_needs_deref: bool = true,

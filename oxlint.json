@@ -31,7 +31,8 @@
     "test/bundler/native-plugin.test.ts", // parser doesn't handle import metadata
     "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
     "test/js/node/module/extensions-fixture", // these files are not meant to be linted
-    "test/cli/run/module-type-fixture"
+    "test/cli/run/module-type-fixture",
+    "test/bundler/transpiler/with-statement-works.js" // parser doesn't allow `with` statement
   ],
   "overrides": [
     {

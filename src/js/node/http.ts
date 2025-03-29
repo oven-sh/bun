@@ -1475,6 +1475,27 @@ const IncomingMessagePrototype = {
       emitErrorNextTickIfErrorListenerNT(this, err, cb);
     }
   },
+  get headersDistinct() {
+    if (this[Symbol.for("headersDistinctCache")]) {
+      return this[Symbol.for("headersDistinctCache")];
+    }
+
+    const headers: { [key: string]: string[] } = {};
+    const rawHeaders = this.rawHeaders;
+
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      const key = rawHeaders[i].toLowerCase();
+      const value = rawHeaders[i + 1];
+
+      if (!headers[key]) {
+        headers[key] = [];
+      }
+      headers[key].push(value);
+    }
+
+    this[Symbol.for("headersDistinctCache")] = headers;
+    return headers;
+  },
   get aborted() {
     return this[abortedSymbol];
   },

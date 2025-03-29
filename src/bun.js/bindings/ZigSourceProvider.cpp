@@ -53,19 +53,19 @@ extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL)
 {
-    return ByteRangeMapping__find(Bun::toString(sourceURL));
+    return ByteRangeMapping__find(Bun::toStringNonRef(sourceURL));
 }
 
 extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 {
-    void* mappings = ByteRangeMapping__find(Bun::toString(sourceURL));
+    void* mappings = ByteRangeMapping__find(Bun::toStringNonRef(sourceURL));
     if (!mappings) {
         return 0;
     }
 
-    return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
+    return ByteRangeMapping__getSourceID(mappings, Bun::toStringNonRef(sourceURL));
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
@@ -130,7 +130,7 @@ Ref<SourceProvider> SourceProvider::create(
     auto provider = getProvider();
 
     if (shouldGenerateCodeCoverage) {
-        ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
+        ByteRangeMapping__generate(Bun::toStringNonRef(provider->sourceURL()), Bun::toStringNonRef(provider->source().toStringWithoutCopying()), provider->asID());
     }
 
     if (resolvedSource.already_bundled) {
@@ -148,7 +148,7 @@ StringView SourceProvider::source() const
 SourceProvider::~SourceProvider()
 {
     if (m_resolvedSource.already_bundled) {
-        BunString str = Bun::toString(sourceURL());
+        BunString str = Bun::toStringNonRef(sourceURL());
         Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
     }
 }

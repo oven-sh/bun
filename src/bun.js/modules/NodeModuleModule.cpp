@@ -269,7 +269,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
     if (trailingSlash) {
-        BunString lhs = Bun::toString(val);
+        BunString lhs = Bun::toStringNonRef(val);
         BunString result;
         Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1, &result);
         val = result.toWTFString();
@@ -516,7 +516,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 
     String request = request_value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    BunString request_bun_str = Bun::toString(request);
+    BunString request_bun_str = Bun::toStringNonRef(request);
 
     JSArray* paths = paths_value.isCell() ? jsDynamicCast<JSArray*>(paths_value) : nullptr;
 

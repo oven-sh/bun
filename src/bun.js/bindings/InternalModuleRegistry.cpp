@@ -22,9 +22,9 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {
 #if ASSERT_ENABLED
     bool isCodeCoverageEnabled = !!vm.controlFlowProfiler();
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(Bun::toString(code.provider()->sourceURL()));
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(Bun::toStringNonRef(code.provider()->sourceURL()));
     if (shouldGenerateCodeCoverage) {
-        ByteRangeMapping__generate(Bun::toString(code.provider()->sourceURL()), Bun::toString(code.provider()->source().toStringWithoutCopying()), code.provider()->asID());
+        ByteRangeMapping__generate(Bun::toStringNonRef(code.provider()->sourceURL()), Bun::toStringNonRef(code.provider()->source().toStringWithoutCopying()), code.provider()->asID());
     }
 #endif
 }

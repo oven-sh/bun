@@ -124,7 +124,7 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
     JSValue result = slot.getValue(globalObject, prop);
     RETURN_IF_EXCEPTION(scope, {});
 
-    *propertyName = Bun::toString(prop.impl());
+    *propertyName = Bun::toStringNonRef(prop.impl());
     return JSValue::encode(result);
 }
 
@@ -148,7 +148,7 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
     JSValue result = slot.getValue(globalObject, prop);
     RETURN_IF_EXCEPTION(scope, {});
 
-    *propertyName = Bun::toString(prop.impl());
+    *propertyName = Bun::toStringNonRef(prop.impl());
     return JSValue::encode(result);
 }
 
@@ -174,14 +174,14 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
     JSValue result = slot.getPureResult();
     RETURN_IF_EXCEPTION(scope, {});
 
-    *propertyName = Bun::toString(prop.impl());
+    *propertyName = Bun::toStringNonRef(prop.impl());
     return JSValue::encode(result);
 }
 
 extern "C" void Bun__JSPropertyIterator__getName(JSPropertyIterator* iter, BunString* propertyName, size_t i)
 {
     const auto& prop = iter->properties->propertyNameVector()[i];
-    *propertyName = Bun::toString(prop.impl());
+    *propertyName = Bun::toStringNonRef(prop.impl());
 }
 
 extern "C" void Bun__JSPropertyIterator__deinit(JSPropertyIterator* iter)

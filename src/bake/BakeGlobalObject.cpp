@@ -39,7 +39,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
             return promise;
         }
 
-        BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
+        BunString result = BakeProdResolve(global, Bun::toStringNonRef(refererString), Bun::toStringNonRef(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
@@ -65,7 +65,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
         if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
-            BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+            BunString result = BakeProdResolve(global, Bun::toStringNonRef(referrer.getString(global)), Bun::toStringNonRef(keyString));
             RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
             return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
@@ -109,7 +109,7 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
 
     if (moduleKey.startsWith("bake:/"_s)) {
         if (LIKELY(global->m_perThreadData)) {
-            BunString source = BakeProdLoad(global->m_perThreadData, Bun::toString(moduleKey));
+            BunString source = BakeProdLoad(global->m_perThreadData, Bun::toStringNonRef(moduleKey));
             if (source.tag != BunStringTag::Dead) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(

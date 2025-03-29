@@ -1151,8 +1151,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // This is always a new JSCommonJSModule object; cast cannot fail.
     JSCommonJSModule* child = jsCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
 
-    BunString specifierStr = Bun::toString(specifier);
-    BunString referrerStr = Bun::toString(referrer);
+    BunString specifierStr = Bun::toStringNonRef(specifier);
+    BunString referrerStr = Bun::toStringNonRef(referrer);
     BunString typeAttributeStr = { BunStringTag::Dead };
     String typeAttribute = String();
 
@@ -1170,7 +1170,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
                 if (typeValue.isString()) {
                     typeAttribute = typeValue.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(throwScope, {});
-                    typeAttributeStr = Bun::toString(typeAttribute);
+                    typeAttributeStr = Bun::toStringNonRef(typeAttribute);
                 }
             }
             RETURN_IF_EXCEPTION(throwScope, {});
@@ -1217,7 +1217,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     ErrorableResolvedSource res;
-    BunString specifierStr = Bun::toString(specifier);
+    BunString specifierStr = Bun::toStringNonRef(specifier);
     if (auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res)) {
         if (res.success)
             return JSC::JSValue::encode(result);

@@ -996,8 +996,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSInternalPromise* promise = pendingModule->internalPromise();
 
-    BunString specifier = Bun::toString(globalObject, specifierString);
-    BunString referrer = Bun::toString(globalObject, referrerString);
+    BunString specifier = Bun::toStringNonRef(globalObject, specifierString);
+    BunString referrer = Bun::toStringNonRef(globalObject, referrerString);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool wasModuleMock = pendingModule->wasModuleMock;

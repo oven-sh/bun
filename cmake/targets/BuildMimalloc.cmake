@@ -32,22 +32,29 @@ if(ENABLE_VALGRIND)
 endif()
 
 if(WIN32)
-  if(DEBUG)
+  if(DEBUG AND ENABLE_ASAN)
+    set(MIMALLOC_LIBRARY mimalloc-asan-static-debug)
+  elseif(DEBUG)
     set(MIMALLOC_LIBRARY mimalloc-static-debug)
   else()
     set(MIMALLOC_LIBRARY mimalloc-static)
   endif()
+elseif(DEBUG AND ENABLE_ASAN)
+  set(MIMALLOC_LIBRARY mimalloc-asan-debug)
 elseif(DEBUG)
   set(MIMALLOC_LIBRARY mimalloc-debug)
+elseif(ENABLE_ASAN)
+  set(MIMALLOC_LIBRARY mimalloc-asan)
 else()
   set(MIMALLOC_LIBRARY mimalloc)
 endif()
 
 # Workaround for linker issue on macOS and Linux x64
 # https://github.com/microsoft/mimalloc/issues/512
-if(APPLE OR (LINUX AND NOT DEBUG))
-  set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
-endif()
+# if(APPLE OR (LINUX AND NOT DEBUG))
+#   set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
+# endif()
+
 
 register_cmake_command(
   TARGET

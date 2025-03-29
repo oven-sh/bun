@@ -261,13 +261,13 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue js_fstype = JSC::jsDoubleNumber(fstype);
-    JSC::JSValue js_bsize = JSC::jsDoubleNumber(bsize);
-    JSC::JSValue js_blocks = JSC::jsDoubleNumber(blocks);
-    JSC::JSValue js_bfree = JSC::jsDoubleNumber(bfree);
-    JSC::JSValue js_bavail = JSC::jsDoubleNumber(bavail);
-    JSC::JSValue js_files = JSC::jsDoubleNumber(files);
-    JSC::JSValue js_ffree = JSC::jsDoubleNumber(ffree);
+    JSC::JSValue js_fstype = JSC::jsNumber(fstype);
+    JSC::JSValue js_bsize = JSC::jsNumber(bsize);
+    JSC::JSValue js_blocks = JSC::jsNumber(blocks);
+    JSC::JSValue js_bfree = JSC::jsNumber(bfree);
+    JSC::JSValue js_bavail = JSC::jsNumber(bavail);
+    JSC::JSValue js_files = JSC::jsNumber(files);
+    JSC::JSValue js_ffree = JSC::jsNumber(ffree);
 
     auto* structure = getStatFSStructure<false>(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);

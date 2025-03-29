@@ -1080,7 +1080,7 @@ function getRelevantTests(cwd) {
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(isNodeParallelTest);
+    tests = tests.filter(isNodeTest);
   }
 
   const isMatch = (testPath, filter) => {

@@ -14,9 +14,6 @@ server: AnyServer,
 /// So we need to buffer that data.
 /// This should be pretty uncommon though.
 buffered_request_body_data_during_pause: bun.ByteList = .{},
-is_data_buffered_during_pause: bool = false,
-/// Did we receive the last chunk of data during pause?
-is_data_buffered_during_pause_last: bool = false,
 
 upgrade_context: UpgradeCTX = .{},
 
@@ -30,7 +27,9 @@ pub const Flags = packed struct(u8) {
     upgraded: bool = false,
     hasCustomOnData: bool = false,
     is_request_pending: bool = true,
-    _reserved: u2 = 0,
+    is_data_buffered_during_pause: bool = false,
+    /// Did we receive the last chunk of data during pause?
+    is_data_buffered_during_pause_last: bool = false,
 };
 pub const UpgradeCTX = struct {
     context: ?*uws.uws_socket_context_t = null,
@@ -211,8 +210,6 @@ pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine, th
         if (had_ref) {
             this.markRequestAsDoneIfNecessary();
         }
-
-        this.deref();
     }
 }
 
@@ -298,7 +295,7 @@ pub fn create(
         // 1 - the JS object
         // 1 - the Server handler.
         // 1 - the onData callback (request body)
-        .ref_count = if (has_body.*) 4 else 3,
+        .ref_count = 3,
     });
     if (has_body.*) {
         response.body_read_ref.ref(vm);
@@ -351,7 +348,7 @@ pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSV
     if (this.buffered_request_body_data_during_pause.len > 0) {
         result |= 1 << 3;
     }
-    if (this.is_data_buffered_during_pause_last) {
+    if (this.flags.is_data_buffered_during_pause_last) {
         result |= 1 << 2;
     }
 
@@ -541,7 +538,7 @@ pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callf
         return .false;
     }
     if (this.body_read_ref.has and NodeHTTPResponse.onDataGetCached(thisValue) == null) {
-        this.is_data_buffered_during_pause = true;
+        this.flags.is_data_buffered_during_pause = true;
         this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
     }
 
@@ -570,9 +567,9 @@ pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, call
     }
 
     var result = JSC.JSValue.true;
-    if (this.is_data_buffered_during_pause) {
+    if (this.flags.is_data_buffered_during_pause) {
         this.raw_response.clearOnData();
-        this.is_data_buffered_during_pause = false;
+        this.flags.is_data_buffered_during_pause = false;
     }
 
     if (this.drainBufferedRequestBodyFromPause(globalObject)) |buffered_data| {
@@ -671,11 +668,10 @@ pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
 fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
     this.buffered_request_body_data_during_pause.append(bun.default_allocator, chunk) catch bun.outOfMemory();
     if (last) {
-        this.is_data_buffered_during_pause_last = true;
+        this.flags.is_data_buffered_during_pause_last = true;
         if (this.body_read_ref.has) {
             this.body_read_ref.unref(JSC.VirtualMachine.get());
             this.markRequestAsDoneIfNecessary();
-            this.deref();
         }
     }
 }
@@ -691,7 +687,6 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
             if (this.body_read_ref.has) {
                 this.body_read_ref.unref(JSC.VirtualMachine.get());
                 this.markRequestAsDoneIfNecessary();
-                this.deref();
             }
 
             this.deref();
@@ -837,7 +832,6 @@ fn writeOrEnd(
         // This is the equivalent of req._dump().
         if (this.body_read_ref.has and this.body_read_state == .pending and (!this.flags.hasCustomOnData or NodeHTTPResponse.onDataGetCached(this_value) == null)) {
             this.body_read_ref.unref(JSC.VirtualMachine.get());
-            this.deref();
             this.body_read_state = .none;
         }
 
@@ -943,12 +937,11 @@ fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalOb
 }
 
 pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-    if (value == .undefined or this.flags.ended or this.flags.socket_closed or this.body_read_state == .none or this.is_data_buffered_during_pause_last) {
+    if (value == .undefined or this.flags.ended or this.flags.socket_closed or this.body_read_state == .none or this.flags.is_data_buffered_during_pause_last) {
         NodeHTTPResponse.onDataSetCached(thisValue, globalObject, .undefined);
         defer {
             if (this.body_read_ref.has) {
                 this.body_read_ref.unref(globalObject.bunVM());
-                this.deref();
             }
         }
         switch (this.body_read_state) {
@@ -966,7 +959,7 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
     NodeHTTPResponse.onDataSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     this.flags.hasCustomOnData = true;
     this.raw_response.onData(*NodeHTTPResponse, onData, this);
-    this.is_data_buffered_during_pause = false;
+    this.flags.is_data_buffered_during_pause = false;
 
     if (!this.body_read_ref.has) {
         this.ref();

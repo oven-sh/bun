@@ -1357,6 +1357,28 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
     _handleError: undefined,
   };
 
+  var asyncContext = stream.$asyncContext;
+  const cancelAlgorithm = asyncContext
+    ? (reason) => {
+      var prev = $getInternalField($asyncContext, 0);
+      $putInternalField($asyncContext, 0, asyncContext);
+      // this does not throw, but can returns a rejected promise
+      var result = $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [
+        reason,
+      ]);
+      $putInternalField($asyncContext, 0, prev);
+      return result;
+    }
+    : (reason) =>
+      $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
+
+  $putByIdDirectPrivate(controller, "cancelAlgorithm", cancelAlgorithm);
+  $putByIdDirectPrivate(
+    controller,
+    "cancel",
+    $readableStreamDefaultControllerCancel,
+  );
+
   $putByIdDirectPrivate(this, "readableStreamController", controller);
   $putByIdDirectPrivate(this, "underlyingSource", undefined);
   $putByIdDirectPrivate(this, "start", undefined);

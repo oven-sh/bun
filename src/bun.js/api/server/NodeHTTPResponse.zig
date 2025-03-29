@@ -548,7 +548,10 @@ pub fn doPause(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFram
         this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
     }
 
-    this.raw_response.pause();
+    if (!Environment.isWindows) {
+        // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
+        this.raw_response.pause();
+    }
     return .true;
 }
 

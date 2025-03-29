@@ -1,4 +1,4 @@
-import { expectType } from "./utilities.test";
+import { expectType } from "./utilities";
 
 declare module "bun" {
   interface Env {

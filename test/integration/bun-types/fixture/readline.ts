@@ -5,6 +5,7 @@ const rl = readline.createInterface({
   output: process.stdout,
   terminal: true,
 });
+
 await rl.question("What is your age?\n").then(answer => {
   console.log("Your age is: " + answer);
 });

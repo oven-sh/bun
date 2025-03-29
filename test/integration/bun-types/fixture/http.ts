@@ -32,4 +32,10 @@ for (const q of sp) {
   console.log(q);
 }
 
-fetch;
+fetch("https://example.com", {
+  s3: {
+    accessKeyId: "123",
+    secretAccessKey: "456",
+  },
+  proxy: "cool",
+});

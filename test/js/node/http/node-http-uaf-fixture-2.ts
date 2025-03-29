@@ -18,7 +18,9 @@ for (let i = 0; i < 100; i++) {
       fetch(url, {
         method: "POST",
         body,
-      }).then(r => r.blob()),
+      })
+        .then(r => r.blob())
+        .catch(() => {}),
     ),
   );
 }

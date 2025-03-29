@@ -65,6 +65,8 @@ class EventTarget;
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
 
+extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
+
 #if OS(WINDOWS)
 #include <uv.h>
 extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
@@ -85,6 +87,11 @@ class GlobalObject : public Bun::GlobalScope {
 public:
     // Move this to the front for better cache locality.
     void* m_bunVM;
+
+    bool isShuttingDown() const
+    {
+        return Bun__VirtualMachine__isShuttingDown(m_bunVM);
+    }
 
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
@@ -339,6 +346,8 @@ public:
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__NodeHTTPRequest__onResolve,
+        Bun__NodeHTTPRequest__onReject,
         Bun__FetchTasklet__onRejectRequestStream,
         Bun__FetchTasklet__onResolveRequestStream,
         Bun__S3UploadStream__onRejectRequestStream,
@@ -346,7 +355,7 @@ public:
         Bun__FileStreamWrapper__onRejectRequestStream,
         Bun__FileStreamWrapper__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 32;
+    static constexpr size_t promiseFunctionsSize = 34;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -389,9 +398,13 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
     LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
+    LazyProperty<JSGlobalObject, JSCell> m_moduleRunMainFunction;
     LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
+
+    WTF::String m_moduleWrapperStart;
+    WTF::String m_moduleWrapperEnd;
 
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
@@ -478,6 +491,7 @@ public:
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
+
     JSC::LazyClassStructure m_JSStatsClassStructure;
     JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
     JSC::LazyClassStructure m_JSDirentClassStructure;
@@ -532,6 +546,14 @@ public:
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
     LazyClassStructure m_JSX509CertificateClassStructure;
+    LazyClassStructure m_JSSignClassStructure;
+    LazyClassStructure m_JSVerifyClassStructure;
+    LazyClassStructure m_JSDiffieHellmanClassStructure;
+    LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
+    LazyClassStructure m_JSHmacClassStructure;
+    LazyClassStructure m_JSHashClassStructure;
+    LazyClassStructure m_JSECDHClassStructure;
+    LazyClassStructure m_JSCipherClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -601,12 +623,18 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
 
+    LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatValues;
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
 
-    bool hasOverridenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module")._resolveFilename` is written to
+    bool hasOverriddenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
+    bool hasOverriddenModuleWrapper = false;
+    // De-optimization once `require("module").runMain` is written to
+    bool hasOverriddenModuleRunMain = false;
 
     WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);

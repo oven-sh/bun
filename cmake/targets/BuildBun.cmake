@@ -1,8 +1,8 @@
 if(DEBUG)
   set(bun bun-debug)
-elseif(ENABLE_SMOL)
-  set(bun bun-smol-profile)
-  set(bunStrip bun-smol)
+# elseif(ENABLE_SMOL)
+#   set(bun bun-smol-profile)
+#   set(bunStrip bun-smol)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -622,6 +622,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/sqlite/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
+  ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
   ${CWD}/src/bake/*.cpp
@@ -737,7 +738,7 @@ endif()
 # --- C/C++ Properties ---
 
 set_target_properties(${bun} PROPERTIES
-  CXX_STANDARD 20
+  CXX_STANDARD 23
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
@@ -745,6 +746,18 @@ set_target_properties(${bun} PROPERTIES
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
+
+if (NOT WIN32)
+  # Enable precompiled headers
+  # Only enable in these scenarios:
+  # 1. NOT in CI, OR
+  # 2. In CI AND BUN_CPP_ONLY is enabled
+  if(NOT CI OR (CI AND BUN_CPP_ONLY))
+    target_precompile_headers(${bun} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+    )
+  endif()
+endif()
 
 # --- C/C++ Includes ---
 
@@ -759,6 +772,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
+  ${CWD}/src/bun.js/bindings/node/crypto
   ${CWD}/src/bun.js/bindings/sqlite
   ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules
@@ -770,6 +784,10 @@ target_include_directories(${bun} PRIVATE
   ${VENDOR_PATH}/picohttpparser
   ${NODEJS_HEADERS_PATH}/include
 )
+
+if(NOT WIN32) 
+  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
+endif()
 
 if(LINUX)
   include(CheckIncludeFiles)
@@ -899,6 +917,10 @@ if(NOT WIN32)
       -Werror
     )
   endif()
+else()
+  target_compile_options(${bun} PUBLIC
+    -Wno-nullability-completeness
+  )
 endif()
 
 # --- Linker options ---
@@ -941,28 +963,17 @@ endif()
 
 if(LINUX)
   if(NOT ABI STREQUAL "musl")
-  # on arm64
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
-    target_link_options(${bun} PUBLIC
-      -Wl,--wrap=exp
-      -Wl,--wrap=expf
-      -Wl,--wrap=fcntl64
-      -Wl,--wrap=log
-      -Wl,--wrap=log2
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=pow
-      -Wl,--wrap=powf
-    )
-  else()
-    target_link_options(${bun} PUBLIC
-      -Wl,--wrap=exp
-      -Wl,--wrap=expf
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=powf
-    )
-  endif()
+  target_link_options(${bun} PUBLIC
+    -Wl,--wrap=exp
+    -Wl,--wrap=expf
+    -Wl,--wrap=fcntl64
+    -Wl,--wrap=log
+    -Wl,--wrap=log2
+    -Wl,--wrap=log2f
+    -Wl,--wrap=logf
+    -Wl,--wrap=pow
+    -Wl,--wrap=powf
+  )
   endif()
 
   if(NOT ABI STREQUAL "musl")

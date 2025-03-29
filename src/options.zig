@@ -27,6 +27,7 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
@@ -89,7 +90,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.JSC.HardcodedModule.Aliases.has(str, .node);
+        return bun.JSC.HardcodedModule.Alias.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -221,6 +222,7 @@ pub const ExternalModules = struct {
         "stream",
         "string_decoder",
         "sys",
+        "test",
         "timers",
         "tls",
         "trace_events",
@@ -581,12 +583,12 @@ pub const Format = enum {
     /// Bake uses a special module format for Hot-module-reloading. It includes a
     /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
     ///
-    /// ((input_graph, config) => {
+    /// ((unloadedModuleRegistry, config) => {
     ///   ... runtime code ...
     /// })({
-    ///   "module1.ts"(module) { ... },
-    ///   "module2.ts"(module) { ... },
-    /// }, { metadata });
+    ///   "module1.ts": ...,
+    ///   "module2.ts": ...,
+    /// }, { ...metadata... });
     internal_bake_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
@@ -617,7 +619,7 @@ pub const Format = enum {
             return global.throwInvalidArguments("format must be a string", .{});
         }
 
-        return Map.fromJS(global, format) orelse {
+        return try Map.fromJS(global, format) orelse {
             return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }
@@ -635,6 +637,7 @@ pub const Loader = enum(u8) {
     css,
     file,
     json,
+    jsonc,
     toml,
     wasm,
     napi,
@@ -645,6 +648,17 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+
+    pub fn isCSS(this: Loader) bool {
+        return this == .css;
+    }
+
+    pub fn isJSLike(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
 
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
@@ -679,7 +693,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json => bun.http.MimeType.json,
+            .toml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => {
@@ -767,9 +781,10 @@ pub const Loader = enum(u8) {
         .{ "css", .css },
         .{ "file", .file },
         .{ "json", .json },
-        .{ "jsonc", .json },
+        .{ "jsonc", .jsonc },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
+        .{ "napi", .napi },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
         .{ "base64", .base64 },
@@ -832,6 +847,7 @@ pub const Loader = enum(u8) {
             .html => .html,
             .file, .bunsh => .file,
             .json => .json,
+            .jsonc => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
@@ -881,7 +897,7 @@ pub const Loader = enum(u8) {
 
     pub fn isJavaScriptLikeOrJSON(loader: Loader) bool {
         return switch (loader) {
-            .jsx, .js, .ts, .tsx, .json => true,
+            .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
             // toml is included because we can serialize to the same AST as JSON
             .toml => true,
@@ -896,7 +912,163 @@ pub const Loader = enum(u8) {
 
         return obj.get(ext);
     }
+
+    pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
+        return switch (this) {
+            .text, .json, .jsonc, .toml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            else => bun.resolver.SideEffects.has_side_effects,
+        };
+    }
+
+    pub fn fromMimeType(mime_type: bun.http.MimeType) Loader {
+        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
+            return .jsx;
+        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
+            return .tsx;
+        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
+            return .js;
+        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
+            return .ts;
+        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
+            return .jsonc;
+        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
+            return .jsonc;
+        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
+            return .json;
+        } else if (mime_type.category == .text) {
+            return .text;
+        } else {
+            // Be maximally permissive.
+            return .tsx;
+        }
+    }
 };
+
+pub fn normalizeSpecifier(
+    jsc_vm: *bun.JSC.VirtualMachine,
+    slice_: string,
+) struct { string, string, string } {
+    var slice = slice_;
+    if (slice.len == 0) return .{ slice, slice, "" };
+
+    if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
+        slice = slice[jsc_vm.origin.host.len..];
+    }
+
+    if (jsc_vm.origin.path.len > 1) {
+        if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
+            slice = slice[jsc_vm.origin.path.len..];
+        }
+    }
+
+    const specifier = slice;
+    var query: []const u8 = "";
+
+    if (strings.indexOfChar(slice, '?')) |i| {
+        query = slice[i..];
+        slice = slice[0..i];
+    }
+
+    return .{ slice, specifier, query };
+}
+
+const GetLoaderAndVirtualSourceErr = error{BlobNotFound};
+const LoaderResult = struct {
+    loader: ?Loader,
+    virtual_source: ?*logger.Source,
+    path: Fs.Path,
+    is_main: bool,
+    specifier: string,
+    /// NOTE: This is always `null` for non-js-like loaders since it's not
+    /// needed for them.
+    package_json: ?*const PackageJSON,
+};
+
+pub fn getLoaderAndVirtualSource(
+    specifier_str: string,
+    jsc_vm: *JSC.VirtualMachine,
+    virtual_source_to_use: *?logger.Source,
+    blob_to_deinit: *?JSC.WebCore.Blob,
+    type_attribute_str: ?string,
+) GetLoaderAndVirtualSourceErr!LoaderResult {
+    const normalized_file_path_from_specifier, const specifier, const query = normalizeSpecifier(
+        jsc_vm,
+        specifier_str,
+    );
+    var path = Fs.Path.init(normalized_file_path_from_specifier);
+
+    var loader: ?Loader = path.loader(&jsc_vm.transpiler.options.loaders);
+    var virtual_source: ?*logger.Source = null;
+
+    if (jsc_vm.module_loader.eval_source) |eval_source| {
+        if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+            virtual_source = eval_source;
+            loader = .tsx;
+        }
+        if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+            virtual_source = eval_source;
+            loader = .tsx;
+        }
+    }
+
+    if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+        if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+            blob_to_deinit.* = blob;
+            loader = blob.getLoader(jsc_vm);
+
+            // "file:" loader makes no sense for blobs
+            // so let's default to tsx.
+            if (blob.getFileName()) |filename| {
+                const current_path = Fs.Path.init(filename);
+
+                // Only treat it as a file if is a Bun.file()
+                if (blob.needsToReadFile()) {
+                    path = current_path;
+                }
+            }
+
+            if (!blob.needsToReadFile()) {
+                virtual_source_to_use.* = logger.Source{
+                    .path = path,
+                    .contents = blob.sharedView(),
+                };
+                virtual_source = &virtual_source_to_use.*.?;
+            }
+        } else {
+            return error.BlobNotFound;
+        }
+    }
+
+    if (strings.eqlComptime(query, "?raw")) {
+        loader = .text;
+    }
+    if (type_attribute_str) |attr_str| if (bun.options.Loader.fromString(attr_str)) |attr_loader| {
+        loader = attr_loader;
+    };
+
+    const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
+
+    const dir = path.name.dir;
+    // NOTE: we cannot trust `path.isFile()` since it's not always correct
+    // NOTE: assume we may need a package.json when no loader is specified
+    const is_js_like = if (loader) |l| l.isJSLike() else true;
+    const package_json: ?*const PackageJSON = if (is_js_like and std.fs.path.isAbsolute(dir))
+        if (jsc_vm.transpiler.resolver.readDirInfo(dir) catch null) |dir_info|
+            dir_info.package_json orelse dir_info.enclosing_package_json
+        else
+            null
+    else
+        null;
+
+    return .{
+        .loader = loader,
+        .virtual_source = virtual_source,
+        .path = path,
+        .is_main = is_main,
+        .specifier = specifier,
+        .package_json = package_json,
+    };
+}
 
 const default_loaders_posix = .{
     .{ ".jsx", .jsx },
@@ -919,7 +1091,7 @@ const default_loaders_posix = .{
     .{ ".txt", .text },
     .{ ".text", .text },
     .{ ".html", .html },
-    .{ ".jsonc", .json },
+    .{ ".jsonc", .jsonc },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },

@@ -68,10 +68,6 @@ export default [
         },
         length: 2,
       },
-      scryptSync: {
-        fn: "doScryptSync",
-        length: 2,
-      },
     },
     klass: {},
   }),

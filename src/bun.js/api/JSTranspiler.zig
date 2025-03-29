@@ -199,7 +199,7 @@ pub const TransformTask = struct {
         if (printed > 0) {
             buffer_writer = printer.ctx;
             buffer_writer.buffer.list.items = buffer_writer.written;
-            this.output_code = bun.String.createLatin1(buffer_writer.written);
+            this.output_code = bun.String.createUTF8(buffer_writer.written);
         } else {
             this.output_code = bun.String.empty;
         }
@@ -332,15 +332,15 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 break :define;
             }
 
-            if (!define.isObject()) {
+            const define_obj = define.getObject() orelse {
                 return globalObject.throwInvalidArguments("define must be an object", .{});
-            }
+            };
 
             var define_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
 
                 .include_value = true,
-            }).init(globalThis, define);
+            }).init(globalThis, define_obj);
             defer define_iter.deinit();
 
             // cannot be a temporary because it may be loaded on different threads.
@@ -490,6 +490,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 &transpiler.log,
                 source,
                 allocator,
+                .json,
+                false,
             ) catch null) orelse break :macros;
             transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
         }
@@ -543,7 +545,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 transpiler.transform.source_map = .none;
             }
         } else {
-            if (options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
+            if (try options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
                 return globalObject.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{});
@@ -614,14 +616,14 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
 
         if (try exports.getTruthy(globalThis, "replace")) |replace| {
-            if (!replace.isObject()) {
+            const replace_obj = replace.getObject() orelse {
                 return globalObject.throwInvalidArguments("replace must be an object", .{});
-            }
+            };
 
             var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
-            }).init(globalThis, replace);
+            }).init(globalThis, replace_obj);
             defer iter.deinit();
 
             if (iter.len > 0) {
@@ -686,7 +688,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     if (try object.getTruthy(globalThis, "logLevel")) |logLevel| {
-        if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
+        if (try logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {
             return globalObject.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{});
@@ -832,7 +834,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe: *JS
         return globalThis.throwInvalidArgumentType("scan", "code", "string or Uint8Array");
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
+    const code_holder = try JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
         return globalThis.throwInvalidArgumentType("scan", "code", "string or Uint8Array");
     };
     defer code_holder.deinit();
@@ -955,7 +957,7 @@ pub fn transformSync(
 
     var arena = Mimalloc.Arena.init() catch unreachable;
     defer arena.deinit();
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), code_arg) orelse {
+    const code_holder = try JSC.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), code_arg) orelse {
         return globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
     };
     defer code_holder.deinit();
@@ -1117,7 +1119,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
         return globalThis.throwInvalidArgumentType("scanImports", "code", "string or Uint8Array");
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
+    const code_holder = try JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
         if (!globalThis.hasException()) {
             return globalThis.throwInvalidArgumentType("scanImports", "code", "string or Uint8Array");
         }

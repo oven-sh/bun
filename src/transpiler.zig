@@ -666,7 +666,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -745,21 +745,43 @@ pub const Transpiler = struct {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                     return null;
                 };
-                var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
+                var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = file_path.text.len > css_module_suffix.len and
+                    strings.eqlComptime(file_path.text[file_path.text.len - css_module_suffix.len ..], css_module_suffix);
+                if (enable_css_modules) {
+                    opts.filename = bun.path.basename(file_path.text);
+                    opts.css_modules = bun.css.CssModuleConfig{};
+                }
+                var sheet, var extra = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
+                    alloc,
+                    entry.contents,
+                    opts,
+                    null,
+                    // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.ZIG file??
+                    bun.bundle_v2.Index.invalid,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                         return null;
                     },
                 };
-                if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                     return null;
                 }
-                const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
-                    .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
-                    .minify = transpiler.options.minify_whitespace,
-                }, null)) {
+                const symbols = bun.JSAst.Symbol.Map{};
+                const result = switch (sheet.toCss(
+                    alloc,
+                    bun.css.PrinterOptions{
+                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                        .minify = transpiler.options.minify_whitespace,
+                    },
+                    null,
+                    null,
+                    &symbols,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
@@ -825,6 +847,7 @@ pub const Transpiler = struct {
                     .transform_only = transpiler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .hmr_ref = ast.wrapper_ref,
                 },
                 enable_source_map,
             ),
@@ -849,6 +872,8 @@ pub const Transpiler = struct {
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .hmr_ref = ast.wrapper_ref,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -883,6 +908,8 @@ pub const Transpiler = struct {
                         .runtime_transpiler_cache = runtime_transpiler_cache,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                        .hmr_ref = ast.wrapper_ref,
+                        .mangled_props = null,
                     },
                     enable_source_map,
                 ),
@@ -965,6 +992,12 @@ pub const Transpiler = struct {
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
+        /// `"type"` from `package.json`. Used to make sure the parser defaults
+        /// to CommonJS or ESM based on what the package.json says, when it
+        /// doesn't otherwise know from reading the source code.
+        ///
+        /// See: https://nodejs.org/api/packages.html#type
+        module_type: options.ModuleType = .unknown,
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
@@ -1106,6 +1139,7 @@ pub const Transpiler = struct {
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.module_type = this_parse.module_type;
 
                 opts.tree_shaking = transpiler.options.tree_shaking;
                 opts.features.inlining = transpiler.options.inlining;
@@ -1184,14 +1218,13 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .json => |kind| {
-                var expr = if (kind == .json)
+            inline .toml, .json, .jsonc => |kind| {
+                var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    if (source.path.isJSONCFile())
-                        JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
-                    else
-                        JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                else if (kind == .json)
+                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, transpiler.log, allocator, false) catch return null
                 else
@@ -1268,6 +1301,7 @@ pub const Transpiler = struct {
                                 js_ast.S.ExportClause,
                                 js_ast.S.ExportClause{
                                     .items = export_clauses[0..count],
+                                    .is_single_line = false,
                                 },
                                 logger.Loc{
                                     .start = 0,

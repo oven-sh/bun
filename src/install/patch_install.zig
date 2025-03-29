@@ -141,7 +141,7 @@ pub const PatchTask = struct {
     pub fn runFromMainThread(
         this: *PatchTask,
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         defer {
@@ -165,7 +165,7 @@ pub const PatchTask = struct {
     fn runFromMainThreadCalcHash(
         this: *PatchTask,
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !void {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
@@ -173,7 +173,7 @@ pub const PatchTask = struct {
         const hash = calc_hash.result orelse {
             const fmt = "\n\nErrors occured while calculating hash for <b>{s}<r>:\n\n";
             const args = .{this.callback.calc_hash.patchfile_path};
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
             } else {
                 Output.prettyErrorln(
@@ -370,7 +370,7 @@ pub const PatchTask = struct {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "failed applying patch file: {}",
-                    .{e.withoutPath()},
+                    .{e},
                     .{},
                 );
             }
@@ -471,7 +471,7 @@ pub const PatchTask = struct {
                 null,
                 Loc.Empty,
                 this.manager.allocator,
-                "patchfile <b>{s}<r> is empty, plese restore or delete it.",
+                "patchfile <b>{s}<r> is empty, please restore or delete it.",
                 .{absolute_patchfile_path},
             ) catch bun.outOfMemory();
             return null;

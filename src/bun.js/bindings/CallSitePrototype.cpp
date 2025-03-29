@@ -177,7 +177,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
                 if (auto* executable = function->jsExecutable()) {
                     return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
                 }
-            } else if (auto* function = jsDynamicCast<InternalFunction*>(functionValue)) {
+            } else if (jsDynamicCast<InternalFunction*>(functionValue)) {
                 return JSC::JSValue::encode(JSC::jsBoolean(true));
             }
         }

@@ -260,7 +260,6 @@ describe("createHash", () => {
     "id-rsassa-pkcs1-v1_5-with-sha3-256",
     "id-rsassa-pkcs1-v1_5-with-sha3-384",
     "id-rsassa-pkcs1-v1_5-with-sha3-512",
-    "md5-sha1",
     "md5withrsaencryption",
     "ripemd",
     "ripemd160withrsa",
@@ -302,11 +301,23 @@ describe("createHash", () => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
           expect(hash.digest("hex")).toBe(nodeValues[name].value);
-        }).toThrow(Error(`Unsupported algorithm ${name}`));
+        }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
         hash.update("Hello World");
+
+        // testing copy to be sure boringssl workarounds for blake2b256/512,
+        // ripemd160, sha3-<n>, and shake128/256 are working.
+        const copy = hash.copy();
         expect(hash.digest("hex")).toBe(nodeValues[name].value);
+        expect(copy.digest("hex")).toBe(nodeValues[name].value);
+
+        expect(() => {
+          hash.copy();
+        }).toThrow(Error(`Digest already called`));
+        expect(() => {
+          copy.copy();
+        }).toThrow(Error(`Digest already called`));
       }
     });
 
@@ -316,7 +327,7 @@ describe("createHash", () => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
           expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
-        }).toThrow(Error(`Unsupported algorithm ${name}`));
+        }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
         hash.update("Hello World");
@@ -535,6 +546,26 @@ it("createDecipheriv should validate iv and password", () => {
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, null).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
+});
+
+it("Cipheriv.update throws expected error for invalid data", () => {
+  const key = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  expect(() => {
+    cipher.update(["c", "d"]);
+  }).toThrow(
+    'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Array',
+  );
+});
+
+it("verifyOneShot should not accept strings for signatures", () => {
+  const data = Buffer.alloc(1);
+  expect(() => {
+    crypto.verify(null, data, "test", "oops");
+  }).toThrow(
+    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+  );
 });
 
 it("x25519", () => {

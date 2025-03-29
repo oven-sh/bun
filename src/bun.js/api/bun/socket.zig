@@ -15,7 +15,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
@@ -190,6 +190,7 @@ const Handlers = struct {
                 const listen_socket: *Listener = @fieldParentPtr("handlers", this);
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == .none) {
+                    listen_socket.poll_ref.unref(this.vm);
                     listen_socket.strong_self.deinit();
                 }
             } else {
@@ -244,7 +245,7 @@ const Handlers = struct {
         };
         inline for (pairs) |pair| {
             if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
-                if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
+                if (!callback_value.isCell() or !callback_value.isCallable()) {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
@@ -798,15 +799,13 @@ pub const Listener = struct {
                 uws.us_socket_context_free(@intFromBool(ssl_enabled), socket_context);
             }
 
-            const err = globalObject.createErrorInstance(
-                "Failed to listen at {s}",
-                .{
-                    bun.span(hostname_or_unix.slice()),
-                },
-            );
+            const err = globalObject.createErrorInstance("Failed to listen at {s}", .{bun.span(hostname_or_unix.slice())});
             log("Failed to listen {d}", .{errno});
             if (errno != 0) {
+                err.put(globalObject, ZigString.static("syscall"), bun.String.createUTF8ForJS(globalObject, "listen"));
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+                err.put(globalObject, ZigString.static("address"), hostname_or_unix.toZigString().toJS(globalObject));
+                if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));
                 if (bun.C.SystemErrno.init(errno)) |str| {
                     err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
                 }
@@ -959,9 +958,10 @@ pub const Listener = struct {
         const listener = this.listener;
         this.listener = .none;
 
-        this.poll_ref.unref(this.handlers.vm);
         // if we already have no active connections, we can deinit the context now
         if (this.handlers.active_connections == 0) {
+            this.poll_ref.unref(this.handlers.vm);
+
             this.handlers.unprotect();
             // deiniting the context will also close the listener
             if (this.socket_context) |ctx| {
@@ -1222,37 +1222,9 @@ pub const Listener = struct {
             if (ssl.?.server_name) |s| {
                 server_name = bun.default_allocator.dupe(u8, s[0..bun.len(s)]) catch bun.outOfMemory();
             }
-            uws.NewSocketHandler(true).configure(
-                socket_context,
-                true,
-                *TLSSocket,
-                struct {
-                    pub const onOpen = NewSocket(true).onOpen;
-                    pub const onClose = NewSocket(true).onClose;
-                    pub const onData = NewSocket(true).onData;
-                    pub const onWritable = NewSocket(true).onWritable;
-                    pub const onTimeout = NewSocket(true).onTimeout;
-                    pub const onConnectError = NewSocket(true).onConnectError;
-                    pub const onEnd = NewSocket(true).onEnd;
-                    pub const onHandshake = NewSocket(true).onHandshake;
-                },
-            );
+            uws.NewSocketHandler(true).configure(socket_context, true, *TLSSocket, NewSocket(true));
         } else {
-            uws.NewSocketHandler(false).configure(
-                socket_context,
-                true,
-                *TCPSocket,
-                struct {
-                    pub const onOpen = NewSocket(false).onOpen;
-                    pub const onClose = NewSocket(false).onClose;
-                    pub const onData = NewSocket(false).onData;
-                    pub const onWritable = NewSocket(false).onWritable;
-                    pub const onTimeout = NewSocket(false).onTimeout;
-                    pub const onConnectError = NewSocket(false).onConnectError;
-                    pub const onEnd = NewSocket(false).onEnd;
-                    pub const onHandshake = NewSocket(false).onHandshake;
-                },
-            );
+            uws.NewSocketHandler(false).configure(socket_context, true, *TCPSocket, NewSocket(false));
         }
 
         default_data.ensureStillAlive();
@@ -1688,7 +1660,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn closeAndDetach(this: *This, code: uws.CloseCode) void {
+        pub fn closeAndDetach(this: *This, code: uws.Socket.CloseCode) void {
             const socket = this.socket;
             this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
 
@@ -2136,12 +2108,10 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var buf: [64]u8 = [_]u8{0} ** 64;
-            var length: i32 = 64;
             var text_buf: [512]u8 = undefined;
 
-            this.socket.remoteAddress(&buf, &length);
-            const address_bytes = buf[0..@as(usize, @intCast(length))];
-            const address: std.net.Address = switch (length) {
+            const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return JSValue.jsUndefined();
+            const address: std.net.Address = switch (address_bytes.len) {
                 4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
                 16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
                 else => return JSValue.jsUndefined(),
@@ -2278,7 +2248,7 @@ fn NewSocket(comptime ssl: bool) type {
                 if (comptime !ssl and Environment.isPosix) {
                     // fast-ish path: use writev() to avoid cloning to another buffer.
                     if (this.socket.socket == .connected and buffer.slice().len > 0) {
-                        const rc = this.socket.socket.connected.write2(this.buffered_data_for_node_net.slice(), buffer.slice());
+                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice());
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
@@ -2773,7 +2743,7 @@ fn NewSocket(comptime ssl: bool) type {
             var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
 
-            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
+            if (try JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
                 defer sb.deinit();
                 const session_slice = sb.slice();
                 const ssl_ptr = this.socket.ssl();
@@ -2890,7 +2860,7 @@ fn NewSocket(comptime ssl: bool) type {
                 var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
 
-                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
+                if (try JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
                     defer sb.deinit();
                     const context_slice = sb.slice();
 
@@ -3541,7 +3511,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
-                    return globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
+                    return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, err));
                 }
 
                 // If BoringSSL did not give us an error code, let's throw a generic error.
@@ -3945,7 +3915,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         });
 
         if (ssl_config) |ssl_options| {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;

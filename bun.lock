@@ -27,9 +27,10 @@
     },
     "packages/bun-types": {
       "name": "bun-types",
+      "version": "1.2.5",
       "dependencies": {
         "@types/node": "*",
-        "@types/ws": "~8.5.10",
+        "@types/ws": "*",
       },
       "devDependencies": {
         "@biomejs/biome": "^1.5.3",
@@ -151,13 +152,13 @@
 
     "@qiwi/npm-registry-client": ["@qiwi/npm-registry-client@8.9.1", "", { "dependencies": { "concat-stream": "^2.0.0", "graceful-fs": "^4.2.4", "normalize-package-data": "~1.0.1 || ^2.0.0 || ^3.0.0", "npm-package-arg": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^8.0.0", "once": "^1.4.0", "request": "^2.88.2", "retry": "^0.12.0", "safe-buffer": "^5.2.1", "semver": "2 >=2.2.1 || 3.x || 4 || 5 || 7", "slide": "^1.1.6", "ssri": "^8.0.0" }, "optionalDependencies": { "npmlog": "2 || ^3.1.0 || ^4.0.0" } }, "sha512-rZF+mG+NfijR0SHphhTLHRr4aM4gtfdwoAMY6we2VGQam8vkN1cxGG1Lg/Llrj8Dd0Mu6VjdFQRyMMRZxtZR2A=="],
 
-    "@types/bun": ["@types/bun@1.1.17", "", { "dependencies": { "bun-types": "1.1.44" } }, "sha512-zZt0Kao/8hAwNOXh4bmt8nKbMEd4QD8n7PeTGF+NZTVY5ouXhU/TX7jUj4He1p7mgY+WdplnU1B6MB1j17vdzg=="],
+    "@types/bun": ["@types/bun@1.2.2", "", { "dependencies": { "bun-types": "1.2.2" } }, "sha512-tr74gdku+AEDN5ergNiBnplr7hpDp3V1h7fqI2GcR/rsUaM39jpSeKH0TFibRvU0KwniRx5POgaYnaXbk0hU+w=="],
 
     "@types/json-schema": ["@types/json-schema@7.0.15", "", {}, "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA=="],
 
     "@types/json5": ["@types/json5@0.0.29", "", {}, "sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ=="],
 
-    "@types/node": ["@types/node@22.10.7", "", { "dependencies": { "undici-types": "~6.20.0" } }, "sha512-V09KvXxFiutGp6B7XkpaDXlNadZxrzajcY50EuoLIpQ6WWYCSvf19lVIazzfIzQvhUN2HjX12spLojTnhuKlGg=="],
+    "@types/node": ["@types/node@22.13.5", "", { "dependencies": { "undici-types": "~6.20.0" } }, "sha512-+lTU0PxZXn0Dr1NBtC7Y8cR21AJr87dLLU953CWA6pMxxv/UDc7jYAY90upcrie1nRcD6XNG5HOYEDtgW5TxAg=="],
 
     "@types/prop-types": ["@types/prop-types@15.7.12", "", {}, "sha512-5zvhXYtRNRluoE/jAp4GVsSduVUzNWKkOZrCDBWYtE7biZywwdC2AcEzg+cSMLFRfVgeAFqpfNabiPjxFddV1Q=="],
 

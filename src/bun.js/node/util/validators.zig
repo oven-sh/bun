@@ -5,6 +5,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
 pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
     var js_type = value.jsType();
@@ -61,16 +62,16 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
         return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
     }
 
-    const num = value.asNumber();
-
-    if (!value.isAnyInt()) {
-        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
+    if (!value.isInteger()) {
+        return globalThis.throwRangeError(value.asNumber(), .{ .field_name = name, .msg = "an integer" });
     }
 
-    const int = value.asInt52();
+    const int: i64 = @intFromFloat(value.asNumber());
+
     if (int < min or int > max) {
         return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
     }
+
     return int;
 }
 
@@ -150,28 +151,29 @@ pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) bun.JSError!f64 {
-    if (!value.isNumber())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, name: string, maybe_min: ?f64, maybe_max: ?f64) bun.JSError!f64 {
+    if (!value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
+    }
 
     const num: f64 = value.asNumber();
     var valid = true;
-    if (min) |min_val| {
-        if (num < min_val) valid = false;
+    if (maybe_min) |min| {
+        if (num < min) valid = false;
     }
-    if (max) |max_val| {
-        if (num > max_val) valid = false;
+    if (maybe_max) |max| {
+        if (num > max) valid = false;
     }
-    if ((min != null or max != null) and std.math.isNan(num)) {
+    if ((maybe_min != null or maybe_max != null) and std.math.isNan(num)) {
         valid = false;
     }
     if (!valid) {
-        if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
-        } else if (min != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
-        } else {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be <= {d}. Received {s}", name_args ++ .{ max, value });
+        if (maybe_min != null and maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d} && <= {d}. Received {d}", .{ name, maybe_min.?, maybe_max.?, num });
+        } else if (maybe_min != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d}. Received {d}", .{ name, maybe_min.?, num });
+        } else if (maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be <= {d}. Received {d}", .{ name, maybe_max.?, num });
         }
     }
     return num;
@@ -251,9 +253,10 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
     return i;
 }
 
-pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!JSValue {
-    if (!value.jsType().isFunction())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "function", value);
+pub fn validateFunction(global: *JSGlobalObject, name: string, value: JSValue) bun.JSError!JSValue {
+    if (!value.isFunction()) {
+        return global.throwInvalidArgumentTypeValue(name, "function", value);
+    }
     return value;
 }
 

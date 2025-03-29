@@ -83,10 +83,10 @@ pub const TestRunner = struct {
     // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
 
-    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer.Node = .{ .data = .{
+    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
         .next = .{},
         .tag = .TestRunner,
-    } },
+    },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
     test_options: *const bun.CLI.Command.TestOptions = undefined,
 
@@ -107,7 +107,7 @@ pub const TestRunner = struct {
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
         _ = vm; // autofix
-        this.event_loop_timer.data.state = .FIRED;
+        this.event_loop_timer.state = .FIRED;
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
@@ -132,12 +132,12 @@ pub const TestRunner = struct {
         const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
 
-        this.event_loop_timer.data.tag = .TestRunner;
-        if (this.event_loop_timer.data.state == .ACTIVE) {
+        this.event_loop_timer.tag = .TestRunner;
+        if (this.event_loop_timer.state == .ACTIVE) {
             vm.timer.remove(&this.event_loop_timer);
         }
 
-        this.event_loop_timer.data.next = then;
+        this.event_loop_timer.next = then;
         vm.timer.insert(&this.event_loop_timer);
     }
 
@@ -261,12 +261,14 @@ pub const TestRunner = struct {
         pub const ID = u32;
         pub const List = std.MultiArrayList(Test);
 
-        pub const Status = enum(u3) {
+        pub const Status = enum(u4) {
             pending,
             pass,
             fail,
             skip,
             todo,
+            /// A test marked as `.failing()` actually passed
+            fail_because_failing_test_passed,
             fail_because_todo_passed,
             fail_because_expected_has_assertions,
             fail_because_expected_assertion_count,
@@ -290,7 +292,7 @@ pub const Jest = struct {
                 }
 
                 const function = arguments.ptr[0];
-                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
+                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable()) {
                     return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
@@ -327,40 +329,20 @@ pub const Jest = struct {
             ZigString.static("test"),
             test_fn,
         );
-        test_fn.put(
-            globalObject,
-            ZigString.static("only"),
-            JSC.NewFunction(globalObject, ZigString.static("only"), 2, ThisTestScope.only, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("skip"),
-            JSC.NewFunction(globalObject, ZigString.static("skip"), 2, ThisTestScope.skip, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("todo"),
-            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, ThisTestScope.todo, false),
-        );
+
+        inline for (.{ "only", "skip", "todo", "failing", "skipIf", "todoIf", "each" }) |method_name| {
+            const name = ZigString.static(method_name);
+            test_fn.put(
+                globalObject,
+                name,
+                JSC.NewFunction(globalObject, name, 2, @field(ThisTestScope, method_name), false),
+            );
+        }
+
         test_fn.put(
             globalObject,
             ZigString.static("if"),
             JSC.NewFunction(globalObject, ZigString.static("if"), 2, ThisTestScope.callIf, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("skipIf"),
-            JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisTestScope.skipIf, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("todoIf"),
-            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisTestScope.todoIf, false),
-        );
-        test_fn.put(
-            globalObject,
-            ZigString.static("each"),
-            JSC.NewFunction(globalObject, ZigString.static("each"), 2, ThisTestScope.each, false),
         );
 
         module.put(
@@ -369,40 +351,25 @@ pub const Jest = struct {
             test_fn,
         );
         const describe = JSC.NewFunction(globalObject, ZigString.static("describe"), 2, ThisDescribeScope.call, false);
-        describe.put(
-            globalObject,
-            ZigString.static("only"),
-            JSC.NewFunction(globalObject, ZigString.static("only"), 2, ThisDescribeScope.only, false),
-        );
-        describe.put(
-            globalObject,
-            ZigString.static("skip"),
-            JSC.NewFunction(globalObject, ZigString.static("skip"), 2, ThisDescribeScope.skip, false),
-        );
-        describe.put(
-            globalObject,
-            ZigString.static("todo"),
-            JSC.NewFunction(globalObject, ZigString.static("todo"), 2, ThisDescribeScope.todo, false),
-        );
+        inline for (.{
+            "only",
+            "skip",
+            "todo",
+            "skipIf",
+            "todoIf",
+            "each",
+        }) |method_name| {
+            const name = ZigString.static(method_name);
+            describe.put(
+                globalObject,
+                name,
+                JSC.NewFunction(globalObject, name, 2, @field(ThisDescribeScope, method_name), false),
+            );
+        }
         describe.put(
             globalObject,
             ZigString.static("if"),
             JSC.NewFunction(globalObject, ZigString.static("if"), 2, ThisDescribeScope.callIf, false),
-        );
-        describe.put(
-            globalObject,
-            ZigString.static("skipIf"),
-            JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisDescribeScope.skipIf, false),
-        );
-        describe.put(
-            globalObject,
-            ZigString.static("todoIf"),
-            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisDescribeScope.todoIf, false),
-        );
-        describe.put(
-            globalObject,
-            ZigString.static("each"),
-            JSC.NewFunction(globalObject, ZigString.static("each"), 2, ThisDescribeScope.each, false),
         );
 
         module.put(
@@ -602,6 +569,10 @@ pub const TestScope = struct {
         return createScope(globalThis, callframe, "test()", true, .pass);
     }
 
+    pub fn failing(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return createScope(globalThis, callframe, "test()", true, .fail);
+    }
+
     pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return createScope(globalThis, callframe, "test.only()", true, .only);
     }
@@ -741,13 +712,15 @@ pub const TestScope = struct {
         initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
 
         if (initial_value.isAnyError()) {
-            _ = vm.uncaughtException(vm.global, initial_value, true);
-
-            if (this.tag == .todo) {
-                return .{ .todo = {} };
+            if (this.tag != .fail) {
+                _ = vm.uncaughtException(vm.global, initial_value, true);
             }
 
-            return .{ .fail = expect.active_test_expectation_counter.actual };
+            return switch (this.tag) {
+                .todo => .{ .todo = {} },
+                .fail => .{ .pass = expect.active_test_expectation_counter.actual },
+                else => .{ .fail = expect.active_test_expectation_counter.actual },
+            };
         }
 
         if (initial_value.asAnyPromise()) |promise| {
@@ -764,15 +737,19 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
-                    if (!promise.isHandled(vm.global.vm())) {
+                    if (!promise.isHandled(vm.global.vm()) and this.tag != .fail) {
                         _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
                     }
 
-                    if (this.tag == .todo) {
-                        return .{ .todo = {} };
-                    }
+                    return switch (this.tag) {
+                        .todo => .{ .todo = {} },
+                        .fail => fail: {
+                            promise.setHandled(vm.global.vm());
 
-                    return .{ .fail = expect.active_test_expectation_counter.actual };
+                            break :fail .{ .pass = expect.active_test_expectation_counter.actual };
+                        },
+                        else => .{ .fail = expect.active_test_expectation_counter.actual },
+                    };
                 },
                 .pending => {
                     task.promise_state = .pending;
@@ -791,7 +768,7 @@ pub const TestScope = struct {
         }
 
         if (this.func_has_callback) {
-            return .{ .pending = {} };
+            return Result{ .pending = {} };
         }
 
         if (expect.active_test_expectation_counter.expected > 0 and expect.active_test_expectation_counter.expected < expect.active_test_expectation_counter.actual) {
@@ -802,17 +779,18 @@ pub const TestScope = struct {
             return .{ .fail = expect.active_test_expectation_counter.actual };
         }
 
-        return .{ .pass = expect.active_test_expectation_counter.actual };
+        return if (this.tag == .fail)
+            .{ .fail_because_failing_test_passed = expect.active_test_expectation_counter.actual }
+        else
+            .{ .pass = expect.active_test_expectation_counter.actual };
     }
 
-    pub const name = "TestScope";
-    pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
         @export(&jsOnResolve, .{
-            .name = shim.symbolName("onResolve"),
+            .name = "Bun__TestScope__onResolve",
         });
         @export(&jsOnReject, .{
-            .name = shim.symbolName("onReject"),
+            .name = "Bun__TestScope__onReject",
         });
     }
 };
@@ -899,7 +877,7 @@ pub const DescribeScope = struct {
                 }
 
                 const cb = arguments.ptr[0];
-                if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
+                if (!cb.isObject() or !cb.isCallable()) {
                     return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
 
@@ -949,7 +927,7 @@ pub const DescribeScope = struct {
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
                 assert(cb.isObject());
-                assert(cb.isCallable(globalObject.vm()));
+                assert(cb.isCallable());
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1006,7 +984,7 @@ pub const DescribeScope = struct {
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
                 assert(cb.isObject());
-                assert(cb.isCallable(globalThis.vm()));
+                assert(cb.isCallable());
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1257,6 +1235,7 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: JSC.JSHostZigF
 /// outside of
 pub const WrappedTestScope = struct {
     pub const call = wrapTestFunction("test", TestScope.call);
+    pub const failing = wrapTestFunction("test", TestScope.failing);
     pub const only = wrapTestFunction("test", TestScope.only);
     pub const skip = wrapTestFunction("test", TestScope.skip);
     pub const todo = wrapTestFunction("test", TestScope.todo);
@@ -1587,6 +1566,17 @@ pub const TestRunnerTask = struct {
                 elapsed,
                 describe,
             ),
+            .fail_because_failing_test_passed => |count| {
+                Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
+                Jest.runner.?.reportFailure(
+                    test_id,
+                    this.source_file_path,
+                    test_.label,
+                    count,
+                    elapsed,
+                    describe,
+                );
+            },
             .fail_because_expected_has_assertions => {
                 Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
                 Output.flush();
@@ -1676,6 +1666,7 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     skip: void,
     todo: void,
+    fail_because_failing_test_passed: u32,
     fail_because_todo_passed: u32,
     fail_because_expected_has_assertions: void,
     fail_because_expected_assertion_count: Counter,
@@ -1725,16 +1716,56 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
+    if (args.len == 1 and description.isFunction()) {
         function = description;
         description = .zero;
+    } else {
+        const is_valid_description =
+            description.isClass(globalThis) or
+            (description.isFunction() and !description.getName(globalThis).isEmpty()) or
+            description.isNumber() or
+            description.isString();
+
+        if (!is_valid_description) {
+            return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
+        }
+
+        if (!function.isFunction()) {
+            if (tag != .todo and tag != .skip) {
+                return globalThis.throwPretty("{s} expects second argument to be a function", .{signature});
+            }
+        }
     }
 
-    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+    if (function == .zero or !function.isFunction()) {
         if (tag != .todo and tag != .skip) {
             return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
+
+    const allocator = getAllocator(globalThis);
+    const parent = DescribeScope.active.?;
+    const label = brk: {
+        if (description == .zero) {
+            break :brk "";
+        }
+
+        if (description.isClass(globalThis)) {
+            const name_str = if (description.className(globalThis).toSlice(allocator).length() == 0)
+                description.getName(globalThis).toSlice(allocator).slice()
+            else
+                description.className(globalThis).toSlice(allocator).slice();
+            break :brk try allocator.dupe(u8, name_str);
+        }
+        if (description.isFunction()) {
+            var slice = description.getName(globalThis).toSlice(allocator);
+            defer slice.deinit();
+            break :brk try allocator.dupe(u8, slice.slice());
+        }
+        var slice = try description.toSlice(globalThis, allocator);
+        defer slice.deinit();
+        break :brk try allocator.dupe(u8, slice.slice());
+    };
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
@@ -1762,17 +1793,6 @@ inline fn createScope(
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
-    const parent = DescribeScope.active.?;
-    const allocator = getAllocator(globalThis);
-    const label = brk: {
-        if (description == .zero) {
-            break :brk "";
-        } else {
-            var slice = try description.toSlice(globalThis, allocator);
-            defer slice.deinit();
-            break :brk try allocator.dupe(u8, slice.slice());
-        }
-    };
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
@@ -1990,7 +2010,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     var function = args[1];
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable()) {
         return globalThis.throwPretty("{s} expects a function", .{signature});
     }
 

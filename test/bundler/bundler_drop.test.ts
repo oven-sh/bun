@@ -106,4 +106,12 @@ describe("bundler", () => {
     run: { stdout: "true" },
     drop: ["Bun"],
   });
+  itBundled("drop/IdentifierCall", {
+    files: {
+      "/a.js": `ASSERT("hello");`,
+    },
+    run: { stdout: "" },
+    drop: ["ASSERT"],
+    backend: "api",
+  });
 });

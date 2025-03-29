@@ -221,6 +221,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
+        clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
         clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
@@ -271,7 +272,8 @@ pub const Arguments = struct {
     } ++ auto_only_params;
 
     const build_only_params = [_]ParamType{
-        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
+        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
         clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -297,7 +299,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
+        clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
@@ -398,10 +400,10 @@ pub const Arguments = struct {
         if (config_path_.len == 0 and (user_config_path_ != null or
             Command.Tag.always_loads_config.get(cmd) or
             (cmd == .AutoCommand and
-            // "bun"
-            (ctx.positionals.len == 0 or
-            // "bun file.js"
-            ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
+                // "bun"
+                (ctx.positionals.len == 0 or
+                    // "bun file.js"
+                    ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
         {
             config_path_ = "bunfig.toml";
             auto_loaded = true;
@@ -635,7 +637,12 @@ pub const Arguments = struct {
 
         opts.drop = args.options("--drop");
 
-        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        // Node added a `--loader` flag (that's kinda like `--register`). It's
+        // completely different from ours.
+        const loader_tuple = if (cmd != .RunAsNodeCommand)
+            try LoaderColonList.resolve(allocator, args.options("--loader"))
+        else
+            .{ .keys = &[_]u8{}, .values = &[_]Api.Loader{} };
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -666,6 +673,7 @@ pub const Arguments = struct {
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
+            const preloads2 = args.options("--require");
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
@@ -745,13 +753,23 @@ pub const Arguments = struct {
                 }
             }
 
-            if (ctx.preloads.len > 0 and preloads.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
+            if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
                 all.appendSliceAssumeCapacity(ctx.preloads);
                 all.appendSliceAssumeCapacity(preloads);
+                all.appendSliceAssumeCapacity(preloads2);
                 ctx.preloads = all.items;
             } else if (preloads.len > 0) {
-                ctx.preloads = preloads;
+                if (preloads2.len > 0) {
+                    var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
+                    all.appendSliceAssumeCapacity(preloads);
+                    all.appendSliceAssumeCapacity(preloads2);
+                    ctx.preloads = all.items;
+                } else {
+                    ctx.preloads = preloads;
+                }
+            } else if (preloads2.len > 0) {
+                ctx.preloads = preloads2;
             }
 
             if (args.option("--print")) |script| {
@@ -833,6 +851,8 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
+            const production = args.flag("--production");
+
             if (args.flag("--app")) {
                 if (!bun.FeatureFlags.bake()) {
                     Output.errGeneric("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
@@ -864,7 +884,7 @@ pub const Arguments = struct {
                 ctx.bundler_options.footer = footer;
             }
 
-            const minify_flag = args.flag("--minify");
+            const minify_flag = args.flag("--minify") or production;
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
@@ -1128,7 +1148,6 @@ pub const Arguments = struct {
         const jsx_fragment = args.option("--jsx-fragment");
         const jsx_import_source = args.option("--jsx-import-source");
         const jsx_runtime = args.option("--jsx-runtime");
-        const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
             // "run.silent" in bunfig.toml
@@ -1163,8 +1182,7 @@ pub const Arguments = struct {
         if (jsx_factory != null or
             jsx_fragment != null or
             jsx_import_source != null or
-            jsx_runtime != null or
-            !react_fast_refresh)
+            jsx_runtime != null)
         {
             var default_factory = "".*;
             var default_fragment = "".*;
@@ -1176,7 +1194,6 @@ pub const Arguments = struct {
                     .import_source = (jsx_import_source orelse &default_import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                     .development = false,
-                    .react_fast_refresh = react_fast_refresh,
                 };
             } else {
                 opts.jsx = Api.Jsx{
@@ -1185,7 +1202,6 @@ pub const Arguments = struct {
                     .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                     .development = false,
-                    .react_fast_refresh = react_fast_refresh,
                 };
             }
         }
@@ -1199,6 +1215,19 @@ pub const Arguments = struct {
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
                 Output.flush();
                 Global.exit(1);
+            }
+
+            if (args.flag("--production")) {
+                const any_html = for (opts.entry_points) |entry_point| {
+                    if (strings.hasSuffixComptime(entry_point, ".html")) {
+                        break true;
+                    }
+                } else false;
+                if (any_html) {
+                    ctx.bundler_options.css_chunking = true;
+                }
+
+                ctx.bundler_options.production = true;
             }
         }
 
@@ -1553,6 +1582,8 @@ pub const Command = struct {
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
+
+            production: bool = false,
 
             env_behavior: Api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
@@ -2115,7 +2146,7 @@ pub const Command = struct {
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@')) and
+                        strings.startsWithChar(template_name, '@')) and
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {

@@ -772,7 +772,7 @@ pub const Version = struct {
                 return .undefined;
             }
 
-            const tag = Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
+            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }

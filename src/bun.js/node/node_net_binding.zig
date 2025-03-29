@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const C = bun.C.translated;
+const C = bun.c;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;

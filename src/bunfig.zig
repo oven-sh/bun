@@ -354,7 +354,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(Api.BunInstall);
@@ -858,7 +858,6 @@ pub const Bunfig = struct {
                     .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
-                    .react_fast_refresh = false,
                 };
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;

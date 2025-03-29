@@ -2,6 +2,7 @@
 
 #include "utils.h"
 #include <cassert>
+#include <chrono>
 #include <thread>
 
 namespace napitests {
@@ -102,7 +103,7 @@ struct ThreadsafeFunctionData {
   napi_deferred deferred;
 
   static void thread_entry(ThreadsafeFunctionData *data) {
-    using namespace std::chrono_literals;
+    using namespace std::literals::chrono_literals;
     std::this_thread::sleep_for(10ms);
     // nonblocking means it will return an error if the threadsafe function's
     // queue is full, which it should never do because we only use it once and

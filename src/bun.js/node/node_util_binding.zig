@@ -7,6 +7,8 @@ const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const uv = bun.windows.libuv;
+const validators = @import("./util/validators.zig");
+const envloader = @import("./../../env_loader.zig");
 
 pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).slice();
@@ -107,6 +109,10 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return fmtstring.transferToJS(globalThis);
 }
 
+pub fn etimedoutErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ETIMEDOUT);
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///
@@ -130,14 +136,6 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
         else
             return JSC.JSValue.jsUndefined(),
     };
-}
-
-extern fn Bun__util__isInsideNodeModules(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bool;
-/// Walks the call stack from bottom to top, returning `true` when it finds a
-/// frame within a `node_modules` directory.
-pub fn isInsideNodeModules(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const res = Bun__util__isInsideNodeModules(globalObject, callframe);
-    return JSC.JSValue.jsBoolean(res);
 }
 
 fn split(
@@ -205,10 +203,31 @@ pub fn SplitNewlineIterator(comptime T: type) type {
 
 pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const input = callframe.argument(0);
-    const str = bun.String.fromJS(input, globalThis);
+    const str = try bun.String.fromJS(input, globalThis);
     bun.assert(str.tag != .Dead);
     defer str.deref();
     if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);
     if (str.inMapCaseInsensitive(JSC.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
     return JSC.JSValue.jsUndefined();
+}
+
+pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const content = callframe.argument(0);
+    try validators.validateString(globalThis, content, "content", .{});
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const str = content.asString().toSlice(globalThis, allocator);
+
+    var map = envloader.Map.init(allocator);
+    var p = envloader.Loader.init(&map, allocator);
+    p.loadFromString(str.slice(), true, false);
+
+    var obj = JSC.JSValue.createEmptyObject(globalThis, map.map.count());
+    for (map.map.keys(), map.map.values()) |k, v| {
+        obj.put(globalThis, JSC.ZigString.initUTF8(k), bun.String.createUTF8ForJS(globalThis, v.value));
+    }
+    return obj;
 }

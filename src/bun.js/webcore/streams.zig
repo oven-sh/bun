@@ -1630,9 +1630,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         const ThisSink = @This();
 
-        pub const shim = JSC.Shimmer("", abi_name, @This());
-        pub const name = abi_name;
-
         // This attaches it to JS
         pub const SinkSignal = extern struct {
             cpp: JSValue,
@@ -1658,34 +1655,53 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return @sizeOf(ThisSink) + SinkType.memoryCost(&this.sink);
         }
 
-        pub fn onClose(ptr: JSValue, reason: JSValue) callconv(.C) void {
-            JSC.markBinding(@src());
+        const AssignToStreamFn = *const fn (*JSGlobalObject, JSValue, *anyopaque, **anyopaque) callconv(.C) JSValue;
+        const OnCloseFn = *const fn (JSValue, JSValue) callconv(.C) void;
+        const OnReadyFn = *const fn (JSValue, JSValue, JSValue) callconv(.C) void;
+        const OnStartFn = *const fn (JSValue, *JSGlobalObject) callconv(.C) void;
+        const CreateObjectFn = *const fn (*JSGlobalObject, *anyopaque, usize) callconv(.C) JSValue;
+        const SetDestroyCallbackFn = *const fn (JSValue, usize) callconv(.C) void;
+        const DetachPtrFn = *const fn (JSValue) callconv(.C) void;
 
-            return shim.cppFn("onClose", .{ ptr, reason });
+        const assignToStreamExtern = @extern(AssignToStreamFn, .{ .name = abi_name ++ "__assignToStream" });
+        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" });
+        const onReadyExtern = @extern(OnReadyFn, .{ .name = abi_name ++ "__onReady" });
+        const onStartExtern = @extern(OnStartFn, .{ .name = abi_name ++ "__onStart" });
+        const createObjectExtern = @extern(CreateObjectFn, .{ .name = abi_name ++ "__createObject" });
+        const setDestroyCallbackExtern = @extern(SetDestroyCallbackFn, .{ .name = abi_name ++ "__setDestroyCallback" });
+        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" });
+
+        pub fn assignToStream(globalThis: *JSGlobalObject, stream: JSValue, ptr: *anyopaque, jsvalue_ptr: **anyopaque) JSValue {
+            return assignToStreamExtern(globalThis, stream, ptr, jsvalue_ptr);
         }
 
-        pub fn onReady(ptr: JSValue, amount: JSValue, offset: JSValue) callconv(.C) void {
+        pub fn onClose(ptr: JSValue, reason: JSValue) void {
             JSC.markBinding(@src());
-
-            return shim.cppFn("onReady", .{ ptr, amount, offset });
+            return onCloseExtern(ptr, reason);
         }
 
-        pub fn onStart(ptr: JSValue, globalThis: *JSGlobalObject) callconv(.C) void {
+        pub fn onReady(ptr: JSValue, amount: JSValue, offset: JSValue) void {
             JSC.markBinding(@src());
-
-            return shim.cppFn("onStart", .{ ptr, globalThis });
+            return onReadyExtern(ptr, amount, offset);
         }
 
-        pub fn createObject(globalThis: *JSGlobalObject, object: *anyopaque, destructor: usize) callconv(.C) JSValue {
+        pub fn onStart(ptr: JSValue, globalThis: *JSGlobalObject) void {
             JSC.markBinding(@src());
+            return onStartExtern(ptr, globalThis);
+        }
 
-            return shim.cppFn("createObject", .{ globalThis, object, destructor });
+        pub fn createObject(globalThis: *JSGlobalObject, object: *anyopaque, destructor: usize) JSValue {
+            JSC.markBinding(@src());
+            return createObjectExtern(globalThis, object, destructor);
         }
 
         pub fn setDestroyCallback(value: JSValue, callback: usize) void {
             JSC.markBinding(@src());
+            return setDestroyCallbackExtern(value, callback);
+        }
 
-            return shim.cppFn("setDestroyCallback", .{ value, callback });
+        pub fn detachPtr(ptr: JSValue) void {
+            return detachPtrExtern(ptr);
         }
 
         pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1727,10 +1743,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const value = @as(JSValue, @enumFromInt(@as(JSC.JSValueReprInt, @bitCast(@intFromPtr(ptr)))));
             value.unprotect();
             detachPtr(value);
-        }
-
-        pub fn detachPtr(ptr: JSValue) callconv(.C) void {
-            shim.cppFn("detachPtr", .{ptr});
         }
 
         // The code generator encodes two distinct failure types using 0 and 1
@@ -1972,10 +1984,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return this.sink.endFromJS(globalThis).toJS(globalThis);
         }
 
-        pub fn assignToStream(globalThis: *JSGlobalObject, stream: JSValue, ptr: *anyopaque, jsvalue_ptr: **anyopaque) JSValue {
-            return shim.cppFn("assignToStream", .{ globalThis, stream, ptr, jsvalue_ptr });
-        }
-
         pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {
             JSC.markBinding(@src());
             var this = bun.cast(*ThisSink, ptr);
@@ -1998,28 +2006,18 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         }
 
         comptime {
-            @export(&finalize, .{ .name = shim.symbolName("finalize") });
-            @export(&jsWrite, .{ .name = shim.symbolName("write") });
-            @export(&jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
-            @export(&close, .{ .name = shim.symbolName("close") });
-            @export(&jsFlush, .{ .name = shim.symbolName("flush") });
-            @export(&jsStart, .{ .name = shim.symbolName("start") });
-            @export(&jsEnd, .{ .name = shim.symbolName("end") });
-            @export(&jsConstruct, .{ .name = shim.symbolName("construct") });
-            @export(&endWithSink, .{ .name = shim.symbolName("endWithSink") });
-            @export(&updateRef, .{ .name = shim.symbolName("updateRef") });
-            @export(&memoryCost, .{ .name = shim.symbolName("memoryCost") });
-
-            shim.assertJSFunction(.{
-                write,
-                close,
-                flush,
-                start,
-                end,
-            });
+            @export(&finalize, .{ .name = abi_name ++ "__finalize" });
+            @export(&jsWrite, .{ .name = abi_name ++ "__write" });
+            @export(&jsGetInternalFd, .{ .name = abi_name ++ "__getInternalFd" });
+            @export(&close, .{ .name = abi_name ++ "__close" });
+            @export(&jsFlush, .{ .name = abi_name ++ "__flush" });
+            @export(&jsStart, .{ .name = abi_name ++ "__start" });
+            @export(&jsEnd, .{ .name = abi_name ++ "__end" });
+            @export(&jsConstruct, .{ .name = abi_name ++ "__construct" });
+            @export(&endWithSink, .{ .name = abi_name ++ "__endWithSink" });
+            @export(&updateRef, .{ .name = abi_name ++ "__updateRef" });
+            @export(&memoryCost, .{ .name = abi_name ++ "__memoryCost" });
         }
-
-        pub const Extern = [_][]const u8{ "createObject", "fromJS", "assignToStream", "onReady", "onClose", "detachPtr" };
     };
 }
 
@@ -2152,7 +2150,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.res.end(buf, false);
                 this.has_backpressure = false;
             } else {
-                this.has_backpressure = !this.res.write(buf);
+                this.has_backpressure = this.res.write(buf) == .backpressure;
             }
             this.handleWrote(buf.len);
             return true;
@@ -3277,7 +3275,7 @@ pub fn ReadableStreamSource(
                     return true;
                 }
 
-                if (!value.isCallable(globalObject.vm())) {
+                if (!value.isCallable()) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function") catch {};
                     return false;
                 }
@@ -3295,7 +3293,7 @@ pub fn ReadableStreamSource(
                     return true;
                 }
 
-                if (!value.isCallable(globalObject.vm())) {
+                if (!value.isCallable()) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function") catch {};
                     return false;
                 }
@@ -4154,8 +4152,8 @@ pub const FileReader = struct {
                 if ((file.is_atty orelse false) or
                     (fd.int() < 3 and std.posix.isatty(fd.cast())) or
                     (file.pathlike == .fd and
-                    bun.FDTag.get(file.pathlike.fd) != .none and
-                    std.posix.isatty(file.pathlike.fd.cast())))
+                        bun.FDTag.get(file.pathlike.fd) != .none and
+                        std.posix.isatty(file.pathlike.fd.cast())))
                 {
                     // var termios = std.mem.zeroes(std.posix.termios);
                     // _ = std.c.tcgetattr(fd.cast(), &termios);
@@ -4996,7 +4994,8 @@ pub const ByteStream = struct {
         // #define LIBUS_RECV_BUFFER_LENGTH 524288
         // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
         // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        return .{ .chunk_size = @min(512 * 1024 + std.mem.page_size, @max(this.highWaterMark, std.mem.page_size)) };
+        const page_size: Blob.SizeType = @intCast(std.heap.pageSize());
+        return .{ .chunk_size = @min(512 * 1024 + page_size, @max(this.highWaterMark, page_size)) };
     }
 
     pub fn value(this: *@This()) JSValue {

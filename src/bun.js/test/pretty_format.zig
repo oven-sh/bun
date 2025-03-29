@@ -414,7 +414,7 @@ pub const JestPrettyFormat = struct {
 
                 // If we check an Object has a method table and it does not
                 // it will crash
-                if (js_type != .Object and value.isCallable(globalThis.vm())) {
+                if (js_type != .Object and value.isCallable()) {
                     if (value.isClass(globalThis)) {
                         return .{
                             .tag = .Class,
@@ -676,7 +676,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
                     const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
@@ -712,7 +712,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
                     this.formatter.writeIndent(Writer, this.writer) catch return;
@@ -1277,7 +1277,7 @@ pub const JestPrettyFormat = struct {
                         );
                     } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
                         this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
-                        if (timer.internals.kind == .setInterval) {
+                        if (timer.internals.flags.kind == .setInterval) {
                             this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                             writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                                 timer.internals.id,
@@ -1305,7 +1305,7 @@ pub const JestPrettyFormat = struct {
                     } else if (printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                         return;
                     } else if (jsType != .DOMWrapper) {
-                        if (value.isCallable(this.globalThis.vm())) {
+                        if (value.isCallable()) {
                             return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                         }
 
@@ -1431,7 +1431,7 @@ pub const JestPrettyFormat = struct {
                         break :brk JSValue.undefined;
                     };
 
-                    const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                    const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                         .MessageEvent, .ErrorEvent => |evt| evt,
                         else => {
                             return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
@@ -1529,7 +1529,7 @@ pub const JestPrettyFormat = struct {
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
                             try type_value.toZigString(&tag_name_str, this.globalThis);
                             is_tag_kind_primitive = true;
-                        } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
+                        } else if (_tag.cell.isObject() or type_value.isCallable()) {
                             type_value.getNameProperty(this.globalThis, &tag_name_str);
                             if (tag_name_str.len == 0) {
                                 tag_name_str = ZigString.init("NoName");
@@ -1572,14 +1572,15 @@ pub const JestPrettyFormat = struct {
 
                     if (value.get_unsafe(this.globalThis, "props")) |props| {
                         const prev_quote_strings = this.quote_strings;
-                        this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
+                        this.quote_strings = true;
 
+                        // SAFETY: JSX props are always an object.
+                        const props_obj = props.getObject().?;
                         var props_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = true,
-
                             .include_value = true,
-                        }).init(this.globalThis, props);
+                        }).init(this.globalThis, props_obj);
                         defer props_iter.deinit();
 
                         const children_prop = props.get_unsafe(this.globalThis, "children");

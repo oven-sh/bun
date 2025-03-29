@@ -161,6 +161,10 @@ pub const AnyTask = struct {
     ctx: ?*anyopaque,
     callback: *const (fn (*anyopaque) void),
 
+    pub fn enqueue(this: *@This(), event_loop: *JSC.EventLoop) void {
+        event_loop.enqueueTask(Task.init(this));
+    }
+
     pub fn task(this: *AnyTask) Task {
         return Task.init(this);
     }

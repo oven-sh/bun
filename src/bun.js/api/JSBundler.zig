@@ -600,10 +600,6 @@ pub const JSBundler = struct {
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
-
-            // pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
-            //     return null;
-            // }
         };
 
         pub fn init(bv2: *bun.BundleV2, record: MiniImportRecord) Resolve {
@@ -860,7 +856,6 @@ pub const JSBundler = struct {
                         },
                         error.JSError => {},
                     }
-
                     @panic("Unexpected: source_code is not a string");
                 };
                 this.value = .{

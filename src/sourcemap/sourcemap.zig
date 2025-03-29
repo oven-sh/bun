@@ -480,9 +480,56 @@ pub const Mapping = struct {
                 else => {},
             }
 
-            // Read the original source
-            const source_index_delta = decodeVLQ(remain, 0);
+            const source_index_delta, const original_line_delta, const original_column_delta = brk: {
+                const source_index_delta = decodeVLQ(remain, 0);
+                remain = remain[source_index_delta.start..];
+                if (remain.len == 0) {
+                    @branchHint(.unlikely);
+                    return .{
+                        .fail = .{
+                            .msg = "Missing source index delta",
+                            .err = error.MissingSourceIndexDelta,
+                            .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        },
+                    };
+                }
+
+                const original_line_delta = decodeVLQ(remain, 0);
+                remain = remain[original_line_delta.start..];
+                if (remain.len == 0) {
+                    @branchHint(.unlikely);
+                    return .{
+                        .fail = .{
+                            .msg = "Missing original line",
+                            .err = error.MissingOriginalLine,
+                            .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        },
+                    };
+                }
+
+                // non-standard sourcemap detection
+                // this corresponds to `source_map_is_internal`
+                if (switch (remain[0]) {
+                    ',', ';' => true,
+                    else => false,
+                }) {
+                    // actually, this one had 3 fields, which we decode as original line, original column, and no source index.
+                    const actual_source_index_delta = VLQ.VLQResult{
+                        .start = source_index_delta.start,
+                        .value = 0,
+                    };
+
+                    break :brk .{ actual_source_index_delta, source_index_delta, original_line_delta };
+                }
+
+                const original_column_delta = decodeVLQ(remain, 0);
+                remain = remain[original_column_delta.start..];
+
+                break :brk .{ source_index_delta, original_line_delta, original_column_delta };
+            };
+
             if (source_index_delta.start == 0) {
+                @branchHint(.unlikely);
                 return .{
                     .fail = .{
                         .msg = "Invalid source index delta",
@@ -491,9 +538,10 @@ pub const Mapping = struct {
                     },
                 };
             }
-            source_index += source_index_delta.value;
 
+            source_index += source_index_delta.value;
             if (source_index < 0 or source_index > sources_count) {
+                @branchHint(.unlikely);
                 return .{
                     .fail = .{
                         .msg = "Invalid source index value",
@@ -503,11 +551,10 @@ pub const Mapping = struct {
                     },
                 };
             }
-            remain = remain[source_index_delta.start..];
 
-            // Read the original line
-            const original_line_delta = decodeVLQ(remain, 0);
             if (original_line_delta.start == 0) {
+                @branchHint(.unlikely);
+
                 return .{
                     .fail = .{
                         .msg = "Missing original line",
@@ -519,6 +566,7 @@ pub const Mapping = struct {
 
             original.lines += original_line_delta.value;
             if (original.lines < 0) {
+                @branchHint(.unlikely);
                 return .{
                     .fail = .{
                         .msg = "Invalid original line value",
@@ -528,11 +576,9 @@ pub const Mapping = struct {
                     },
                 };
             }
-            remain = remain[original_line_delta.start..];
 
-            // Read the original column
-            const original_column_delta = decodeVLQ(remain, 0);
             if (original_column_delta.start == 0) {
+                @branchHint(.unlikely);
                 return .{
                     .fail = .{
                         .msg = "Missing original column value",
@@ -545,6 +591,7 @@ pub const Mapping = struct {
 
             original.columns += original_column_delta.value;
             if (original.columns < 0) {
+                @branchHint(.unlikely);
                 return .{
                     .fail = .{
                         .msg = "Invalid original column value",
@@ -554,7 +601,6 @@ pub const Mapping = struct {
                     },
                 };
             }
-            remain = remain[original_column_delta.start..];
 
             if (remain.len > 0) {
                 switch (remain[0]) {
@@ -580,6 +626,8 @@ pub const Mapping = struct {
                 .source_index = source_index,
             }) catch bun.outOfMemory();
         }
+
+        debug("parsed {}", .{bun.fmt.size(mapping.memoryCost(), .{})});
 
         return .{ .success = .{
             .mappings = mapping,
@@ -1134,6 +1182,7 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
             j.lastByte(),
             prev_end_state,
             start_state,
+            true,
         ).list.items,
         allocator,
     );
@@ -1161,11 +1210,22 @@ pub fn appendSourceMappingURLRemote(
 }
 
 /// This function is extremely hot.
-pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) MutableString {
+pub fn appendMappingToBuffer(
+    buffer_: MutableString,
+    last_byte: u8,
+    prev_state: SourceMapState,
+    current_state: SourceMapState,
+    /// Bun-specific, non-standard sourcemap mappings
+    /// Instead of `sourceIndex, line, column` it's `line, column`
+    /// At runtime, there's only ever 1 source index in certain cases.
+    comptime include_source_index: bool,
+) MutableString {
     var buffer = buffer_;
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
 
-    const vlqs = [_]VLQ{
+    const vlqs = if (comptime include_source_index) [_]VLQ{
+        // Standard sourcemaps
+
         // Record the generated column (the line is recorded using ';' elsewhere)
         .encode(current_state.generated_column -| prev_state.generated_column),
         // Record the generated source
@@ -1174,13 +1234,26 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         .encode(current_state.original_line -| prev_state.original_line),
         // Record the original column
         .encode(current_state.original_column -| prev_state.original_column),
+    } else [_]VLQ{
+        // non-standard sourcemaps
+        .encode(current_state.generated_column -| prev_state.generated_column),
+        .encode(current_state.original_line -| prev_state.original_line),
+        .encode(current_state.original_column -| prev_state.original_column),
     };
 
+    if (comptime !include_source_index) {
+        // If there is no source index, then the source index should be the same as the previous source index
+        bun.assert_eql(current_state.source_index, prev_state.source_index);
+    }
+
     // Count exactly how many bytes we need to write
-    const total_len = @as(usize, vlqs[0].len) +
-        @as(usize, vlqs[1].len) +
-        @as(usize, vlqs[2].len) +
-        @as(usize, vlqs[3].len);
+    const total_len = brk: {
+        var len: usize = 0;
+        for (&vlqs) |*item| {
+            len += item.len;
+        }
+        break :brk len;
+    };
 
     // Instead of updating .len 5 times, we only need to update it once.
     var writable = buffer.writableNBytes(total_len + @as(usize, @intFromBool(needs_comma))) catch unreachable;
@@ -1288,8 +1361,8 @@ pub const Chunk = struct {
             ctx: Type,
             const Format = @This();
 
-            pub fn init(allocator: std.mem.Allocator, prepend_count: bool) Format {
-                return .{ .ctx = Type.init(allocator, prepend_count) };
+            pub fn init(allocator: std.mem.Allocator, prepend_count: bool, source_map_is_internal: bool) Format {
+                return .{ .ctx = Type.init(allocator, prepend_count, source_map_is_internal) };
             }
 
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {
@@ -1319,15 +1392,18 @@ pub const Chunk = struct {
         count: usize = 0,
         offset: usize = 0,
         approximate_input_line_count: usize = 0,
+        include_source_index: bool = true,
 
         pub const Format = SourceMapFormat(VLQSourceMap);
 
-        pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
+        pub fn init(allocator: std.mem.Allocator, prepend_count: bool, source_map_is_internal: bool) VLQSourceMap {
             var map = VLQSourceMap{
                 .data = MutableString.initEmpty(allocator),
+                .include_source_index = !source_map_is_internal,
             };
 
-            // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
+            // For bun.js, we store the number of mappings and how many bytes
+            // the final list is at the beginning of the array
             if (prepend_count) {
                 map.offset = 24;
                 map.data.append(&([_]u8{0} ** 24)) catch unreachable;
@@ -1346,7 +1422,9 @@ pub const Chunk = struct {
             else
                 0;
 
-            this.data = appendMappingToBuffer(this.data, last_byte, prev_state, current_state);
+            this.data = switch (this.include_source_index) {
+                inline else => |include_source_index| appendMappingToBuffer(this.data, last_byte, prev_state, current_state, include_source_index),
+            };
             this.count += 1;
         }
 

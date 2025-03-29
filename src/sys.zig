@@ -2329,11 +2329,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
             .FileEndOfFileInformation,
         );
 
-        if (rc != 0) {
-            return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
-        }
-
-        return Maybe(void).success;
+        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
     }
 
     return while (true) {

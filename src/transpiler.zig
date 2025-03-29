@@ -1177,21 +1177,21 @@ pub const Transpiler = struct {
                     transpiler.log,
                     &source,
                 ) catch null) orelse return null) {
-                    .ast => |value| .{
+                    .ast => |value| ParseResult{
                         .ast = value,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                     },
-                    .cached => .{
+                    .cached => ParseResult{
                         .ast = undefined,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
-                    .already_bundled => |already_bundled| .{
+                    .already_bundled => |already_bundled| ParseResult{
                         .ast = undefined,
                         .already_bundled = switch (already_bundled) {
                             .bun => .source_code,

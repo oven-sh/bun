@@ -72,7 +72,7 @@ await Bun.file("logs.json").delete()
 
 ## Writing files (`Bun.write()`)
 
-`Bun.write(destination, data): Promise<number>`
+`Bun.write(destination, data, options): Promise<number>`
 
 The `Bun.write` function is a multi-tool for writing payloads of all kinds to disk.
 
@@ -89,6 +89,10 @@ The second argument is the data to be written. It can be any of the following:
 - `ArrayBuffer` or `SharedArrayBuffer`
 - `TypedArray` (`Uint8Array`, et. al.)
 - `Response`
+
+The third argument is the options object. It is optional. It can be any of the following:
+
+- `createPath`: (default `true`), by default Bun will create the parent directory if it doesn't exist. Set to false to throw the Error instead.
 
 All possible permutations are handled using the fastest available system calls on the current platform.
 

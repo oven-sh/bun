@@ -16,15 +16,11 @@ declare module "bun" {
 
     type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("util").TextDecoder;
 
-    type LibEmptyOrNodeReadableStream<T = any> = LibDomIsLoaded extends true
-      ? {}
-      : import("stream/web").ReadableStream<T>;
+    type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true ? {} : import("stream/web").ReadableStream<T>;
 
-    type LibEmptyOrNodeWritableStream<T = any> = LibDomIsLoaded extends true
-      ? {}
-      : import("stream/web").WritableStream<T>;
+    type LibEmptyOrNodeWritableStream<T> = LibDomIsLoaded extends true ? {} : import("stream/web").WritableStream<T>;
 
-    type LibEmptyOrNodeTransformStream<I = any, O = any> = LibDomIsLoaded extends true
+    type LibEmptyOrNodeTransformStream<I, O> = LibDomIsLoaded extends true
       ? {}
       : import("stream/web").TransformStream<I, O>;
 
@@ -32,7 +28,7 @@ declare module "bun" {
   }
 }
 
-interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream {}
+interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
@@ -42,7 +38,7 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream {}
+interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream<W> {}
 declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   "WritableStream",
   {
@@ -1760,7 +1756,7 @@ interface BunFetchRequestInit extends RequestInit {
  *
  * @returns A promise that resolves to {@link Response} object.
  */
-declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
+declare function fetch(input: string | URL | globalThis.Request, init?: BunFetchRequestInit): Promise<Response>;
 
 /**
  * Bun's extensions of the `fetch` API

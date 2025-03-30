@@ -1756,7 +1756,7 @@ interface BunFetchRequestInit extends RequestInit {
  *
  * @returns A promise that resolves to {@link Response} object.
  */
-declare function fetch(input: string | URL | globalThis.Request, init?: BunFetchRequestInit): Promise<Response>;
+declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
 /**
  * Bun's extensions of the `fetch` API

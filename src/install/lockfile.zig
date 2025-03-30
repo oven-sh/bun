@@ -7717,7 +7717,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
                 for (Npm.Architecture.NameMap.kvs) |kv| {
                     if (pkg.meta.arch.has(kv.value)) {
-                        try w.write(kv.key);
+                        try w.write(kv.key_ptr[0..kv.key_len]);
                     }
                 }
             }
@@ -7729,7 +7729,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
                 for (Npm.OperatingSystem.NameMap.kvs) |kv| {
                     if (pkg.meta.os.has(kv.value)) {
-                        try w.write(kv.key);
+                        try w.write(kv.key_ptr[0..kv.key_len]);
                     }
                 }
             }

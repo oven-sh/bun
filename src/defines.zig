@@ -40,8 +40,8 @@ pub const UserDefinesArray = bun.StringArrayHashMap(DefineData);
 
 pub const DefineData = struct {
     value: js_ast.Expr.Data,
-    valueless: bool = false,
     original_name: ?string = null,
+    valueless: bool = false,
 
     // True if accessing this value is known to not have any side effects. For
     // example, a bare reference to "Object.create" can be removed because it
@@ -59,21 +59,32 @@ pub const DefineData = struct {
         return self.valueless;
     }
 
-    pub fn initBoolean(value: bool) DefineData {
-        return .{
-            .value = .{ .e_boolean = .{ .value = value } },
-            .can_be_removed_if_unused = true,
-        };
+    const define_data_with_true = &DefineData{
+        .value = .{ .e_boolean = .{ .value = true } },
+        .can_be_removed_if_unused = true,
+    };
+
+    const define_data_with_false = &DefineData{
+        .value = .{ .e_boolean = .{ .value = false } },
+        .can_be_removed_if_unused = true,
+    };
+
+    pub fn initBoolean(value: bool) *const DefineData {
+        return if (value) define_data_with_true else define_data_with_false;
     }
 
-    pub fn initStaticString(str: *const js_ast.E.String) DefineData {
-        return .{
-            .value = .{ .e_string = @constCast(str) },
-            .can_be_removed_if_unused = true,
+    pub fn initStaticString(comptime str: *const js_ast.E.String) *const DefineData {
+        const Holder = struct {
+            pub const data = &DefineData{
+                .value = .{ .e_string = @constCast(str) },
+                .can_be_removed_if_unused = true,
+            };
         };
+
+        return Holder.data;
     }
 
-    pub fn merge(a: DefineData, b: DefineData) DefineData {
+    pub fn merge(a: *const DefineData, b: *const DefineData) DefineData {
         return DefineData{
             .value = b.value,
             .can_be_removed_if_unused = a.can_be_removed_if_unused,
@@ -209,21 +220,25 @@ pub const Define = struct {
 
     pub const Data = DefineData;
 
-    pub fn forIdentifier(this: *const Define, name: []const u8) ?IdentifierDefine {
-        if (this.identifiers.get(name)) |data| {
+    pub fn forIdentifier(this: *const Define, name: []const u8) ?*const IdentifierDefine {
+        if (this.identifiers.getPtr(name)) |data| {
             return data;
         }
 
-        return table.pure_global_identifier_map.get(name);
+        if (table.pure_global_identifier_map.get(name)) |entry| {
+            return entry.get();
+        }
+
+        return null;
     }
 
     pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
         while (iter.next()) |user_define| {
-            try define.insert(allocator, user_define.key_ptr.*, user_define.value_ptr.*);
+            try define.insert(allocator, user_define.key_ptr.*, user_define.value_ptr);
         }
     }
 
-    pub fn insert(define: *Define, allocator: std.mem.Allocator, key: []const u8, value: DefineData) !void {
+    pub fn insert(define: *Define, allocator: std.mem.Allocator, key: []const u8, value: *const DefineData) !void {
         // If it has a dot, then it's a DotDefine.
         // e.g. process.env.NODE_ENV
         if (strings.lastIndexOfChar(key, '.')) |last_dot| {
@@ -246,7 +261,9 @@ pub const Define = struct {
                 for (gpe_entry.value_ptr.*) |*part| {
                     // ["process", "env"] === ["process", "env"] (if that actually worked)
                     if (arePartsEqual(part.parts, parts)) {
-                        part.data = part.data.merge(value);
+                        const prev_data = part.data;
+
+                        part.data = prev_data.merge(value);
                         return;
                     }
                 }
@@ -260,14 +277,14 @@ pub const Define = struct {
             }
 
             list.appendAssumeCapacity(DotDefine{
-                .data = value,
+                .data = value.*,
                 // TODO: do we need to allocate this?
                 .parts = parts,
             });
             gpe_entry.value_ptr.* = try list.toOwnedSlice();
         } else {
             // e.g. IS_BROWSER
-            try define.identifiers.put(key, value);
+            try define.identifiers.put(key, value.*);
         }
     }
 
@@ -278,35 +295,6 @@ pub const Define = struct {
         define.dots = bun.StringHashMap([]DotDefine).init(allocator);
         define.drop_debugger = drop_debugger;
         try define.dots.ensureTotalCapacity(124);
-
-        const value_define = DefineData{
-            .value = .{ .e_undefined = .{} },
-            .valueless = true,
-            .can_be_removed_if_unused = true,
-        };
-        // Step 1. Load the globals into the hash tables
-        for (GlobalDefinesKey) |global| {
-            const key = global[global.len - 1];
-            const gpe = try define.dots.getOrPut(key);
-            if (gpe.found_existing) {
-                var list = try std.ArrayList(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
-                list.appendSliceAssumeCapacity(gpe.value_ptr.*);
-                list.appendAssumeCapacity(DotDefine{
-                    .parts = global[0..global.len],
-                    .data = value_define,
-                });
-
-                gpe.value_ptr.* = try list.toOwnedSlice();
-            } else {
-                var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
-                list.appendAssumeCapacity(DotDefine{
-                    .parts = global[0..global.len],
-                    .data = value_define,
-                });
-
-                gpe.value_ptr.* = try list.toOwnedSlice();
-            }
-        }
 
         // Step 3. Load user data into hash tables
         // At this stage, user data has already been validated.

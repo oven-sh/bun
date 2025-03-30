@@ -13,7 +13,8 @@ const strings = @import("./string_immutable.zig");
 /// TODO: https://github.com/ziglang/zig/issues/4335
 pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, comptime kvs_list: anytype) type {
     const KV = struct {
-        key: []const KeyType,
+        key_ptr: [*]const KeyType,
+        key_len: u8,
         value: V,
     };
 
@@ -24,29 +25,30 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         const lenAsc = (struct {
             fn lenAsc(context: void, a: KV, b: KV) bool {
                 _ = context;
-                if (a.key.len != b.key.len) {
-                    return a.key.len < b.key.len;
+                if (a.key_len != b.key_len) {
+                    return a.key_len < b.key_len;
                 }
                 // https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array
                 @setEvalBranchQuota(999999);
-                return std.mem.order(KeyType, a.key, b.key) == .lt;
+                return std.mem.order(KeyType, a.key_ptr[0..a.key_len], b.key_ptr[0..b.key_len]) == .lt;
             }
         }).lenAsc;
         if (KeyType == u8) {
             for (kvs_list, 0..) |kv, i| {
                 if (V != void) {
-                    sorted_kvs[i] = .{ .key = kv.@"0", .value = kv.@"1" };
+                    sorted_kvs[i] = .{ .key_ptr = kv.@"0".ptr, .key_len = @as(u8, @intCast(kv.@"0".len)), .value = kv.@"1" };
                 } else {
-                    sorted_kvs[i] = .{ .key = kv.@"0", .value = {} };
+                    sorted_kvs[i] = .{ .key_ptr = kv.@"0".ptr, .key_len = @as(u8, @intCast(kv.@"0".len)), .value = {} };
                 }
             }
         } else {
             @compileError("Not implemented for this key type");
         }
         std.sort.pdq(KV, &sorted_kvs, {}, lenAsc);
-        const min_len = sorted_kvs[0].key.len;
-        const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
-        var len_indexes: [max_len + 1]usize = undefined;
+        const min_len = sorted_kvs[0].key_len;
+        const max_len = sorted_kvs[sorted_kvs.len - 1].key_len;
+        const LenIndexInt = if (sorted_kvs.len > std.math.maxInt(u8)) u16 else u8;
+        var len_indexes: [max_len + 1]LenIndexInt = undefined;
         var len: usize = 0;
         var i: usize = 0;
 
@@ -54,35 +56,37 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             @setEvalBranchQuota(99999);
 
             // find the first keyword len == len
-            while (len > sorted_kvs[i].key.len) {
+            while (len > sorted_kvs[i].key_len) {
                 i += 1;
             }
-            len_indexes[len] = i;
+            len_indexes[len] = @intCast(i);
         }
         break :blk .{
-            .min_len = min_len,
-            .max_len = max_len,
+            .min_len = @as(LenIndexInt, @intCast(min_len)),
+            .max_len = @as(LenIndexInt, @intCast(max_len)),
             .sorted_kvs = sorted_kvs,
             .len_indexes = len_indexes,
         };
     };
 
     return struct {
-        const len_indexes = precomputed.len_indexes;
-        pub const kvs = precomputed.sorted_kvs;
-
-        const keys_list: []const []const KeyType = blk: {
-            var k: [kvs.len][]const KeyType = undefined;
-            for (kvs, 0..) |kv, i| {
-                k[i] = kv.key;
-            }
-            const final = k;
-            break :blk &final;
-        };
+        const len_indexes = &precomputed.len_indexes;
+        pub const kvs = &precomputed.sorted_kvs;
 
         pub const Value = V;
 
         pub fn keys() []const []const KeyType {
+            const keys_list = struct {
+                const list: []const []const KeyType = blk: {
+                    var k: [kvs.len][]const KeyType = undefined;
+                    for (kvs, 0..) |kv, i| {
+                        k[i] = kv.key_ptr[0..kv.key_len];
+                    }
+                    const final = k;
+                    break :blk &final;
+                };
+            }.list;
+
             return keys_list;
         }
 
@@ -91,20 +95,57 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         pub fn getWithLength(str: []const KeyType, comptime len: usize) ?V {
+            const start: u16 = comptime len_indexes[len];
             const end = comptime brk: {
                 var i = len_indexes[len];
                 @setEvalBranchQuota(99999);
 
-                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+                while (i < kvs.len and kvs[i].key_len == len) : (i += 1) {}
 
                 break :brk i;
             };
 
-            // This benchmarked faster for both small and large lists of strings than using a big switch statement
-            // But only so long as the keys are a sorted list.
-            inline for (len_indexes[len]..end) |i| {
-                if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
-                    return kvs[i].value;
+            if (comptime end == start) {
+                return null;
+            }
+
+            if (comptime len == 8) {
+                const key: u64 = @bitCast(str[0..8].*);
+
+                inline for (comptime start..end) |k| {
+                    if ((comptime @as(u64, @bitCast(kvs[k].key_ptr[0..8].*))) == key) {
+                        return kvs[k].value;
+                    }
+                }
+            } else if (comptime len == 4) {
+                const key: u32 = @bitCast(str[0..4].*);
+                inline for (comptime start..end) |k| {
+                    if ((comptime @as(u32, @bitCast(kvs[k].key_ptr[0..4].*))) == key) {
+                        return kvs[k].value;
+                    }
+                }
+            } else if (comptime len == 2) {
+                const key: u16 = @bitCast(str[0..2].*);
+                inline for (comptime start..end) |k| {
+                    if ((comptime @as(u16, @bitCast(kvs[k].key_ptr[0..2].*))) == key) {
+                        return kvs[k].value;
+                    }
+                }
+            } else if (comptime len == 1) {
+                const key: u8 = str[0];
+                inline for (comptime start..end) |k| {
+                    if (key == comptime kvs[k].key_ptr[0]) {
+                        return kvs[k].value;
+                    }
+                }
+            } else {
+
+                // This benchmarked faster for both small and large lists of strings than using a big switch statement
+                // But only so long as the keys are a sorted list.
+                inline for (start..end) |i| {
+                    if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key_ptr[0..kvs[i].key_len], false)) {
+                        return kvs[i].value;
+                    }
                 }
             }
 
@@ -116,7 +157,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 var i = len_indexes[len];
                 @setEvalBranchQuota(99999);
 
-                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+                while (i < kvs.len and kvs[i].key_len == len) : (i += 1) {}
 
                 break :brk i;
             };
@@ -124,7 +165,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             // This benchmarked faster for both small and large lists of strings than using a big switch statement
             // But only so long as the keys are a sorted list.
             inline for (len_indexes[len]..end) |i| {
-                if (eqls(str, kvs[i].key)) {
+                if (eqls(str, kvs[i].key_ptr[0..kvs[i].key_len])) {
                     return kvs[i].value;
                 }
             }
@@ -137,7 +178,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 var i = len_indexes[len];
                 @setEvalBranchQuota(99999);
 
-                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+                while (i < kvs.len and kvs[i].key_len == len) : (i += 1) {}
 
                 break :brk i;
             };
@@ -155,14 +196,10 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             if (str.len < precomputed.min_len or str.len > precomputed.max_len)
                 return null;
 
-            comptime var i: usize = precomputed.min_len;
-            inline while (i <= precomputed.max_len) : (i += 1) {
-                if (str.len == i) {
-                    return getWithLength(str, i);
-                }
-            }
-
-            return null;
+            return switch (str.len) {
+                inline precomputed.min_len...precomputed.max_len => |len| getWithLength(str, len),
+                else => null,
+            };
         }
 
         /// Returns the index of the key in the sorted list of keys.
@@ -177,7 +214,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                         var i = len_indexes[len];
                         @setEvalBranchQuota(99999);
 
-                        while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+                        while (i < kvs.len and kvs[i].key_len == len) : (i += 1) {}
 
                         break :brk i;
                     };
@@ -185,7 +222,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                     // This benchmarked faster for both small and large lists of strings than using a big switch statement
                     // But only so long as the keys are a sorted list.
                     inline for (len_indexes[len]..end) |i| {
-                        if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
+                        if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key_ptr[0..kvs[i].key_len], false)) {
                             return i;
                         }
                     }

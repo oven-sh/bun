@@ -654,13 +654,13 @@ pub fn Negatable(comptime T: type) type {
                 if (has and print_included) {
                     try writer.print(
                         \\"{s}"
-                    , .{kv.key});
+                    , .{kv.key_ptr[0..kv.key_len]});
                     if (one) return;
                     try writer.writeAll(", ");
                 } else if (!has and !print_included) {
                     try writer.print(
                         \\"!{s}"
-                    , .{kv.key});
+                    , .{kv.key_ptr[0..kv.key_len]});
                     if (one) return;
                     try writer.writeAll(", ");
                 }
@@ -2164,7 +2164,7 @@ pub const PackageManifest = struct {
 
                                 if (count > 0 and
                                     ((comptime !is_peer) or
-                                    optional_peer_dep_names.items.len == 0))
+                                        optional_peer_dep_names.items.len == 0))
                                 {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();

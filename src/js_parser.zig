@@ -16241,7 +16241,7 @@ fn NewParser_(
                     if (p.symbols.items[e_.ref.innerIndex()].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
                         if (p.define.forIdentifier(name)) |def| {
                             if (!def.valueless) {
-                                const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
+                                const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, def);
 
                                 // Don't substitute an identifier for a non-identifier if this is an
                                 // assignment target, since it'll cause a syntax error
@@ -16915,7 +16915,7 @@ fn NewParser_(
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
                     if (p.define.dots.get(e_.name)) |parts| {
-                        for (parts) |define| {
+                        for (parts) |*define| {
                             if (p.isDotDefineMatch(expr, define.parts)) {
                                 if (in.assign_target == .none) {
                                     // Substitute user-specified defines

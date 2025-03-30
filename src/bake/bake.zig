@@ -677,13 +677,13 @@ pub const Framework = struct {
         if ((bundler_options.define.keys.len + bundler_options.drop.count()) > 0) {
             for (bundler_options.define.keys, bundler_options.define.values) |k, v| {
                 const parsed = try bun.options.Define.Data.parse(k, v, false, false, log, arena);
-                try out.options.define.insert(arena, k, parsed);
+                try out.options.define.insert(arena, k, &parsed);
             }
 
             for (bundler_options.drop.keys()) |drop_item| {
                 if (drop_item.len > 0) {
                     const parsed = try bun.options.Define.Data.parse(drop_item, "", true, true, log, arena);
-                    try out.options.define.insert(arena, drop_item, parsed);
+                    try out.options.define.insert(arena, drop_item, &parsed);
                 }
             }
         }
@@ -791,10 +791,10 @@ pub fn addImportMetaDefines(
     try define.insert(
         allocator,
         "import.meta.env.MODE",
-        Define.Data.initStaticString(switch (mode) {
-            .development => &.{ .data = "development" },
-            .production_dynamic, .production_static => &.{ .data = "production" },
-        }),
+        switch (mode) {
+            .development => Define.Data.initStaticString(&.{ .data = "development" }),
+            .production_dynamic, .production_static => Define.Data.initStaticString(&.{ .data = "production" }),
+        },
     );
     try define.insert(
         allocator,

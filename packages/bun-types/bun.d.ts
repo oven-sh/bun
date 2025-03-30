@@ -4500,12 +4500,12 @@ declare module "bun" {
    * ```
    */
   function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-    options: ServeFunctionOptions<T, R> & {
+    options: Partial<ServeFunctionOptions<T, R> & {
       /**
        * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
        */
       static?: R;
-    },
+    }>,
   ): Server;
 
   /**

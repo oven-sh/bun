@@ -93,9 +93,9 @@ try {
 # Remove Entry from path
 try {
   $Path = Get-Env -Key 'Path'
-  $Path = $Path -split ';'
+  $Path = $Path -split [System.IO.Path]::PathSeparator
   $Path = $Path | Where-Object { $_ -ne "${PSScriptRoot}\bin" }
-  Write-Env -Key 'Path' -Value ($Path -join ';')
+  Write-Env -Key 'Path' -Value ($Path -join [System.IO.Path]::PathSeparator)
 } catch  {
   Write-Host "Could not remove ${PSScriptRoot}\bin from PATH."
   Write-Error $_

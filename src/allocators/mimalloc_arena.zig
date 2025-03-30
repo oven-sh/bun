@@ -83,7 +83,7 @@ pub const Arena = struct {
         const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
             mimalloc.mi_heap_malloc_aligned(heap, len, alignment.toByteUnits())
         else
-            mimalloc.mi_heap_malloc(heap, len);
+            mimalloc.mi_heap_malloc_aligned_at(heap, len, alignment.toByteUnits(), 0);
 
         if (comptime Environment.isDebug) {
             const usable = mimalloc.mi_malloc_usable_size(ptr);

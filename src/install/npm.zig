@@ -2169,7 +2169,7 @@ pub const PackageManifest = struct {
 
                                 if (count > 0 and
                                     ((comptime !is_peer) or
-                                    optional_peer_dep_names.items.len == 0))
+                                        optional_peer_dep_names.items.len == 0))
                                 {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();

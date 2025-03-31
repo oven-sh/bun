@@ -15,6 +15,9 @@ const socket = await Bun.udpSocket({
   port: 41234
 })
 console.log(socket.port); // 41234
+
+A import feature for wakeonlan scene, you need set this
+socket.setBroadcast(true)
 ```
 
 ### Send a datagram

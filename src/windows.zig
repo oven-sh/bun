@@ -93,12 +93,6 @@ pub extern "kernel32" fn GetFileInformationByHandle(
     lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
 ) callconv(windows.WINAPI) BOOL;
 
-/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
-pub extern "kernel32" fn SetFileValidData(
-    hFile: win32.HANDLE,
-    validDataLength: c_longlong,
-) callconv(windows.WINAPI) win32.BOOL;
-
 pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,

@@ -1,5 +1,5 @@
-import { BunFile, BunPlugin, FileBlob } from "bun";
-import * as tsd from "./utilities.test";
+import type { BunFile, BunPlugin, FileBlob } from "bun";
+import * as tsd from "./utilities";
 {
   const _plugin: BunPlugin = {
     name: "asdf",
@@ -7,6 +7,7 @@ import * as tsd from "./utilities.test";
   };
   _plugin;
 }
+
 {
   // tslint:disable-next-line:no-void-expression
   const arg = Bun.plugin({

@@ -2062,7 +2062,7 @@ extern "C" napi_status napi_create_double(napi_env env, double value,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
-    *result = toNapi(jsDoubleNumber(value), toJS(env));
+    *result = toNapi(jsNumber(value), toJS(env));
     NAPI_RETURN_SUCCESS(env);
 }
 

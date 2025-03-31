@@ -61,9 +61,16 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject) {
     // When adding to this list, please comment why the package is using extensions incorrectly.
 
     WTF::String url = frame.sourceURL(vm);
-    if (url.contains("dist/build/next-config-ts/"_s))
+
+#if OS(WINDOWS)
+#define CHECK_PATH(url, _, windows) (url.contains(windows))
+#else
+#define CHECK_PATH(url, posix, _) (url.contains(posix))
+#endif
+
+    if (CHECK_PATH(url, "dist/build/next-config-ts/"_s, "dist\\build\\next-config-ts\\"_s))
         return false; // Next.js adds SWC support to add features Bun already has.
-    if (url.contains("@meteorjs/babel"_s))
+    if (CHECK_PATH(url, "@meteorjs/babel"_s, "@meteorjs\\babel"_s))
         return false; // Wraps existing loaders to use Babel.
     // NOTE: @babel/core is not on this list because it checks if extensions[".ts"] exists
     //       before adding it's own.
@@ -71,6 +78,7 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject) {
     // NOTE: vite doesn't need to use extensions, but blocking them would make
     //       it slower as they already bundle the code before injecting the hook.
 
+#undef CHECK_PATH
     return true;
 }
 

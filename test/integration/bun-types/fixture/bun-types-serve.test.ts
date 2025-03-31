@@ -306,16 +306,20 @@ test(
         return chunks.join("\n");
       }
 
-      const result = await cheapRequest("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+      const result = await cheapRequest(
+        "GET / HTTP/1.1\r\n" +
+          "Host: example.com\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "\r\n",
+      );
 
-      expect(result).toContain("HTTP/1.1 200 OK\r\nDate:");
-      expect(result).toContain("\r\nContent-Length: 0\r\n\r\n");
-
-      // const res = await Bun.fetch("https://definitelydoesnotexist.bun.sh", {
-      //   unix: server.url.toString(),
-      // });
-
-      // expect(res.status).toBe(101);
+      expect(result).toContain("HTTP/1.1 101 Switching Protocols\r\n");
+      expect(result).toContain("Upgrade: websocket\r\n");
+      expect(result).toContain("Connection: Upgrade\r\n");
+      expect(result).toContain("Sec-WebSocket-Accept: ");
     },
   },
 );

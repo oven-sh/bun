@@ -105,55 +105,47 @@ pub fn RefCounted(
 
     const log = Output.scoped(output_name, true);
 
-    const OwnCount: ?type = if (!@hasField(T, "ref_count")) void else blk: {
-        const Count: type = @FieldType(T, "ref_count");
-        const count_info = @typeInfo(Count);
-        if (count_info != .int) @compileError(@typeName(T) ++ ".ref_count must be an integer type");
-        break :blk Count;
-    };
-    // const intrusive = OwnCount != null;
+    const intrusive = @hasField(T, "ref_count");
 
     const Inner = struct {
         /// This is always > 0 unless value is just about to be deallocated.
-        ref_count: if (OwnCount != null) void else if (sync) AtomicU32 else u32 = if (sync) .init(1) else 1,
+        ref_count: if (intrusive) void else if (sync) AtomicU32 else u32 = if (sync) .init(1) else 1,
         allocator: Allocator,
         value: T,
 
         const Self = @This();
 
         fn ref(this: *Self) callconv(bun.callconv_inline) u32 {
-            if (OwnCount) |C| {
-                const prev = if (comptime sync) @atomicRmw(C, &this.value.ref_count, .Add, 1, .acquire) else this.value.ref_count;
+            const ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
+            if (comptime sync) {
+                const prev = ref_count_field.fetchAdd(1, AtomicOrder.acquire);
                 bun.assertWithLocation(prev > 0, @src());
-                if (!sync) this.value.ref_count = prev + 1;
+                return prev;
+            } else {
+                const prev = ref_count_field;
+                bun.assertWithLocation(prev > 0, @src());
+                ref_count_field += 1;
                 return prev;
             }
-
-            const prev = if (comptime sync) this.ref_count.fetchAdd(1, AtomicOrder.acquire) else this.ref_count;
-            bun.assertWithLocation(prev > 0, @src());
-            if (!sync) this.ref_count += 1;
-            return prev;
         }
 
         fn deref(this: *Self) callconv(bun.callconv_inline) u32 {
-            if (OwnCount) |C| {
-                const prev = if (comptime sync) @atomicRmw(C, &this.value.ref_count, .Sub, 1, .release) else this.value.ref_count;
+            const ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
+            if (comptime sync) {
+                const prev = ref_count_field.fetchSub(1, AtomicOrder.release);
                 bun.assertWithLocation(prev > 0, @src());
-                if (!sync) this.value.ref_count = prev - 1;
+                return prev;
+            } else {
+                const prev = ref_count_field;
+                bun.assertWithLocation(prev > 0, @src());
+                ref_count_field -= 1;
                 return prev;
             }
-
-            const prev = if (comptime sync) this.ref_count.fetchSub(1, AtomicOrder.release) else this.ref_count;
-            bun.assertWithLocation(prev > 0, @src());
-            if (!sync) this.ref_count -= 1;
-            return prev;
         }
 
         fn refCount(this: Self) callconv(bun.callconv_inline) u32 {
-            if (OwnCount) |C|
-                return if (comptime sync) @atomicLoad(C, &this.value.ref_count, .acquire) else this.value.ref_count
-            else
-                return if (comptime sync) this.ref_count.load(AtomicOrder.acq_rel) else this.ref_count;
+            const ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
+            return if (comptime sync) ref_count_field.load(.acq_rel) else ref_count_field;
         }
     };
 

@@ -4,10 +4,11 @@ const t = std.testing;
 
 test {
     _ = @import("shell/braces.zig");
+    _ = @import("bun.js/node/assert/myers_diff.zig");
 }
 
 test "basic string usage" {
-    var s = bun.String.createUTF8("hi"); // it can create `WTF::String`s too
+    var s = bun.String.createUTF8("hi");
     defer s.deref();
     try t.expect(s.tag != .Dead and s.tag != .Empty);
     try t.expectEqual(s.length(), 2);

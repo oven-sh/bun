@@ -20,7 +20,7 @@ const Npm = @import("./npm.zig");
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const String = Semver.String;
 const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
@@ -63,7 +63,7 @@ pub fn detectAndLoadOtherLockfile(
                 , .{});
                 Global.exit(1);
             }
-            if (Environment.allow_assert) {
+            if (Environment.isDebug) {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
                 Output.prettyErrorln("Error: {s}", .{@errorName(err)});
@@ -675,9 +675,7 @@ pub fn migrateNPMLockfile(
                                 .workspace = wksp_path,
                             },
                         },
-                        .behavior = .{
-                            .workspace = true,
-                        },
+                        .behavior = .{ .workspace = true },
                     };
                     resolutions_buf[0] = entry1.new_package_id;
 
@@ -768,7 +766,7 @@ pub fn migrateNPMLockfile(
                                 .name_hash = name_hash,
                                 .version = version,
                                 .behavior = .{
-                                    .normal = dep_key == .dependencies,
+                                    .prod = dep_key == .dependencies,
                                     .optional = dep_key == .optionalDependencies,
                                     .dev = dep_key == .devDependencies,
                                     .peer = dep_key == .peerDependencies,
@@ -945,7 +943,7 @@ pub fn migrateNPMLockfile(
                                                 .name_hash = name_hash,
                                                 .version = version,
                                                 .behavior = .{
-                                                    .normal = dep_key == .dependencies,
+                                                    .prod = dep_key == .dependencies,
                                                     .optional = true,
                                                     .dev = dep_key == .devDependencies,
                                                     .peer = dep_key == .peerDependencies,
@@ -1019,7 +1017,7 @@ pub fn migrateNPMLockfile(
         return error.NotAllPackagesGotResolved;
     }
 
-    try this.hoist(log, .resolvable, {});
+    try this.resolve(log);
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});

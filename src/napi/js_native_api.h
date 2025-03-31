@@ -238,8 +238,6 @@ NAPI_EXTERN napi_status napi_unwrap(napi_env env, napi_value js_object,
                                     void **result);
 NAPI_EXTERN napi_status napi_remove_wrap(napi_env env, napi_value js_object,
                                          void **result);
-NAPI_EXTERN napi_status napi_create_object(napi_env env, 
-                                             napi_value *result);
 NAPI_EXTERN napi_status napi_create_external(napi_env env, void *data,
                                              napi_finalize finalize_cb,
                                              void *finalize_hint,
@@ -454,6 +452,32 @@ napi_check_object_type_tag(napi_env env, napi_value value,
 NAPI_EXTERN napi_status napi_object_freeze(napi_env env, napi_value object);
 NAPI_EXTERN napi_status napi_object_seal(napi_env env, napi_value object);
 #endif // NAPI_VERSION >= 8
+
+#if NAPI_VERSION >= 10
+NAPI_EXTERN napi_status node_api_create_external_string_latin1(
+    napi_env env,
+    char* str,
+    size_t length,
+    napi_finalize finalize_callback,
+    void* finalize_hint,
+    napi_value* result,
+    bool* copied);
+NAPI_EXTERN napi_status
+node_api_create_external_string_utf16(napi_env env,
+                                      char16_t* str,
+                                      size_t length,
+                                      napi_finalize finalize_callback,
+                                      void* finalize_hint,
+                                      napi_value* result,
+                                      bool* copied);
+
+NAPI_EXTERN napi_status node_api_create_property_key_latin1(
+    napi_env env, const char* str, size_t length, napi_value* result);
+NAPI_EXTERN napi_status node_api_create_property_key_utf8(
+    napi_env env, const char* str, size_t length, napi_value* result);
+NAPI_EXTERN napi_status node_api_create_property_key_utf16(
+    napi_env env, const char16_t* str, size_t length, napi_value* result);
+#endif // NAPI_VERSION >= 10
 
 EXTERN_C_END
 

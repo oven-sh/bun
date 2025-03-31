@@ -20,9 +20,37 @@ describe("bundler", () => {
       "/styles.css": "body { background-color: red; }",
       "/script.js": "console.log('Hello World')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
+
+    onAfterBundle(api) {
+      // Check that output HTML references hashed filenames
+      api.expectFile("out/index.html").not.toContain("styles.css");
+      api.expectFile("out/index.html").not.toContain("script.js");
+      api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
+      api.expectFile("out/index.html").toMatch(/src=".*\.js"/);
+    },
+  });
+
+  // Test relative paths without "./" in script src
+  itBundled("html/implicit-relative-paths", {
+    outdir: "out/",
+    files: {
+      "/src/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js"></script>
+  </head>
+  <body>
+    <h1>Hello World</h1>
+  </body>
+</html>`,
+      "/src/styles.css": "body { background-color: red; }",
+      "/src/script.js": "console.log('Hello World')",
+    },
+    root: "/src",
+    entryPoints: ["/src/index.html"],
 
     onAfterBundle(api) {
       // Check that output HTML references hashed filenames
@@ -55,8 +83,6 @@ describe("bundler", () => {
       "/script1.js": "console.log('First script')",
       "/script2.js": "console.log('Second script')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Should combine CSS files into one
@@ -85,8 +111,6 @@ describe("bundler", () => {
 </html>`,
       "/image.jpg": "fake image content",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Local image should be hashed
@@ -114,8 +138,6 @@ describe("bundler", () => {
   </body>
 </html>`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // External URLs should remain unchanged
@@ -147,8 +169,6 @@ describe("bundler", () => {
       "/local.js": "console.log('Local script')",
       "/local.jpg": "fake image content",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Local assets should be hashed
@@ -190,8 +210,6 @@ export const formatDate = (date) => \`\${date.getFullYear()}-\${padZero(date.get
       "/in/utils/numbers.js": `
 export const padZero = (num) => String(num).padStart(2, '0');`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/in/index.html"],
     onAfterBundle(api) {
       // All JS should be bundled into one file
@@ -246,8 +264,6 @@ h1 {
   --body-font: 'Helvetica', sans-serif;
 }`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/in/index.html"],
     onAfterBundle(api) {
       // All CSS should be bundled into one file
@@ -313,8 +329,6 @@ initNav();`,
 export const initNav = () => console.log('Navigation initialized');`,
     },
     entryPoints: ["/in/pages/index.html", "/in/pages/about.html"],
-    experimentalHtml: true,
-    experimentalCss: true,
     onAfterBundle(api) {
       // Check index.html
       api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
@@ -423,8 +437,6 @@ export const largeModule = {
 };`,
     },
     entryPoints: ["/in/pages/page1.html", "/in/pages/page2.html"],
-    experimentalHtml: true,
-    experimentalCss: true,
     splitting: true,
     onAfterBundle(api) {
       // Check both pages
@@ -487,7 +499,6 @@ console.log('Loaded HTML:', htmlContent);`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
 
     // This becomes:
     //
@@ -526,7 +537,6 @@ console.log('Loaded HTML!');`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
     // This becomes:
     // - ./template.html
     // - ./template-*.js
@@ -569,7 +579,6 @@ console.log('Loaded HTML!', badDefaultImport);`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
     entryPointsRaw: ["in/template.html", "in/entry.js"],
     bundleErrors: {
       "/in/entry.js": ['No matching export in "in/template.html" for import "default"'],
@@ -585,43 +594,6 @@ console.log('Loaded HTML!', badDefaultImport);`,
       // Verify we DID bundle the HTML file
       expect(entryBundle).not.toMatch(/\.\/template-.*\.html/);
       console.log(entryBundle);
-    },
-  });
-
-  itBundled("html/js-importing-html-and-entry-point-default-import-succeeds-html-loader-disabled", {
-    outdir: "out/",
-    target: "browser",
-    files: {
-      "/in/2nd.js": `
-console.log('2nd');`,
-      "/in/entry.js": `
-import badDefaultImport from './template.html';
-console.log('Loaded HTML!', badDefaultImport);`,
-
-      "/in/template.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>HTML Template</title>
-  </head>
-  <body>
-    <h1>HTML Template</h1>
-    <script src="./entry.js"></script>
-    <script src="./2nd.js"></script>
-  </body>
-</html>`,
-    },
-    experimentalHtml: false,
-    entryPointsRaw: ["in/template.html", "in/entry.js"],
-    onAfterBundle(api) {
-      const entryBundle = api.readFile("out/entry.js");
-
-      // Verify we DID bundle the HTML file
-      expect(entryBundle).toMatch(/\.\/template-.*\.html/);
-      const filename = entryBundle.match(/\.\/(template-.*\.html)/)?.[1];
-      expect(filename).toBeDefined();
-      const templateBundle = api.readFile("out/" + filename!);
-      expect(templateBundle).toContain("HTML Template");
     },
   });
 
@@ -644,8 +616,8 @@ console.log('Main JS loaded page:', page);`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
     entryPoints: ["/in/main.js"],
+    loader: { ".html": "file" },
     onAfterBundle(api) {
       const bundle = api.readFile("out/main.js");
 
@@ -697,8 +669,6 @@ body {
   background-color: #f5f5f5;
 }`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/in/page.html"],
     onAfterBundle(api) {
       const htmlBundle = api.readFile("out/page.html");
@@ -719,6 +689,158 @@ body {
       expect(cssBundle).toContain(".content");
       expect(cssBundle).toContain("background-color");
       expect(cssBundle).toContain("box-sizing: border-box");
+    },
+  });
+
+  // Test absolute paths in HTML
+  itBundled("html/absolute-paths", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="/styles/main.css">
+    <script src="/scripts/app.js"></script>
+  </head>
+  <body>
+    <h1>Absolute Paths</h1>
+    <img src="/images/logo.png">
+  </body>
+</html>`,
+      "/styles/main.css": "body { margin: 0; }",
+      "/scripts/app.js": "console.log('App loaded')",
+      "/images/logo.png": "fake image content",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Check that absolute paths are handled correctly
+      const htmlBundle = api.readFile("out/index.html");
+
+      // CSS should be bundled and hashed
+      api.expectFile("out/index.html").not.toContain("/styles/main.css");
+      api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
+
+      // JS should be bundled and hashed
+      api.expectFile("out/index.html").not.toContain("/scripts/app.js");
+      api.expectFile("out/index.html").toMatch(/src=".*\.js"/);
+
+      // Image should be hashed
+      api.expectFile("out/index.html").not.toContain("/images/logo.png");
+      api.expectFile("out/index.html").toMatch(/src=".*\.png"/);
+
+      // Get the bundled files and verify their contents
+      const cssMatch = htmlBundle.match(/href="(.*\.css)"/);
+      const jsMatch = htmlBundle.match(/src="(.*\.js)"/);
+      const imgMatch = htmlBundle.match(/src="(.*\.png)"/);
+
+      expect(cssMatch).not.toBeNull();
+      expect(jsMatch).not.toBeNull();
+      expect(imgMatch).not.toBeNull();
+
+      const cssBundle = api.readFile("out/" + cssMatch![1]);
+      const jsBundle = api.readFile("out/" + jsMatch![1]);
+
+      expect(cssBundle).toContain("margin: 0");
+      expect(jsBundle).toContain("App loaded");
+    },
+  });
+
+  // Test that sourcemap comments are not included in HTML and CSS files
+  itBundled("html/no-sourcemap-comments", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./script.js"></script>
+  </head>
+  <body>
+    <h1>No Sourcemap Comments</h1>
+  </body>
+</html>`,
+      "/styles.css": `
+body {
+  background-color: red;
+}
+/* This is a comment */`,
+      "/script.js": "console.log('Hello World')",
+    },
+    sourceMap: "linked",
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Check HTML file doesn't contain sourcemap comments
+      const htmlContent = api.readFile("out/index.html");
+      api.expectFile("out/index.html").not.toContain("sourceMappingURL");
+      api.expectFile("out/index.html").not.toContain("debugId");
+
+      // Get the CSS filename from the HTML
+      const cssMatch = htmlContent.match(/href="(.*\.css)"/);
+      expect(cssMatch).not.toBeNull();
+      const cssFile = cssMatch![1];
+
+      // Check CSS file doesn't contain sourcemap comments
+      api.expectFile("out/" + cssFile).not.toContain("sourceMappingURL");
+      api.expectFile("out/" + cssFile).not.toContain("debugId");
+
+      // Get the JS filename from the HTML
+      const jsMatch = htmlContent.match(/src="(.*\.js)"/);
+      expect(jsMatch).not.toBeNull();
+      const jsFile = jsMatch![1];
+
+      // JS file SHOULD contain sourcemap comment since it's supported
+      api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
+    },
+  });
+
+  // Also test with inline sourcemaps
+  itBundled("html/no-sourcemap-comments-inline", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./script.js"></script>
+  </head>
+  <body>
+    <h1>No Sourcemap Comments</h1>
+  </body>
+</html>`,
+      "/styles.css": `
+body {
+  background-color: red;
+}
+/* This is a comment */`,
+      "/script.js": "console.log('Hello World')",
+    },
+    sourceMap: "inline",
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Check HTML file doesn't contain sourcemap comments
+      const htmlContent = api.readFile("out/index.html");
+      api.expectFile("out/index.html").not.toContain("sourceMappingURL");
+      api.expectFile("out/index.html").not.toContain("debugId");
+
+      // Get the CSS filename from the HTML
+      const cssMatch = htmlContent.match(/href="(.*\.css)"/);
+      expect(cssMatch).not.toBeNull();
+      const cssFile = cssMatch![1];
+
+      // Check CSS file doesn't contain sourcemap comments
+      api.expectFile("out/" + cssFile).not.toContain("sourceMappingURL");
+      api.expectFile("out/" + cssFile).not.toContain("debugId");
+
+      // Get the JS filename from the HTML
+      const jsMatch = htmlContent.match(/src="(.*\.js)"/);
+      expect(jsMatch).not.toBeNull();
+      const jsFile = jsMatch![1];
+
+      // JS file SHOULD contain sourcemap comment since it's supported
+      api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
 });

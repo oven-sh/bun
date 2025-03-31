@@ -60,7 +60,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = JSC::jsCast<Zig::GlobalObject*>(globalObject)->V8GlobalInternals()->isolate();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 
@@ -71,6 +71,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     // object.
     JSC::JSObject* jscThis = globalObject->globalThis();
     if (!callFrame->thisValue().isUndefinedOrNull()) {
+        // TODO(@190n) throwscope, assert no exception
         jscThis = callFrame->thisValue().toObject(globalObject);
     }
     Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);

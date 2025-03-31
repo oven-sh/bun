@@ -81,6 +81,10 @@ pub const Request = struct {
         return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
     }
 
+    pub export fn Request__setCookiesOnRequestContext(this: *Request, cookieMap: ?*JSC.WebCore.CookieMap) void {
+        this.request_context.setCookies(cookieMap);
+    }
+
     pub export fn Request__getUWSRequest(
         this: *Request,
     ) ?*uws.Request {
@@ -107,20 +111,16 @@ pub const Request = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = Request__getUWSRequest;
-            _ = Request__setInternalEventCallback;
-            _ = Request__setTimeout;
-        }
+        _ = Request__getUWSRequest;
+        _ = Request__setInternalEventCallback;
+        _ = Request__setTimeout;
     }
 
     pub const InternalJSEventCallback = struct {
-        function: JSC.Strong = .{},
+        function: JSC.Strong = .empty,
 
-        pub const EventType = enum(u8) {
-            timeout = 0,
-            abort = 1,
-        };
+        pub const EventType = JSC.API.NodeHTTPResponse.AbortEvent;
+
         pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSEventCallback {
             return InternalJSEventCallback{
                 .function = JSC.Strong.create(function, globalThis),
@@ -194,8 +194,20 @@ pub const Request = struct {
         return this.reported_estimated_size;
     }
 
+    pub fn getRemoteSocketInfo(this: *Request, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        if (this.request_context.getRemoteSocketInfo()) |info| {
+            return JSC.JSSocketAddress.create(globalObject, info.ip, info.port, info.is_ipv6);
+        }
+
+        return null;
+    }
+
     pub fn calculateEstimatedByteSize(this: *Request) void {
         this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
+        this.calculateEstimatedByteSize();
     }
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
@@ -203,9 +215,18 @@ pub const Request = struct {
         return Request.toJSUnchecked(globalObject, this);
     }
 
-    pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
+
+    pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size(), .{})});
+
+        const params_object = Bun__getParamsIfBunRequest(this_value);
+
+        const class_label = switch (params_object) {
+            .zero => "Request",
+            else => "BunRequest",
+        };
+        try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(), .{}) });
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -224,6 +245,14 @@ pub const Request = struct {
             try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
+
+            if (params_object.isCell()) {
+                try formatter.writeIndent(Writer, writer);
+                try writer.writeAll(comptime Output.prettyFmt("<r>params<d>:<r> ", enable_ansi_colors));
+                try formatter.printAs(.Private, Writer, writer, params_object, .Object, enable_ansi_colors);
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+            }
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
@@ -244,7 +273,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable.get()) |stream| {
+                if (this.body.value.Locked.readable.get(this.body.value.Locked.global)) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -490,6 +519,7 @@ pub const Request = struct {
                     const href = bun.JSC.URL.hrefFromString(this.url);
                     // TODO: what is the right thing to do for invalid URLS?
                     if (!href.isEmpty()) {
+                        this.url.deref();
                         this.url = href;
                     }
 
@@ -555,7 +585,7 @@ pub const Request = struct {
             url_or_object.as(JSC.DOMURL) != null;
 
         if (is_first_argument_a_url) {
-            const str = try bun.String.fromJS2(arguments[0], globalThis);
+            const str = try bun.String.fromJS(arguments[0], globalThis);
             req.url = str;
 
             if (!req.url.isEmpty())
@@ -612,7 +642,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.asDirect(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);
@@ -657,7 +687,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis);
+                    req.url = try bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -665,7 +695,7 @@ pub const Request = struct {
                 } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const str = bun.String.tryFromJS(value, globalThis) orelse return error.JSError;
+                    const str = try bun.String.fromJS(value, globalThis);
                     req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
@@ -792,14 +822,14 @@ pub const Request = struct {
         const js_wrapper = cloned.toJS(globalThis);
         if (js_wrapper != .zero) {
             if (cloned.body.value == .Locked) {
-                if (cloned.body.value.Locked.readable.get()) |readable| {
+                if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
                     // If we are teed, then we need to update the cached .body
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned request
                     // but especially the original request since it will have a stale .body value now.
                     Request.bodySetCached(js_wrapper, globalThis, readable.value);
 
-                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                    if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
                         Request.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }

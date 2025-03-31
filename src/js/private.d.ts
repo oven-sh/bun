@@ -149,9 +149,10 @@ declare interface Error {
   code?: string;
 }
 
-interface CommonJSModuleRecord {
+interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
-  children: CommonJSModuleRecord[];
+  $requireNativeModule(id: string): any;
+  children: JSCommonJSModule[];
   exports: any;
   id: string;
   loaded: boolean;
@@ -159,6 +160,7 @@ interface CommonJSModuleRecord {
   path: string;
   paths: string[];
   require: typeof require;
+  filename: string;
 }
 
 /**

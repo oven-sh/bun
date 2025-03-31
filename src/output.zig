@@ -228,7 +228,7 @@ pub const Source = struct {
     };
 
     pub const Stdio = struct {
-        extern "C" var bun_is_stdio_null: [3]i32;
+        extern "c" var bun_is_stdio_null: [3]i32;
 
         pub fn isStderrNull() bool {
             return bun_is_stdio_null[2] == 1;
@@ -310,19 +310,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -469,16 +468,6 @@ pub fn isVerbose() bool {
     return false;
 }
 
-// var _source_for_test: if (Environment.isTest) Source else void = undefined;
-// var _source_for_test_set = false;
-// pub fn initTest() void {
-//     if (_source_for_test_set) return;
-//     _source_for_test_set = true;
-//     const in = std.io.getStdErr();
-//     const out = std.io.getStdOut();
-//     _source_for_test = Source.init(File.from(out), File.from(in));
-//     Source.set(&_source_for_test);
-// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -489,7 +478,7 @@ pub fn disableBuffering() void {
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (isEmojiEnabled()) {
         std.debug.panic(comptime prettyFmt(fmt, true), args);
@@ -713,9 +702,9 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = comptime brk: {
+    const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
-            @Type(.EnumLiteral) => @tagName(tag),
+            @Type(.enum_literal) => @tagName(tag),
             else => tag,
         };
         var ascii_slice: [input.len]u8 = undefined;
@@ -734,7 +723,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             pub inline fn isVisible() bool {
                 return false;
             }
-            pub inline fn log(comptime _: string, _: anytype) void {}
+            pub fn log(comptime _: string, _: anytype) callconv(bun.callconv_inline) void {}
         };
     }
 
@@ -746,7 +735,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var lock = bun.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {
@@ -788,6 +777,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             if (ScopedDebugWriter.disable_inside_log > 0) {
                 return;
             }
+
+            if (bun.crash_handler.isPanicking()) return;
 
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
@@ -838,32 +829,43 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
     ).log;
 }
 
+pub fn up(n: usize) void {
+    print("\x1B[{d}A", .{n});
+}
+pub fn clearToEnd() void {
+    print("\x1B[0J", .{});
+}
+
 // Valid "colors":
 // <black>
 // <blue>
 // <cyan>
 // <green>
+// <bggreen>
 // <magenta>
 // <red>
+// <bgred>
 // <white>
 // <yellow>
 // <b> - bold
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const ED = "\x1b[";
+const CSI = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
-    &.{ "black", ED ++ "30m" },
-    &.{ "blue", ED ++ "34m" },
-    &.{ "b", ED ++ "1m" },
-    &.{ "d", ED ++ "2m" },
-    &.{ "i", ED ++ "3m" },
-    &.{ "cyan", ED ++ "36m" },
-    &.{ "green", ED ++ "32m" },
-    &.{ "magenta", ED ++ "35m" },
-    &.{ "red", ED ++ "31m" },
-    &.{ "white", ED ++ "37m" },
-    &.{ "yellow", ED ++ "33m" },
+    &.{ "b", CSI ++ "1m" },
+    &.{ "d", CSI ++ "2m" },
+    &.{ "i", CSI ++ "3m" },
+    &.{ "black", CSI ++ "30m" },
+    &.{ "red", CSI ++ "31m" },
+    &.{ "green", CSI ++ "32m" },
+    &.{ "yellow", CSI ++ "33m" },
+    &.{ "blue", CSI ++ "34m" },
+    &.{ "magenta", CSI ++ "35m" },
+    &.{ "cyan", CSI ++ "36m" },
+    &.{ "white", CSI ++ "37m" },
+    &.{ "bgred", CSI ++ "41m" },
+    &.{ "bggreen", CSI ++ "42m" },
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
@@ -994,6 +996,41 @@ pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printErrorln, .stderr);
 }
 
+/// Pretty-print a command that will be run.
+/// $ bun run foo
+fn printCommand(argv: anytype, comptime destination: Destination) void {
+    const prettyFn = if (destination == .stdout) pretty else prettyError;
+    const printFn = if (destination == .stdout) print else printError;
+    switch (@TypeOf(argv)) {
+        [][:0]const u8, []const []const u8, []const []u8, [][]const u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>", .{});
+            printFn("{s}", .{argv[0]});
+            if (argv.len > 1) {
+                for (argv[1..]) |arg| {
+                    printFn(" {s}", .{arg});
+                }
+            }
+            prettyFn("<r>\n", .{});
+        },
+        []const u8, []u8, [:0]const u8, [:0]u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{argv});
+        },
+        else => {
+            @compileLog(argv);
+            @compileError("command() was given unsupported type: " ++ @typeName(@TypeOf(argv)));
+        },
+    }
+    flush();
+}
+
+pub fn commandOut(argv: anytype) void {
+    printCommand(argv, .stdout);
+}
+
+pub fn command(argv: anytype) void {
+    printCommand(argv, .stderr);
+}
+
 pub const Destination = enum(u8) {
     stderr,
     stdout,
@@ -1046,11 +1083,9 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
-const debugWarnScope = Scoped("debug_warn", false);
-
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (debugWarnScope.isVisible()) {
+    if (bun.Environment.isDebug) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }
@@ -1063,19 +1098,27 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const T = @TypeOf(error_name);
     const info = @typeInfo(T);
 
-    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
-        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+    if (comptime T == bun.sys.Error or info == .pointer and info.pointer.child == bun.sys.Error) {
+        const e: bun.sys.Error = error_name;
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            err("unknown error", fmt, args);
+            return;
+        };
+        if (bun.sys.coreutils_error_map.get(sys_errno)) |label| {
+            prettyErrorln("<r><red>{s}<r><d>:<r> {s}: " ++ fmt ++ " <d>({s})<r>", .{ tag_name, label } ++ args ++ .{@tagName(e.syscall)});
+        } else {
+            prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
+        }
         return;
     }
 
     const display_name, const is_comptime_name = display_name: {
-
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
-        if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
-            const child_info = @typeInfo(info.Pointer.child);
-            if (child_info == .Array and child_info.Array.child == u8) {
-                if (child_info.Array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
+        if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
+            const child_info = @typeInfo(info.pointer.child);
+            if (child_info == .array and child_info.array.child == u8) {
+                if (child_info.array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
                 break :display_name .{ error_name, true };
             }
         }
@@ -1086,8 +1129,8 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // error unions
-        if (info == .ErrorSet) {
-            if (info.ErrorSet) |errors| {
+        if (info == .error_set) {
+            if (info.error_set) |errors| {
                 if (errors.len == 0) {
                     @compileError("Output.err was given an empty error set");
                 }
@@ -1100,7 +1143,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // enum literals
-        if (info == .EnumLiteral) {
+        if (info == .enum_literal) {
             const tag = @tagName(info);
             comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
@@ -1108,7 +1151,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // enums
-        if (info == .Enum) {
+        if (info == .@"enum") {
             const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
             break :display_name .{ @tagName(errno), false };
         }
@@ -1130,10 +1173,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;

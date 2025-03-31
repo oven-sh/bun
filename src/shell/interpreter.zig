@@ -34,8 +34,8 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+const TaggedPointer = @import("../ptr.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
@@ -109,61 +109,6 @@ pub const StateKind = enum(u8) {
     @"async",
     subshell,
 };
-
-/// Copy-on-write
-pub fn Cow(comptime T: type, comptime VTable: type) type {
-    const Handler = struct {
-        fn copy(this: *T) T {
-            if (@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
-            return VTable.copy(this);
-        }
-
-        fn deinit(this: *T) void {
-            if (@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
-            return VTable.deinit(this);
-        }
-    };
-
-    return union(enum) {
-        borrowed: *T,
-        owned: T,
-
-        pub fn borrow(val: *T) @This() {
-            return .{
-                .borrowed = val,
-            };
-        }
-
-        pub fn own(val: T) @This() {
-            return .{
-                .owned = val,
-            };
-        }
-
-        /// Get the underlying value.
-        pub inline fn inner(this: *@This()) *T {
-            return switch (this.*) {
-                .borrowed => this.borrowed,
-                .owned => &this.owned,
-            };
-        }
-
-        pub fn copy(this: *@This()) void {
-            switch (this.*) {
-                .borrowed => {
-                    this.* = .{
-                        .owned = Handler.copy(this.borrowed),
-                    };
-                },
-                .owned => {},
-            }
-        }
-
-        pub fn deinit(this: *@This()) void {
-            Handler.deinit(this.inner());
-        }
-    };
-}
 
 /// Copy-on-write file descriptor. This is to avoid having multiple non-blocking
 /// writers to the same file descriptor, which breaks epoll/kqueue
@@ -517,8 +462,8 @@ pub const RefCountedStr = struct {
 /// A) or B) won't even mutate the environment anyway.
 ///
 /// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
-pub const CowEnvMap = Cow(EnvMap, struct {
-    pub fn copy(val: *EnvMap) EnvMap {
+pub const CowEnvMap = bun.ptr.Cow(EnvMap, struct {
+    pub fn copy(val: *const EnvMap) EnvMap {
         return val.clone();
     }
 
@@ -709,7 +654,7 @@ pub const ParsedShellScript = struct {
         const str_js = arguments.nextEat() orelse {
             return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
-        const str = bun.String.fromJS(str_js, globalThis);
+        const str = try bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }
@@ -721,36 +666,28 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var env =
-            if (this.export_env) |*env|
-        brk: {
-            env.clearRetainingCapacity();
-            break :brk env.*;
-        } else EnvMap.init(bun.default_allocator);
-        defer this.export_env = env;
-
-        const value1 = callframe.argument(0);
-        if (!value1.isObject()) {
+        const value1 = callframe.argument(0).getObject() orelse {
             return globalThis.throwInvalidArguments("env must be an object", .{});
-        }
+        };
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
         defer object_iter.deinit();
 
+        var env: EnvMap = EnvMap.init(bun.default_allocator);
         env.ensureTotalCapacity(object_iter.len);
 
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
-        while (object_iter.next()) |key| {
+        while (try object_iter.next()) |key| {
             const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
 
-            const value_str = value.getZigString(globalThis);
+            const value_str = try value.getZigString(globalThis);
             const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
@@ -759,7 +696,10 @@ pub const ParsedShellScript = struct {
 
             env.insert(keyref, valueref);
         }
-
+        if (this.export_env) |*previous| {
+            previous.deinit();
+        }
+        this.export_env = env;
         return .undefined;
     }
 
@@ -1329,14 +1269,14 @@ pub const Interpreter = struct {
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
             },
         };
 
         const cwd_fd = switch (Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .result => |fd| fd,
             .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
             },
         };
 
@@ -1350,7 +1290,7 @@ pub const Interpreter = struct {
         log("Duping stdin", .{});
         const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
         };
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
@@ -1391,7 +1331,7 @@ pub const Interpreter = struct {
         };
 
         if (cwd_) |c| {
-            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
         }
 
         return .{ .result = interpreter };
@@ -1465,7 +1405,7 @@ pub const Interpreter = struct {
         switch (try interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ std.fs.path.basename(path), e.toSystemError() });
+                bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
             },
@@ -1477,7 +1417,7 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8, cwd: ?[]const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
         var shargs = ShellArgs.init();
         defer shargs.deinit();
@@ -1509,7 +1449,7 @@ pub const Interpreter = struct {
             shargs,
             jsobjs,
             null,
-            null,
+            cwd,
         )) {
             .err => |*e| {
                 e.throwMini();
@@ -1532,7 +1472,7 @@ pub const Interpreter = struct {
         switch (try interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ path_for_errors, e.toSystemError() });
+                bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
                 bun.Global.exit(1);
                 return 1;
             },
@@ -1758,7 +1698,7 @@ pub const Interpreter = struct {
 
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value = callframe.argument(0);
-        const str = bun.String.fromJS(value, globalThis);
+        const str = try bun.String.fromJS(value, globalThis);
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();
@@ -1851,18 +1791,15 @@ pub const Interpreter = struct {
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) bool {
-        @fence(.seq_cst);
         return this.has_pending_activity.load(.seq_cst) > 0;
     }
 
     fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        @fence(.seq_cst);
         _ = has_pending_activity.fetchAdd(1, .seq_cst);
         log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
 
     fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        @fence(.seq_cst);
         _ = has_pending_activity.fetchSub(1, .seq_cst);
         log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
@@ -3407,7 +3344,7 @@ pub const Interpreter = struct {
                         closefd(pipe[0]);
                         closefd(pipe[1]);
                     }
-                    const system_err = err.toSystemError();
+                    const system_err = err.toShellSystemError();
                     this.writeFailingError("bun: {s}\n", .{system_err.message});
                     return .yield;
                 }
@@ -3427,7 +3364,7 @@ pub const Interpreter = struct {
                         const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
                             .result => |s| s,
                             .err => |err| {
-                                const system_err = err.toSystemError();
+                                const system_err = err.toShellSystemError();
                                 this.writeFailingError("bun: {s}\n", .{system_err.message});
                                 return .yield;
                             },
@@ -3733,8 +3670,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_redirect.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_redirect.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 this.next();
@@ -4151,8 +4087,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_args.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_args.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 child.deinit();
@@ -4753,8 +4688,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_assigns.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_assigns.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
 
@@ -4777,8 +4711,7 @@ pub const Interpreter = struct {
                         else => @panic("Invalid state"),
                     };
                     defer err.deinit(bun.default_allocator);
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 // Handling this case from the shell spec:
@@ -4878,7 +4811,7 @@ pub const Interpreter = struct {
                     switch (this.exec.bltn.start()) {
                         .result => {},
                         .err => |e| {
-                            this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toSystemError().message });
+                            this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toShellSystemError().message });
                             return;
                         },
                     }
@@ -4972,7 +4905,7 @@ pub const Interpreter = struct {
                         const flags = this.node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
-                                return this.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
+                                return this.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                             },
                             .result => |f| f,
                         };
@@ -4997,19 +4930,29 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
+            var did_exit_immediately = false;
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child, &did_exit_immediately)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.exec = .none;
-                    const msg = e.fmt();
-                    defer bun.default_allocator.free(msg);
-                    this.writeFailingError("{s}", .{msg});
+                    this.writeFailingError("{}\n", .{e});
                     return;
                 },
             };
             subproc.ref();
             this.spawn_arena_freed = true;
             arena.deinit();
+
+            if (did_exit_immediately) {
+                if (subproc.process.hasExited()) {
+                    // process has already exited, we called wait4(), but we did not call onProcessExit()
+                    subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage));
+                } else {
+                    // process has already exited, but we haven't called wait4() yet
+                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                    subproc.process.wait(false);
+                }
+            }
         }
 
         fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {
@@ -5397,9 +5340,9 @@ pub const Interpreter = struct {
             const Blob = struct {
                 ref_count: usize = 1,
                 blob: bun.JSC.WebCore.Blob,
-                pub usingnamespace bun.NewRefCounted(Blob, Blob.deinit);
+                pub usingnamespace bun.NewRefCounted(Blob, _deinit, null);
 
-                pub fn deinit(this: *Blob) void {
+                fn _deinit(this: *Blob) void {
                     this.blob.deinit();
                     bun.destroy(this);
                 }
@@ -5563,7 +5506,7 @@ pub const Interpreter = struct {
                         const flags = node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
-                                cmd.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
+                                cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                                 return .yield;
                             },
                             .result => |f| f,
@@ -5739,7 +5682,7 @@ pub const Interpreter = struct {
         }
 
         /// If the stdout/stderr is supposed to be captured then get the bytelist associated with that
-        pub fn stdBufferedBytelist(this: *Builtin, comptime io_kind: @Type(.EnumLiteral)) ?*bun.ByteList {
+        pub fn stdBufferedBytelist(this: *Builtin, comptime io_kind: @Type(.enum_literal)) ?*bun.ByteList {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
             }
@@ -5761,7 +5704,7 @@ pub const Interpreter = struct {
         }
 
         /// **WARNING** You should make sure that stdout/stderr does not need IO (e.g. `.needsIO(.stderr)` is false before caling `.writeNoIO(.stderr, buf)`)
-        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(usize) {
+        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []const u8) Maybe(usize) {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
             }
@@ -5804,12 +5747,17 @@ pub const Interpreter = struct {
         /// Error messages formatted to match bash
         fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []const u8 {
             switch (@TypeOf(err)) {
-                Syscall.Error => return switch (err.getErrno()) {
-                    bun.C.E.NOENT => this.fmtErrorArena(kind, "{s}: No such file or directory\n", .{err.path}),
-                    bun.C.E.NAMETOOLONG => this.fmtErrorArena(kind, "{s}: File name too long\n", .{err.path}),
-                    bun.C.E.ISDIR => this.fmtErrorArena(kind, "{s}: is a directory\n", .{err.path}),
-                    bun.C.E.NOTEMPTY => this.fmtErrorArena(kind, "{s}: Directory not empty\n", .{err.path}),
-                    else => this.fmtErrorArena(kind, "{s}\n", .{err.toSystemError().message.byteSlice()}),
+                Syscall.Error => {
+                    if (err.getErrorCodeTagName()) |entry| {
+                        _, const sys_errno = entry;
+                        if (bun.sys.coreutils_error_map.get(sys_errno)) |message| {
+                            if (err.path.len > 0) {
+                                return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.path, message });
+                            }
+                            return this.fmtErrorArena(kind, "{s}\n", .{message});
+                        }
+                    }
+                    return this.fmtErrorArena(kind, "unknown error {d}\n", .{err.errno});
                 },
                 JSC.SystemError => {
                     if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
@@ -6422,8 +6370,8 @@ pub const Interpreter = struct {
                     var node_fs = JSC.Node.NodeFS{};
                     const milliseconds: f64 = @floatFromInt(std.time.milliTimestamp());
                     const atime: JSC.Node.TimeLike = if (bun.Environment.isWindows) milliseconds / 1000.0 else JSC.Node.TimeLike{
-                        .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-                        .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
+                        .sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
+                        .nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
                     };
                     const mtime = atime;
                     const args = JSC.Node.Arguments.Utimes{
@@ -6431,7 +6379,7 @@ pub const Interpreter = struct {
                         .mtime = mtime,
                         .path = .{ .string = bun.PathString.init(filepath) },
                     };
-                    if (node_fs.utimes(args, .callback).asErr()) |err| out: {
+                    if (node_fs.utimes(args, .sync).asErr()) |err| out: {
                         if (err.getErrno() == bun.C.E.NOENT) {
                             const perm = 0o664;
                             switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
@@ -6440,12 +6388,12 @@ pub const Interpreter = struct {
                                     break :out;
                                 },
                                 .err => |e| {
-                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                     break :out;
                                 },
                             }
                         }
-                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                     }
 
                     if (this.event_loop == .js) {
@@ -6835,10 +6783,10 @@ pub const Interpreter = struct {
 
                         var vtable = MkdirVerboseVTable{ .inner = this, .active = this.opts.verbose };
 
-                        switch (node_fs.mkdirRecursiveImpl(args, .callback, *MkdirVerboseVTable, &vtable)) {
+                        switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                             .result => {},
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -6848,7 +6796,7 @@ pub const Interpreter = struct {
                             .recursive = false,
                             .always_return_none = true,
                         };
-                        switch (node_fs.mkdirNonRecursive(args, .callback)) {
+                        switch (node_fs.mkdirNonRecursive(args)) {
                             .result => {
                                 if (this.opts.verbose) {
                                     this.created_directories.appendSlice(filepath[0..filepath.len]) catch bun.outOfMemory();
@@ -6856,7 +6804,7 @@ pub const Interpreter = struct {
                                 }
                             },
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -6960,7 +6908,7 @@ pub const Interpreter = struct {
                 }
             };
 
-            pub fn writeOutput(this: *Export, comptime io_kind: @Type(.EnumLiteral), comptime fmt: []const u8, args: anytype) Maybe(void) {
+            pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), comptime fmt: []const u8, args: anytype) Maybe(void) {
                 if (this.bltn.stdout.needsIO()) |safeguard| {
                     var output: *BuiltinIO.Output = &@field(this.bltn, @tagName(io_kind));
                     this.printing = true;
@@ -8493,7 +8441,7 @@ pub const Interpreter = struct {
                                             return this.writeFailingError(buf, 1);
                                         },
                                         else => {
-                                            const sys_err = e.toSystemError();
+                                            const sys_err = e.toShellSystemError();
                                             const buf = this.bltn.fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
                                             return this.writeFailingError(buf, 1);
                                         },
@@ -8627,7 +8575,7 @@ pub const Interpreter = struct {
                 exec.tasks_done += 1;
                 if (exec.tasks_done >= exec.task_count) {
                     if (exec.err) |err| {
-                        const e = err.toSystemError();
+                        const e = err.toShellSystemError();
                         const buf = this.bltn.fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
                         _ = this.writeFailingError(buf, err.errno);
                         return;
@@ -8769,7 +8717,7 @@ pub const Interpreter = struct {
                     filepath_args: []const [*:0]const u8,
                     total_tasks: usize,
                     err: ?Syscall.Error = null,
-                    lock: std.Thread.Mutex = std.Thread.Mutex{},
+                    lock: bun.Mutex = bun.Mutex{},
                     error_signal: std.atomic.Value(bool) = .{ .raw = false },
                     output_done: std.atomic.Value(usize) = .{ .raw = 0 },
                     output_count: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -8787,16 +8735,14 @@ pub const Interpreter = struct {
                         }
                     },
 
-                    fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) void {
-                        @fence(.seq_cst);
+                    fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.enum_literal)) void {
                         var atomicvar = &@field(this, @tagName(thevar));
                         const result = atomicvar.fetchAdd(1, .seq_cst);
                         log("[rm] {s}: {d} + 1", .{ @tagName(thevar), result });
                         return;
                     }
 
-                    fn getOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) usize {
-                        @fence(.seq_cst);
+                    fn getOutputCount(this: *@This(), comptime thevar: @Type(.enum_literal)) usize {
                         var atomicvar = &@field(this, @tagName(thevar));
                         return atomicvar.load(.seq_cst);
                     }
@@ -9247,7 +9193,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = .{},
+                err_mutex: bun.Mutex = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -10163,8 +10109,8 @@ pub const Interpreter = struct {
             bltn: *Builtin,
             state: enum { idle, waiting_io, err, done } = .idle,
             buf: std.ArrayListUnmanaged(u8) = .{},
-            start: f32 = 1,
-            end: f32 = 1,
+            _start: f32 = 1,
+            _end: f32 = 1,
             increment: f32 = 1,
             separator: string = "\n",
             terminator: string = "",
@@ -10208,28 +10154,28 @@ pub const Interpreter = struct {
                 }
 
                 const maybe1 = iter.next().?;
-                const int1 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
-                this.end = int1;
-                if (this.start > this.end) this.increment = -1;
+                const int1 = std.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+                this._end = int1;
+                if (this._start > this._end) this.increment = -1;
 
                 const maybe2 = iter.next();
                 if (maybe2 == null) return this.do();
-                const int2 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
-                this.start = int1;
-                this.end = int2;
-                if (this.start < this.end) this.increment = 1;
-                if (this.start > this.end) this.increment = -1;
+                const int2 = std.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this._start = int1;
+                this._end = int2;
+                if (this._start < this._end) this.increment = 1;
+                if (this._start > this._end) this.increment = -1;
 
                 const maybe3 = iter.next();
                 if (maybe3 == null) return this.do();
-                const int3 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
-                this.start = int1;
+                const int3 = std.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this._start = int1;
                 this.increment = int2;
-                this.end = int3;
+                this._end = int3;
 
                 if (this.increment == 0) return this.fail("seq: zero increment\n");
-                if (this.start > this.end and this.increment > 0) return this.fail("seq: needs negative decrement\n");
-                if (this.start < this.end and this.increment < 0) return this.fail("seq: needs positive increment\n");
+                if (this._start > this._end and this.increment > 0) return this.fail("seq: needs negative decrement\n");
+                if (this._start < this._end and this.increment < 0) return this.fail("seq: needs positive increment\n");
 
                 return this.do();
             }
@@ -10246,11 +10192,11 @@ pub const Interpreter = struct {
             }
 
             fn do(this: *@This()) Maybe(void) {
-                var current = this.start;
+                var current = this._start;
                 var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
 
-                while (if (this.increment > 0) current <= this.end else current >= this.end) : (current += this.increment) {
+                while (if (this.increment > 0) current <= this._end else current >= this._end) : (current += this.increment) {
                     const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch bun.outOfMemory();
                     defer _ = arena.reset(.retain_capacity);
                     _ = this.print(str);
@@ -10655,9 +10601,9 @@ pub const Interpreter = struct {
                         if (err == .sys and
                             err.sys.getErrno() == .BUSY and
                             (task.tgt_absolute != null and
-                            err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
+                                err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
                             (task.src_absolute != null and
-                            err.sys.path.eqlUTF8(task.src_absolute.?)))
+                                err.sys.path.eqlUTF8(task.src_absolute.?)))
                         {
                             log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                             this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
@@ -10750,7 +10696,7 @@ pub const Interpreter = struct {
                 src_absolute: ?[:0]const u8 = null,
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
-                verbose_output_lock: std.Thread.Mutex = .{},
+                verbose_output_lock: bun.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
@@ -11190,8 +11136,7 @@ pub const Interpreter = struct {
         pub const ChildPtr = IOReaderChildPtr;
         pub const ReaderImpl = bun.io.BufferedReader;
 
-        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOReaderRefCount";
-        pub usingnamespace bun.NewRefCounted(@This(), IOReader.asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOReaderRefCount");
 
         const InitFlags = packed struct(u8) {
             pollable: bool = false,
@@ -11328,7 +11273,7 @@ pub const Interpreter = struct {
 
         pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
             this.setReading(false);
-            this.err = err.toSystemError();
+            this.err = err.toShellSystemError();
             for (this.readers.slice()) |r| {
                 r.onReaderDone(if (this.err) |*e| brk: {
                     e.ref();
@@ -11457,8 +11402,6 @@ pub const Interpreter = struct {
         started: bool = false,
         flags: InitFlags = .{},
 
-        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
-
         const debug = bun.Output.scoped(.IOWriter, true);
 
         const ChildPtr = IOWriterChildPtr;
@@ -11470,7 +11413,7 @@ pub const Interpreter = struct {
 
         pub const auto_poll = false;
 
-        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOWriterRefCount");
         const This = @This();
         pub const WriterImpl = bun.io.BufferedWriter(
             This,
@@ -11720,7 +11663,7 @@ pub const Interpreter = struct {
 
         pub fn onError(this: *This, err__: bun.sys.Error) void {
             this.setWriting(false);
-            const ee = err__.toSystemError();
+            const ee = err__.toShellSystemError();
             this.err = ee;
             log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
             var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
@@ -11994,7 +11937,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
 
         pub fn init(_ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
-            if (tyinfo != .Pointer) @compileError("Only pass pointers to StatePtrUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            if (tyinfo != .pointer) @compileError("Only pass pointers to StatePtrUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
             const Type = std.meta.Child(@TypeOf(_ptr));
             Ptr.assert_type(Type);
 
@@ -12011,7 +11954,7 @@ pub fn MaybeChild(comptime T: type) type {
     return switch (@typeInfo(T)) {
         .Array => |info| info.child,
         .Vector => |info| info.child,
-        .Pointer => |info| info.child,
+        .pointer => |info| info.child,
         .Optional => |info| info.child,
         else => T,
     };
@@ -12143,8 +12086,8 @@ inline fn errnocast(errno: anytype) u16 {
 
 inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     const Value = @typeInfo(@TypeOf(val));
-    if (Value != .Int) @compileError("LHS of fastMod should be an int");
-    if (Value.Int.signedness != .unsigned) @compileError("LHS of fastMod should be unsigned");
+    if (Value != .int) @compileError("LHS of fastMod should be an int");
+    if (Value.int.signedness != .unsigned) @compileError("LHS of fastMod should be unsigned");
     if (!comptime std.math.isPowerOfTwo(rhs)) @compileError("RHS of fastMod should be power of 2");
 
     return val & (rhs - 1);
@@ -12296,7 +12239,7 @@ const ShellSyscall = struct {
         return Syscall.fstatat(dir, path_);
     }
 
-    fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {

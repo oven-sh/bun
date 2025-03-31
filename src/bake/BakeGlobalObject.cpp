@@ -11,6 +11,7 @@
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 
 namespace Bake {
+using namespace JSC;
 
 JSC::JSInternalPromise*
 bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
@@ -20,13 +21,13 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 {
     WTF::String keyString = moduleNameValue->getString(global);
     if (keyString.startsWith("bake:/"_s)) {
-        JSC::VM& vm = global->vm();
+        auto& vm = JSC::getVM(global);
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
             JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
-        JSC::VM& vm = global->vm();
+        auto& vm = JSC::getVM(global);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         WTF::String refererString = sourceOrigin.string();
@@ -54,20 +55,21 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     JSC::JSValue referrer, JSC::JSValue origin)
 {
     Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(jsGlobal);
-    JSC::VM& vm = global->vm();
+    auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(referrer.isString());
-    WTF::String refererString = jsCast<JSC::JSString*>(referrer)->getString(global);
+    if (auto string = jsDynamicCast<JSC::JSString*>(referrer)) {
+        WTF::String refererString = string->getString(global);
 
-    WTF::String keyString = key.toWTFString(global);
-    RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
-
-    if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
-        BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+        WTF::String keyString = key.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
-        return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
+            BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+            return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        }
     }
 
     // Use Zig::GlobalObject's function
@@ -76,7 +78,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, JSC::jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
@@ -85,7 +87,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 
 static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, JSC::jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
@@ -99,7 +101,7 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     JSC::JSValue parameters, JSC::JSValue script)
 {
     Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(globalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto moduleKey = key.toWTFString(globalObject);
     if (UNLIKELY(scope.exception()))
@@ -151,13 +153,14 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
     INHERIT_HOOK_METHOD(codeForEval),
     INHERIT_HOOK_METHOD(canCompileStrings),
+    INHERIT_HOOK_METHOD(trustedScriptStructure),
 };
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,
     const JSC::GlobalObjectMethodTable* methodTable)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm))
-        GlobalObject(vm, structure, methodTable);
+    Bake::GlobalObject* ptr = new (NotNull, JSC::allocateCell<Bake::GlobalObject>(vm))
+        Bake::GlobalObject(vm, structure, methodTable);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -166,6 +169,13 @@ void GlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+}
+
+JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
+{
+    auto* structure = JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
+    structure->setTransitionWatchpointIsLikelyToBeFired(true);
+    return structure;
 }
 
 struct BunVirtualMachine;
@@ -181,9 +191,9 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     BunVirtualMachine* bunVM = Bun__getVM();
     WebCore::JSVMClientData::create(&vm, bunVM);
 
-    JSC::Structure* structure = GlobalObject::createStructure(vm);
-    GlobalObject* global = GlobalObject::create(
-        vm, structure, &GlobalObject::s_globalObjectMethodTable);
+    JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
+    Bake::GlobalObject* global = Bake::GlobalObject::create(
+        vm, structure, &Bake::GlobalObject::s_globalObjectMethodTable);
     if (!global)
         BUN_PANIC("Failed to create BakeGlobalObject");
 
@@ -193,6 +203,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 
     global->setConsole(console);
     global->setStackTraceLimit(10); // Node.js defaults to 10
+    global->isThreadLocalDefaultGlobalObject = true;
 
     // TODO: it segfaults! process.nextTick is scoped out for now i guess!
     // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
@@ -213,5 +224,8 @@ extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, Prod
 {
     global->m_perThreadData = perThreadData;
 }
+
+const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
+    CREATE_METHOD_TABLE(Bake::GlobalObject) };
 
 }; // namespace Bake

@@ -447,8 +447,6 @@ describe("child_process double pipe", () => {
       }),
     );
 
-    // TODO(Derrick): We don't implement the full API for this yet,
-    // So stdin has no 'drain' event.
     // TODO(@jasnell): This does not appear to ever be
     // emitted. It's not clear if it is necessary.
     fakeGrep.stdin.on("drain", () => {

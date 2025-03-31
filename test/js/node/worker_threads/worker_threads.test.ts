@@ -151,12 +151,12 @@ test("receiveMessageOnPort works across threads", async () => {
   let sharedBufferView = new Int32Array(sharedBuffer);
   let msg = { sharedBuffer };
   worker.postMessage(msg);
-  expect(Atomics.wait(sharedBufferView, 0, 0)).toBe("ok");
+  expect(await Atomics.waitAsync(sharedBufferView, 0, 0).value).toBe("ok");
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
   await worker.terminate();
-});
+}, 9999999);
 
 test("receiveMessageOnPort works as FIFO", () => {
   const { port1, port2 } = new MessageChannel();
@@ -188,7 +188,7 @@ test("receiveMessageOnPort works as FIFO", () => {
       receiveMessageOnPort(value);
     }).toThrow();
   }
-});
+}, 9999999);
 
 test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url).href);

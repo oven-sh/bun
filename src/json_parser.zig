@@ -87,7 +87,7 @@ const HashMapPool = struct {
 
 fn newExpr(t: anytype, loc: logger.Loc) Expr {
     const Type = @TypeOf(t);
-    if (comptime @typeInfo(Type) == .Pointer) {
+    if (comptime @typeInfo(Type) == .pointer) {
         @compileError("Unexpected pointer");
     }
 
@@ -250,13 +250,9 @@ fn JSONLikeParser_(
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
-                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
-                        HashMapPool.get(p.allocator)
-                    else {};
+                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys) HashMapPool.get(p.allocator);
 
-                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
-                        duplicates_node.data
-                    else {};
+                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys) duplicates_node.data;
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -537,7 +533,7 @@ pub fn toAST(
     const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
-        .Bool => {
+        .bool => {
             return Expr{
                 .data = .{ .e_boolean = .{
                     .value = value,
@@ -545,7 +541,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Int => {
+        .int => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -555,7 +551,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Float => {
+        .float => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -565,9 +561,9 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .One => switch (@typeInfo(ptr_info.child)) {
-                .Array => {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .one => switch (@typeInfo(ptr_info.child)) {
+                .array => {
                     const Slice = []const std.meta.Elem(ptr_info.child);
                     return try toAST(allocator, Slice, value.*);
                 },
@@ -575,7 +571,7 @@ pub fn toAST(
                     return try toAST(allocator, @TypeOf(value.*), value.*);
                 },
             },
-            .Slice => {
+            .slice => {
                 if (ptr_info.child == u8) {
                     return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
@@ -587,7 +583,7 @@ pub fn toAST(
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
-        .Array => |Array| {
+        .array => |Array| {
             if (Array.child == u8) {
                 return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
@@ -597,7 +593,7 @@ pub fn toAST(
 
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
-        .Struct => |Struct| {
+        .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
@@ -618,25 +614,25 @@ pub fn toAST(
                 logger.Loc.Empty,
             );
         },
-        .Null => {
+        .null => {
             return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
         },
-        .Optional => {
+        .optional => {
             if (value) |_value| {
                 return try toAST(allocator, @TypeOf(_value), _value);
             } else {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             }
         },
-        .Enum => {
+        .@"enum" => {
             _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
-        .Union => |Union| {
+        .error_set => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
+        .@"union" => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
@@ -654,7 +650,7 @@ pub fn toAST(
                                                 @field(value, u_field.name),
                                             ),
                                             .is_comptime = false,
-                                            .default_value = undefined,
+                                            .default_value_ptr = undefined,
                                             .alignment = @alignOf(
                                                 @TypeOf(
                                                     @field(value, u_field.name),
@@ -1042,7 +1038,9 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
 
     const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
-    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{});
+    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{
+        .mangled_props = null,
+    });
     var js = writer.ctx.buffer.list.items.ptr[0 .. written + 1];
 
     if (js.len > 1) {

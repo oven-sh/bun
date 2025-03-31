@@ -22,7 +22,6 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
-
 #ifndef WIN32
 #include <fcntl.h>
 #endif
@@ -168,13 +167,17 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     if (!c->pending_resolve_callback) {
         us_connecting_socket_free(ssl, c);
     }
-} 
+}
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
     if(ssl) {
         return (struct us_socket_t *)us_internal_ssl_socket_close((struct us_internal_ssl_socket_t *) s, code, reason);
     }
+
     if (!us_socket_is_closed(0, s)) {
+        /* make sure the context is alive until the callback ends */
+        us_socket_context_ref(ssl, s->context);
+
         if (s->low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
@@ -186,7 +189,6 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->next = 0;
             s->low_prio_state = 0;
             us_socket_context_unref(ssl, s->context);
-
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
@@ -207,18 +209,27 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
-        /* Link this socket to the close-list and let it be deleted after this iteration */
-        s->next = s->context->loop->data.closed_head;
-        s->context->loop->data.closed_head = s;
 
         /* Any socket with prev = context is marked as closed */
         s->prev = (struct us_socket_t *) s->context;
 
+        /* mark it as closed and call the callback */
+        struct us_socket_t *res = s;
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
-            return s->context->on_close(s, code, reason);
+            res = s->context->on_close(s, code, reason);
         }
-        
+
+        /* Link this socket to the close-list and let it be deleted after this iteration */
+        s->next = s->context->loop->data.closed_head;
+        s->context->loop->data.closed_head = s;
+
+        /* unref the context after the callback ends */
+        us_socket_context_unref(ssl, s->context);
+
+        /* preserve the return value from on_close if its called */
+        return res;
     }
+
     return s;
 }
 
@@ -435,18 +446,18 @@ int us_connecting_socket_get_error(int ssl, struct us_connecting_socket_t *c) {
     return c->error;
 }
 
-/* 
+/*
     Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
           context ext will not be copied to the new context, new context will contain us_wrapped_socket_context_t on ext
 */
 struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size) {
     // only accepts non-TLS sockets
     if (ssl) {
-        return NULL; 
+        return NULL;
     }
 
     return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, socket_ext_size);
-}  
+}
 
 // if a TLS socket calls this, it will start SSL call open event and TLS handshake if required
 // will have no effect if the socket is closed or is not TLS
@@ -456,6 +467,7 @@ struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_clien
     }
     return s;
 }
+
 
 int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
 #ifndef LIBUS_NO_SSL
@@ -489,6 +501,24 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     return length;
 }
 
+unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+{
+    struct bsd_addr_t addr;
+    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+        return 0;
+    }
+
+    int length = bsd_addr_get_ip_length(&addr);
+    if (!length) {
+        return 0;
+    }
+
+    memcpy(buf, bsd_addr_get_ip(&addr), length);
+    *port = bsd_addr_get_port(&addr);
+
+    return length;
+}
+
 void us_socket_ref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_ref((uv_handle_t*)s->p.uv_p);
@@ -502,9 +532,14 @@ void us_socket_nodelay(struct us_socket_t *s, int enabled) {
     }
 }
 
+/// Returns 0 on success. Returned error values depend on the platform.
+/// - on posix, returns `errno`
+/// - on windows, when libuv is used, returns a UV err code
+/// - on windows, LIBUS_USE_LIBUV is set, returns `WSAGetLastError()`
+/// - on windows, otherwise returns result of `WSAGetLastError`
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay){
     if (!us_socket_is_shut_down(0, s)) {
-        bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
+        return bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
     }
     return 0;
 }
@@ -523,11 +558,6 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 void us_socket_pause(int ssl, struct us_socket_t *s) {
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
-    if(us_socket_is_shut_down(ssl, s)) {
-        // we already sent FIN so we pause all events because we are read-only
-        us_poll_change(&s->p, s->context->loop, 0);
-        return;
-    }
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 }

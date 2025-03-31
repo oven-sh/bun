@@ -22,6 +22,7 @@ const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const VLQ = SourceMap.VLQ;
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -44,17 +45,15 @@ var has_printed_message = false;
 var panicking = std.atomic.Value(u8).init(0);
 
 // Locked to avoid interleaving panic messages from multiple threads.
-var panic_mutex = std.Thread.Mutex{};
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var panic_mutex = bun.Mutex{};
 
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
 threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
-
-export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
-    inside_native_plugin = name;
-}
+threadlocal var unsupported_uv_function: ?[*:0]const u8 = null;
 
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
@@ -66,9 +65,10 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 pub threadlocal var current_action: ?Action = null;
 
 var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
-var before_crash_handlers_mutex: std.Thread.Mutex = .{};
 
-const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+var before_crash_handlers_mutex: bun.Mutex = .{};
+
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
@@ -133,6 +133,8 @@ pub const Action = union(enum) {
         kind: bun.ImportKind,
     } else void,
 
+    dlopen: []const u8,
+
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
@@ -164,6 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
+            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
         }
     }
 };
@@ -175,7 +178,7 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
@@ -243,6 +246,20 @@ pub fn crashHandler(
                             \\
                         ;
                         writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    } else if (bun.analytics.Features.unsupported_uv_function > 0) {
+                        const name = unsupported_uv_function orelse "<unknown>";
+                        const fmt =
+                            \\Bun encountered a crash when running a NAPI module that tried to call 
+                            \\the <red>{s}<r> libuv function.
+                            \\
+                            \\Bun is actively working on supporting all libuv functions for POSIX
+                            \\systems, please see this issue to track our progress:
+                            \\
+                            \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                            \\
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{name}) catch std.posix.abort();
                     }
                 } else {
                     if (Output.enable_ansi_colors) {
@@ -272,11 +289,11 @@ pub fn crashHandler(
                     } else switch (bun.Environment.os) {
                         .windows => {
                             var name: std.os.windows.PWSTR = undefined;
-                            const result = bun.windows.GetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), &name);
+                            const result = bun.windows.GetThreadDescription(bun.windows.GetCurrentThread(), &name);
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},
@@ -298,7 +315,13 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = error_return_trace orelse get_backtrace: {
+                const trace = @as(?*std.builtin.StackTrace, if (error_return_trace) |ert|
+                    if (ert.index > 0)
+                        ert
+                    else
+                        null
+                else
+                    null) orelse get_backtrace: {
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
@@ -336,9 +359,23 @@ pub fn crashHandler(
                                 \\
                                 \\
                             , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (bun.analytics.Features.unsupported_uv_function > 0) {
+                            const name = unsupported_uv_function orelse "<unknown>";
+                            const fmt =
+                                \\Bun encountered a crash when running a NAPI module that tried to call 
+                                \\the <red>{s}<r> libuv function.
+                                \\
+                                \\Bun is actively working on supporting all libuv functions for POSIX
+                                \\systems, please see this issue to track our progress:
+                                \\
+                                \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                                \\
+                                \\
+                            ;
+                            writer.print(Output.prettyFmt(fmt, true), .{name}) catch std.posix.abort();
                         } else if (reason == .out_of_memory) {
                             writer.writeAll(
-                                \\Bun has ran out of memory.
+                                \\Bun has run out of memory.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
@@ -703,7 +740,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 }
 
 pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     crashHandler(
         if (bun.strings.eqlComptime(msg, "reached unreachable code"))
             .{ .@"unreachable" = {} }
@@ -793,10 +830,10 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
         }
     }
 
-    try std.posix.sigaction(std.posix.SIG.SEGV, act, null);
-    try std.posix.sigaction(std.posix.SIG.ILL, act, null);
-    try std.posix.sigaction(std.posix.SIG.BUS, act, null);
-    try std.posix.sigaction(std.posix.SIG.FPE, act, null);
+    std.posix.sigaction(std.posix.SIG.SEGV, act, null);
+    std.posix.sigaction(std.posix.SIG.ILL, act, null);
+    std.posix.sigaction(std.posix.SIG.BUS, act, null);
+    std.posix.sigaction(std.posix.SIG.FPE, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;
@@ -865,7 +902,7 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
-extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
@@ -895,10 +932,8 @@ pub fn printMetadata(writer: anytype) !void {
             try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
         }
 
-        if (comptime bun.Environment.isX64) {
-            if (!cpu_features.avx and !cpu_features.avx2 and !cpu_features.avx512) {
-                is_ancient_cpu = true;
-            }
+        if (bun.Environment.isX64) {
+            is_ancient_cpu = !cpu_features.hasAnyAVX();
         }
 
         if (!cpu_features.isEmpty()) {
@@ -971,7 +1006,7 @@ fn waitForOtherThreadToFinishPanicking() void {
 
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -987,7 +1022,7 @@ pub fn sleepForeverIfAnotherThreadIsCrashing() void {
     if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -1143,19 +1178,19 @@ const StackLine = struct {
                     fn callback(info: *std.posix.dl_phdr_info, _: usize, context: *CtxTy) !void {
                         defer context.i += 1;
 
-                        if (context.address < info.dlpi_addr) return;
-                        const phdrs = info.dlpi_phdr[0..info.dlpi_phnum];
+                        if (context.address < info.addr) return;
+                        const phdrs = info.phdr[0..info.phnum];
                         for (phdrs) |*phdr| {
                             if (phdr.p_type != std.elf.PT_LOAD) continue;
 
                             // Overflowing addition is used to handle the case of VSDOs
                             // having a p_vaddr = 0xffffffffff700000
-                            const seg_start = info.dlpi_addr +% phdr.p_vaddr;
+                            const seg_start = info.addr +% phdr.p_vaddr;
                             const seg_end = seg_start + phdr.p_memsz;
                             if (context.address >= seg_start and context.address < seg_end) {
-                                // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
+                                // const name = bun.sliceTo(info.name, 0) orelse "";
                                 context.result = .{
-                                    .address = @intCast(context.address - info.dlpi_addr),
+                                    .address = @intCast(context.address - info.addr),
                                     .object = null,
                                 };
                                 return error.Found;
@@ -1176,12 +1211,12 @@ const StackLine = struct {
         };
 
         if (known.object) |object| {
-            try SourceMap.encodeVLQ(1).writeTo(writer);
-            try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
+            try VLQ.encode(1).writeTo(writer);
+            try VLQ.encode(@intCast(object.len)).writeTo(writer);
             try writer.writeAll(object);
         }
 
-        try SourceMap.encodeVLQ(known.address).writeTo(writer);
+        try VLQ.encode(known.address).writeTo(writer);
     }
 
     pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1240,10 +1275,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         try StackLine.writeEncoded(line, writer);
     }
 
-    try writer.writeAll(comptime zero_vlq: {
-        const vlq = SourceMap.encodeVLQ(0);
-        break :zero_vlq vlq.bytes[0..vlq.len];
-    });
+    try writer.writeAll(VLQ.zero.slice());
 
     // The following switch must be kept in sync with `bun.report`'s decoder implementation.
     switch (opts.reason) {
@@ -1311,8 +1343,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
-    const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
+    const first = VLQ.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
+    const second = VLQ.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
 }
@@ -1444,7 +1476,7 @@ fn report(url: []const u8) void {
                 },
             }
         },
-        else => @compileError("NOT IMPLEMENTED"),
+        else => @compileError("Not implemented"),
     }
 }
 
@@ -1453,7 +1485,9 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            std.posix.abort();
+            // This exit code is what Node.js uses when it calls
+            // abort. This is relied on by their Node-API tests.
+            bun.C.quick_exit(134);
         },
         else => {
             // Install default handler so that the tkill below will terminate.
@@ -1467,7 +1501,7 @@ fn crash() noreturn {
                 std.posix.SIG.HUP,
                 std.posix.SIG.TERM,
             }) |sig| {
-                std.posix.sigaction(sig, &sigact, null) catch {};
+                std.posix.sigaction(sig, &sigact, null);
             }
 
             @trap();
@@ -1478,7 +1512,7 @@ fn crash() noreturn {
 pub var verbose_error_trace = false;
 
 noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
-    @setCold(true);
+    @branchHint(.cold);
     const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
 
     // The format of the panic trace is slightly different in debug
@@ -1579,9 +1613,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            var arena = bun.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
+            debug.writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
@@ -1589,7 +1621,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperdave): see if zig 0.14 fixes this
+            // TODO(@paperclover): see if zig 0.14 fixes this
         },
         else => {
             stdDumpStackTrace(trace);
@@ -1649,6 +1681,13 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     stderr.writeAll(proc.stderr) catch return;
 }
 
+pub fn dumpCurrentStackTrace(first_address: ?usize) void {
+    var addrs: [32]usize = undefined;
+    var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
+    std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
+    dumpStackTrace(stack);
+}
+
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
 /// instead of being a pointer. This allows storing captured stack traces
 /// for later printing.
@@ -1673,6 +1712,12 @@ pub const StoredTrace = struct {
         var frame = stored.trace();
         std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
         stored.index = frame.index;
+        for (frame.instruction_addresses[0..frame.index], 0..) |addr, i| {
+            if (addr == 0) {
+                stored.index = i;
+                break;
+            }
+        }
         return stored;
     }
 
@@ -1807,4 +1852,39 @@ pub fn removePreCrashHandler(ptr: *anyopaque) void {
         if (item.@"0" == ptr) break i;
     } else return;
     _ = before_crash_handlers.orderedRemove(index);
+}
+
+pub fn isPanicking() bool {
+    return panicking.load(.monotonic) > 0;
+}
+
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
+
+fn unsupportUVFunction(name: ?[*:0]const u8) callconv(.C) void {
+    bun.analytics.Features.unsupported_uv_function += 1;
+    unsupported_uv_function = name;
+    std.debug.panic("unsupported uv function: {s}", .{name.?});
+}
+
+export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
+    crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
+}
+
+export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
+    if (action) |str| {
+        bun.debugAssert(current_action == null);
+        current_action = .{ .dlopen = bun.sliceTo(str, 0) };
+    } else {
+        bun.debugAssert(current_action != null and current_action.? == .dlopen);
+        current_action = null;
+    }
+}
+
+comptime {
+    _ = &Bun__crashHandler;
+    if (!bun.Environment.isWindows) {
+        @export(&unsupportUVFunction, .{ .name = "CrashHandler__unsupportedUVFunction" });
+    }
 }

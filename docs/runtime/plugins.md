@@ -324,13 +324,12 @@ await Bun.build({
       },
     },
   ],
-  throw: true,
 });
 ```
 
 {% callout %}
 
-**NOTE**: Plugin lifcycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
+**NOTE**: Plugin lifecycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
 
 ```ts
 await Bun.build({
@@ -351,7 +350,6 @@ await Bun.build({
       },
     },
   ],
-  throw: true,
 });
 ```
 
@@ -402,7 +400,7 @@ type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml" | "object";
 
 ### Namespaces
 
-`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespaace?
+`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespace?
 
 Every module has a namespace. Namespaces are used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
 

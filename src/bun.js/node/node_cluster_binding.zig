@@ -1,3 +1,8 @@
+// Most of this code should be rewritten.
+// - Usage of JSC.Strong here is likely to cause memory leaks.
+// - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
+//   at all. It should happen in the protocol before it reaches JS.
+// - We should not be creating JSFunction's in process.nextTick.
 const std = @import("std");
 const bun = @import("root").bun;
 const Environment = bun.Environment;
@@ -35,6 +40,8 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
+        // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
+        // These sequence numbers shouldn't exist from JavaScript's perspective at all.
         child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
@@ -44,6 +51,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     // similar code as Bun__Process__send
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     if (Environment.isDebug) log("child: {}", .{message.toFmt(&formatter)});
 
     const ipc_instance = vm.getIPCInstance().?;
@@ -52,7 +60,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         fn impl(globalThis_: *JSC.JSGlobalObject, callframe_: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe_.arguments_old(1).slice();
             const ex = arguments_[0];
-            Process__emitErrorEvent(globalThis_, ex);
+            Process__emitErrorEvent(globalThis_, ex.toError() orelse ex);
             return .undefined;
         }
     };
@@ -73,6 +81,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("onInternalMessageChild", .{});
     const arguments = callframe.arguments_old(2).ptr;
+    // TODO: we should not create two JSC.Strong here. If absolutely necessary, a single Array. should be all we use.
     child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
     child_singleton.cb = JSC.Strong.create(arguments[1], globalThis);
     try child_singleton.flush(globalThis);
@@ -85,19 +94,18 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
     try child_singleton.dispatch(message, globalThis);
 }
 
-//
-//
-//
-
+// TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is recieved with an 'ack' property of the same sequence number.
 pub const InternalMsgHolder = struct {
     seq: i32 = 0,
-    callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
 
-    worker: JSC.Strong = .{},
-    cb: JSC.Strong = .{},
+    // TODO: move this to an Array or a JS Object or something which doesn't
+    // individually create a Strong for every single IPC message...
+    callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
+    worker: JSC.Strong = .empty,
+    cb: JSC.Strong = .empty,
     messages: std.ArrayListUnmanaged(JSC.Strong) = .{},
 
     pub fn isReady(this: *InternalMsgHolder) bool {
@@ -198,6 +206,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
     // similar code as bun.JSC.Subprocess.doSend
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
@@ -211,6 +220,7 @@ pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC
     const arguments = callframe.arguments_old(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const ipc_data = subprocess.ipc() orelse return .undefined;
+    // TODO: remove these strongs.
     ipc_data.internal_msg_queue.worker = JSC.Strong.create(arguments[1], globalThis);
     ipc_data.internal_msg_queue.cb = JSC.Strong.create(arguments[2], globalThis);
     return .undefined;
@@ -221,12 +231,13 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 
     const event_loop = globalThis.bunVM().eventLoop();
 
+    // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if (try message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
             const ack = p.toInt32();
             if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
-                defer cbstrong.clear();
+                defer cbstrong.deinit();
                 _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
                 event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
@@ -249,8 +260,6 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 //
 //
 
-extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
-
 pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).ptr;
 
@@ -262,6 +271,34 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
 
     const enabled = arguments[0].toBoolean();
-    Bun__setChannelRef(globalObject, enabled);
+    const vm = globalObject.bunVM();
+    vm.channel_ref_overridden = true;
+    if (enabled) {
+        vm.channel_ref.ref(vm);
+    } else {
+        vm.channel_ref.unref(vm);
+    }
     return .undefined;
+}
+
+export fn Bun__refChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.ref(vm);
+    }
+}
+export fn Bun__unrefChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.unref(vm);
+    }
+}
+pub fn channelIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalObject.bunVM();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    return .false;
+}
+export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject) bool {
+    const vm = globalObject.bunVM();
+    return vm.channel_ref_should_ignore_one_disconnect_event_listener;
 }

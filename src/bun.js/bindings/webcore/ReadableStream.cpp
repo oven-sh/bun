@@ -148,7 +148,7 @@ std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStrea
 void ReadableStream::lock()
 {
     auto& builtinNames = WebCore::builtinNames(m_globalObject->vm());
-    invokeConstructor(*m_globalObject, builtinNames.ReadableStreamDefaultReaderPrivateName(), [this](auto& args, auto&, auto&) {
+    auto result = invokeConstructor(*m_globalObject, builtinNames.ReadableStreamDefaultReaderPrivateName(), [this](auto& args, auto&, auto&) {
         args.append(readableStream());
     });
 }
@@ -242,7 +242,7 @@ bool ReadableStream::isDisturbed() const
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* readableStream = jsDynamicCast<JSReadableStream*>(callFrame->argument(0));

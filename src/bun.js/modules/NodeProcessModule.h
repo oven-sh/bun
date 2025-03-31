@@ -21,8 +21,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsFunctionProcessModuleCommonJSGetter,
 {
 
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)
-                               ->processObject()
-                               ->get(globalObject, propertyName));
+            ->processObject()
+            ->get(globalObject, propertyName));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsFunctionProcessModuleCommonJSSetter,
@@ -40,7 +40,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsFunctionProcessModuleCommonJSSetter,
 
 DEFINE_NATIVE_MODULE(NodeProcess)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
 
     JSC::JSObject* process = globalObject->processObject();

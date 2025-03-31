@@ -9,7 +9,8 @@
 /// Version 10: Constant folding for ''.charCodeAt(n)
 /// Version 11: Fix \uFFFF printing regression
 /// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
-const expected_version = 12;
+/// Version 13: Hoist `import.meta.require` definition, see #15738
+const expected_version = 13;
 
 const bun = @import("root").bun;
 const std = @import("std");
@@ -365,7 +366,7 @@ pub const RuntimeTranspilerCache = struct {
     ) !usize {
         const fmt_name = if (comptime bun.Environment.allow_assert) "{any}.debug.pile" else "{any}.pile";
 
-        const printed = try std.fmt.bufPrint(buf, fmt_name, .{bun.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
+        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
         return printed.len;
     }
 

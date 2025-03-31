@@ -871,6 +871,16 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 
 #endif
 
+#if OS(LINUX) || OS(DARWIN)
+#include <paths.h>
+
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#elif OS(WINDOWS)
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
+#else
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
+#endif
+
 #if OS(DARWIN)
 #include <os/signpost.h>
 #include "generated_perf_trace_events.h"
@@ -895,4 +905,19 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 #undef EMIT_SIGNPOST
 #undef FOR_EACH_TRACE_EVENT
 
+#define BLOB_HEADER_ALIGNMENT 16 * 1024
+
+extern "C" {
+struct BlobHeader {
+    uint32_t size;
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
+
+extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
+
+extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+{
+    return &BUN_COMPILED.size;
+}
 #endif

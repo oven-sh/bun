@@ -24,19 +24,31 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function getStdioWriteStream(fd) {
-  const tty = require("node:tty");
+const enum BunProcessStdinFdType {
+  file = 0,
+  pipe = 1,
+  socket = 2,
+}
+
+export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+  $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
 
   let stream;
-  if (tty.isatty(fd)) {
+  if (isTTY) {
+    const tty = require("node:tty");
     stream = new tty.WriteStream(fd);
+    // TODO: this is the wrong place for this property.
+    // but the TTY is technically duplex
+    // see test-fs-syncwritestream.js
+    stream.readable = true;
     process.on("SIGWINCH", () => {
       stream._refreshSize();
     });
     stream._type = "tty";
   } else {
     const fs = require("node:fs");
-    stream = new fs.WriteStream(fd, { autoClose: false, fd });
+    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+    stream.readable = false;
     stream._type = "fs";
   }
 
@@ -57,36 +69,35 @@ export function getStdioWriteStream(fd) {
   stream._isStdio = true;
   stream.fd = fd;
 
-  return [stream, stream[require("internal/shared").fileSinkSymbol]];
+  const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
+  $assert(underlyingSink);
+  return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd) {
-  // Ideally we could use this:
-  // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
-  // but we need to extend TTY/FS ReadStream
+export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
+  // @ts-expect-error
+  const source = native.$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  var readerRef;
 
   var shouldUnref = false;
+  let needsInternalReadRefresh = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    // TODO: remove this. likely we are dereferencing the stream
-    // when there is still more data to be read.
-    readerRef ??= setInterval(() => {}, 1 << 30);
+    source.updateRef(true);
     shouldUnref = false;
+    if (needsInternalReadRefresh) {
+      needsInternalReadRefresh = false;
+      internalRead(stream);
+    }
   }
 
   function unref() {
     $debug("unref();");
-    if (readerRef) {
-      clearInterval(readerRef);
-      readerRef = undefined;
-      $debug("cleared timeout");
-    }
+
     if (reader) {
       try {
         reader.releaseLock();
@@ -98,29 +109,15 @@ export function getStdinStream(fd) {
 
         // Releasing the lock is not possible as there are active reads
         // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldUnref = true;
-
-        // unref the native part of the stream
-        try {
-          $getByIdDirectPrivate(
-            $getByIdDirectPrivate(native, "readableStreamController"),
-            "underlyingByteSource",
-          ).$resume(false);
-        } catch (e) {
-          if (IS_BUN_DEVELOPMENT) {
-            // we assume this isn't possible, but because we aren't sure
-            // we will ignore if error during release, but make a big deal in debug
-            console.error(e);
-            $assert(!"reachable");
-          }
-        }
+        source?.updateRef?.(false);
       }
+    } else if (source) {
+      source.updateRef(false);
     }
   }
 
-  const tty = require("node:tty");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -144,6 +141,20 @@ export function getStdinStream(fd) {
 
   stream.fd = fd;
 
+  // tty.ReadStream is supposed to extend from net.Socket.
+  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    stream.ref = function () {
+      ref();
+      return this;
+    };
+
+    stream.unref = function () {
+      unref();
+      return this;
+    };
+  }
+
   const originalPause = stream.pause;
   stream.pause = function () {
     $debug("pause();");
@@ -162,25 +173,11 @@ export function getStdinStream(fd) {
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
-      var done: boolean, value: Uint8Array[];
       $assert(reader);
-      const pendingRead = reader.readMany();
+      const { done, value } = await reader.read();
 
-      if ($isPromise(pendingRead)) {
-        ({ done, value } = await pendingRead);
-      } else {
-        $debug("readMany() did not return a promise");
-        ({ done, value } = pendingRead);
-      }
-
-      if (!done) {
-        stream.push(value[0]);
-
-        // shouldn't actually happen, but just in case
-        const length = value.length;
-        for (let i = 1; i < length; i++) {
-          stream.push(value[i]);
-        }
+      if (value) {
+        stream.push(value);
 
         if (shouldUnref) unref();
       } else {
@@ -196,23 +193,31 @@ export function getStdinStream(fd) {
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // Not a bug. Happens in unref().
+        // The stream was unref()ed. It may be ref()ed again in the future,
+        // or maybe it has already been ref()ed again and we just need to
+        // restart the internalRead() function. triggerRead() will figure that out.
+        triggerRead.$call(stream, undefined);
         return;
       }
       stream.destroy(err);
     }
   }
 
-  stream._read = function (size) {
+  function triggerRead(size) {
     $debug("_read();", reader);
-    if (!reader) return;
 
-    if (!shouldUnref) {
+    if (reader && !shouldUnref) {
       internalRead(this);
+    } else {
+      // The stream has not been ref()ed yet. If it is ever ref()ed,
+      // run internalRead()
+      needsInternalReadRefresh = true;
     }
-  };
+  }
+  stream._read = triggerRead;
 
   stream.on("resume", () => {
+    if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     ref();
     stream._undestroy();
@@ -241,7 +246,6 @@ export function getStdinStream(fd) {
 
   return stream;
 }
-
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
   var queue;
   var process;
@@ -304,7 +308,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     setup = undefined;
   };
 
-  function nextTick(cb, args) {
+  function nextTick(cb, ...args) {
     validateFunction(cb, "callback");
     if (setup) {
       setup();
@@ -314,7 +318,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
     queue.push({
       callback: cb,
-      args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined,
+      // We want to avoid materializing the args if there are none because it's
+      // a waste of memory and Array.prototype.slice shows up in profiling.
+      args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
     });
     $putInternalField(nextTickQueue, 0, 1);

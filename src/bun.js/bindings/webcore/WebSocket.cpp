@@ -62,7 +62,7 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 // #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
@@ -77,7 +77,7 @@
 // #endif
 
 namespace WebCore {
-WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
 static size_t getFramingOverhead(size_t payloadSize)
@@ -1027,11 +1027,7 @@ void WebSocket::didConnect()
             this->incPendingActivityCount();
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-
-                // m_subprotocol = m_channel->subprotocol();
-                // m_extensions = m_channel->extensions();
                 protectedThis->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
-                // });
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -1145,12 +1141,8 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             context->postTask([name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
-                JSUint8Array* uint8array = JSUint8Array::create(
-                    globalObject,
-                    reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure(),
-                    buffer.copyRef(),
-                    0,
-                    length);
+                auto* subclassStructure = reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
+                JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
                 MessageEvent::Init init;
                 init.data = uint8array;
@@ -1177,7 +1169,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
-    if (auto* context = scriptExecutionContext()) {
+    if (scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
             ErrorEvent::Init eventInit = {};
@@ -1250,25 +1242,20 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
         if (auto* context = scriptExecutionContext()) {
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->decPendingActivityCount();
+                protectedThis->disablePendingActivity();
             });
-        } else {
-            // we fallback if we don't have a context or we will leak
-            this->decPendingActivityCount();
+            return;
         }
-        return;
-    }
-
-    if (auto* context = scriptExecutionContext()) {
+    } else if (auto* context = scriptExecutionContext()) {
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
-            protectedThis->decPendingActivityCount();
+            protectedThis->disablePendingActivity();
         });
-    } else {
-        // we fallback if we don't have a context
-        this->decPendingActivityCount();
+        return;
     }
+
+    this->disablePendingActivity();
 }
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
@@ -1443,13 +1430,19 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->decPendingActivityCount();
+            protectedThis->disablePendingActivity();
         });
     } else {
-        // we fallback if we don't have a context
-        this->decPendingActivityCount();
+        this->deref();
     }
 }
+
+void WebSocket::disablePendingActivity()
+{
+    this->m_pendingActivityCount = 1;
+    this->decPendingActivityCount();
+}
+
 void WebSocket::updateHasPendingActivity()
 {
     std::atomic_thread_fence(std::memory_order_acquire);
@@ -1467,9 +1460,9 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {
-    WTF::String wtf_reason = reason->toWTFString(BunString::ZeroCopy);
+    WTF::String wtf_reason = reason->transferToWTFString();
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
 }
 

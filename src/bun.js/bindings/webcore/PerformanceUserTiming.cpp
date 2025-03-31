@@ -78,6 +78,29 @@ PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
 {
 }
 
+size_t PerformanceUserTiming::memoryCost() const
+{
+    size_t size = sizeof(PerformanceUserTiming);
+    size += m_marksMap.byteSize();
+    size += m_measuresMap.byteSize();
+
+    for (const auto& entry : m_marksMap) {
+        size += entry.value.sizeInBytes();
+        for (const auto& entry : entry.value) {
+            size += entry->memoryCost();
+        }
+    }
+
+    for (const auto& entry : m_measuresMap) {
+        size += entry.value.sizeInBytes();
+        for (const auto& entry : entry.value) {
+            size += entry->memoryCost();
+        }
+    }
+
+    return size;
+}
+
 static void clearPerformanceEntries(PerformanceEntryMap& map, const String& name)
 {
     if (name.isNull())

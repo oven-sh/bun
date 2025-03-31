@@ -62,7 +62,6 @@
 // #include "JSWebCodecsEncodedVideoChunk.h"
 // #include "JSWebCodecsVideoFrame.h"
 #include "ScriptExecutionContext.h"
-#include "SharedBuffer.h"
 // #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/APICast.h>
@@ -104,8 +103,11 @@
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
+#include "ZigGlobalObject.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
+#include "JSX509Certificate.h"
+#include "ncrypto.h"
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -233,6 +235,7 @@ enum SerializationTag {
 
     Bun__BlobTag = 254,
     // bun types start at 254 and decrease with each addition
+    Bun__X509CertificateTag = 253,
 
     ErrorTag = 255
 };
@@ -500,6 +503,7 @@ enum class CryptoAlgorithmIdentifierTag {
     HKDF = 20,
     PBKDF2 = 21,
     ED25519 = 22,
+    X25519 = 23,
 };
 
 const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 22;
@@ -1612,14 +1616,6 @@ private:
             //     return true;
             // }
 
-            // write bun types
-            if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
-                StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
-                write(cloneable.tag);
-                cloneable.write(this, m_lexicalGlobalObject);
-                return true;
-            }
-
             // if (auto* blob = JSBlob::toWrapped(vm, obj)) {
             //     write(BlobTag);
             //     m_blobHandles.append(blob->handle().isolatedCopy());
@@ -1928,6 +1924,40 @@ private:
                 return dumpWebCodecsVideoFrame(obj);
             }
 #endif
+
+            // write bun types
+            if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
+                StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
+                write(cloneable.tag);
+                cloneable.write(this, m_lexicalGlobalObject);
+                return true;
+            }
+
+            if (auto* x509 = jsDynamicCast<Bun::JSX509Certificate*>(obj)) {
+                write(Bun__X509CertificateTag);
+                X509* cert = x509->m_x509.get();
+
+                // Get the size needed for the DER encoding
+                int size = i2d_X509(cert, nullptr);
+                if (size <= 0)
+                    return false;
+
+                Vector<uint8_t> der;
+                der.reserveInitialCapacity(size);
+                der.grow(size);
+
+                // Get pointer to where we should write
+                unsigned char* der_ptr = der.begin();
+
+                // Write the DER encoding
+                if (i2d_X509(cert, &der_ptr) != size) {
+                    return false;
+                }
+
+                write(der);
+
+                return true;
+            }
 
             return false;
         }
@@ -2262,6 +2292,9 @@ private:
             break;
         case CryptoAlgorithmIdentifier::Ed25519:
             write(CryptoAlgorithmIdentifierTag::ED25519);
+            break;
+        case CryptoAlgorithmIdentifier::X25519:
+            write(CryptoAlgorithmIdentifierTag::X25519);
             break;
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
@@ -3747,6 +3780,9 @@ private:
         case CryptoAlgorithmIdentifierTag::ED25519:
             result = CryptoAlgorithmIdentifier::Ed25519;
             break;
+        case CryptoAlgorithmIdentifierTag::X25519:
+            result = CryptoAlgorithmIdentifier::X25519;
+            break;
         }
         return true;
     }
@@ -4368,6 +4404,36 @@ private:
     //     return getJSValue(bitmap);
     // }
 
+    JSValue readX509Certificate()
+    {
+        Vector<uint8_t> buffer;
+
+        if (!read(buffer)) {
+            fail();
+            return JSValue();
+        }
+
+        if (buffer.size() == 0) {
+            return Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
+        }
+        ncrypto::ClearErrorOnReturn clear_error_on_return;
+        X509* ptr = nullptr;
+        const uint8_t* data = buffer.data();
+
+        auto cert = d2i_X509(&ptr, &data, buffer.size());
+        if (!cert) {
+            fail();
+            return JSValue();
+        }
+
+        auto cert_ptr = ncrypto::X509Pointer(cert);
+        auto* domGlobalObject = defaultGlobalObject(m_globalObject);
+        auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), domGlobalObject->m_JSX509CertificateClassStructure.get(domGlobalObject), m_globalObject, WTFMove(cert_ptr));
+        m_gcBuffer.appendWithCrashOnOverflow(cert_obj);
+
+        return cert_obj;
+    }
+
     JSValue readDOMException()
     {
         CachedStringRef message;
@@ -4764,7 +4830,7 @@ private:
 
             auto& vm = m_lexicalGlobalObject->vm();
             auto scope = DECLARE_THROW_SCOPE(vm);
-            JSWebAssemblyMemory* result = JSC::JSWebAssemblyMemory::tryCreate(m_lexicalGlobalObject, vm, m_globalObject->webAssemblyMemoryStructure());
+            JSWebAssemblyMemory* result = JSC::JSWebAssemblyMemory::create(vm, m_globalObject->webAssemblyMemoryStructure());
             // Since we are cloning a JSWebAssemblyMemory, it's impossible for that
             // module to not have been a valid module. Therefore, createStub should
             // not throw.
@@ -4923,6 +4989,9 @@ private:
         case DOMExceptionTag:
             return readDOMException();
 
+        case Bun__X509CertificateTag:
+            return readX509Certificate();
+
         default:
             m_ptr--; // Push the tag back
             return JSValue();
@@ -5034,6 +5103,10 @@ DeserializationResult CloneDeserializer::deserialize()
 
             if (JSValue terminal = readTerminal()) {
                 putProperty(outputObjectStack.last(), index, terminal);
+                if (UNLIKELY(scope.exception())) {
+                    fail();
+                    goto error;
+                }
                 goto arrayStartVisitMember;
             }
             if (m_failed)
@@ -5045,6 +5118,10 @@ DeserializationResult CloneDeserializer::deserialize()
         case ArrayEndVisitMember: {
             JSObject* outArray = outputObjectStack.last();
             putProperty(outArray, indexStack.last(), outValue);
+            if (UNLIKELY(scope.exception())) {
+                fail();
+                goto error;
+            }
             indexStack.removeLast();
             goto arrayStartVisitMember;
         }
@@ -5073,6 +5150,10 @@ DeserializationResult CloneDeserializer::deserialize()
 
             if (JSValue terminal = readTerminal()) {
                 putProperty(outputObjectStack.last(), cachedString->identifier(vm), terminal);
+                if (UNLIKELY(scope.exception())) {
+                    fail();
+                    goto error;
+                }
                 goto objectStartVisitMember;
             }
             stateStack.append(ObjectEndVisitMember);
@@ -5109,6 +5190,10 @@ DeserializationResult CloneDeserializer::deserialize()
         }
         case MapDataEndVisitValue: {
             mapStack.last()->set(m_lexicalGlobalObject, mapKeyStack.last(), outValue);
+            if (UNLIKELY(scope.exception())) {
+                fail();
+                goto error;
+            }
             mapKeyStack.removeLast();
             goto mapDataStartVisitEntry;
         }
@@ -5134,6 +5219,10 @@ DeserializationResult CloneDeserializer::deserialize()
         case SetDataEndVisitKey: {
             JSSet* set = setStack.last();
             set->add(m_lexicalGlobalObject, outValue);
+            if (UNLIKELY(scope.exception())) {
+                fail();
+                goto error;
+            }
             goto setDataStartVisitEntry;
         }
 
@@ -5567,7 +5656,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     //         wasmMemoryHandles,
     // #endif
     //         blobHandles, buffer, context, *sharedBuffers, forStorage);
-
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         offscreenCanvases,
@@ -5585,17 +5674,23 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         buffer, context, *sharedBuffers, forStorage);
 
-    if (throwExceptions == SerializationErrorMode::Throwing)
+    // Serialize may throw an exception. This code looks weird, but we'll rethrow it
+    // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
+    // different errors), and then re-check if we have an exception after the call.
+    // If so, we'll throw it again.
+    if (UNLIKELY(scope.exception()) || throwExceptions == SerializationErrorMode::Throwing)
         maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, code);
 
-    if (code != SerializationReturnCode::SuccessfullyCompleted)
+    // If we rethrew an exception just now, or we failed with a status code other than success,
+    // we should exit right now.
+    if (UNLIKELY(scope.exception()) || code != SerializationReturnCode::SuccessfullyCompleted)
         return exceptionForSerializationFailure(code);
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
     if (arrayBufferContentsArray.hasException())
         return arrayBufferContentsArray.releaseException();
 
-        // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
+    // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedCanvases;
@@ -5665,7 +5760,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(originContext);
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSLockHolder locker(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
@@ -5775,6 +5870,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 
 JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
 {
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
@@ -5797,8 +5894,14 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     );
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
-    if (throwExceptions == SerializationErrorMode::Throwing)
+    // Deserialize may throw an exception. Similar to serialize (~L6240, SerializedScriptValue::create),
+    // we'll catch and rethrow.
+    if (UNLIKELY(scope.exception()) || throwExceptions == SerializationErrorMode::Throwing)
         maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
+
+    // Rethrow is a bit simpler here since we don't deal with return codes.
+    RETURN_IF_EXCEPTION(scope, jsNull());
+
     return result.first ? result.first : jsNull();
 }
 // JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
@@ -5853,7 +5956,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 JSValueRef SerializedScriptValue::deserialize(JSContextRef destinationContext, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(destinationContext);
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSLockHolder locker(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 

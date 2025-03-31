@@ -6,7 +6,7 @@ const RareData = @This();
 const Syscall = bun.sys;
 const JSC = bun.JSC;
 const std = @import("std");
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const bun = @import("root").bun;
 const FDImpl = bun.FDImpl;
 const Environment = bun.Environment;
@@ -44,18 +44,21 @@ mime_types: ?bun.http.MimeType.Map = null,
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
-listening_sockets_for_watch_mode_lock: bun.Lock = .{},
+listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
 aws_signature_cache: AWSSignatureCache = .{},
+
+s3_default_client: JSC.Strong = .empty,
+default_csrf_secret: []const u8 = "",
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
     cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,
-    lock: bun.Lock = .{},
+    lock: bun.Mutex = .{},
 
     pub fn clean(this: *@This()) void {
         for (this.cache.keys()) |cached_key| {
@@ -242,7 +245,7 @@ pub const EntropyCache = struct {
     }
 
     pub fn fill(this: *EntropyCache) void {
-        bun.rand(&this.cache);
+        bun.csprng(&this.cache);
         this.index = 0;
     }
 
@@ -405,7 +408,27 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     };
 }
 
-const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
+const StdinFdType = enum(i32) {
+    file = 0,
+    pipe = 1,
+    socket = 2,
+};
+
+pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) StdinFdType {
+    const mode = switch (fd) {
+        0 => vm.rareData().stdin().data.file.mode,
+        1 => vm.rareData().stdout().data.file.mode,
+        2 => vm.rareData().stderr().data.file.mode,
+        else => unreachable,
+    };
+    if (bun.S.ISFIFO(mode)) {
+        return .pipe;
+    } else if (bun.S.ISSOCK(mode)) {
+        return .socket;
+    } else {
+        return .file;
+    }
+}
 
 pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {
@@ -414,7 +437,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 
     const opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
-    IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
+    IPC.Socket.configure(ctx, true, *JSC.Subprocess, JSC.Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;
 }
@@ -422,6 +445,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
     if (rare.global_dns_data == null) {
         rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+        rare.global_dns_data.?.resolver.ref(); // live forever
     }
 
     return &rare.global_dns_data.?.resolver;
@@ -434,6 +458,33 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
     };
 }
 
+pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    return rare.s3_default_client.get() orelse {
+        const vm = globalThis.bunVM();
+        var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, null, globalThis) catch bun.outOfMemory();
+        defer aws_options.deinit();
+        const client = JSC.WebCore.S3Client.new(.{
+            .credentials = aws_options.credentials.dupe(),
+            .options = aws_options.options,
+            .acl = aws_options.acl,
+            .storage_class = aws_options.storage_class,
+        });
+        const js_client = client.toJS(globalThis);
+        js_client.ensureStillAlive();
+        rare.s3_default_client = JSC.Strong.create(js_client, globalThis);
+        return js_client;
+    };
+}
+
+pub fn defaultCSRFSecret(this: *RareData) []const u8 {
+    if (this.default_csrf_secret.len == 0) {
+        const secret = bun.default_allocator.alloc(u8, 16) catch bun.outOfMemory();
+        bun.csprng(secret);
+        this.default_csrf_secret = secret;
+    }
+    return this.default_csrf_secret;
+}
+
 pub fn deinit(this: *RareData) void {
     if (this.temp_pipe_read_buffer) |pipe| {
         this.temp_pipe_read_buffer = null;
@@ -442,8 +493,12 @@ pub fn deinit(this: *RareData) void {
 
     this.aws_signature_cache.deinit();
 
+    this.s3_default_client.deinit();
     if (this.boring_ssl_engine) |engine| {
-        _ = bun.BoringSSL.ENGINE_free(engine);
+        _ = bun.BoringSSL.c.ENGINE_free(engine);
+    }
+    if (this.default_csrf_secret.len > 0) {
+        bun.default_allocator.free(this.default_csrf_secret);
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);

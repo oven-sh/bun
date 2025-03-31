@@ -48,6 +48,14 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const napiTimeout = 10 * 60_000;
+
+function getNodeParallelTestTimeout(testPath) {
+  if (testPath.includes("test-dns")) {
+    return 90_000;
+  }
+  return 10_000;
+}
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -56,6 +64,7 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Path to bun binary */
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -191,7 +200,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts) {
+      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
       }
@@ -245,15 +254,22 @@ async function runTests() {
 
   if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-      if (title.startsWith("test/js/node/test/parallel/")) {
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+      if (isNodeTest(testPath)) {
+        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        const runWithBunTest =
+          title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+        const subcommand = runWithBunTest ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [title],
-            timeout: 10_000,
+            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
+            timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
+              NO_COLOR: "1",
+              BUN_DEBUG_QUIET_LOGS: "1",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
@@ -271,9 +287,9 @@ async function runTests() {
             stdoutPreview: stdoutPreview,
           };
         });
-        continue;
+      } else {
+        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
       }
-      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
 
@@ -530,7 +546,7 @@ async function spawnSafe(options) {
 }
 
 /**
- * @param {string} execPath
+ * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
@@ -558,9 +574,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };
+
   if (env) {
     Object.assign(bunEnv, env);
   }
+
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;
@@ -664,6 +682,9 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
+  }
+  if (/napi/i.test(testPath)) {
+    return napiTimeout;
   }
   return testTimeout;
 }
@@ -854,19 +875,39 @@ function isJavaScriptTest(path) {
  * @param {string} path
  * @returns {boolean}
  */
-function isTest(path) {
-  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
-  if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
-  return isTestStrict(path);
+function isNodeTest(path) {
+  // Do not run node tests on macOS x64 in CI
+  // TODO: Unclear why we decided to do this?
+  if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  const unixPath = path.replaceAll(sep, "/");
+  return unixPath.includes("js/node/test/parallel/") || unixPath.includes("js/node/test/sequential/");
 }
 
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isClusterTest(path) {
+  const unixPath = path.replaceAll(sep, "/");
+  return unixPath.includes("js/node/cluster/test-") && unixPath.endsWith(".ts");
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isTest(path) {
+  return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
-}
-
-function targetDoesRunNodeTests() {
-  if (isMacOS && isX64) return false;
-  return true;
 }
 
 /**
@@ -877,6 +918,9 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
+/** Files with these extensions are not treated as test cases */
+const IGNORED_EXTENSIONS = new Set([".md"]);
+
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -886,8 +930,9 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
+      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename)) {
+      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
         continue;
       }
       if (entry.isFile() && isTest(filename)) {
@@ -1035,7 +1080,7 @@ function getRelevantTests(cwd) {
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+    tests = tests.filter(isNodeTest);
   }
 
   const isMatch = (testPath, filter) => {
@@ -1524,6 +1569,13 @@ function getExitCode(outcome) {
     return 3;
   }
   return 1;
+}
+
+// A flaky segfault, sigtrap, or sigill must never be ignored.
+// If it happens in CI, it will happen to our users.
+function isAlwaysFailure(error) {
+  error = ((error || "") + "").toLowerCase().trim();
+  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
 }
 
 /**

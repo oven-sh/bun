@@ -1,3 +1,5 @@
+// Hardcoded module "bun:internal-for-testing"
+
 // If you want to test an internal API, add a binding into this file.
 //
 // Then at test time: import ... from "bun:internal-for-testing"
@@ -53,8 +55,12 @@ export const iniInternals = {
 
 export const cssInternals = {
   minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  minifyErrorTestWithOptions: $newZigFunction("css_internals.zig", "minifyErrorTestWithOptions", 3),
   testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
   prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  minifyTest: $newZigFunction("css_internals.zig", "minifyTest", 3),
+  prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
+  _test: $newZigFunction("css_internals.zig", "_test", 3),
   attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
 };
 
@@ -149,3 +155,32 @@ export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
   add: (a: any, b: any) => number;
   requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
 };
+
+export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+export const Dequeue = require("internal/fifo");
+
+export const fs = require("node:fs/promises").$data;
+
+export const fsStreamInternals = {
+  writeStreamFastPath(str) {
+    return str[require("internal/fs/streams").kWriteStreamFastPath];
+  },
+};
+
+export const arrayBufferViewHasBuffer = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_arrayBufferViewHasBuffer",
+  1,
+);
+
+export const timerInternals = {
+  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+};
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);
+
+export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");

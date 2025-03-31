@@ -1,12 +1,6 @@
 import { join, resolve } from "path";
 
-const classes = [
-  "ArrayBufferSink",
-  "FileSink",
-  "HTTPResponseSink",
-  "HTTPSResponseSink",
-  "FetchTaskletChunkedRequestSink",
-];
+const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink", "NetworkSink"];
 
 function names(name) {
   return {
@@ -32,7 +26,7 @@ function header() {
             static constexpr SinkID Sink = SinkID::${name};
                                                                                                                                                                                     
             static constexpr unsigned StructureFlags = Base::StructureFlags;                                                                                                        
-            static constexpr bool needsDestruction = false;                                                                                                                         
+            static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;                                                                                                                         
                                                                                                                                                                                     
             DECLARE_EXPORT_INFO;                                                                                                                                                    
             template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                
@@ -459,7 +453,6 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
 JSC_DECLARE_HOST_FUNCTION(${controller}__end);
 JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -478,6 +471,28 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     return ${name}__endWithSink(ptr, lexicalGlobalObject);
 }
 
+extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::${className}*);
+
+// TODO: how to make this a property callback. then, we can expose this as a documented field
+// It should not be shipped as a function call.
+JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    if (!sink) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    void *ptr = sink->wrapped();
+    if (ptr == nullptr) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    return ${name}__getInternalFd(sink);
+}
 
 JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
 JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
@@ -736,24 +751,43 @@ extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr
 
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
+    Base::analyzeHeap(cell, analyzer);    
     auto* thisObject = jsCast<${className}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
-    Base::analyzeHeap(cell, analyzer);
+    
 }
 
 void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
+    Base::analyzeHeap(cell, analyzer);
     auto* thisObject = jsCast<${controller}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
-    Base::analyzeHeap(cell, analyzer);
+
+    auto& vm = cell->vm();
+    
+    if (thisObject->m_onPull) {
+        JSValue onPull = thisObject->m_onPull.get();
+        if (onPull.isCell()) {
+            const Identifier& id = Identifier::fromString(vm, "onPull"_s);
+            analyzer.analyzePropertyNameEdge(cell, onPull.asCell(), id.impl());
+        }
+    }
+
+    if (thisObject->m_onClose) {
+        JSValue onClose = thisObject->m_onClose.get();
+        if (onClose.isCell()) {
+            const Identifier& id = Identifier::fromString(vm, "onClose"_s);
+            analyzer.analyzePropertyNameEdge(cell, onClose.asCell(), id.impl());
+        }
+    }
 }
 
 
@@ -763,8 +797,11 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${controller}* thisObject = jsCast<${controller}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_onPull);
-    visitor.append(thisObject->m_onClose);
+    
+    // Avoid duplicating in the heap snapshot
+    visitor.appendHidden(thisObject->m_onPull);
+    visitor.appendHidden(thisObject->m_onClose);
+    
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);
@@ -879,15 +916,15 @@ extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* s
     return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr, destructor));
 }
 
-extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
+extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(value)))
         return sink->wrapped();
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(value)))
         return controller->wrapped();
 
-    return nullptr;
+    return (void*)1;
 }
 
 extern "C" void ${name}__detachPtr(JSC__JSValue JSValue0)
@@ -979,6 +1016,7 @@ function lutInput() {
     write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
     ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
     unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+    _getFd      ${`${name}__getFd`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
 @end
 */
 

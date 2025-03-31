@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
@@ -11,7 +10,6 @@ const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
-const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
@@ -38,7 +36,7 @@ const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../mimalloc_arena.zig");
+const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
@@ -60,6 +58,7 @@ pub const JSBundler = struct {
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
+        force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
         no_macros: bool = false,
@@ -75,13 +74,11 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
-        throw_on_error: bool = if (bun.FeatureFlags.breaking_changes_1_2) true else false,
-
-        env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
+        throw_on_error: bool = true,
+        env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
@@ -107,26 +104,6 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
                 did_set_target = true;
-            }
-
-            if (try config.getBooleanStrict(globalThis, "html")) |enable_html| {
-                this.experimental.html = enable_html;
-
-                if (enable_html and this.target != .browser) {
-                    return globalThis.throwInvalidArguments("'html' is currently only supported when target is 'browser'. You can still import HTML files via the 'file' loader, just not using the 'html' loader.", .{});
-                }
-            }
-
-            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental.css = if (enable_css.isBoolean())
-                    enable_css.toBoolean()
-                else if (enable_css.isObject()) true: {
-                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
-                        this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
-                    }
-
-                    break :true true;
-                } else false;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -229,7 +206,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
+                if (config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
@@ -252,7 +229,7 @@ pub const JSBundler = struct {
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
                         this.env_behavior = .load_all;
                     } else if (env.isString()) {
-                        const slice = try env.toSlice2(globalThis, bun.default_allocator);
+                        const slice = try env.toSlice(globalThis, bun.default_allocator);
                         defer slice.deinit();
                         if (strings.eqlComptime(slice.slice(), "inline")) {
                             this.env_behavior = .load_all;
@@ -449,17 +426,13 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
-                if (!define.isObject()) {
-                    return globalThis.throwInvalidArguments("define must be an object", .{});
-                }
-
-                var define_iter = JSC.JSPropertyIterator(.{
+                var define_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, define);
                 defer define_iter.deinit();
 
-                while (define_iter.next()) |prop| {
+                while (try define_iter.next()) |prop| {
                     const property_value = define_iter.value;
                     const value_type = property_value.jsType();
 
@@ -468,7 +441,7 @@ pub const JSBundler = struct {
                     }
 
                     var val = JSC.ZigString.init("");
-                    property_value.toZigString(&val, globalThis);
+                    try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
@@ -485,7 +458,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "loader")) |loaders| {
-                var loader_iter = JSC.JSPropertyIterator(.{
+                var loader_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, loaders);
@@ -496,7 +469,7 @@ pub const JSBundler = struct {
                 var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
                 errdefer allocator.free(loader_values);
 
-                while (loader_iter.next()) |prop| {
+                while (try loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
@@ -516,7 +489,7 @@ pub const JSBundler = struct {
                 };
             }
 
-            if (try config.getBooleanLoose(globalThis, "throw")) |flag| {
+            if (try config.getBooleanStrict(globalThis, "throw")) |flag| {
                 this.throw_on_error = flag;
             }
 
@@ -601,6 +574,7 @@ pub const JSBundler = struct {
         );
     }
 
+    /// `Bun.build(config)`
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -622,7 +596,7 @@ pub const JSBundler = struct {
             source_file: string = "",
             namespace: string = "",
             specifier: string = "",
-            importer_source_index: ?u32 = null,
+            importer_source_index: u32,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
@@ -872,15 +846,23 @@ pub const JSBundler = struct {
 
                 if (this.was_file) {
                     // Faster path: skip the extra threadpool dispatch
-                    this.bv2.graph.pool.pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
+                    this.bv2.graph.pool.worker_pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
                     this.deinit();
                     return;
                 }
             } else {
                 const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
-                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(this.bv2.plugins.?.globalObject(), source_code_value, bun.default_allocator) catch
-                // TODO:
+                const global = this.bv2.plugins.?.globalObject();
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, source_code_value, bun.default_allocator) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => {
+                            bun.outOfMemory();
+                        },
+                        error.JSError => {},
+                    }
+
                     @panic("Unexpected: source_code is not a string");
+                };
                 this.value = .{
                     .success = .{
                         .loader = options.Loader.fromAPI(loader),
@@ -1115,7 +1097,7 @@ pub const BuildArtifact = struct {
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .{},
+    sourcemap: JSC.Strong = .empty,
 
     pub const OutputKind = enum {
         chunk,

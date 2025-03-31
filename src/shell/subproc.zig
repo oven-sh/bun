@@ -511,7 +511,7 @@ pub const ShellSubprocess = struct {
         return this.process.kill(@intCast(sig));
     }
 
-    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
+    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
     //     return this.observable_getters.contains(getter);
     // }
 
@@ -528,7 +528,7 @@ pub const ShellSubprocess = struct {
         // this.ipc_mode = .none;
     }
 
-    pub fn closeIO(this: *@This(), comptime io: @Type(.EnumLiteral)) void {
+    pub fn closeIO(this: *@This(), comptime io: @Type(.enum_literal)) void {
         if (this.closed.contains(io)) return;
         log("close IO {s}", .{@tagName(io)});
         this.closed.insert(io);
@@ -746,6 +746,7 @@ pub const ShellSubprocess = struct {
         shellio: *ShellIO,
         spawn_args_: SpawnArgs,
         out: **@This(),
+        notify_caller_process_already_exited: *bool,
     ) bun.shell.Result(void) {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -761,6 +762,7 @@ pub const ShellSubprocess = struct {
             &spawn_args,
             shellio,
             out,
+            notify_caller_process_already_exited,
         )) {
             .result => |subproc| subproc,
             .err => |err| return .{ .err = err },
@@ -778,6 +780,7 @@ pub const ShellSubprocess = struct {
         spawn_args: *SpawnArgs,
         shellio: *ShellIO,
         out_subproc: **@This(),
+        notify_caller_process_already_exited: *bool,
     ) bun.shell.Result(*@This()) {
         const is_sync = config.is_sync;
 
@@ -830,7 +833,7 @@ pub const ShellSubprocess = struct {
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
                 .loop = event_loop,
-            } else {},
+            },
         };
 
         spawn_args.argv.append(allocator, null) catch {
@@ -848,7 +851,7 @@ pub const ShellSubprocess = struct {
         ) catch |err| {
             return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
             .result => |result| result,
         };
 
@@ -876,23 +879,13 @@ pub const ShellSubprocess = struct {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
         }
 
-        var send_exit_notification = false;
-
         if (comptime !is_sync) {
             switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
-                    send_exit_notification = true;
+                    notify_caller_process_already_exited.* = true;
                     spawn_args.lazy = false;
                 },
-            }
-        }
-
-        defer {
-            if (send_exit_notification) {
-                // process has already exited
-                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.wait(subprocess.flags.is_sync);
             }
         }
 
@@ -1020,7 +1013,7 @@ pub const PipeReader = struct {
         }
     };
 
-    pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
+    pub usingnamespace bun.NewRefCounted(PipeReader, deinit, null);
 
     pub const CapturedWriter = struct {
         dead: bool = true,
@@ -1128,10 +1121,10 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source =
                 switch (result) {
-                .buffer => .{ .pipe = this.stdio_result.buffer },
-                .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
-                .unavailable => @panic("Shouldn't happen."),
-            };
+                    .buffer => .{ .pipe = this.stdio_result.buffer },
+                    .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
+                    .unavailable => @panic("Shouldn't happen."),
+                };
         }
         this.reader.setParent(this);
 

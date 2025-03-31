@@ -12,7 +12,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-set(DEFAULT_LLVM_VERSION "18.1.8")
+set(DEFAULT_LLVM_VERSION "19.1.7")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -41,11 +41,11 @@ if(APPLE)
     endif()
   endif()
 
-  list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
-
   if(USE_LLVM_VERSION)
     list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm@${LLVM_VERSION_MAJOR}/bin)
   endif()
+
+  list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
 endif()
 
 if(UNIX)

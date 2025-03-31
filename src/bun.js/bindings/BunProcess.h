@@ -12,8 +12,7 @@ class GlobalObject;
 
 namespace Bun {
 
-// TODO: find a better place for this
-int getRSS(size_t* rss);
+extern "C" int getRSS(size_t* rss);
 
 using namespace JSC;
 
@@ -36,6 +35,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
+    bool m_reportOnUncaughtException = false;
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -49,9 +49,14 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
-    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args);
-    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue);
-    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue, JSValue);
+    void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
+    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue);
+    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue, JSValue);
+
+    template<size_t NumArgs>
+    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);
+
+    static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }

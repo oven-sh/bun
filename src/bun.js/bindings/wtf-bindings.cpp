@@ -17,7 +17,7 @@
 #include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
-static _Atomic int orig_termios_spinlock;
+static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
 
 static int current_tty_mode = 0;
@@ -173,11 +173,6 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {
     return WTF::parseDouble({ string, length }, *position);
-}
-
-extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
-{
-    WTF::StringImpl::copyCharacters(destination, { source, length });
 }
 
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,

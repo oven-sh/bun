@@ -29,7 +29,8 @@ const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
@@ -41,6 +42,7 @@ pub const Run = struct {
     entry_path: string,
     arena: Arena,
     any_unhandled: bool = false,
+    is_html_entrypoint: bool = false,
 
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
@@ -49,6 +51,7 @@ pub const Run = struct {
 
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
+        graph_ptr.set();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
@@ -94,7 +97,8 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        b.options.experimental = ctx.bundler_options.experimental;
+        b.options.serve_plugins = ctx.args.serve_plugins;
+        b.options.bunfig_path = ctx.args.bunfig_path;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
@@ -153,7 +157,7 @@ pub const Run = struct {
     }
 
     fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
-        @setCold(true);
+        @branchHint(.cold);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         var bundle = try bun.Transpiler.init(
@@ -168,7 +172,7 @@ pub const Run = struct {
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
-    pub fn boot(ctx: Command.Context, entry_path: string) !void {
+    pub fn boot(ctx: Command.Context, entry_path: string, loader: ?bun.options.Loader) !void {
         JSC.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
@@ -199,6 +203,7 @@ pub const Run = struct {
                     .smol = ctx.runtime_options.smol,
                     .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
+                    .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
                 },
             ),
@@ -274,6 +279,8 @@ pub const Run = struct {
 
         doPreconnect(ctx.runtime_options.preconnect);
 
+        vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
+
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
@@ -283,16 +290,12 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
-    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
-
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.runtime_options.eval.script.len > 0) {
-            Bun__ExposeNodeModuleGlobals(vm.global);
-        }
+        this.addConditionalGlobals();
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),
@@ -362,7 +365,7 @@ pub const Run = struct {
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
+            _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
             vm.tick();
         }
@@ -445,8 +448,24 @@ pub const Run = struct {
             );
         }
 
-        if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
+        JSC.napi.fixDeadCodeElimination();
         vm.globalExit();
+    }
+
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+    /// add `gc()` to `globalThis`.
+    extern fn JSC__JSGlobalObject__addGc(*JSC.JSGlobalObject) void;
+
+    fn addConditionalGlobals(this: *Run) void {
+        const vm = this.vm;
+        const runtime_options: *const Command.RuntimeOptions = &this.ctx.runtime_options;
+
+        if (runtime_options.eval.script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
+        if (runtime_options.expose_gc) {
+            JSC__JSGlobalObject__addGc(vm.global);
+        }
     }
 };
 
@@ -467,7 +486,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
 }
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     Output.flush();
 
@@ -483,7 +502,7 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 }
 
 pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     dumpBuildError(vm);
     Global.exit(1);
 }

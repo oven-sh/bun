@@ -142,7 +142,7 @@ for (const [name, inspect] of process.versions.bun
 
     const expected = isBunInspect
       ? "{[Symbol(nodejs.util.inspect.custom)]:512,}"
-      : "{[Symbol(nodejs.util.inspect.custom)]:512}";
+      : "{Symbol(nodejs.util.inspect.custom):512}";
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
   });
 

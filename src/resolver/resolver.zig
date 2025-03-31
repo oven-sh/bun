@@ -24,11 +24,11 @@ const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
-const DataURL = @import("./data_url.zig").DataURL;
+pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
-const Mutex = @import("../lock.zig").Lock;
+const Mutex = bun.Mutex;
 const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
 const JSC = bun.JSC;
@@ -43,7 +43,7 @@ const Install = @import("../install/install.zig");
 const Lockfile = @import("../install/lockfile.zig").Lockfile;
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
@@ -341,17 +341,17 @@ pub const DebugLogs = struct {
     }
 
     pub fn increaseIndent(d: *DebugLogs) void {
-        @setCold(true);
+        @branchHint(.cold);
         d.indent.append(" ") catch unreachable;
     }
 
     pub fn decreaseIndent(d: *DebugLogs) void {
-        @setCold(true);
+        @branchHint(.cold);
         d.indent.list.shrinkRetainingCapacity(d.indent.list.items.len - 1);
     }
 
     pub fn addNote(d: *DebugLogs, _text: string) void {
-        @setCold(true);
+        @branchHint(.cold);
         var text = _text;
         const len = d.indent.len();
         if (len > 0) {
@@ -366,7 +366,7 @@ pub const DebugLogs = struct {
     }
 
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) void {
-        @setCold(true);
+        @branchHint(.cold);
         return d.addNote(std.fmt.allocPrint(d.notes.allocator, fmt, args) catch unreachable);
     }
 };
@@ -581,7 +581,7 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        // TODO(@paperdave): make this configurable. the rationale for disabling
+        // TODO(@paperclover): make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
         // - bundle the dependency itself. dynamic `require`/`import` could be
@@ -687,7 +687,7 @@ pub const Resolver = struct {
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
-            .entry_point, .stmt, .dynamic => r.opts.extension_order.default.esm,
+            .entry_point_build, .entry_point_run, .stmt, .dynamic => r.opts.extension_order.default.esm,
             else => r.opts.extension_order.default.default,
         };
 
@@ -713,7 +713,7 @@ pub const Resolver = struct {
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
                 strings.hasPrefixComptime(import_path, "bun:") or
-                bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target))
+                bun.JSC.HardcodedModule.Alias.has(import_path, r.opts.target))
             {
                 return .{
                     .success = Result{
@@ -731,19 +731,19 @@ pub const Resolver = struct {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if (kind != .entry_point and
+        if (kind != .entry_point_build and kind != .entry_point_run and
             (r.isExternalPattern(import_path) or
-            // "fill: url(#filter);"
-            (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
+                // "fill: url(#filter);"
+                (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 
-            // "background: url(http://example.com/images/image.png);"
-            strings.startsWith(import_path, "http://") or
+                // "background: url(http://example.com/images/image.png);"
+                strings.startsWith(import_path, "http://") or
 
-            // "background: url(https://example.com/images/image.png);"
-            strings.startsWith(import_path, "https://") or
+                // "background: url(https://example.com/images/image.png);"
+                strings.startsWith(import_path, "https://") or
 
-            // "background: url(//example.com/images/image.png);"
-            strings.startsWith(import_path, "//")))
+                // "background: url(//example.com/images/image.png);"
+                strings.startsWith(import_path, "//")))
         {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this path as implicitly external");
@@ -877,7 +877,31 @@ pub const Resolver = struct {
         // defer r.mutex.unlock();
         errdefer (r.flushDebugLogs(.fail) catch {});
 
+        // A path with a null byte cannot exist on the filesystem. Continuing
+        // anyways would cause assertion failures.
+        if (bun.strings.indexOfChar(import_path, 0) != null) {
+            r.flushDebugLogs(.fail) catch {};
+            return .{ .not_found = {} };
+        }
+
         var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
+
+        // Fragments in URLs in CSS imports are technically expected to work
+        if (tmp == .not_found and kind.isFromCSS()) try_without_suffix: {
+            // If resolution failed, try again with the URL query and/or hash removed
+            const maybe_suffix = std.mem.indexOfAny(u8, import_path, "?#");
+            if (maybe_suffix == null or maybe_suffix.? < 1)
+                break :try_without_suffix;
+
+            const suffix = maybe_suffix.?;
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("Retrying resolution after removing the suffix {s}", .{import_path[suffix..]});
+            }
+            const result2 = r.resolveWithoutSymlinks(source_dir_normalized, import_path[0..suffix], kind, global_cache);
+            if (result2 == .not_found) break :try_without_suffix;
+            tmp = result2;
+        }
+
         switch (tmp) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
@@ -926,7 +950,7 @@ pub const Resolver = struct {
                             .primary_side_effects_data = .no_side_effects__pure_data,
                         };
                     },
-                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point),
+                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point_build),
                 }
                 return .{};
             }
@@ -1091,6 +1115,24 @@ pub const Resolver = struct {
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
         if (std.fs.path.isAbsolute(import_path)) {
+            // Collapse relative directory specifiers if they exist. Extremely
+            // loose check to avoid always doing this copy, but avoid spending
+            // too much time on the check.
+            if (bun.strings.indexOf(import_path, "..") != null) {
+                const platform = bun.path.Platform.auto;
+                const ends_with_dir = platform.isSeparator(import_path[import_path.len - 1]) or
+                    (import_path.len > 3 and
+                        platform.isSeparator(import_path[import_path.len - 3]) and
+                        import_path[import_path.len - 2] == '.' and
+                        import_path[import_path.len - 1] == '.');
+                const buf = bufs(.relative_abs_path);
+                import_path = r.fs.absBuf(&.{import_path}, buf);
+                if (ends_with_dir) {
+                    buf[import_path.len] = platform.separator();
+                    import_path.len += 1;
+                }
+            }
+
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
             }
@@ -1155,8 +1197,8 @@ pub const Resolver = struct {
 
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
-        const is_package_path = isPackagePathNotAbsolute(import_path);
-        var check_relative = !is_package_path or kind == .url;
+        const is_package_path = kind != .entry_point_run and isPackagePathNotAbsolute(import_path);
+        var check_relative = !is_package_path or kind.isFromCSS();
         var check_package = is_package_path;
 
         if (check_relative) {
@@ -1264,7 +1306,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.JSC.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
                         return .{ .not_found = {} };
                     }
 
@@ -1282,7 +1324,7 @@ pub const Resolver = struct {
                 // Always mark "fs" as disabled, matching Webpack v4 behavior
                 if (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[2] == '/'))
+                        import_path_without_node_prefix[2] == '/'))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
@@ -1321,7 +1363,42 @@ pub const Resolver = struct {
                 }
             }
 
-            var source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return .{ .not_found = {} };
+            var source_dir_info = r.dirInfoCached(source_dir) catch (return .{ .not_found = {} }) orelse dir: {
+                // It is possible to resolve with a source file that does not exist:
+                // A. Bundler plugin refers to a non-existing `resolveDir`.
+                // B. `createRequire()` is called with a path that does not exist. This was
+                //    hit in Nuxt, specifically the `vite-node` dependency [1].
+                //
+                // Normally it would make sense to always bail here, but in the case of
+                // resolving "hello" from "/project/nonexistent_dir/index.ts", resolution
+                // should still query "/project/node_modules" and "/node_modules"
+                //
+                // For case B in Node.js, they use `_resolveLookupPaths` in
+                // combination with `_nodeModulePaths` to collect a listing of
+                // all possible parent `node_modules` [2]. Bun has a much smarter
+                // approach that caches directory entries, but it (correctly) does
+                // not cache non-existing directories. To successfully resolve this,
+                // Bun finds the nearest existing directory, and uses that as the base
+                // for `node_modules` resolution. Since that directory entry knows how
+                // to resolve concrete node_modules, this iteration stops at the first
+                // existing directory, regardless of what it is.
+                //
+                // The resulting `source_dir_info` cannot resolve relative files.
+                //
+                // [1]: https://github.com/oven-sh/bun/issues/16705
+                // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
+                if (Environment.allow_assert)
+                    bun.assert(isPackagePath(import_path));
+                var closest_dir = source_dir;
+                // Use std.fs.path.dirname to get `null` once the entire
+                // directory tree has been visited. `null` is theoretically
+                // impossible since the drive root should always exist.
+                while (std.fs.path.dirname(closest_dir)) |current| : (closest_dir = current) {
+                    if (r.dirInfoCached(current) catch return .{ .not_found = {} }) |dir|
+                        break :dir dir;
+                }
+                return .{ .not_found = {} };
+            };
 
             if (r.care_about_browser_field) {
                 // Support remapping one package path to another via the "browser" field
@@ -1576,12 +1653,20 @@ pub const Resolver = struct {
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
-    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source: []const u8, specifier: []const u8) bool {
+    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source_file: []const u8, specifier: []const u8) bool {
+        if (std.fs.path.isAbsolute(specifier)) {
+            const dir = bun.path.dirname(specifier, .auto);
+            const a = r.bustDirCache(dir);
+            const b = r.bustDirCache(specifier);
+            return a or b;
+        }
+
         if (!(bun.strings.startsWith(specifier, "./") or
             bun.strings.startsWith(specifier, "../"))) return false;
-        if (!std.fs.path.isAbsolute(import_source)) return false;
+        if (!std.fs.path.isAbsolute(import_source_file))
+            return false;
 
-        const joined = bun.path.joinAbs(import_source, .auto, specifier);
+        const joined = bun.path.joinAbs(bun.path.dirname(import_source_file, .auto), .auto, specifier);
         const dir = bun.path.dirname(joined, .auto);
 
         const a = r.bustDirCache(dir);
@@ -1703,10 +1788,11 @@ pub const Resolver = struct {
                             if (package_json.exports) |exports_map| {
 
                                 // The condition set is determined by the kind of import
-                                var module_type = options.ModuleType.unknown;
+                                var module_type = package_json.module_type;
                                 var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                        ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,
@@ -1786,6 +1872,22 @@ pub const Resolver = struct {
             dir_info = dir_info.getParent() orelse break;
         }
 
+        // try resolve from `NODE_PATH`
+        // https://nodejs.org/api/modules.html#loading-from-the-global-folders
+        const node_path: []const u8 = if (r.env_loader) |env_loader| env_loader.get("NODE_PATH") orelse "" else "";
+        if (node_path.len > 0) {
+            var it = std.mem.tokenizeScalar(u8, node_path, if (Environment.isWindows) ';' else ':');
+            while (it.next()) |path| {
+                const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
+                if (r.debug_logs) |*debug| {
+                    debug.addNoteFmt("Checking for a package in the NODE_PATH directory \"{s}\"", .{abs_path});
+                }
+                if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
+                    return .{ .success = res };
+                }
+            }
+        }
+
         dir_info = source_dir_info;
 
         // this is the magic!
@@ -1797,7 +1899,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = Dependency.Behavior.normal;
+                var dependency_behavior: Dependency.Behavior = .{ .prod = true };
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -1877,7 +1979,7 @@ pub const Resolver = struct {
                             ) orelse break :load_module_from_cache;
                         }
 
-                        if (manager.lockfile.resolve(esm.name, dependency_version)) |id| {
+                        if (manager.lockfile.resolvePackageFromNameAndVersion(esm.name, dependency_version)) |id| {
                             resolved_package_id = id;
                         }
                     }
@@ -2059,8 +2161,6 @@ pub const Resolver = struct {
             }
         }
 
-        // Mostly to cut scope, we don't resolve `NODE_PATH` environment variable.
-        // But also: https://github.com/nodejs/node/issues/38128#issuecomment-814969356
         return .{ .not_found = {} };
     }
     fn dirInfoForResolution(
@@ -2186,7 +2286,7 @@ pub const Resolver = struct {
         var pm = r.getPackageManager();
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved
-            assert(pm.lockfile.resolve(esm.name, version) == null);
+            assert(pm.lockfile.resolvePackageFromNameAndVersion(esm.name, version) == null);
         }
 
         // Add the containing package to the lockfile
@@ -2369,6 +2469,7 @@ pub const Resolver = struct {
                     }
                     break :brk entry_query.entry.abs_path.slice();
                 };
+                const module_type = if (resolved_dir_info.package_json) |pkg| pkg.module_type else .unknown;
 
                 return MatchResult{
                     .path_pair = PathPair{
@@ -2380,6 +2481,7 @@ pub const Resolver = struct {
                     .diff_case = entry_query.diff_case,
                     .is_node_module = true,
                     .package_json = resolved_dir_info.package_json orelse package_json,
+                    .module_type = module_type,
                 };
             },
             .Inexact => {
@@ -2489,7 +2591,6 @@ pub const Resolver = struct {
                 package_id,
                 .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2499,7 +2600,6 @@ pub const Resolver = struct {
                 package_id,
                 .include_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         }
 
@@ -2514,6 +2614,7 @@ pub const Resolver = struct {
         return try r.dirInfoCachedMaybeLog(path, false, true);
     }
 
+    /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn readDirInfoIgnoreError(r: *ThisResolver, path: string) ?*const DirInfo {
         return r.dirInfoCachedMaybeLog(path, false, true) catch null;
     }
@@ -2556,7 +2657,7 @@ pub const Resolver = struct {
             }
         }
 
-        assert(std.fs.path.isAbsolute(input_path));
+        bun.assertf(std.fs.path.isAbsolute(input_path), "cannot resolve DirInfo for non-absolute path: {s}", .{input_path});
 
         const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);
@@ -2929,7 +3030,7 @@ pub const Resolver = struct {
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
                     (prefix.len > longest_match_prefix_length or
-                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
+                        (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));
@@ -3032,10 +3133,10 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
+                if (JSC.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
-                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
                             .is_external = true,
                         },
                     };
@@ -3295,7 +3396,7 @@ pub const Resolver = struct {
 
     comptime {
         const Resolver__nodeModulePathsForJS = JSC.toJSHostFunction(Resolver__nodeModulePathsForJS_);
-        @export(Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
+        @export(&Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
     }
     pub fn Resolver__nodeModulePathsForJS_(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.JSC.markBinding(@src());
@@ -3305,90 +3406,66 @@ pub const Resolver = struct {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
         }
 
-        const in_str = argument.toBunString(globalThis);
+        const in_str = try argument.toBunString(globalThis);
         defer in_str.deref();
-        const r = &globalThis.bunVM().transpiler.resolver;
-        return nodeModulePathsJSValue(r, in_str, globalThis);
+        return nodeModulePathsJSValue(in_str, globalThis);
     }
 
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         bun.JSC.markBinding(@src());
 
-        const in_str = bun.String.createUTF8(".");
-        const r = &globalThis.bunVM().transpiler.resolver;
-        return nodeModulePathsJSValue(r, in_str, globalThis);
+        const in_str = bun.String.init(".");
+        return nodeModulePathsJSValue(in_str, globalThis);
     }
 
-    pub fn nodeModulePathsJSValue(
-        r: *ThisResolver,
-        in_str: bun.String,
-        globalObject: *bun.JSC.JSGlobalObject,
-    ) bun.JSC.JSValue {
-        var list = std.ArrayList(bun.String).init(bun.default_allocator);
-        defer list.deinit();
-
-        const sliced = in_str.toUTF8(bun.default_allocator);
-        defer sliced.deinit();
-
-        const str = brk: {
-            if (std.fs.path.isAbsolute(sliced.slice())) {
-                if (comptime Environment.isWindows) {
-                    const dir_path_buf = bufs(.node_modules_paths_buf);
-                    var normalizer = bun.path.PosixToWinNormalizer{};
-                    const normalized = normalizer.resolveCWD(sliced.slice()) catch {
-                        @panic("Failed to get cwd for _nodeModulesPaths");
-                    };
-                    break :brk bun.path.normalizeBuf(normalized, dir_path_buf, .windows);
-                }
-                break :brk sliced.slice();
-            }
-            const dir_path_buf = bufs(.node_modules_paths_buf);
-            break :brk bun.path.joinStringBuf(dir_path_buf, &[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
-        };
+    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
         const alloc = stack_fallback_allocator.get();
 
-        if (r.readDirInfo(str) catch null) |result| {
-            var dir_info = result;
+        var list = std.ArrayList(bun.String).init(alloc);
+        defer list.deinit();
 
-            while (true) {
-                const path_without_trailing_slash = strings.withoutTrailingSlash(dir_info.abs_path);
-                const path_parts = brk: {
-                    if (path_without_trailing_slash.len == 1 and path_without_trailing_slash[0] == '/') {
-                        break :brk [2]string{ "", std.fs.path.sep_str ++ "node_modules" };
-                    }
+        const sliced = in_str.toUTF8(bun.default_allocator);
+        defer sliced.deinit();
+        const buf = bufs(.node_modules_paths_buf);
 
-                    break :brk [2]string{ path_without_trailing_slash, std.fs.path.sep_str ++ "node_modules" };
-                };
-                const nodemodules_path = bun.strings.concat(alloc, &path_parts) catch unreachable;
-                bun.path.posixToPlatformInPlace(u8, nodemodules_path);
-                list.append(bun.String.createUTF8(nodemodules_path)) catch unreachable;
-                dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
-            }
-        } else {
-            // does not exist
-            const full_path = std.fs.path.resolve(r.allocator, &[1][]const u8{str}) catch unreachable;
-            var path = strings.withoutTrailingSlash(full_path);
-            while (true) {
-                const path_without_trailing_slash = strings.withoutTrailingSlash(path);
+        const full_path = bun.path.joinAbsStringBuf(
+            bun.fs.FileSystem.instance.top_level_dir,
+            buf,
+            &.{sliced.slice()},
+            .auto,
+        );
+        const root_index = switch (bun.Environment.os) {
+            .windows => bun.path.windowsFilesystemRoot(full_path).len,
+            else => 1,
+        };
+        var root_path: []const u8 = full_path[0..root_index];
+        if (full_path.len > root_path.len) {
+            var it = std.mem.splitBackwardsScalar(u8, full_path[root_index..], std.fs.path.sep);
+            while (it.next()) |part| {
+                if (strings.eqlComptime(part, "node_modules"))
+                    continue;
 
-                list.append(
-                    bun.String.createUTF8(
-                        bun.strings.concat(
-                            alloc,
-                            &[_]string{
-                                path_without_trailing_slash,
-                                std.fs.path.sep_str ++ "node_modules",
-                            },
-                        ) catch unreachable,
-                    ),
-                ) catch unreachable;
-
-                path = path[0 .. strings.lastIndexOfChar(path, std.fs.path.sep) orelse break];
+                list.append(bun.String.createFormat(
+                    "{s}{s}" ++ std.fs.path.sep_str ++ "node_modules",
+                    .{
+                        root_path,
+                        it.buffer[0 .. (if (it.index) |i| i + 1 else 0) + part.len],
+                    },
+                ) catch bun.outOfMemory()) catch bun.outOfMemory();
             }
         }
+
+        while (root_path.len > 0 and bun.path.Platform.auto.isSeparator(root_path[root_path.len - 1])) {
+            root_path.len -= 1;
+        }
+
+        list.append(bun.String.createFormat(
+            "{s}" ++ std.fs.path.sep_str ++ "node_modules",
+            .{root_path},
+        ) catch bun.outOfMemory()) catch bun.outOfMemory();
 
         return bun.String.toJSArray(globalObject, list.items);
     }
@@ -4094,10 +4171,10 @@ pub const Resolver = struct {
                         }
                     }
 
-                    var merged_config = parent_configs.pop();
+                    var merged_config = parent_configs.pop().?;
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
-                    while (parent_configs.popOrNull()) |parent_config| {
+                    while (parent_configs.pop()) |parent_config| {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
@@ -4219,9 +4296,7 @@ pub const GlobalCache = enum {
 };
 
 comptime {
-    if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__propForRequireMainPaths;
-    }
+    _ = Resolver.Resolver__propForRequireMainPaths;
 }
 
 const assert = bun.assert;

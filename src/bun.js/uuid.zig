@@ -13,7 +13,7 @@ bytes: [16]u8,
 pub fn init() UUID {
     var uuid = UUID{ .bytes = undefined };
 
-    bun.rand(&uuid.bytes);
+    bun.csprng(&uuid.bytes);
     // Version 4
     uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
     // Variant 1
@@ -140,7 +140,7 @@ pub fn newV4() UUID {
 pub const UUID7 = struct {
     bytes: [16]u8,
 
-    var uuid_v7_lock = bun.Lock{};
+    var uuid_v7_lock = bun.Mutex{};
     var uuid_v7_last_timestamp: std.atomic.Value(u64) = .{ .raw = 0 };
     var uuid_v7_counter: std.atomic.Value(u32) = .{ .raw = 0 };
 

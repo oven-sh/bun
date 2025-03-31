@@ -2,6 +2,7 @@
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
 import { expect, test as it } from "bun:test";
+import { isWindows } from "harness";
 import { expectType } from "./utilities";
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
@@ -19,6 +20,11 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
     overrideExpectBehavior?: (server: Bun.Server) => void | Promise<void>;
   } = {},
 ) {
+  if ("unix" in serveConfig && typeof serveConfig.unix === "string" && isWindows) {
+    // Skip unix socket tests on Windows
+    return;
+  }
+
   async function testServer(server: Bun.Server) {
     if (overrideExpectBehavior) {
       await overrideExpectBehavior(server);

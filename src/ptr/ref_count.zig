@@ -257,14 +257,16 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 ///
 /// See `RefCount`'s comment defined above for examples & best practices.
 pub fn RefPtr(T: type) type {
-    // For simplicity, RefPtr only supports `ref_count` as the field name
-    const kind = implementsRefCount(T, "ref_count");
-    bun.assert(kind != .not_ref_counted);
-    const DebugId = if (enable_debug) TrackedRef.Id else void;
-
     return struct {
         data: *T,
         debug: DebugId,
+
+        // For simplicity, RefPtr only supports `ref_count` as the field name
+        const kind = implementsRefCount(T, "ref_count");
+        comptime {
+            bun.assert(kind != .not_ref_counted);
+        }
+        const DebugId = if (enable_debug) TrackedRef.Id else void;
 
         /// Increment the reference count, and return a structure boxing the pointer.
         pub fn initRef(raw_ptr: *T) @This() {

@@ -29,6 +29,7 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = bun.NullableAllocator;
+const Arc = bun.ptr.Arc;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -83,7 +84,7 @@ pub const Blob = struct {
     /// When set, the blob will be freed on finalization callbacks
     /// If the blob is contained in Response or Request, this must be null
     allocator: ?std.mem.Allocator = null,
-    store: ?*Store = null,
+    store: ?Arc(Store) = null,
     content_type: string = "",
     content_type_allocated: bool = false,
     content_type_was_set: bool = false,
@@ -124,7 +125,10 @@ pub const Blob = struct {
     }
 
     pub fn hasContentTypeFromUser(this: *const Blob) bool {
-        return this.content_type_was_set or (this.store != null and (this.store.?.data == .file or this.store.?.data == .s3));
+        return this.content_type_was_set or if (this.store) |store| switch (store.get().data) {
+            .s3, .file => true,
+            else => false,
+        } else false;
     }
 
     pub fn contentTypeOrMimeType(this: *const Blob) ?[]const u8 {
@@ -132,7 +136,7 @@ pub const Blob = struct {
             return this.content_type;
         }
         if (this.store) |store| {
-            switch (store.data) {
+            switch (store.get().data) {
                 .file => |file| {
                     return file.mime_type.value;
                 },
@@ -148,7 +152,7 @@ pub const Blob = struct {
     pub fn isBunFile(this: *const Blob) bool {
         const store = this.store orelse return false;
 
-        return store.data == .file;
+        return store.get().data == .file;
     }
 
     pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
@@ -5183,7 +5187,7 @@ pub const Blob = struct {
         return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
     }
 
-    pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
+    pub fn initWithStore(store: Arc(Blob.Store), globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = store.size(),
             .store = store,
@@ -5213,7 +5217,7 @@ pub const Blob = struct {
     }
 
     pub fn detach(this: *Blob) void {
-        if (this.store != null) this.store.?.deref();
+        if (this.store) |*s| s.deinit();
         this.store = null;
     }
 
@@ -5225,7 +5229,8 @@ pub const Blob = struct {
     }
 
     pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
-        if (this.store != null) this.store.?.ref();
+        // SAFETY: creating a copy of `this`, so the new reference belongs to the new Blob.
+        if (this.store) |*s| s.dangerouslyIncrementRef();
         var duped = this.*;
         if (duped.content_type_allocated and duped.allocator != null and !include_content_type) {
 

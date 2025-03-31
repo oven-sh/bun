@@ -44,6 +44,8 @@ const Syscall = bun.sys;
 const uv = bun.windows.libuv;
 
 const AnyBlob = bun.JSC.WebCore.AnyBlob;
+const Arc = bun.ptr.Arc;
+
 pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
@@ -339,7 +341,7 @@ pub const ReadableStream = struct {
         var store = blob.store orelse {
             return ReadableStream.empty(globalThis);
         };
-        switch (store.data) {
+        switch (store.getMut().data) {
             .bytes => {
                 var reader = ByteBlobLoader.Source.new(
                     .{
@@ -359,11 +361,10 @@ pub const ReadableStream = struct {
                         .max_size = if (blob.size != Blob.max_size) blob.size else null,
 
                         .lazy = .{
-                            .blob = store,
+                            .blob = store.clone(),
                         },
                     },
                 });
-                store.ref();
 
                 return reader.toReadableStream(globalThis);
             },
@@ -373,6 +374,7 @@ pub const ReadableStream = struct {
                 const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
 
+                // NOTE: contains a reference to blob store field, but store isn't ref'd. This smells like a bug.
                 return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
             },
         }
@@ -387,7 +389,7 @@ pub const ReadableStream = struct {
         var store = blob.store orelse {
             return ReadableStream.empty(globalThis);
         };
-        switch (store.data) {
+        switch (store.getMut().data) {
             .file => {
                 var reader = FileReader.Source.new(.{
                     .globalThis = globalThis,
@@ -395,11 +397,10 @@ pub const ReadableStream = struct {
                         .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
                         .start_offset = offset,
                         .lazy = .{
-                            .blob = store,
+                            .blob = store.clone(),
                         },
                     },
                 });
-                store.ref();
 
                 return reader.toReadableStream(globalThis);
             },
@@ -4091,7 +4092,7 @@ pub const FileReader = struct {
 
     pub const Lazy = union(enum) {
         none: void,
-        blob: *Blob.Store,
+        blob: Arc(Blob.Store),
 
         const OpenedFileBlob = struct {
             fd: bun.FileDescriptor,

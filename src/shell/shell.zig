@@ -3778,9 +3778,10 @@ pub fn handleTemplateValue(
 
         if (template_value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
-                if (store.data == .file) {
-                    if (store.data.file.pathlike == .path) {
-                        const path = store.data.file.pathlike.path.slice();
+                const s = store.get();
+                if (s.data == .file) {
+                    if (s.data.file.pathlike == .path) {
+                        const path = s.data.file.pathlike.path.slice();
                         if (!try builder.appendUTF8(path, true)) {
                             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         }

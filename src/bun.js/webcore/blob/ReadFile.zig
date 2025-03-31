@@ -15,6 +15,7 @@ const JSPromise = JSC.JSPromise;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
 const libuv = bun.windows.libuv;
+const Arc = bun.ptr.Arc;
 
 const log = bun.Output.scoped(.ReadFile, true);
 
@@ -64,7 +65,7 @@ pub const ReadFileTask = JSC.WorkTask(ReadFile);
 pub const ReadFile = struct {
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
-    store: ?*Store = null,
+    store: ?Arc(Store) = null,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
     total_size: SizeType = Blob.max_size,
@@ -100,7 +101,7 @@ pub const ReadFile = struct {
 
     pub fn createWithCtx(
         _: std.mem.Allocator,
-        store: *Store,
+        store: Arc(Store),
         onReadFileContext: *anyopaque,
         onCompleteCallback: ReadFileOnReadFileCallback,
         off: SizeType,
@@ -110,20 +111,20 @@ pub const ReadFile = struct {
             @compileError("Do not call ReadFile.createWithCtx on Windows, see ReadFileUV");
 
         const read_file = bun.new(ReadFile, ReadFile{
-            .file_store = store.data.file,
+            // TODO: do not store this separately from .store
+            .file_store = store.get().data.file,
             .offset = off,
             .max_length = max_len,
             .store = store,
             .onCompleteCtx = onReadFileContext,
             .onCompleteCallback = onCompleteCallback,
         });
-        store.ref();
         return read_file;
     }
 
     pub fn create(
         allocator: std.mem.Allocator,
-        store: *Store,
+        store: Arc(Store),
         off: SizeType,
         max_len: SizeType,
         comptime Context: type,
@@ -258,14 +259,14 @@ pub const ReadFile = struct {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
-        if (this.store == null and this.system_error != null) {
-            const system_error = this.system_error.?;
-            bun.destroy(this);
-            cb(cb_ctx, ReadFileResultType{ .err = system_error });
-            return;
-        } else if (this.store == null) {
-            bun.destroy(this);
+        var store = this.store orelse {
+            if (this.system_error) |system_error| {
+                bun.destroy(this);
+                cb(cb_ctx, ReadFileResultType{ .err = system_error });
+                return;
+            }
             if (Environment.allow_assert) @panic("assertion failure - store should not be null");
+            bun.destroy(this);
             cb(cb_ctx, ReadFileResultType{
                 .err = SystemError{
                     .code = bun.String.static("INTERNAL_ERROR"),
@@ -274,12 +275,11 @@ pub const ReadFile = struct {
                 },
             });
             return;
-        }
+        };
 
-        var store = this.store.?;
         const buf = this.buffer.items;
 
-        defer store.deref();
+        defer store.deinit();
         const system_error = this.system_error;
         const total_size = this.total_size;
         bun.destroy(this);
@@ -342,8 +342,9 @@ pub const ReadFile = struct {
         };
 
         if (this.store) |store| {
-            if (store.data == .file) {
-                store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
+            const data = &store.getMut().data;
+            if (data == .file) {
+                data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
             }
         }
 
@@ -547,7 +548,7 @@ pub const ReadFileUV = struct {
     loop: *libuv.Loop,
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
-    store: *Store,
+    store: Arc(Store),
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
     total_size: SizeType = Blob.max_size,
@@ -565,7 +566,7 @@ pub const ReadFileUV = struct {
 
     req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
 
-    pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
+    pub fn start(loop: *libuv.Loop, store: Arc(Store), off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
         log("ReadFileUV.start", .{});
         var this = bun.new(ReadFileUV, .{
             .loop = loop,
@@ -576,14 +577,13 @@ pub const ReadFileUV = struct {
             .on_complete_data = handler,
             .on_complete_fn = @ptrCast(&Handler.run),
         });
-        store.ref();
         this.getFd(onFileOpen);
     }
 
     pub fn finalize(this: *ReadFileUV) void {
         log("ReadFileUV.finalize", .{});
         defer {
-            this.store.deref();
+            this.store.deinit();
             this.req.deinit();
             bun.destroy(this);
             log("ReadFileUV.finalize destroy", .{});
@@ -657,8 +657,9 @@ pub const ReadFileUV = struct {
         log("stat: {any}", .{stat});
 
         // keep in sync with resolveSizeAndLastModified
-        if (this.store.data == .file) {
-            this.store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
+        const data = &this.store.getMut().data;
+        if (data == .file) {
+            data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
         }
 
         if (bun.S.ISDIR(@intCast(stat.mode))) {

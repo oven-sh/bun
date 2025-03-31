@@ -97,7 +97,7 @@ pub fn RefCounted(
 ) type {
     const output_name: [:0]const u8 =
         if (!bun.Environment.enable_logs)
-            &""
+            ""
         else if (@hasDecl(Context, "debug_name") and Context.debug_name != null)
             Context.debug_name
         else
@@ -109,14 +109,14 @@ pub fn RefCounted(
 
     const Inner = struct {
         /// This is always > 0 unless value is just about to be deallocated.
-        ref_count: if (intrusive) void else if (sync) AtomicU32 else u32 = if (sync) .init(1) else 1,
+        ref_count: if (intrusive) void else if (sync) AtomicU32 else u32 = if (intrusive) {} else if (sync) .init(1) else 1,
         allocator: Allocator,
         value: T,
 
         const Self = @This();
 
         fn ref(this: *Self) callconv(bun.callconv_inline) u32 {
-            const ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
+            var ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
             if (comptime sync) {
                 const prev = ref_count_field.fetchAdd(1, AtomicOrder.acquire);
                 bun.assertWithLocation(prev > 0, @src());
@@ -130,7 +130,7 @@ pub fn RefCounted(
         }
 
         fn deref(this: *Self) callconv(bun.callconv_inline) u32 {
-            const ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
+            var ref_count_field = @field(if (intrusive) this.value else this, "ref_count");
             if (comptime sync) {
                 const prev = ref_count_field.fetchSub(1, AtomicOrder.release);
                 bun.assertWithLocation(prev > 0, @src());
@@ -190,12 +190,57 @@ pub fn RefCounted(
             return this;
         }
 
-        pub fn deinit(this: Self) void {
+        /// Increment the reference count without obtaining a new pointer.
+        ///
+        /// While this does not return a new pointer, it _does_ create an owned
+        /// reference. Caller must ensure the new reference's lifecycle is
+        /// properly managed (that is, its owner calls `.deinit()`), otherwise a
+        /// memory leak will occur.
+        pub fn dangerouslyIncrementRef(this: Self) void {
+            std.mem.doNotOptimizeAway(this.clone());
+        }
+
+        /// Decrement the reference count without deinitializing the pointer.
+        /// When the reference count hits 0, the value is deinitialized and the
+        /// allocation is freed.
+        ///
+        /// ## Safety
+        /// Decrementing the reference count below 1 while holding a live
+        /// reference count is illegal behavior. This pointer's owner must die
+        /// at the same time as this pointer, otherwise it may hold a dangling
+        /// pointer.
+        /// 
+        /// Caller should set `ensure_alive` to `true` when it assumes the
+        /// allocation will continue to be alive after this call. This enables
+        /// runtime safety checks and is useful, for example, when transferring
+        /// ownership across threads or Zig/c++ boundaries.
+        pub fn dangerouslyDecrementRef(this: Self, comptime ensure_alive: bool) void {
             const prev = this.__ptr.deref();
             log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(this.__ptr), prev, prev - 1 });
             if (prev == 1) {
                 @branchHint(.unlikely);
+                if (comptime ensure_alive) bun.assert(false);
+                // SAFETY: caller ensures that
+                // 1. owner will die at the same time as this pointer, meaning nobody owns the dangling pointer
+                // 2. reference count is not decremented below 1, meaning the pointer is not dangling
+                this.destroy();
             }
+        }
+
+        /// Deinitialize the pointer.
+        ///
+        /// `deinit` decrements the stored allocation's reference count. If that
+        /// count hits 0, the value gets deinitialized and the allocation is freed.
+        pub fn deinit(this: *Self) void {
+            const prev = this.__ptr.deref();
+            log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(this.__ptr), prev, prev - 1 });
+            if (prev == 1) {
+                @branchHint(.unlikely);
+                this.destroy();
+            }
+            // pointer cannot be used after .deinit(), even if other references
+            // to the allocation still exist
+            this.* = undefined;
         }
 
         fn destroy(this: Self) void {

@@ -39,6 +39,7 @@ pub const PerfEvent = enum(i32) {
     @"JSBundler.hasAnyMatches",
     @"JSBundler.matchOnLoad",
     @"JSBundler.matchOnResolve",
+    @"JSGlobalObject.create",
     @"JSParser.analyze",
     @"JSParser.parse",
     @"JSParser.postvisit",

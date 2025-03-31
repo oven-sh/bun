@@ -3,12 +3,14 @@ const std = @import("std");
 
 pub const Ctx = union(enum) {
     disabled: Disabled,
-    enabled: if (bun.Environment.isMac) Darwin else Disabled,
+    enabled: switch (bun.Environment.os) {
+        .mac => Darwin,
+        .linux => Linux,
+        else => Disabled,
+    },
 
     pub const Disabled = struct {
-        pub inline fn end(this: *const @This()) void {
-            _ = this; // autofix
-        }
+        pub inline fn end(_: *const @This()) void {}
     };
 
     pub fn end(this: *const @This()) void {
@@ -25,10 +27,21 @@ fn isEnabledOnMacOSOnce() void {
     }
 }
 
+fn isEnabledOnLinuxOnce() void {
+    if (bun.getRuntimeFeatureFlag("BUN_TRACE")) {
+        is_enabled.store(true, .seq_cst);
+    }
+}
+
 fn isEnabledOnce() void {
     if (comptime bun.Environment.isMac) {
         isEnabledOnMacOSOnce();
         if (Darwin.get() == null) {
+            is_enabled.store(false, .seq_cst);
+        }
+    } else if (comptime bun.Environment.isLinux) {
+        isEnabledOnLinuxOnce();
+        if (!Linux.isSupported()) {
             is_enabled.store(false, .seq_cst);
         }
     }
@@ -69,11 +82,14 @@ pub fn trace(comptime name: [:0]const u8) Ctx {
     }
 
     if (!isEnabled()) {
+        @branchHint(.likely);
         return .{ .disabled = .{} };
     }
 
     if (comptime bun.Environment.isMac) {
         return .{ .enabled = Darwin.init(@intFromEnum(@field(PerfEvent, name))) };
+    } else if (comptime bun.Environment.isLinux) {
+        return .{ .enabled = Linux.init(@field(PerfEvent, name)) };
     }
 
     return .{ .disabled = .{} };
@@ -102,5 +118,45 @@ pub const Darwin = struct {
     pub fn get() ?*OSLog {
         os_log_once.call();
         return os_log;
+    }
+};
+
+pub const Linux = struct {
+    start_time: u64,
+    event: PerfEvent,
+
+    var is_initialized = std.atomic.Value(bool).init(false);
+    var init_once = std.once(initOnce);
+
+    extern "c" fn Bun__linux_trace_init() c_int;
+    extern "c" fn Bun__linux_trace_close() void;
+    extern "c" fn Bun__linux_trace_emit(event_name: [*:0]const u8, duration_ns: i64) c_int;
+
+    fn initOnce() void {
+        const result = Bun__linux_trace_init();
+        is_initialized.store(result != 0, .monotonic);
+    }
+
+    pub fn isSupported() bool {
+        init_once.call();
+        return is_initialized.load(.monotonic);
+    }
+
+    /// Initialize a new trace event
+    /// - event_id: Unique identifier for this type of event (from PerfEvent enum)
+    /// - event_name: String name of the event (used in trace output)
+    pub fn init(event: PerfEvent) @This() {
+        return .{
+            .start_time = bun.timespec.now().ns(),
+            .event = event,
+        };
+    }
+
+    pub fn end(this: *const @This()) void {
+        if (!isSupported()) return;
+
+        const duration = bun.timespec.now().ns() -| this.start_time;
+
+        _ = Bun__linux_trace_emit(@tagName(this.event).ptr, @intCast(duration));
     }
 };

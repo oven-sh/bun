@@ -1592,6 +1592,8 @@ pub const TestCommand = struct {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
+        } else {
+            vm.runWithAPILock(JSC.VirtualMachine, vm, JSC.VirtualMachine.globalExit);
         }
     }
 

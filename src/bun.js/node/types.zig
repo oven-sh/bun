@@ -1895,6 +1895,7 @@ pub const Process = struct {
 
     // TODO: switch this to using *bun.wtf.String when it is added
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+        comptime bun.assert(bun.Environment.isWindows);
         if (k.tag == .Empty) return;
         const wtf1 = k.value.WTFStringImpl;
         var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
@@ -1977,10 +1978,6 @@ pub const PathOrBlob = union(enum) {
         return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
     }
 };
-
-comptime {
-    std.testing.refAllDecls(Process);
-}
 
 pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;

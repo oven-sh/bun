@@ -263,9 +263,6 @@ pub const ThreadPool = struct {
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
-        const trace = bun.perf.trace("Bundler.getWorker");
-        defer trace.end();
-
         var worker: *Worker = undefined;
         {
             this.workers_assignments_lock.lock();

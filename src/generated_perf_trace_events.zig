@@ -21,7 +21,6 @@ pub const PerfEvent = enum(i32) {
     @"Bundler.generateCodeForFileInChunkJS",
     @"Bundler.generateIsolatedHash",
     @"Bundler.generateSourceMapForChunk",
-    @"Bundler.getWorker",
     @"Bundler.markFileLiveForTreeShaking",
     @"Bundler.markFileReachableForCodeSplitting",
     @"Bundler.onParseTaskComplete",

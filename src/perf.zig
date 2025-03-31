@@ -53,6 +53,7 @@ pub fn isEnabled() bool {
 }
 
 const PerfEvent = @import("./generated_perf_trace_events.zig").PerfEvent;
+
 /// Trace an event using the system profiler (Instruments).
 ///
 /// When instruments is not connected, this is a no-op.
@@ -142,9 +143,6 @@ pub const Linux = struct {
         return is_initialized.load(.monotonic);
     }
 
-    /// Initialize a new trace event
-    /// - event_id: Unique identifier for this type of event (from PerfEvent enum)
-    /// - event_name: String name of the event (used in trace output)
     pub fn init(event: PerfEvent) @This() {
         return .{
             .start_time = bun.timespec.now().ns(),

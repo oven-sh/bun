@@ -27,7 +27,6 @@ const sendDrainNeedingData = (res) => {
   // Send data to socket more than the high watermark so that
   // it definitely needs drain
   const highWaterMark = res.socket.writableHighWaterMark;
-  console.log("highWaterMark", highWaterMark);
   const bufferToSend = Buffer.alloc(highWaterMark + 100);
   const ret = res.write(bufferToSend); // Write the request data.
   // Make sure that we had back pressure on response stream.

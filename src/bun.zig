@@ -3512,8 +3512,8 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
-            @compileLog(a);
-            @compileLog(b);
+            @compileLog("a: ", a);
+            @compileLog("b: ", b);
             @compileError("A != B");
         }
     }

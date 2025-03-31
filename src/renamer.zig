@@ -230,8 +230,8 @@ pub const MinifyRenamer = struct {
         var ref = this.symbols.follow(_ref);
         var symbol = this.symbols.get(ref).?;
 
-        while (symbol.namespace_alias != null) {
-            const ref_ = this.symbols.follow(symbol.namespace_alias.?.namespace_ref);
+        while (symbol.namespaceAlias()) |alias| {
+            const ref_ = this.symbols.follow(alias.namespace_ref);
             if (ref_.eql(ref)) break;
             ref = ref_;
             symbol = this.symbols.get(ref_).?;
@@ -243,7 +243,7 @@ pub const MinifyRenamer = struct {
         if (symbol.nestedScopeSlot()) |i| {
             var slot = &this.slots.getPtr(ns).items[i];
             slot.count += count;
-            if (symbol.must_start_with_capital_letter_for_jsx) {
+            if (symbol.flags.must_start_with_capital_letter_for_jsx) {
                 slot.needs_capital_for_jsx = true;
             }
             return;
@@ -265,14 +265,14 @@ pub const MinifyRenamer = struct {
             if (existing.found_existing) {
                 var slot = &slots.items[existing.value_ptr.*];
                 slot.count += stable.count;
-                if (symbol.must_start_with_capital_letter_for_jsx) {
+                if (symbol.flags.must_start_with_capital_letter_for_jsx) {
                     slot.needs_capital_for_jsx = true;
                 }
             } else {
                 existing.value_ptr.* = slots.items.len;
                 try slots.append(SymbolSlot{
                     .count = stable.count,
-                    .needs_capital_for_jsx = symbol.must_start_with_capital_letter_for_jsx,
+                    .needs_capital_for_jsx = symbol.flags.must_start_with_capital_letter_for_jsx,
                 });
             }
         }
@@ -942,14 +942,14 @@ pub fn computeReservedNamesForScope(
     var member_iter = scope.members.valueIterator();
     while (member_iter.next()) |member| {
         const symbol = symbols.get(member.ref).?;
-        if (symbol.kind == .unbound or symbol.must_not_be_renamed) {
+        if (symbol.flags.kind == .unbound or symbol.flags.must_not_be_renamed) {
             names.put(allocator, symbol.original_name, 1) catch unreachable;
         }
     }
 
     for (scope.generated.slice()) |ref| {
         const symbol = symbols.get(ref).?;
-        if (symbol.kind == .unbound or symbol.must_not_be_renamed) {
+        if (symbol.flags.kind == .unbound or symbol.flags.must_not_be_renamed) {
             names.put(allocator, symbol.original_name, 1) catch unreachable;
         }
     }

@@ -1299,12 +1299,12 @@ pub const ImportScanner = struct {
                                 // Make sure the printer prints this as a property access
                                 var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
 
-                                symbol.namespace_alias = G.NamespaceAlias{
+                                symbol.setNamespaceAlias(.{
                                     .namespace_ref = namespace_ref,
                                     .alias = alias,
                                     .import_record_index = st.import_record_index,
                                     .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
-                                };
+                                });
 
                                 // Also record these automatically-generated top-level namespace alias symbols
                                 p.declared_symbols.append(p.allocator, .{
@@ -1383,22 +1383,22 @@ pub const ImportScanner = struct {
                             // Make sure the printer prints this as a property access
                             var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
                             if (record.contains_import_star or st.star_name_loc != null)
-                                symbol.namespace_alias = G.NamespaceAlias{
+                                symbol.setNamespaceAlias(.{
                                     .namespace_ref = namespace_ref,
                                     .alias = item.alias,
                                     .import_record_index = st.import_record_index,
                                     .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
-                                };
+                                });
                         }
 
                         if (record.was_originally_require) {
                             var symbol = &p.symbols.items[namespace_ref.innerIndex()];
-                            symbol.namespace_alias = G.NamespaceAlias{
+                            symbol.setNamespaceAlias(.{
                                 .namespace_ref = namespace_ref,
                                 .alias = "",
                                 .import_record_index = st.import_record_index,
                                 .was_originally_property_access = false,
-                            };
+                            });
                         }
                     }
 
@@ -1691,7 +1691,7 @@ pub const SideEffects = enum(u1) {
                     return expr;
                 }
 
-                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
+                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].flags.kind != .unbound) {
                     return null;
                 }
             },
@@ -4517,7 +4517,7 @@ pub const KnownGlobal = enum {
     pub noinline fn maybeMarkConstructorAsPure(e: *E.New, symbols: []const Symbol) void {
         const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return;
         const symbol = &symbols[id.innerIndex()];
-        if (symbol.kind != .unbound)
+        if (symbol.flags.kind != .unbound)
             return;
 
         const constructor = map.get(symbol.original_name) orelse return;
@@ -5668,10 +5668,10 @@ fn NewParser_(
                                 if (!gop.found_existing) {
                                     const ref = try p.newSymbol(.other, name);
                                     gop.value_ptr.* = ref;
-                                    p.symbols.items[ref.inner_index].namespace_alias = .{
+                                    p.symbols.items[ref.inner_index].setNamespaceAlias(.{
                                         .namespace_ref = ts_namespace.arg_ref,
                                         .alias = name,
-                                    };
+                                    });
                                     break :brk ref;
                                 }
                                 break :brk gop.value_ptr.*;
@@ -5714,7 +5714,7 @@ fn NewParser_(
             // property on the target object of the "with" statement. We must not rename
             // it or we risk changing the behavior of the code.
             if (is_inside_with_scope) {
-                p.symbols.items[ref.innerIndex()].must_not_be_renamed = true;
+                p.symbols.items[ref.innerIndex()].flags.must_not_be_renamed = true;
             }
 
             // Track how many times we've referenced this symbol
@@ -5833,7 +5833,7 @@ fn NewParser_(
             }
 
             // Create an error for assigning to an import namespace
-            if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.innerIndex()].kind == .import) {
+            if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.innerIndex()].flags.kind == .import) {
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
                 p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{s}\"", .{
                     p.symbols.items[ref.innerIndex()].original_name,
@@ -5843,7 +5843,7 @@ fn NewParser_(
             // Substitute an EImportIdentifier now if this has a namespace alias
             if (opts.assign_target == .none and !opts.is_delete_target) {
                 const symbol = &p.symbols.items[ref.inner_index];
-                if (symbol.namespace_alias) |ns_alias| {
+                if (symbol.namespaceAlias()) |ns_alias| {
                     if (p.ref_to_ts_namespace_member.get(ns_alias.namespace_ref)) |ts_member_data| {
                         if (ts_member_data == .namespace) {
                             if (ts_member_data.namespace.get(ns_alias.alias)) |member| {
@@ -6002,12 +6002,12 @@ fn NewParser_(
                 // ensure every e_import_identifier holds the namespace
                 if (p.options.features.hot_module_reloading) {
                     const symbol = &p.symbols.items[ref.inner_index];
-                    if (symbol.namespace_alias == null) {
-                        symbol.namespace_alias = .{
+                    if (symbol.namespaceAlias() == null) {
+                        symbol.setNamespaceAlias(.{
                             .namespace_ref = namespace_ref,
                             .alias = alias_name,
                             .import_record_index = import_record_i,
-                        };
+                        });
                     }
                 }
 
@@ -6800,7 +6800,7 @@ fn NewParser_(
                         const name = symbol.original_name;
                         var hash: ?u64 = null;
 
-                        if (parent_scope.kind == .catch_binding and symbol.kind != .hoisted) {
+                        if (parent_scope.kind == .catch_binding and symbol.flags.kind != .hoisted) {
                             hash = Scope.getMemberHash(name);
                             if (parent_scope.getMemberWithHash(name, hash.?)) |existing_member| {
                                 p.log.addSymbolAlreadyDeclaredError(
@@ -6825,7 +6825,7 @@ fn NewParser_(
                         var is_sloppy_mode_block_level_fn_stmt = false;
                         const original_member_ref = value.ref;
 
-                        if (p.willUseRenamer() and symbol.kind == .hoisted_function) {
+                        if (p.willUseRenamer() and symbol.flags.kind == .hoisted_function) {
                             // Block-level function declarations behave like "let" in strict mode
                             if (scope.strict_mode != .sloppy_mode) {
                                 continue;
@@ -6874,12 +6874,12 @@ fn NewParser_(
                             //   assert(obj.foo === 2)
                             //
                             if (scope_kind == .with) {
-                                symbol.must_not_be_renamed = true;
+                                symbol.flags.must_not_be_renamed = true;
                             }
 
                             if (_scope.getMemberWithHash(name, hash.?)) |member_in_scope| {
                                 var existing_symbol: *Symbol = &symbols[member_in_scope.ref.innerIndex()];
-                                const existing_kind = existing_symbol.kind;
+                                const existing_kind = existing_symbol.flags.kind;
 
                                 // We can hoist the symbol from the child scope into the symbol in
                                 // this scope if:
@@ -6905,7 +6905,7 @@ fn NewParser_(
 
                                     // An identifier binding from a catch statement and a function
                                     // declaration can both silently shadow another hoisted symbol
-                                    if (symbol.kind != .catch_identifier and symbol.kind != .hoisted_function) {
+                                    if (symbol.flags.kind != .catch_identifier and symbol.flags.kind != .hoisted_function) {
                                         if (!is_sloppy_mode_block_level_fn_stmt) {
                                             const r = js_lexer.rangeOfIdentifier(p.source, value.loc);
                                             var notes = allocator.alloc(logger.Data, 1) catch unreachable;
@@ -7041,7 +7041,7 @@ fn NewParser_(
                     // Don't copy down the optional function expression name. Re-declaring
                     // the name of a function expression is allowed.
                     const value = entry.value_ptr.*;
-                    const adjacent_kind = p.symbols.items[value.ref.innerIndex()].kind;
+                    const adjacent_kind = p.symbols.items[value.ref.innerIndex()].flags.kind;
                     if (adjacent_kind != .hoisted_function) {
                         try scope.members.put(allocator, entry.key_ptr.*, value);
                     }
@@ -7566,7 +7566,7 @@ fn NewParser_(
                             private.ref = result.ref;
 
                             // Unlike regular identifiers, there are no unbound private identifiers
-                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].flags.kind;
                             if (!Symbol.isKindPrivate(kind)) {
                                 const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
                                 p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
@@ -7950,7 +7950,7 @@ fn NewParser_(
             // be called "arguments", in which case the real "arguments" is inaccessible.
             if (!p.current_scope.members.contains("arguments")) {
                 func.arguments_ref = p.declareSymbolMaybeGenerated(.arguments, func.open_parens_loc, arguments_str, false) catch unreachable;
-                p.symbols.items[func.arguments_ref.?.innerIndex()].must_not_be_renamed = true;
+                p.symbols.items[func.arguments_ref.?.innerIndex()].flags.must_not_be_renamed = true;
             }
 
             try p.lexer.expect(.t_close_paren);
@@ -8975,12 +8975,12 @@ fn NewParser_(
                 // ensure every e_import_identifier holds the namespace
                 if (p.options.features.hot_module_reloading) {
                     const symbol = &p.symbols.items[ref.inner_index];
-                    if (symbol.namespace_alias == null) {
-                        symbol.namespace_alias = .{
+                    if (symbol.namespaceAlias() == null) {
+                        symbol.setNamespaceAlias(.{
                             .namespace_ref = stmt.namespace_ref,
                             .alias = "default",
                             .import_record_index = stmt.import_record_index,
-                        };
+                        });
                     }
                 }
 
@@ -9034,12 +9034,12 @@ fn NewParser_(
                 // ensure every e_import_identifier holds the namespace
                 if (p.options.features.hot_module_reloading) {
                     const symbol = &p.symbols.items[ref.inner_index];
-                    if (symbol.namespace_alias == null) {
-                        symbol.namespace_alias = .{
+                    if (symbol.namespaceAlias() == null) {
+                        symbol.setNamespaceAlias(.{
                             .namespace_ref = stmt.namespace_ref,
                             .alias = item.alias,
                             .import_record_index = stmt.import_record_index,
-                        };
+                        });
                     }
                 }
 
@@ -9287,7 +9287,9 @@ fn NewParser_(
         pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !Ref {
             const inner_index: Ref.Int = @truncate(p.symbols.items.len);
             try p.symbols.append(Symbol{
-                .kind = kind,
+                .flags = .{
+                    .kind = kind,
+                },
                 .original_name = identifier,
             });
 
@@ -12442,7 +12444,7 @@ fn NewParser_(
             // Both the "exports" argument and "var exports" are hoisted variables, so
             // they don't collide.
             if (member) |_member| {
-                if (p.symbols.items[_member.ref.innerIndex()].kind == .hoisted and kind == .hoisted and !p.has_es_module_syntax) {
+                if (p.symbols.items[_member.ref.innerIndex()].flags.kind == .hoisted and kind == .hoisted and !p.has_es_module_syntax) {
                     return _member.ref;
                 }
             }
@@ -12495,7 +12497,7 @@ fn NewParser_(
                 var symbol: *Symbol = &p.symbols.items[existing.ref.innerIndex()];
 
                 if (comptime !is_generated) {
-                    switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
+                    switch (scope.canMergeSymbols(symbol.flags.kind, kind, is_typescript_enabled)) {
                         .forbidden => {
                             try p.log.addSymbolAlreadyDeclaredError(p.allocator, p.source, symbol.original_name, loc, existing.loc);
                             return existing.ref;
@@ -12509,19 +12511,19 @@ fn NewParser_(
                             symbol.link = ref;
 
                             // If these are both functions, remove the overwritten declaration
-                            if (kind.isFunction() and symbol.kind.isFunction()) {
-                                symbol.remove_overwritten_function_declaration = true;
+                            if (kind.isFunction() and symbol.flags.kind.isFunction()) {
+                                symbol.flags.remove_overwritten_function_declaration = true;
                             }
                         },
 
                         .become_private_get_set_pair => {
                             ref = existing.ref;
-                            symbol.kind = .private_get_set_pair;
+                            symbol.flags.kind = .private_get_set_pair;
                         },
 
                         .become_private_static_get_set_pair => {
                             ref = existing.ref;
-                            symbol.kind = .private_static_get_set_pair;
+                            symbol.flags.kind = .private_static_get_set_pair;
                         },
 
                         .overwrite_with_new => {},
@@ -13086,7 +13088,7 @@ fn NewParser_(
                     //     continue;
                     // }
 
-                    p.symbols.items[member.value_ptr.ref.innerIndex()].must_not_be_renamed = true;
+                    p.symbols.items[member.value_ptr.ref.innerIndex()].flags.must_not_be_renamed = true;
                 }
             }
 
@@ -16198,7 +16200,7 @@ fn NewParser_(
 
                     // Handle assigning to a constant
                     if (in.assign_target != .none) {
-                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) { // TODO: silence this for runtime transpiler
+                        if (p.symbols.items[result.ref.innerIndex()].flags.kind == .constant) { // TODO: silence this for runtime transpiler
                             const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                             var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                             notes[0] = logger.Data{
@@ -16232,13 +16234,13 @@ fn NewParser_(
                             p.commonjs_module_exports_assigned_deoptimized = true;
                         }
 
-                        p.symbols.items[result.ref.innerIndex()].has_been_assigned_to = true;
+                        p.symbols.items[result.ref.innerIndex()].flags.has_been_assigned_to = true;
                     }
 
                     var original_name: ?string = null;
 
                     // Substitute user-specified defines for unbound symbols
-                    if (p.symbols.items[e_.ref.innerIndex()].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
+                    if (p.symbols.items[e_.ref.innerIndex()].flags.kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
                         if (p.define.forIdentifier(name)) |def| {
                             if (!def.valueless) {
                                 const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
@@ -16647,7 +16649,7 @@ fn NewParser_(
                             private.ref = result.ref;
 
                             // Unlike regular identifiers, there are no unbound private identifiers
-                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].flags.kind;
                             var r: logger.Range = undefined;
                             if (!Symbol.isKindPrivate(kind)) {
                                 r = logger.Range{ .loc = e_.index.loc, .len = @as(i32, @intCast(name.len)) };
@@ -16772,7 +16774,7 @@ fn NewParser_(
                     // errors.
                     if ((in.assign_target != .none or is_delete_target) and
                         @as(Expr.Tag, e_.target.data) == .e_identifier and
-                        p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import)
+                        p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].flags.kind == .import)
                     {
                         const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeErrorFmt(
@@ -16795,7 +16797,7 @@ fn NewParser_(
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
-                            if (!id_before and id_after and p.symbols.items[e_.value.data.e_identifier.ref.innerIndex()].kind == .unbound) {
+                            if (!id_before and id_after and p.symbols.items[e_.value.data.e_identifier.ref.innerIndex()].flags.kind == .unbound) {
                                 e_.value = Expr.joinWithComma(
                                     Expr{ .loc = e_.value.loc, .data = Prefill.Data.Zero },
                                     e_.value,
@@ -17885,7 +17887,7 @@ fn NewParser_(
                     // incorrect but proper TDZ analysis is very complicated and would have to
                     // be very conservative, which would inhibit a lot of optimizations of code
                     // inside closures. This may need to be revisited if it proves problematic.
-                    if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.innerIndex()].kind != .unbound) {
+                    if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.innerIndex()].flags.kind != .unbound) {
                         return true;
                     }
                 },
@@ -18256,7 +18258,7 @@ fn NewParser_(
 
         fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
             if (value.data != .e_identifier or
-                p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or
+                p.symbols.items[value.data.e_identifier.ref.innerIndex()].flags.kind != .unbound or
                 guard_condition.data != .e_binary)
                 return false;
 
@@ -18434,7 +18436,7 @@ fn NewParser_(
                                 // Mark this as generated in case it's missing. We don't want to
                                 // generate errors for missing import items that are automatically
                                 // generated.
-                                symbol.import_item_status = .generated;
+                                symbol.flags.import_item_status = .generated;
 
                                 break :brk new_item;
                             }).ref.?;
@@ -19083,7 +19085,7 @@ fn NewParser_(
                             continue;
                         }
 
-                        if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
+                        if (p.symbols.items[ref.innerIndex()].flags.kind == .unbound) {
                             // Silently strip exports of non-local symbols in TypeScript, since
                             // those likely correspond to type-only exports. But report exports of
                             // non-local symbols as errors in JavaScript.
@@ -19104,7 +19106,7 @@ fn NewParser_(
                         const symbol = try p.findSymbol(item.alias_loc, name);
                         const ref = symbol.ref;
 
-                        if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
+                        if (p.symbols.items[ref.innerIndex()].flags.kind == .unbound) {
                             // Silently strip exports of non-local symbols in TypeScript, since
                             // those likely correspond to type-only exports. But report exports of
                             // non-local symbols as errors in JavaScript.
@@ -19243,7 +19245,7 @@ fn NewParser_(
                                 .e_identifier => |ident| {
                                     if (!ident.ref.isSourceContentsSlice()) {
                                         const symbol = p.symbols.items[ident.ref.innerIndex()];
-                                        if (symbol.kind == .unbound) {
+                                        if (symbol.flags.kind == .unbound) {
                                             if (p.local_type_names.get(symbol.original_name)) |local_type| {
                                                 if (local_type) {
                                                     // the name points to a type
@@ -19522,7 +19524,7 @@ fn NewParser_(
                         p.newExpr(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc),
                     ));
                 } else if (!mark_as_dead) {
-                    if (name_symbol.remove_overwritten_function_declaration) {
+                    if (name_symbol.flags.remove_overwritten_function_declaration) {
                         return;
                     }
 
@@ -20878,7 +20880,7 @@ fn NewParser_(
 
             // Make sure to only emit a variable once for a given namespace, since there
             // can be multiple namespace blocks for the same namespace
-            if ((symbol.kind == .ts_namespace or symbol.kind == .ts_enum) and
+            if ((symbol.flags.kind == .ts_namespace or symbol.flags.kind == .ts_enum) and
                 !p.emitted_namespace_vars.contains(name_ref))
             {
                 p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}) catch bun.outOfMemory();
@@ -21699,7 +21701,7 @@ fn NewParser_(
 
                         // when there's actually no symbol by that name, we return Ref.None
                         // If a symbol had already existed by that name, we return .unbound
-                        return (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound);
+                        return (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].flags.kind == .unbound);
                     }
                 },
                 else => {},
@@ -22069,7 +22071,7 @@ fn NewParser_(
                                             // Copy the argument name symbol to prevent the class field declaration from being renamed
                                             // but not the constructor argument.
                                             const field_symbol_ref = p.declareSymbol(.other, arg.binding.loc, name) catch id.ref;
-                                            field_symbol_ref.getSymbol(p.symbols.items).must_not_be_renamed = true;
+                                            field_symbol_ref.getSymbol(p.symbols.items).flags.must_not_be_renamed = true;
                                             const field_ident = p.newExpr(E.Identifier{ .ref = field_symbol_ref }, arg.binding.loc);
                                             class_body.items[j] = G.Property{ .key = field_ident };
                                             j += 1;
@@ -22238,7 +22240,7 @@ fn NewParser_(
                                 // or async functions, since this is a backwards-compatibility hack from
                                 // Annex B of the JavaScript standard.
                                 !p.current_scope.kindStopsHoisting() and
-                                    p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
+                                    p.symbols.items[data.func.name.?.ref.?.innerIndex()].flags.kind == .hoisted_function)
                                 {
                                     break :list_getter &before;
                                 }
@@ -24520,12 +24522,12 @@ pub const ConvertESMExportsForHmr = struct {
                 for (st.items) |*item| {
                     const ref = item.name.ref.?;
                     const symbol = &p.symbols.items[ref.innerIndex()];
-                    if (symbol.namespace_alias == null) {
-                        symbol.namespace_alias = .{
+                    if (symbol.namespaceAlias() == null) {
+                        symbol.setNamespaceAlias(.{
                             .namespace_ref = namespace_ref,
                             .alias = item.original_name,
                             .import_record_index = st.import_record_index,
-                        };
+                        });
                     }
                     try ctx.visitRefToExport(
                         p,
@@ -24684,11 +24686,11 @@ pub const ConvertESMExportsForHmr = struct {
         is_live_binding_source: bool,
     ) !void {
         const symbol = p.symbols.items[ref.inner_index];
-        const id = if (symbol.kind == .import)
+        const id = if (symbol.flags.kind == .import)
             Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
         else
             Expr.initIdentifier(ref, loc);
-        if (is_live_binding_source or (symbol.kind == .import and !ctx.is_in_node_modules) or symbol.has_been_assigned_to) {
+        if (is_live_binding_source or (symbol.flags.kind == .import and !ctx.is_in_node_modules) or symbol.flags.has_been_assigned_to) {
             // TODO (2024-11-24) instead of requiring getters for live-bindings,
             // a callback propagation system should be considered.  mostly
             // because here, these might not even be live bindings, and

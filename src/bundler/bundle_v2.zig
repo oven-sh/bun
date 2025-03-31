@@ -5916,7 +5916,9 @@ const LinkerGraph = struct {
         source_symbols.push(
             this.allocator,
             .{
-                .kind = kind,
+                .flags = .{
+                    .kind = kind,
+                },
                 .original_name = original_name,
             },
         ) catch unreachable;
@@ -8734,8 +8736,8 @@ pub const LinkerContext = struct {
                     {
                         const exports_ref = symbols.follow(exports_refs[source_index]);
                         const module_ref = symbols.follow(module_refs[source_index]);
-                        symbols.get(exports_ref).?.kind = .unbound;
-                        symbols.get(module_ref).?.kind = .unbound;
+                        symbols.get(exports_ref).?.flags.kind = .unbound;
+                        symbols.get(module_ref).?.flags.kind = .unbound;
                     } else if (flag.force_include_exports_for_entry_point or export_kind != .cjs) {
                         flag.needs_exports_variable = true;
                         flags[source_index] = flag;
@@ -9523,7 +9525,7 @@ pub const LinkerContext = struct {
             // note: this is stack allocated
             const value: js_ast.Expr = brk: {
                 if (c.graph.symbols.getConst(exp.data.import_ref)) |symbol| {
-                    if (symbol.namespace_alias != null) {
+                    if (symbol.namespaceAlias() != null) {
                         break :brk js_ast.Expr.init(
                             js_ast.E.ImportIdentifier,
                             js_ast.E.ImportIdentifier{
@@ -9823,7 +9825,7 @@ pub const LinkerContext = struct {
                 if (our_imports_to_bind.get(ref)) |import_data| {
                     const import_ref = import_data.data.import_ref;
                     if (c.graph.symbols.get(import_ref)) |symbol| {
-                        if (symbol.kind == .ts_enum) {
+                        if (symbol.flags.kind == .ts_enum) {
                             if (c.graph.ts_enums.get(import_ref)) |enum_data| {
                                 var found_non_inlined_enum = false;
 
@@ -10113,11 +10115,11 @@ pub const LinkerContext = struct {
                             var symbol = deps.symbols.getConst(ref_to_use).?;
 
                             // Ignore unbound symbols
-                            if (symbol.kind == .unbound)
+                            if (symbol.flags.kind == .unbound)
                                 continue;
 
                             // Ignore symbols that are going to be replaced by undefined
-                            if (symbol.import_item_status == .missing)
+                            if (symbol.flags.import_item_status == .missing)
                                 continue;
 
                             // If this is imported from another file, follow the import
@@ -10135,7 +10137,7 @@ pub const LinkerContext = struct {
                             // property access off the namespace symbol instead of a bare
                             // identifier. In that case we want to pull in the namespace symbol
                             // instead. The namespace symbol stores the result of "require()".
-                            if (symbol.namespace_alias) |*namespace_alias| {
+                            if (symbol.namespaceAlias()) |namespace_alias| {
                                 ref_to_use = namespace_alias.namespace_ref;
                             }
                             break :brk ref_to_use;
@@ -10174,7 +10176,7 @@ pub const LinkerContext = struct {
                             // property access off the namespace symbol instead of a bare
                             // identifier. In that case we want to pull in the namespace symbol
                             // instead. The namespace symbol stores the result of "require()".
-                            if (deps.symbols.getConst(target_ref).?.namespace_alias) |namespace_alias| {
+                            if (deps.symbols.getConst(target_ref).?.namespaceAlias()) |namespace_alias| {
                                 target_ref = namespace_alias.namespace_ref;
                             }
                             if (comptime Environment.allow_assert)
@@ -12523,7 +12525,7 @@ pub const LinkerContext = struct {
 
                                 // Exports of imports need EImportIdentifier in case they need to be re-
                                 // written to a property access later on
-                                if (c.graph.symbols.get(resolved_export.data.import_ref).?.namespace_alias != null) {
+                                if (c.graph.symbols.get(resolved_export.data.import_ref).?.namespaceAlias() != null) {
                                     const temp_ref = cjs_export_copies[i];
 
                                     // Create both a local variable and an export clause for that variable.
@@ -14496,7 +14498,7 @@ pub const LinkerContext = struct {
                 const symbols = all_symbols[source_index];
                 for (symbols.sliceConst(), 0..) |*symbol_, inner_index| {
                     var symbol = symbol_;
-                    if (symbol.kind == .local_css) {
+                    if (symbol.flags.kind == .local_css) {
                         const ref = ref: {
                             var ref = Ref.init(@intCast(inner_index), @intCast(source_index), false);
                             ref.tag = .symbol;
@@ -15947,7 +15949,7 @@ pub const LinkerContext = struct {
 
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         const symbol = c.graph.symbols.get(tracker.import_ref).?;
-                        symbol.import_item_status = .missing;
+                        symbol.flags.import_item_status = .missing;
                         result.kind = .normal_and_namespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.?;
@@ -15982,7 +15984,7 @@ pub const LinkerContext = struct {
                     const r = source.rangeOfIdentifier(named_import.alias_loc.?);
 
                     // Report mismatched imports and exports
-                    if (symbol.import_item_status == .generated) {
+                    if (symbol.flags.import_item_status == .generated) {
                         // This is a debug message instead of an error because although it
                         // appears to be a named import, it's actually an automatically-
                         // generated named import that was originally a property access on an
@@ -15990,7 +15992,7 @@ pub const LinkerContext = struct {
                         // just resolve to undefined at run-time instead of failing at binding-
                         // time, so we emit a debug message and rewrite the value to the literal
                         // "undefined" instead of emitting an error.
-                        symbol.import_item_status = .missing;
+                        symbol.flags.import_item_status = .missing;
 
                         if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
@@ -16451,10 +16453,10 @@ pub const LinkerContext = struct {
                     ) catch unreachable;
                 },
                 .namespace => {
-                    c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
+                    c.graph.symbols.get(import_ref).?.setNamespaceAlias(.{
                         .namespace_ref = result.namespace_ref,
                         .alias = result.alias,
-                    };
+                    });
                 },
                 .normal_and_namespace => {
                     imports_to_bind.put(
@@ -16469,10 +16471,10 @@ pub const LinkerContext = struct {
                         },
                     ) catch unreachable;
 
-                    c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
+                    c.graph.symbols.get(import_ref).?.setNamespaceAlias(.{
                         .namespace_ref = result.namespace_ref,
                         .alias = result.alias,
-                    };
+                    });
                 },
                 .cycle => {
                     const source = &c.parse_graph.input_files.items(.source)[source_index];
@@ -16502,8 +16504,8 @@ pub const LinkerContext = struct {
                     // TODO: log locations of the ambiguous exports
 
                     const symbol: *Symbol = c.graph.symbols.get(import_ref).?;
-                    if (symbol.import_item_status == .generated) {
-                        symbol.import_item_status = .missing;
+                    if (symbol.flags.import_item_status == .generated) {
+                        symbol.flags.import_item_status = .missing;
                         c.log.addRangeWarningFmt(
                             source,
                             r,
@@ -17742,7 +17744,9 @@ pub const AstBuilder = struct {
     pub fn newSymbol(p: *AstBuilder, kind: Symbol.Kind, identifier: []const u8) !Ref {
         const inner_index: Ref.Int = @intCast(p.symbols.items.len);
         try p.symbols.append(p.allocator, .{
-            .kind = kind,
+            .flags = .{
+                .kind = kind,
+            },
             .original_name = identifier,
         });
         const ref: Ref = .{
@@ -17792,11 +17796,11 @@ pub const AstBuilder = struct {
             const import_id: []const u8 = import_id_untyped; // must be given '[N][]const u8'
             const ref = try p.newSymbol(.import, import_id);
             if (p.hot_reloading) {
-                p.getSymbol(ref).namespace_alias = .{
+                p.getSymbol(ref).setNamespaceAlias(.{
                     .namespace_ref = namespace_ref,
                     .alias = import_id,
                     .import_record_index = record,
-                };
+                });
             }
             out_ref.* = p.newExpr(E.ImportIdentifier{ .ref = ref });
             clause.* = .{
@@ -17834,7 +17838,7 @@ pub const AstBuilder = struct {
     pub fn newExternalSymbol(p: *AstBuilder, name: []const u8) !Ref {
         const ref = try p.newSymbol(.other, name);
         const sym = p.getSymbol(ref);
-        sym.must_not_be_renamed = true;
+        sym.flags.must_not_be_renamed = true;
         return ref;
     }
 

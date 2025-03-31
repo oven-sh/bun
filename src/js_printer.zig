@@ -1629,7 +1629,7 @@ fn NewPrinter(
                     if (ident.ref.isSourceContentsSlice()) return false;
 
                     const symbol = p.symbols().get(p.symbols().follow(ident.ref)) orelse return false;
-                    return symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");
+                    return symbol.flags.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");
                 },
                 else => {
                     return false;
@@ -2926,10 +2926,10 @@ fn NewPrinter(
                     //     @breakpoint();
                     // }
 
-                    if (symbol.import_item_status == .missing) {
+                    if (symbol.flags.import_item_status == .missing) {
                         p.printUndefined(expr.loc, level);
                         didPrint = true;
-                    } else if (symbol.namespace_alias) |namespace| {
+                    } else if (symbol.namespaceAlias()) |namespace| {
                         if (namespace.import_record_index < p.import_records.len) {
                             const import_record = p.importRecord(namespace.import_record_index);
                             if (namespace.was_originally_property_access) {
@@ -3193,7 +3193,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printNamespaceAlias(p: *Printer, _: ImportRecord, namespace: G.NamespaceAlias) void {
+        pub fn printNamespaceAlias(p: *Printer, _: ImportRecord, namespace: *const G.NamespaceAlias) void {
             p.printSymbol(namespace.namespace_ref);
 
             // In the case of code like this:
@@ -3462,7 +3462,7 @@ fn NewPrinter(
                                     //     break :inner;
 
                                     if (p.symbols().get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
+                                        if (symbol.namespaceAlias() == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
                                             }
@@ -3504,7 +3504,7 @@ fn NewPrinter(
                                     //     break :inner;
 
                                     if (p.symbols().get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
+                                        if (symbol.namespaceAlias() == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
                                             }
@@ -3957,7 +3957,7 @@ fn NewPrinter(
                                     const name = symbol.original_name;
                                     var did_print = false;
 
-                                    if (symbol.namespace_alias) |namespace| {
+                                    if (symbol.namespaceAlias()) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
                                         if (namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
@@ -4023,7 +4023,7 @@ fn NewPrinter(
 
                             if (item.original_name.len > 0) {
                                 if (p.symbols().get(item.name.ref.?)) |symbol| {
-                                    if (symbol.namespace_alias) |namespace| {
+                                    if (symbol.namespaceAlias()) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
                                         if (namespace.was_originally_property_access) {
                                             p.print("var ");
@@ -4968,7 +4968,7 @@ fn NewPrinter(
             if (target.data.as(.e_import_identifier)) |id| {
                 const ref = p.symbols().follow(id.ref);
                 if (p.symbols().get(ref)) |symbol| {
-                    if (symbol.kind == .ts_enum) {
+                    if (symbol.flags.kind == .ts_enum) {
                         if (p.options.ts_enums.get(ref)) |enum_value| {
                             if (enum_value.get(name)) |value|
                                 return value.decode();
@@ -5759,13 +5759,13 @@ pub fn printAst(
 
         inline for (dont_break_the_code) |ref| {
             if (symbols.get(ref)) |symbol| {
-                symbol.must_not_be_renamed = true;
+                symbol.flags.must_not_be_renamed = true;
             }
         }
 
         for (tree.named_exports.values()) |named_export| {
             if (symbols.get(named_export.ref)) |symbol| {
-                symbol.must_not_be_renamed = true;
+                symbol.flags.must_not_be_renamed = true;
             }
         }
 

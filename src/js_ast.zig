@@ -982,7 +982,12 @@ pub const Symbol = struct {
     /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
     /// symbols from other files that end up at this symbol must be able to tell
     /// if it has a namespace alias.
-    namespace_alias: ?G.NamespaceAlias = null,
+    __namespace_alias_do_not_use_directly: G.NamespaceAlias = .{
+        .namespace_ref = .None,
+        .alias = "",
+
+        // This is not an optional field because that increases the Symbol struct size by 8 bytes.
+    },
 
     /// Used by the parser for single pass parsing.
     link: Ref = Ref.None,
@@ -1014,105 +1019,66 @@ pub const Symbol = struct {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     nested_scope_slot: u32 = invalid_nested_scope_slot,
 
-    did_keep_name: bool = true,
+    flags: Symbol.Flags = .{},
 
-    must_start_with_capital_letter_for_jsx: bool = false,
+    pub const Flags = packed struct {
+        must_start_with_capital_letter_for_jsx: bool = false,
+        remove_overwritten_function_declaration: bool = false,
 
-    /// The kind of symbol. This is used to determine how to print the symbol
-    /// and how to deal with conflicts, renaming, etc.
-    kind: Kind = Kind.other,
+        /// Used in HMR to decide when live binding code is needed.
+        has_been_assigned_to: bool = false,
 
-    /// Certain symbols must not be renamed or minified. For example, the
-    /// "arguments" variable is declared by the runtime for every function.
-    /// Renaming can also break any identifier used inside a "with" statement.
-    must_not_be_renamed: bool = false,
+        has_namespace_alias: bool = false,
 
-    /// We automatically generate import items for property accesses off of
-    /// namespace imports. This lets us remove the expensive namespace imports
-    /// while bundling in many cases, replacing them with a cheap import item
-    /// instead:
-    ///
-    ///   import * as ns from 'path'
-    ///   ns.foo()
-    ///
-    /// That can often be replaced by this, which avoids needing the namespace:
-    ///
-    ///   import {foo} from 'path'
-    ///   foo()
-    ///
-    /// However, if the import is actually missing then we don't want to report a
-    /// compile-time error like we do for real import items. This status lets us
-    /// avoid this. We also need to be able to replace such import items with
-    /// undefined, which this status is also used for.
-    import_item_status: ImportItemStatus = ImportItemStatus.none,
+        /// Certain symbols must not be renamed or minified. For example, the
+        /// "arguments" variable is declared by the runtime for every function.
+        /// Renaming can also break any identifier used inside a "with" statement.
+        must_not_be_renamed: bool = false,
 
-    /// --- Not actually used yet -----------------------------------------------
-    /// Sometimes we lower private symbols even if they are supported. For example,
-    /// consider the following TypeScript code:
-    ///
-    ///   class Foo {
-    ///     #foo = 123
-    ///     bar = this.#foo
-    ///   }
-    ///
-    /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-    /// must use assignment semantics instead of define semantics. We can compile
-    /// that to this code:
-    ///
-    ///   class Foo {
-    ///     constructor() {
-    ///       this.#foo = 123;
-    ///       this.bar = this.#foo;
-    ///     }
-    ///     #foo;
-    ///   }
-    ///
-    /// However, we can't do the same for static fields:
-    ///
-    ///   class Foo {
-    ///     static #foo = 123
-    ///     static bar = this.#foo
-    ///   }
-    ///
-    /// Compiling these static fields to something like this would be invalid:
-    ///
-    ///   class Foo {
-    ///     static #foo;
-    ///   }
-    ///   Foo.#foo = 123;
-    ///   Foo.bar = Foo.#foo;
-    ///
-    /// Thus "#foo" must be lowered even though it's supported. Another case is
-    /// when we're converting top-level class declarations to class expressions
-    /// to avoid the TDZ and the class shadowing symbol is referenced within the
-    /// class body:
-    ///
-    ///   class Foo {
-    ///     static #foo = Foo
-    ///   }
-    ///
-    /// This cannot be converted into something like this:
-    ///
-    ///   var Foo = class {
-    ///     static #foo;
-    ///   };
-    ///   Foo.#foo = Foo;
-    ///
-    /// --- Not actually used yet -----------------------------------------------
-    private_symbol_must_be_lowered: bool = false,
+        /// The kind of symbol. This is used to determine how to print the symbol
+        /// and how to deal with conflicts, renaming, etc.
+        kind: Kind = Kind.other,
 
-    remove_overwritten_function_declaration: bool = false,
-
-    /// Used in HMR to decide when live binding code is needed.
-    has_been_assigned_to: bool = false,
+        /// We automatically generate import items for property accesses off of
+        /// namespace imports. This lets us remove the expensive namespace imports
+        /// while bundling in many cases, replacing them with a cheap import item
+        /// instead:
+        ///
+        ///   import * as ns from 'path'
+        ///   ns.foo()
+        ///
+        /// That can often be replaced by this, which avoids needing the namespace:
+        ///
+        ///   import {foo} from 'path'
+        ///   foo()
+        ///
+        /// However, if the import is actually missing then we don't want to report a
+        /// compile-time error like we do for real import items. This status lets us
+        /// avoid this. We also need to be able to replace such import items with
+        /// undefined, which this status is also used for.
+        import_item_status: ImportItemStatus = ImportItemStatus.none,
+    };
 
     comptime {
-        bun.assert_eql(@sizeOf(Symbol), 88);
+        bun.assert_eql(@sizeOf(Symbol), 72);
         bun.assert_eql(@alignOf(Symbol), @alignOf([]const u8));
     }
 
     const invalid_chunk_index = std.math.maxInt(u32);
     pub const invalid_nested_scope_slot = std.math.maxInt(u32);
+
+    pub fn namespaceAlias(this: *const Symbol) ?*const G.NamespaceAlias {
+        if (!this.flags.has_namespace_alias) {
+            return null;
+        }
+
+        return &this.__namespace_alias_do_not_use_directly;
+    }
+
+    pub fn setNamespaceAlias(this: *Symbol, alias: G.NamespaceAlias) void {
+        this.__namespace_alias_do_not_use_directly = alias;
+        this.flags.has_namespace_alias = true;
+    }
 
     pub const SlotNamespace = enum {
         must_not_be_renamed,
@@ -1136,9 +1102,9 @@ pub const Symbol = struct {
     }
 
     pub fn slotNamespace(this: *const Symbol) SlotNamespace {
-        const kind = this.kind;
+        const kind = this.flags.kind;
 
-        if (kind == .unbound or this.must_not_be_renamed) {
+        if (kind == .unbound or this.flags.must_not_be_renamed) {
             return .must_not_be_renamed;
         }
 
@@ -1157,7 +1123,7 @@ pub const Symbol = struct {
         return this.link.tag != .invalid;
     }
 
-    pub const Kind = enum {
+    pub const Kind = enum(u5) {
         /// An unbound symbol is one that isn't declared in the file it's referenced
         /// in. For example, using "window" without declaring it will be unbound.
         unbound,
@@ -1285,9 +1251,9 @@ pub const Symbol = struct {
 
     pub fn mergeContentsWith(this: *Symbol, old: *Symbol) void {
         this.use_count_estimate += old.use_count_estimate;
-        if (old.must_not_be_renamed) {
+        if (old.flags.must_not_be_renamed) {
             this.original_name = old.original_name;
-            this.must_not_be_renamed = true;
+            this.flags.must_not_be_renamed = true;
         }
 
         // TODO: MustStartWithCapitalLetterForJSX
@@ -1311,7 +1277,7 @@ pub const Symbol = struct {
                     Output.prettyln(
                         " name: {s}\n  tag: {s}\n       {any}\n",
                         .{
-                            symbol.original_name, @tagName(symbol.kind),
+                            symbol.original_name, @tagName(symbol.flags.kind),
                             if (symbol.hasLink()) symbol.link else Ref{
                                 .source_index = @truncate(i),
                                 .inner_index = @truncate(inner_index),
@@ -1438,7 +1404,7 @@ pub const Symbol = struct {
     };
 
     pub inline fn isHoisted(self: *const Symbol) bool {
-        return Symbol.isKindHoisted(self.kind);
+        return Symbol.isKindHoisted(self.flags.kind);
     }
 };
 

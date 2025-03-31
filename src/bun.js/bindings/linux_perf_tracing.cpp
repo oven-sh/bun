@@ -1,3 +1,6 @@
+#include "root.h"
+
+#if OS(LINUX)
 #include <stdint.h>
 #include <sys/types.h>
 #include <fcntl.h>
@@ -67,3 +70,4 @@ int Bun__linux_trace_emit(const char* event_name, int64_t duration_ns)
 }
 
 } // end extern "C"
+#endif

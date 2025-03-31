@@ -43,7 +43,7 @@ pub fn Rc(T: type) type {
 /// `Arc`, while increasing a reference count. When the last `Arc` pointer to a
 /// given allocation is destroyed, the value stored in that allocation (often
 /// referred to as "inner value") is also dropped.
-/// 
+///
 /// The `deinit` function used by `Arc(T)` is inferred from `T`. Types that do
 /// not need to deinitialize their fields do not need a `deinit` function. If they
 /// do, `deinit` should either
@@ -61,19 +61,19 @@ fn AutoContext(T: type) type {
 }
 
 /// A reference-counted pointer.
-/// 
+///
 /// The `RefCounted` type provides shared ownership of a value of type `T`,
 /// allocated in the heap. Invoking `clone` on `RefCounted` produces a new
 /// `RefCounted` instance, which points to the same allocation on the heap as
 /// the source `RefCounted`, while increasing a reference count. When the last
 /// `RefCounted` pointer to a given allocation is destroyed, the value stored in
 /// that allocation (often referred to as "inner value") is also dropped.
-/// 
+///
 /// ## Deinitialization Behavior
-/// 
-/// `RefCounted` takes a `Context` type that may define a `deinit` function to 
+///
+/// `RefCounted` takes a `Context` type that may define a `deinit` function to
 /// deinitialize a `T`.
-/// 
+///
 /// ## Invariants
 /// The following invariants must be upheld for `RefCounted` to work safely:
 /// - Allocations created by the provided `Allocator` must have `'static`
@@ -105,46 +105,55 @@ pub fn RefCounted(
 
     const log = Output.scoped(output_name, true);
 
-    const RefCountInner = struct {
+    const OwnCount: ?type = if (!@hasField(T, "ref_count")) void else blk: {
+        const Count: type = @FieldType(T, "ref_count");
+        const count_info = @typeInfo(Count);
+        if (count_info != .int) @compileError(@typeName(T) ++ ".ref_count must be an integer type");
+        break :blk Count;
+    };
+    // const intrusive = OwnCount != null;
+
+    const Inner = struct {
         /// This is always > 0 unless value is just about to be deallocated.
-        ref_count: if (sync) AtomicU32 else u32 = if (sync) .init(1) else 1,
+        ref_count: if (OwnCount != null) void else if (sync) AtomicU32 else u32 = if (sync) .init(1) else 1,
         allocator: Allocator,
         value: T,
 
         const Self = @This();
 
         fn ref(this: *Self) callconv(bun.callconv_inline) u32 {
-            if (comptime sync) {
-                const prev = this.ref_count.fetchAdd(1, AtomicOrder.acquire);
+            if (OwnCount) |C| {
+                const prev = if (comptime sync) @atomicRmw(C, &this.value.ref_count, .Add, 1, .acquire) else this.value.ref_count;
                 bun.assertWithLocation(prev > 0, @src());
-                return prev;
-            } else {
-                const prev = this.ref_count;
-                bun.assertWithLocation(prev > 0, @src());
-                this.ref_count += 1;
+                if (!sync) this.value.ref_count = prev + 1;
                 return prev;
             }
+
+            const prev = if (comptime sync) this.ref_count.fetchAdd(1, AtomicOrder.acquire) else this.ref_count;
+            bun.assertWithLocation(prev > 0, @src());
+            if (!sync) this.ref_count += 1;
+            return prev;
         }
 
         fn deref(this: *Self) callconv(bun.callconv_inline) u32 {
-            if (comptime sync) {
-                const prev = this.ref_count.fetchSub(1, AtomicOrder.release);
+            if (OwnCount) |C| {
+                const prev = if (comptime sync) @atomicRmw(C, &this.value.ref_count, .Sub, 1, .release) else this.value.ref_count;
                 bun.assertWithLocation(prev > 0, @src());
-                return prev;
-            } else {
-                const prev = this.ref_count;
-                bun.assertWithLocation(prev > 0, @src());
-                this.ref_count -= 1;
+                if (!sync) this.value.ref_count = prev - 1;
                 return prev;
             }
+
+            const prev = if (comptime sync) this.ref_count.fetchSub(1, AtomicOrder.release) else this.ref_count;
+            bun.assertWithLocation(prev > 0, @src());
+            if (!sync) this.ref_count -= 1;
+            return prev;
         }
 
         fn refCount(this: Self) callconv(bun.callconv_inline) u32 {
-            if (comptime sync) {
-                return this.ref_count.load(AtomicOrder.acq_rel);
-            } else {
-                return this.ref_count;
-            }
+            if (OwnCount) |C|
+                return if (comptime sync) @atomicLoad(C, &this.value.ref_count, .acquire) else this.value.ref_count
+            else
+                return if (comptime sync) this.ref_count.load(AtomicOrder.acq_rel) else this.ref_count;
         }
     };
 
@@ -152,14 +161,14 @@ pub fn RefCounted(
         /// Do not initialize, read, or otherwise access this directly.
         /// - Use `.get()` or `.getMut()` to dereference the pointer.
         /// - use `.clone()` to obtain a new reference to the value.
-        __ptr: *RefCountInner,
+        __ptr: *Inner,
 
         const Self = @This();
 
         /// Construct a new reference-counted pointer. It takes ownership of
         /// `value`. `value` is assumed to be fully initialized.
         pub fn init(value: T, allocator: Allocator) Allocator.Error!Self {
-            const inner = try allocator.create(RefCountInner);
+            const inner = try allocator.create(Inner);
             inner.* = .{ .value = value, .allocator = allocator };
             return Self{ .__ptr = inner };
         }

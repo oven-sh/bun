@@ -206,44 +206,44 @@ test(
   },
 );
 
-// test(
-//   {
-//     unix: "/tmp/bun.sock",
-//     fetch(req, server) {
-//       server.upgrade(req);
-//       if (Math.random() > 0.5) return undefined;
-//       return new Response();
-//     },
-//     websocket: { message() {} },
-//   },
-//   {
-//     overrideExpectBehavior: server => {
-//       expect(server.hostname).toBeUndefined();
-//       expect(server.port).toBeUndefined();
-//       expect(server.url.toString()).toStartWith("unix://");
-//     },
-//   },
-// );
+test(
+  {
+    unix: "/tmp/bun.sock",
+    fetch(req, server) {
+      server.upgrade(req);
+      if (Math.random() > 0.5) return undefined;
+      return new Response();
+    },
+    websocket: { message() {} },
+  },
+  {
+    overrideExpectBehavior: server => {
+      expect(server.hostname).toBeUndefined();
+      expect(server.port).toBeUndefined();
+      expect(server.url.toString()).toStartWith("unix://");
+    },
+  },
+);
 
-// test(
-//   {
-//     unix: "/tmp/bun.sock",
-//     fetch(req, server) {
-//       server.upgrade(req);
-//       if (Math.random() > 0.5) return undefined;
-//       return new Response();
-//     },
-//     websocket: { message() {} },
-//     tls: {},
-//   },
-//   {
-//     overrideExpectBehavior: server => {
-//       expect(server.hostname).toBeUndefined();
-//       expect(server.port).toBeUndefined();
-//       expect(server.url.toString()).toStartWith("unix://");
-//     },
-//   },
-// );
+test(
+  {
+    unix: "/tmp/bun.sock",
+    fetch(req, server) {
+      server.upgrade(req);
+      if (Math.random() > 0.5) return undefined;
+      return new Response();
+    },
+    websocket: { message() {} },
+    tls: {},
+  },
+  {
+    overrideExpectBehavior: server => {
+      expect(server.hostname).toBeUndefined();
+      expect(server.port).toBeUndefined();
+      expect(server.url.toString()).toStartWith("unix://");
+    },
+  },
+);
 
 test(
   {

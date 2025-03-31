@@ -3074,9 +3074,7 @@ declare module "bun" {
    * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
    *
    * @example
-   * import { serve } from "bun";
-   *
-   * serve({
+   * Bun.serve({
    *   websocket: {
    *     open(ws) {
    *       console.log("Connected", ws.remoteAddress);
@@ -3698,8 +3696,7 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve } from "bun";
-     * serve({
+     * Bun.serve({
      *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
@@ -4261,15 +4258,30 @@ declare module "bun" {
 
     readonly url: URL;
 
-    readonly port: number;
     /**
-     * The hostname the server is listening on. Does not include the port
+     * The port the server is listening on.
+     *
+     * This will be undefined when the server is listening on a unix socket.
+     *
+     * @example
+     * ```js
+     * 3000
+     * ```
+     */
+    readonly port: number | undefined;
+
+    /**
+     * The hostname the server is listening on. Does not include the port.
+     *
+     * This will be `undefined` when the server is listening on a unix socket.
+     *
      * @example
      * ```js
      * "localhost"
      * ```
      */
-    readonly hostname: string;
+    readonly hostname: string | undefined;
+
     /**
      * Is the server running in development mode?
      *

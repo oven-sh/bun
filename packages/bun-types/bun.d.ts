@@ -510,7 +510,7 @@ declare module "bun" {
     threadId: number;
   }
 
-  interface Env extends NodeJS.ProcessEnv {
+  interface Env {
     NODE_ENV?: string;
     /**
      * Can be used to change the default timezone at runtime
@@ -525,7 +525,7 @@ declare module "bun" {
    *
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    */
-  const env: Env;
+  const env: Env & NodeJS.ProcessEnv;
 
   /**
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.

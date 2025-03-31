@@ -220,7 +220,7 @@ JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* 
 
     // Add property transitions for all statfs fields
     PropertyOffset offset = 0;
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "type"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->type, 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bsize"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bfree"_s), 0, offset);

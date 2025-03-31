@@ -4127,6 +4127,7 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
     hasher.update(std.mem.asBytes(&thing));
 }
 
+pub const perf = @import("./perf.zig");
 pub inline fn isComptimeKnown(x: anytype) bool {
     return comptime @typeInfo(@TypeOf(.{x})).@"struct".fields[0].is_comptime;
 }

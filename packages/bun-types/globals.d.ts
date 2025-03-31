@@ -1,7 +1,7 @@
 declare module "bun" {
   namespace __internal {
     type NodeWorkerThreadsWorker = import("worker_threads").Worker;
-    type LibWorkerOrNodeWorkerThreadsWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", NodeWorkerThreadsWorker>;
+    type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
 
     type NodePerfHooksPerformance = import("perf_hooks").Performance;
     type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
@@ -11,24 +11,24 @@ declare module "bun" {
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
-    type NodeUtilTextEncoder = import("util").TextEncoder;
-    type NodeUtilTextDecoder = import("util").TextDecoder;
 
-    type LibEmptyOrNodeReadableStream<T = any> = LibDomIsLoaded extends true
-      ? {}
-      : import("stream/web").ReadableStream<T>;
+    type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("util").TextEncoder;
 
-    type LibEmptyOrNodeWritableStream<T = any> = LibDomIsLoaded extends true
-      ? {}
-      : import("stream/web").WritableStream<T>;
+    type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("util").TextDecoder;
 
-    type LibEmptyOrNodeTransformStream<I = any, O = any> = LibDomIsLoaded extends true
+    type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true ? {} : import("stream/web").ReadableStream<T>;
+
+    type LibEmptyOrNodeWritableStream<T> = LibDomIsLoaded extends true ? {} : import("stream/web").WritableStream<T>;
+
+    type LibEmptyOrNodeTransformStream<I, O> = LibDomIsLoaded extends true
       ? {}
       : import("stream/web").TransformStream<I, O>;
+
+    type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("worker_threads").MessagePort;
   }
 }
 
-interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream {}
+interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
@@ -38,7 +38,7 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream {}
+interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream<W> {}
 declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   "WritableStream",
   {
@@ -47,7 +47,7 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface Worker extends Bun.__internal.LibWorkerOrNodeWorkerThreadsWorker {}
+interface Worker extends Bun.__internal.LibWorkerOrBunWorker {}
 declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
   {
@@ -62,6 +62,13 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * A WebSocket client implementation
+ *
+ * If `DOM` is included in tsconfig `lib`, this falls back to the default DOM global `WebSocket`.
+ * Otherwise (when outside of a browser environment), this will be the `WebSocket`
+ * implementation from the `ws` package, which Bun implements.
+ */
 declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
 
 interface Crypto {}
@@ -81,7 +88,7 @@ declare var crypto: Crypto;
  * const uint8array = encoder.encode('this is some data');
  * ```
  */
-interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
+interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
   /**
    * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
    * containing the read Unicode code units and written UTF-8 bytes.
@@ -113,53 +120,51 @@ declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
+interface TextDecoder extends Bun.__internal.LibEmptyOrNodeUtilTextDecoder {}
 declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoder",
   {
-    prototype: Bun.__internal.NodeUtilTextDecoder;
-    new (
-      encoding?: Bun.Encoding,
-      options?: { fatal?: boolean; ignoreBOM?: boolean },
-    ): Bun.__internal.NodeUtilTextDecoder;
+    prototype: TextDecoder;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
   }
 >;
 
-// interface Event {
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   readonly bubbles: boolean;
-//   /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-//   cancelBubble: () => void;
-//   /** True if the event was created with the cancelable option */
-//   readonly cancelable: boolean;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   readonly composed: boolean;
-//   /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-//   composedPath(): [EventTarget?];
-//   /** Alias for event.target. */
-//   readonly currentTarget: EventTarget | null;
-//   /** Is true if cancelable is true and event.preventDefault() has been called. */
-//   readonly defaultPrevented: boolean;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   readonly eventPhase: typeof globalThis extends { Event: infer T extends {eventPhase: number} } ? T['eventPhase'] : 0 | 2;
-//   /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-//   readonly isTrusted: boolean;
-//   /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-//   preventDefault(): void;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   returnValue: boolean;
-//   /** Alias for event.target. */
-//   readonly srcElement: EventTarget | null;
-//   /** Stops the invocation of event listeners after the current one completes. */
-//   stopImmediatePropagation(): void;
-//   /** This is not used in Node.js and is provided purely for completeness. */
-//   stopPropagation(): void;
-//   /** The `EventTarget` dispatching the event */
-//   readonly target: EventTarget | null;
-//   /** The millisecond timestamp when the Event object was created. */
-//   readonly timeStamp: number;
-//   /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-//   readonly type: string;
-// }
+interface Event {
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly bubbles: boolean;
+  /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+  cancelBubble: boolean;
+  /** True if the event was created with the cancelable option */
+  readonly cancelable: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly composed: boolean;
+  /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+  composedPath(): [EventTarget?];
+  /** Alias for event.target. */
+  readonly currentTarget: EventTarget | null;
+  /** Is true if cancelable is true and event.preventDefault() has been called. */
+  readonly defaultPrevented: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly eventPhase: number;
+  /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+  readonly isTrusted: boolean;
+  /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+  preventDefault(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  returnValue: boolean;
+  /** Alias for event.target. */
+  readonly srcElement: EventTarget | null;
+  /** Stops the invocation of event listeners after the current one completes. */
+  stopImmediatePropagation(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  stopPropagation(): void;
+  /** The `EventTarget` dispatching the event */
+  readonly target: EventTarget | null;
+  /** The millisecond timestamp when the Event object was created. */
+  readonly timeStamp: number;
+  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+  readonly type: string;
+}
 declare var Event: {
   prototype: Event;
   readonly NONE: 0;
@@ -411,7 +416,13 @@ declare var CloseEvent: {
 };
 
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
-declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<"MessageEvent", MessageEvent>;
+declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<
+  "MessageEvent",
+  {
+    prototype: MessageEvent;
+    new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<any>;
+  }
+>;
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1119,7 +1130,7 @@ interface ImportMeta {
    * import.meta.env === process.env
    * ```
    */
-  readonly env: NodeJS.ProcessEnv;
+  readonly env: Bun.Env;
 
   /**
    * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
@@ -1256,6 +1267,16 @@ interface BlobPropertyBag {
 interface WorkerOptions extends Bun.WorkerOptions {}
 
 interface Blob {
+  /**
+   * The size of this Blob in bytes
+   */
+  readonly size: number;
+
+  /**
+   * The MIME type of this Blob
+   */
+  readonly type: string;
+
   /**
    * Read the data from the blob as a JSON object.
    *
@@ -1461,7 +1482,28 @@ declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
   { prototype: DOMException; new (): DOMException }
 >;
 
-interface FormData {}
+interface FormData {
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/append) */
+  append(name: string, value: string | Blob): void;
+  append(name: string, value: string): void;
+  append(name: string, blobValue: Blob, filename?: string): void;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/delete) */
+  delete(name: string): void;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/get) */
+  get(name: string): Bun.FormDataEntryValue | null;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/getAll) */
+  getAll(name: string): Bun.FormDataEntryValue[];
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/has) */
+  has(name: string): boolean;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/set) */
+  set(name: string, value: string | Blob): void;
+  set(name: string, value: string): void;
+  set(name: string, blobValue: Blob, filename?: string): void;
+  forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  entries(): IterableIterator<[string, string]>;
+}
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 interface EventSource {}
@@ -1542,16 +1584,39 @@ declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
 interface URLSearchParams {}
 declare var URLSearchParams: Bun.__internal.UseLibDomIfAvailable<
   "URLSearchParams",
-  { prototype: URLSearchParams; new (): URLSearchParams }
+  {
+    prototype: URLSearchParams;
+    new (
+      init?:
+        | URLSearchParams
+        | string
+        | Record<string, string | readonly string[]>
+        | Iterable<[string, string]>
+        | ReadonlyArray<[string, string]>,
+    ): URLSearchParams;
+  }
 >;
 
-interface MessageChannel {}
+interface MessageChannel {
+  /**
+   * Returns the first MessagePort object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port1)
+   */
+  readonly port1: MessagePort;
+  /**
+   * Returns the second MessagePort object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port2)
+   */
+  readonly port2: MessagePort;
+}
 declare var MessageChannel: Bun.__internal.UseLibDomIfAvailable<
   "MessageChannel",
   { prototype: MessageChannel; new (): MessageChannel }
 >;
 
-interface MessagePort {}
+interface MessagePort extends Bun.__internal.LibEmptyOrNodeMessagePort {}
 declare var MessagePort: Bun.__internal.UseLibDomIfAvailable<
   "MessagePort",
   {
@@ -1681,27 +1746,9 @@ interface BunFetchRequestInit extends RequestInit {
    * Override the default S3 options
    */
   s3?: Bun.S3Options;
+
+  unix?: string;
 }
-
-/**
- * Send a HTTP(s) request
- *
- * @param request Request object
- * @param init A structured value that contains settings for the fetch() request.
- *
- * @returns A promise that resolves to {@link Response} object.
- */
-declare function fetch(request: Request, init?: BunFetchRequestInit): Promise<Response>;
-
-/**
- * Send a HTTP(s) request
- *
- * @param url URL string
- * @param init A structured value that contains settings for the fetch() request.
- *
- * @returns A promise that resolves to {@link Response} object.
- */
-declare function fetch(url: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
 /**
  * Send a HTTP(s) request

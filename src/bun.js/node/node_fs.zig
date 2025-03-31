@@ -3850,7 +3850,7 @@ pub const NodeFS = struct {
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
         return switch (Syscall.fstat(args.fd)) {
-            .result => |result| .{ .result = .init(result, args.big_int) },
+            .result => |*result| .{ .result = .init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
     }
@@ -3927,7 +3927,7 @@ pub const NodeFS = struct {
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
         return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
+            .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
@@ -4234,7 +4234,8 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.StatFS).initResult(Return.StatFS.init(req.ptrAs(*align(1) bun.StatFS).*, args.big_int));
+        const statfs_ = req.ptrAs(*align(1) bun.StatFS).*;
+        return Maybe(Return.StatFS).initResult(Return.StatFS.init(&statfs_, args.big_int));
     }
 
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, _: Flavor) Maybe(Return.OpenDir) {
@@ -5748,7 +5749,7 @@ pub const NodeFS = struct {
 
     pub fn statfs(this: *NodeFS, args: Arguments.StatFS, _: Flavor) Maybe(Return.StatFS) {
         return switch (Syscall.statfs(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
+            .result => |*result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
             .err => |err| Maybe(Return.StatFS){ .err = err },
         };
     }
@@ -5756,13 +5757,13 @@ pub const NodeFS = struct {
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
         if (bun.StandaloneModuleGraph.get()) |graph| {
-            if (graph.stat(path)) |result| {
+            if (graph.stat(path)) |*result| {
                 return .{ .result = .{ .stats = .init(result, args.big_int) } };
             }
         }
 
         return switch (Syscall.stat(path)) {
-            .result => |result| .{
+            .result => |*result| .{
                 .result = .{ .stats = .init(result, args.big_int) },
             },
             .err => |err| brk: {

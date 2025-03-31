@@ -448,9 +448,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   get writableHighWaterMark() {
-    // 256kb is for macOS 208kb is for Linux and 64kb is for Windows
-    // this is not quite correct, but it's close enough for now
-    return 256 * 1024;
+    return getPlatformHighWaterMark();
   }
   get remoteAddress() {
     return this.address()?.address;
@@ -1780,9 +1778,7 @@ const OutgoingMessagePrototype = {
   },
 
   get writableHighWaterMark() {
-    // 256kb is for macOS 208kb is for Linux and 64kb is for Windows
-    // this is not quite correct, but it's close enough for now
-    return 256 * 1024;
+    return getPlatformHighWaterMark();
   },
 
   get writableNeedDrain() {
@@ -1962,6 +1958,18 @@ function callWriteHeadIfObservable(self, headerState) {
 function allowWritesToContinue() {
   this._callPendingCallbacks();
   this.emit("drain");
+}
+function getPlatformHighWaterMark() {
+  // 256kb is for macOS 1MB is for unix/windows
+  // this is not quite correct, but it's close enough for now
+  switch (process.platform) {
+    case "darwin":
+      return 256 * 1024;
+    case "win32":
+    // unix
+    default:
+      return 1024 * 1024;
+  }
 }
 const ServerResponsePrototype = {
   constructor: ServerResponse,
@@ -2248,9 +2256,7 @@ const ServerResponsePrototype = {
   },
 
   get writableHighWaterMark() {
-    // 256kb is for macOS 208kb is for Linux and 64kb is for Windows
-    // this is not quite correct, but it's close enough for now
-    return 256 * 1024;
+    return getPlatformHighWaterMark();
   },
 
   get closed() {

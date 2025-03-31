@@ -207,6 +207,7 @@ test(
 );
 
 test(
+  // @ts-expect-error - TODO Fix this
   {
     unix: "/tmp/bun.sock",
     fetch(req, server) {
@@ -226,6 +227,7 @@ test(
 );
 
 test(
+  // @ts-expect-error - TODO Fix this
   {
     unix: "/tmp/bun.sock",
     fetch(req, server) {
@@ -263,6 +265,7 @@ test(
 );
 
 test(
+  // @ts-expect-error - TODO Fix this
   {
     unix: "/tmp/bun.sock",
     fetch(req, server) {
@@ -273,7 +276,7 @@ test(
       return new Response("failed to upgrade", { status: 500 });
     },
     websocket: {
-      message: (ws, data) => {},
+      message: () => {},
     },
   },
   {

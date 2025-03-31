@@ -36,6 +36,7 @@ const LogLevel = PackageManager.Options.LogLevel;
 const FileDescriptor = bun.FileDescriptor;
 const Publish = bun.CLI.PublishCommand;
 const Dependency = Install.Dependency;
+const CowString = bun.ptr.CowString;
 
 pub const PackCommand = struct {
     pub const Context = struct {
@@ -267,9 +268,16 @@ pub const PackCommand = struct {
     fn iterateIncludedProjectTree(
         allocator: std.mem.Allocator,
         includes: []const Pattern,
+        excludes: []const Pattern,
         root_dir: std.fs.Dir,
         log_level: LogLevel,
     ) OOM!PackQueue {
+        if (comptime Environment.isDebug) {
+            for (excludes) |exclude| {
+                bun.assertf(exclude.flags.negated, "Illegal exclusion pattern '{s}'. Exclusion patterns are always negated.", .{exclude.glob});
+            }
+        }
+
         var pack_queue = PackQueue.init(allocator, {});
 
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
@@ -303,43 +311,52 @@ pub const PackCommand = struct {
                 const entry_subpath = try entrySubpath(allocator, dir_subpath, entry_name);
 
                 var included = false;
+                var is_unconditionally_included = false;
 
                 if (dir_depth == 1) {
                     if (strings.eqlComptime(entry_name, "package.json")) continue;
                     if (strings.eqlComptime(entry_name, "node_modules")) continue;
 
-                    // TODO: should this be case insensitive on all platforms?
-                    const eql = if (comptime Environment.isLinux)
-                        strings.eqlComptime
-                    else
-                        strings.eqlCaseInsensitiveASCIIICheckLength;
-
-                    if (entry.kind == .file and
-                        (eql(entry_name, "package.json") or
-                            eql(entry_name, "LICENSE") or
-                            eql(entry_name, "LICENCE") or
-                            eql(entry_name, "README") or
-                            entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
+                    if (entry.kind == .file and isUnconditionallyIncludedFile(entry_name)) {
                         included = true;
+                        is_unconditionally_included = true;
+                    }
                 }
 
                 if (!included) {
                     for (includes) |include| {
-                        if (include.dirs_only and entry.kind != .directory) continue;
+                        if (include.flags.dirs_only and entry.kind != .directory) continue;
 
                         // include patters are not recursive unless they start with `**/`
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
-                        const match_path = if (include.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
+                        const match_path = if (include.flags.@"leading **/") entry_name else entry_subpath;
+                        switch (glob.walk.matchImpl(allocator, include.glob.slice(), match_path)) {
                             .match => included = true,
-                            .negate_no_match => included = false,
-
+                            .negate_no_match, .negate_match => unreachable,
                             else => {},
                         }
                     }
                 }
 
+                // There may be a "narrowing" exclusion that excludes a subset
+                // of files within an included directory/pattern.
+                if (included and !is_unconditionally_included and excludes.len > 0) {
+                    for (excludes) |exclude| {
+                        if (exclude.flags.dirs_only and entry.kind != .directory) continue;
+
+                        const match_path = if (exclude.flags.@"leading **/") entry_name else entry_subpath;
+                        // NOTE: These patterns have `!` so `.match` logic is
+                        // inverted here
+                        switch (glob.walk.matchImpl(allocator, exclude.glob.slice(), match_path)) {
+                            .negate_no_match => included = false,
+                            else => {},
+                        }
+                    }
+                }
+
+                // TODO: do not traverse directories that match patterns
+                // excluding all files within them (e.g. `!test/**`)
                 if (!included) {
                     if (entry.kind == .directory) {
                         const subdir = openSubdir(dir, entry_name, entry_subpath);
@@ -368,7 +385,14 @@ pub const PackCommand = struct {
 
         // for each included dir, traverse it's entries, exclude any with `negate_no_match`.
         for (included_dirs.items) |included_dir_info| {
-            try addEntireTree(allocator, included_dir_info, &pack_queue, &subpath_dedupe, log_level);
+            try addEntireTree(
+                allocator,
+                excludes,
+                included_dir_info,
+                &pack_queue,
+                &subpath_dedupe,
+                log_level,
+            );
         }
 
         return pack_queue;
@@ -377,6 +401,7 @@ pub const PackCommand = struct {
     /// Adds all files in a directory tree to `pack_list` (default ignores still apply)
     fn addEntireTree(
         allocator: std.mem.Allocator,
+        excludes: []const Pattern,
         root_dir_info: DirInfo,
         pack_queue: *PackQueue,
         maybe_dedupe: ?*bun.StringHashMap(void),
@@ -389,6 +414,24 @@ pub const PackCommand = struct {
 
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
         defer ignores.deinit(allocator);
+
+        var negated_excludes: std.ArrayListUnmanaged(Pattern) = .{};
+        defer negated_excludes.deinit(allocator);
+
+        if (excludes.len > 0) {
+            try negated_excludes.ensureTotalCapacityPrecise(allocator, excludes.len);
+            for (excludes) |exclude| {
+                try negated_excludes.append(allocator, exclude.asPositive());
+            }
+            try ignores.append(allocator, IgnorePatterns{
+                .list = negated_excludes.items,
+                .kind = .@"package.json",
+                .depth = 1,
+                // always assume no relative path b/c matching is done from the
+                // root directory
+                .has_rel_path = false,
+            });
+        }
 
         while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
@@ -1021,23 +1064,11 @@ pub const PackCommand = struct {
         const entry_name = entry.name.slice();
 
         if (dir_depth == 1) {
-
-            // TODO: should this be case insensitive on all platforms?
-            const eql = if (comptime Environment.isLinux)
-                strings.eqlComptime
-            else
-                strings.eqlCaseInsensitiveASCIIICheckLength;
-
-            // first, check files that can never be ignored. project root directory only
-            if (entry.kind == .file and
-                (eql(entry_name, "package.json") or
-                    eql(entry_name, "LICENSE") or
-                    eql(entry_name, "LICENCE") or
-                    eql(entry_name, "README") or
-                    entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
-                    eql(entry_name, "CHANGELOG") or
-                    entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
+            // first, check files that can never be ignored. project root
+            // directory only
+            if (isUnconditionallyIncludedFile(entry_name) or isSpecialFileOrVariant(entry_name, "CHANGELOG")) {
                 return null;
+            }
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
@@ -1107,13 +1138,13 @@ pub const PackCommand = struct {
                 }
             }
             for (ignore.list) |pattern| {
-                if (pattern.dirs_only and entry.kind != .directory) continue;
+                if (pattern.flags.dirs_only and entry.kind != .directory) continue;
 
-                const match_path = if (pattern.rel_path) rel else entry_name;
-                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob, match_path)) {
+                const match_path = if (pattern.flags.rel_path) rel else entry_name;
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob.slice(), match_path)) {
                     .match => {
                         ignored = true;
-                        ignore_pattern = pattern.glob;
+                        ignore_pattern = pattern.glob.slice();
                         ignore_kind = ignore.kind;
                     },
                     .negate_no_match => ignored = false,
@@ -1350,7 +1381,11 @@ pub const PackCommand = struct {
                 files_error: {
                     if (files.asArray()) |_files_array| {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
-                        defer includes.deinit(ctx.allocator);
+                        var excludes: std.ArrayListUnmanaged(Pattern) = .{};
+                        defer {
+                            includes.deinit(ctx.allocator);
+                            excludes.deinit(ctx.allocator);
+                        }
 
                         var path_buf: PathBuffer = undefined;
                         var files_array = _files_array;
@@ -1358,7 +1393,13 @@ pub const PackCommand = struct {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
                                 const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
                                 const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
-                                try includes.append(ctx.allocator, parsed);
+                                if (parsed.flags.negated) {
+                                    @branchHint(.unlikely); // most "files" entries are not exclusions.
+                                    try excludes.append(ctx.allocator, parsed);
+                                } else {
+                                    try includes.append(ctx.allocator, parsed);
+                                }
+
                                 continue;
                             }
 
@@ -1368,6 +1409,7 @@ pub const PackCommand = struct {
                         break :pack_queue try iterateIncludedProjectTree(
                             ctx.allocator,
                             includes.items,
+                            excludes.items,
                             root_dir,
                             log_level,
                         );
@@ -2123,18 +2165,22 @@ pub const PackCommand = struct {
         return package_json_writer.ctx.writtenWithoutTrailingZero();
     }
 
-    /// A pattern used to ignore or include
-    /// files in the project tree. Might come
-    /// from .npmignore, .gitignore, or `files`
-    /// in package.json
+    /// A glob pattern used to ignore or include files in the project tree.
+    /// Might come from .npmignore, .gitignore, or `files` in package.json
     const Pattern = struct {
-        glob: []const u8,
-        /// beginning or middle slash (leading slash was trimmed)
-        rel_path: bool,
-        // can only match directories (had an ending slash, also trimmed)
-        dirs_only: bool,
+        glob: CowString,
+        flags: Flags,
 
-        @"leading **/": bool,
+        const Flags = packed struct {
+            /// beginning or middle slash (leading slash was trimmed)
+            rel_path: bool,
+            // can only match directories (had an ending slash, also trimmed)
+            dirs_only: bool,
+
+            @"leading **/": bool,
+            /// true if the pattern starts with `!`
+            negated: bool,
+        };
 
         pub fn fromUTF8(allocator: std.mem.Allocator, pattern: string) OOM!?Pattern {
             var remain = pattern;
@@ -2188,15 +2234,32 @@ pub const PackCommand = struct {
             }
 
             return .{
-                .glob = buf[0..end],
-                .rel_path = has_leading_or_middle_slash,
-                .@"leading **/" = @"has leading **/, (could start with '!')",
-                .dirs_only = has_trailing_slash,
+                .glob = CowString.initOwned(buf[0..end], allocator),
+                .flags = .{
+                    .rel_path = has_leading_or_middle_slash,
+                    .@"leading **/" = @"has leading **/, (could start with '!')",
+                    .dirs_only = has_trailing_slash,
+                    .negated = add_negate,
+                },
+            };
+        }
+
+        /// Invert a negated pattern to a positive pattern
+        pub fn asPositive(this: *const Pattern) Pattern {
+            bun.assertWithLocation(this.flags.negated and this.glob.length() > 0, @src());
+            return Pattern{
+                .glob = this.glob.borrowSubslice(1, null), // remove the leading `!`
+                .flags = .{
+                    .rel_path = this.flags.rel_path,
+                    .dirs_only = this.flags.dirs_only,
+                    .@"leading **/" = this.flags.@"leading **/",
+                    .negated = false,
+                },
             };
         }
 
         pub fn deinit(this: Pattern, allocator: std.mem.Allocator) void {
-            allocator.free(this.glob);
+            this.glob.deinit(allocator);
         }
     };
 
@@ -2214,6 +2277,8 @@ pub const PackCommand = struct {
             default,
             @".npmignore",
             @".gitignore",
+            /// Exlusion pattern in "files" field within `package.json`
+            @"package.json",
         };
 
         pub const List = std.ArrayListUnmanaged(IgnorePatterns);
@@ -2294,7 +2359,7 @@ pub const PackCommand = struct {
                 const parsed = try Pattern.fromUTF8(allocator, trimmed) orelse continue;
                 try patterns.append(allocator, parsed);
 
-                has_rel_path = has_rel_path or parsed.rel_path;
+                has_rel_path = has_rel_path or parsed.flags.rel_path;
             }
 
             if (patterns.items.len == 0) return null;
@@ -2309,7 +2374,7 @@ pub const PackCommand = struct {
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
             for (this.list) |pattern_info| {
-                allocator.free(pattern_info.glob);
+                pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
         }
@@ -2380,6 +2445,33 @@ pub const PackCommand = struct {
 
         Output.flush();
     }
+
+    /// Some files are always packed, even if they are explicitly ignored or not
+    /// included in package.json "files".
+    fn isUnconditionallyIncludedFile(filename: []const u8) bool {
+        return filename.len > 5 and (stringsEql(filename, "package.json") or
+            isSpecialFileOrVariant(filename, "LICENSE") or
+            isSpecialFileOrVariant(filename, "LICENCE") or // THIS IS SPELLED DIFFERENTLY
+            isSpecialFileOrVariant(filename, "README"));
+    }
+
+    // TODO: should this be case insensitive on all platforms?
+    const stringsEql = if (Environment.isLinux)
+        strings.eqlComptime
+    else
+        strings.eqlCaseInsensitiveASCIIICheckLength;
+
+    fn isSpecialFileOrVariant(filename: []const u8, comptime name: []const u8) callconv(bun.callconv_inline) bool {
+        return switch (filename.len) {
+            inline 0...name.len - 1 => false,
+            inline name.len => stringsEql(filename, name),
+            inline name.len + 1 => false,
+            else => blk: {
+                bun.unsafeAssert(filename.len > name.len + 1);
+                break :blk filename[name.len] == '.' and stringsEql(filename[0..name.len], name);
+            },
+        };
+    }
 };
 
 pub const bindings = struct {
@@ -2391,14 +2483,6 @@ pub const bindings = struct {
     const String = bun.String;
     const JSArray = JSC.JSArray;
     const JSObject = JSC.JSObject;
-
-    // pub fn generate(global: *JSGlobalObject) JSValue {
-    //     const obj = JSValue.createEmptyObject(global, 1);
-
-    //     const readTarEntries = ZigString.static("readTarEntries");
-    //     obj.put(global, readTarEntries, JSC.createCallback(global, readTarEntries, 1, jsReadTarEntries));
-    //     return obj;
-    // }
 
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();

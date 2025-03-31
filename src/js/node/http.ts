@@ -952,6 +952,8 @@ const ServerPrototype = {
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
+          // start buffering data if any, the user will need to resume() or .on("data") to read it
+          handle.pause();
           drainMicrotasks();
 
           let capturedError;
@@ -2037,6 +2039,12 @@ const ServerResponsePrototype = {
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);
 
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
+    }
     if (headerState !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -2745,8 +2753,10 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      // no body and not finished
+      const isDuplex = customBody === undefined && !this.finished;
 
-      if (customBody === undefined) {
+      if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
@@ -2755,7 +2765,7 @@ function ClientRequest(input, options, cb) {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
-        } else {
+        } else if (isDuplex) {
           fetchOptions.body = async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();

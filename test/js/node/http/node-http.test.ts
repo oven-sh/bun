@@ -2285,3 +2285,89 @@ it("should not emit/throw error when writing after socket.end", async () => {
     server.close();
   }
 });
+
+it("should handle data if not immediately handled", async () => {
+  // Create a local server to receive data from
+  const server = http.createServer();
+
+  // Listen to the request event
+  server.on("request", (request, res) => {
+    setTimeout(() => {
+      const body: Uint8Array[] = [];
+      request.on("data", chunk => {
+        body.push(chunk);
+      });
+      request.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(Buffer.concat(body));
+      });
+    }, 100);
+  });
+  try {
+    await once(server.listen(0), "listening");
+    const url = `http://localhost:${server.address().port}`;
+    const payload = "Hello, world!".repeat(10).toString();
+    const res = await fetch(url, {
+      method: "POST",
+      body: payload,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(payload);
+  } finally {
+    server.close();
+  }
+});
+
+it("Empty requests should not be Transfer-Encoding: chunked", async () => {
+  const server = http.createServer((req, res) => {
+    res.end(JSON.stringify(req.headers));
+  });
+  await once(server.listen(0), "listening");
+  const url = `http://localhost:${server.address().port}`;
+  try {
+    for (let method of ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      http
+        .request(
+          url,
+          {
+            method,
+          },
+          res => {
+            const body: Uint8Array[] = [];
+            res.on("data", chunk => {
+              body.push(chunk);
+            });
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(Buffer.concat(body).toString()));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          },
+        )
+        .on("error", reject)
+        .end();
+
+      const headers = (await promise) as Record<string, string | undefined>;
+      expect(headers).toBeDefined();
+      expect(headers["transfer-encoding"]).toBeUndefined();
+      switch (method) {
+        case "GET":
+        case "DELETE":
+        case "OPTIONS":
+          // Content-Length will not be present for GET, DELETE, and OPTIONS
+          // aka DELETE in node.js will be undefined and in bun it will be 0
+          // this is not outside the spec but is different between node.js and bun
+          expect(headers["content-length"]).toBeOneOf(["0", undefined]);
+          break;
+        default:
+          expect(headers["content-length"]).toBeDefined();
+          break;
+      }
+    }
+  } finally {
+    server.close();
+  }
+});

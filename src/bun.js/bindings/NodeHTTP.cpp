@@ -1379,6 +1379,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
         if (nameValue.isString()) {
             String name = nameValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
             FetchHeaders* impl = &headers->wrapped();
 
             if (valueValue.isUndefined())

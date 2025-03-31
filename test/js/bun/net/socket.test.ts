@@ -392,7 +392,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
       hostname: server.hostname,
       socket: {
         open(socket) {
-          // ReferenceError: Can't find variable: bytes
+          // ReferenceError: bytes is not defined
           // @ts-expect-error
           socket.write(bytes);
         },
@@ -409,7 +409,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
     });
 
     const result: any = await promise;
-    expect(result?.message).toBe("Can't find variable: bytes");
+    expect(result?.message).toBe("bytes is not defined");
   }
 });
 

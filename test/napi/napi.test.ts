@@ -15,7 +15,8 @@ describe("napi", () => {
       stdin: "inherit",
     });
     if (!install.success) {
-      throw new Error("build failed");
+      console.error("build failed, bailing out!");
+      process.exit(1);
     }
   });
 
@@ -62,44 +63,48 @@ describe("napi", () => {
       });
 
       if (target === "bun") {
-        it("should work with --compile", async () => {
-          const dir = tempDirWithFiles("napi-app-compile-" + format, {
-            "package.json": JSON.stringify({
-              name: "napi-app",
-              version: "1.0.0",
-              type: format === "esm" ? "module" : "commonjs",
-            }),
-          });
+        it(
+          "should work with --compile",
+          async () => {
+            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+              "package.json": JSON.stringify({
+                name: "napi-app",
+                version: "1.0.0",
+                type: format === "esm" ? "module" : "commonjs",
+              }),
+            });
 
-          const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
-          const build = spawnSync({
-            cmd: [
-              bunExe(),
-              "build",
-              "--target=" + target,
-              "--format=" + format,
-              "--compile",
-              join(__dirname, "napi-app", "main.js"),
-            ],
-            cwd: dir,
-            env: bunEnv,
-            stdout: "inherit",
-            stderr: "inherit",
-          });
-          expect(build.success).toBeTrue();
+            const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+            const build = spawnSync({
+              cmd: [
+                bunExe(),
+                "build",
+                "--target=" + target,
+                "--format=" + format,
+                "--compile",
+                join(__dirname, "napi-app", "main.js"),
+              ],
+              cwd: dir,
+              env: bunEnv,
+              stdout: "inherit",
+              stderr: "inherit",
+            });
+            expect(build.success).toBeTrue();
 
-          const result = spawnSync({
-            cmd: [exe, "self"],
-            env: bunEnv,
-            stdin: "inherit",
-            stderr: "inherit",
-            stdout: "pipe",
-          });
-          const stdout = result.stdout.toString().trim();
+            const result = spawnSync({
+              cmd: [exe, "self"],
+              env: bunEnv,
+              stdin: "inherit",
+              stderr: "inherit",
+              stdout: "pipe",
+            });
+            const stdout = result.stdout.toString().trim();
 
-          expect(stdout).toBe("hello world!");
-          expect(result.success).toBeTrue();
-        });
+            expect(stdout).toBe("hello world!");
+            expect(result.success).toBeTrue();
+          },
+          10 * 1000,
+        );
       }
 
       it("`bun build`", async () => {
@@ -146,7 +151,7 @@ describe("napi", () => {
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);
-      expect(result).toStartWith("data: nullptr");
+      expect(result).toStartWith("data = 1234, context = 42");
     });
   });
 
@@ -178,6 +183,12 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_get_value_string_*", () => {
+    it("behaves like node on edge cases", () => {
+      checkSameOutput("test_get_value_string", []);
+    });
+  });
+
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");
@@ -198,6 +209,9 @@ describe("napi", () => {
     });
     it("exists while calling a napi_async_complete_callback", () => {
       checkSameOutput("create_promise", [false]);
+    });
+    it("keeps arguments moved off the stack alive", () => {
+      checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
   });
 
@@ -265,22 +279,22 @@ describe("napi", () => {
 
   describe("napi_run_script", () => {
     it("evaluates a basic expression", () => {
-      checkSameOutput("eval_wrapper", ["5 * (1 + 2)"]);
+      checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);
     });
     it("provides the right this value", () => {
-      checkSameOutput("eval_wrapper", ["this === global"]);
+      checkSameOutput("test_napi_run_script", ["this === global"]);
     });
     it("propagates exceptions", () => {
-      checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
+      checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("cannot see locals from around its invocation", () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use checkSameOutput because V8 and JSC use different error messages for a missing variable
-      let bunResult = runOn(bunExe(), "eval_wrapper", ["shouldNotExist"]);
+      let bunResult = runOn(bunExe(), "test_napi_run_script", ["shouldNotExist"]);
       // remove all debug logs
       bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
       expect(bunResult).toBe(
-        `synchronously threw ReferenceError: message "Can't find variable: shouldNotExist", code undefined`,
+        `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
     });
   });
@@ -288,6 +302,12 @@ describe("napi", () => {
   describe("napi_get_named_property", () => {
     it("handles edge cases", () => {
       checkSameOutput("test_get_property", []);
+    });
+  });
+
+  describe("napi_set_named_property", () => {
+    it("handles edge cases", () => {
+      checkSameOutput("test_set_property", []);
     });
   });
 
@@ -323,6 +343,8 @@ describe("napi", () => {
     });
   });
 
+  // TODO(@190n) test allocating in a finalizer from a napi module with the right version
+
   describe("napi_wrap", () => {
     it("accepts the right kinds of values", () => {
       checkSameOutput("test_napi_wrap", []);
@@ -350,6 +372,19 @@ describe("napi", () => {
       checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+      // check that napi finalizers also run at VM exit, even if they didn't get run by GC
+      checkSameOutput("test_ref_deleted_in_cleanup", []);
+      // check that calling napi_delete_ref in the ref's finalizer is not use-after-free
+      checkSameOutput("test_ref_deleted_in_async_finalize", []);
+    });
+  });
+
+  describe("napi_define_class", () => {
+    it("handles edge cases in the constructor", () => {
+      checkSameOutput("test_napi_class", []);
+      checkSameOutput("test_subclass_napi_class", []);
+      checkSameOutput("test_napi_class_non_constructor_call", []);
+      checkSameOutput("test_reflect_construct_napi_class", []);
     });
   });
 
@@ -413,10 +448,10 @@ describe("napi", () => {
     ["null", null],
     ["undefined", undefined],
   ])("works when the module register function returns %s", (returnKind, expected) => {
-    expect(require(`./napi-app/build/Release/${returnKind}_addon.node`)).toEqual(expected);
+    expect(require(`./napi-app/build/Debug/${returnKind}_addon.node`)).toEqual(expected);
   });
   it("works when the module register function throws", () => {
-    expect(() => require("./napi-app/build/Release/throw_addon.node")).toThrow(new Error("oops!"));
+    expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
 });
 

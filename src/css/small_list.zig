@@ -48,6 +48,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         const This = @This();
 
+        pub fn initInlined(values: []const T) This {
+            bun.assert(values.len <= N);
+            var this = This{
+                .capacity = values.len,
+                .data = .{ .inlined = undefined },
+            };
+
+            @memcpy(this.data.inlined[0..values.len], values);
+
+            return this;
+        }
         pub fn parse(input: *Parser) Result(@This()) {
             const parseFn = comptime voidWrap(T, generic.parseFor(T));
             var values: @This() = .{};
@@ -276,7 +287,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                             old.deinit(allocator);
                         }
                     }
-                } else if (res.popOrNull()) |the_last| {
+                } else if (res.pop()) |the_last| {
                     var old = this.*;
                     // Prefixed property with no unprefixed version.
                     // Replace self with the last prefixed version so that it doesn't

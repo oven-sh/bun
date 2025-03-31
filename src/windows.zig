@@ -93,12 +93,6 @@ pub extern "kernel32" fn GetFileInformationByHandle(
     lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
 ) callconv(windows.WINAPI) BOOL;
 
-/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
-pub extern "kernel32" fn SetFileValidData(
-    hFile: win32.HANDLE,
-    validDataLength: c_longlong,
-) callconv(windows.WINAPI) win32.BOOL;
-
 pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
@@ -3477,6 +3471,9 @@ pub extern "kernel32" fn GetThreadDescription(
     *PWSTR, // [out]
 ) std.os.windows.HRESULT;
 
+pub const ENABLE_ECHO_INPUT = 0x004;
+pub const ENABLE_LINE_INPUT = 0x002;
+pub const ENABLE_PROCESSED_INPUT = 0x001;
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;

@@ -68,28 +68,48 @@ static uint8_t x86_cpu_features()
 
 #if CPU(ARM64)
 
+#if OS(WINDOWS)
+#elif OS(MACOS)
+#include <sys/sysctl.h>
+#elif OS(LINUX)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
+
 static uint8_t aarch64_cpu_features()
 {
     uint8_t features = 0;
 
 #if OS(WINDOWS)
 #pragma error "TODO: Implement AArch64 CPU features for Windows"
-#endif
-
-#if __has_builtin(__builtin_cpu_supports)
-    __builtin_cpu_init();
-
-    if (__builtin_cpu_supports("neon"))
+#elif OS(MACOS)
+    int value = 0;
+    size_t size = sizeof(value);
+    if (sysctlbyname("hw.optional.AdvSIMD", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::neon);
-    if (__builtin_cpu_supports("crypto"))
+    if (sysctlbyname("hw.optional.floatingpoint", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::fp);
-    if (__builtin_cpu_supports("aes"))
+    if (sysctlbyname("hw.optional.arm.FEAT_AES", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::aes);
-    if (__builtin_cpu_supports("crc32"))
+    if (sysctlbyname("hw.optional.armv8_crc32", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::crc32);
-    if (__builtin_cpu_supports("atomics"))
+    if (sysctlbyname("hw.optional.arm.FEAT_LSE", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::atomics);
-    if (__builtin_cpu_supports("sve"))
+    if (sysctlbyname("hw.optional.arm.FEAT_SVE", &value, &size, NULL, 0) == 0 && value == 1)
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::sve);
+#elif OS(LINUX)
+    unsigned long hwcaps = getauxval(AT_HWCAP);
+    if (hwcaps & HWCAP_ASIMD)
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::neon);
+    if (hwcaps & HWCAP_FP)
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::fp);
+    if (hwcaps & HWCAP_AES)
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::aes);
+    if (hwcaps & HWCAP_CRC32)
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::crc32);
+    if (hwcaps & HWCAP_ATOMICS)
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::atomics);
+    if (hwcaps & HWCAP_SVE)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::sve);
 #endif
 

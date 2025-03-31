@@ -29,7 +29,7 @@ const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
@@ -45,7 +45,7 @@ var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
-const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("./ptr.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
@@ -583,7 +583,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = .empty,
+        pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
+
+        pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();
@@ -742,7 +744,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             ) void {
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    return client.onOpen(comptime ssl, socket);
+                    if (client.onOpen(comptime ssl, socket)) |_| {
+                        return;
+                    } else |_| {
+                        log("Unable to open socket", .{});
+                        terminateSocket(socket);
+                        return;
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -944,7 +952,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
-            var iter = this.pending_sockets.available.iterator(.{ .kind = .unset });
+            var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
 
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
@@ -1005,7 +1013,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
-                    client.onOpen(comptime ssl, sock);
+                    try client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
                         client.firstCall(comptime ssl, sock);
                     }
@@ -1196,9 +1204,11 @@ pub const HTTPThread = struct {
             .loop = undefined,
             .http_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
             },
             .https_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
             },
             .timer = std.time.Timer.start() catch unreachable,
         };
@@ -1388,7 +1398,7 @@ pub const HTTPThread = struct {
             this.queued_writes.clearRetainingCapacity();
         }
 
-        while (this.queued_proxy_deref.popOrNull()) |http| {
+        while (this.queued_proxy_deref.pop()) |http| {
             http.deref();
         }
 
@@ -1568,7 +1578,7 @@ pub fn checkServerIdentity(
                         }
                     }
 
-                    if (BoringSSL.checkX509ServerIdentity(x509, hostname)) {
+                    if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
                     }
                 }
@@ -1604,7 +1614,7 @@ pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
-) void {
+) !void {
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -1617,11 +1627,11 @@ pub fn onOpen(
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
-        return;
+        return error.ClientAborted;
     }
 
     if (comptime is_ssl) {
-        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
@@ -2221,6 +2231,7 @@ pub const Flags = packed struct {
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
+    defer_fail_until_connecting_is_complete: bool = false,
 };
 
 // TODO: reduce the size of this struct
@@ -2327,6 +2338,10 @@ pub fn hashHeaderConst(comptime name: string) u64 {
 
     return hasher.final();
 }
+// for each request we need this hashs, putting on top of the file to avoid exceeding comptime quota limit
+const authorization_header_hash = hashHeaderConst("Authorization");
+const proxy_authorization_header_hash = hashHeaderConst("Proxy-Authorization");
+const cookie_header_hash = hashHeaderConst("Cookie");
 
 pub const Encoding = enum {
     identity,
@@ -3071,7 +3086,14 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    // mark that we are connecting
+    this.flags.defer_fail_until_connecting_is_complete = true;
+    // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
+    defer this.completeConnectingProcess();
     if (comptime Environment.allow_assert) {
+        // Comparing `ptr` is safe here because it is only done if the vtable pointers are equal,
+        // which means they are both mimalloc arenas and therefore have non-undefined context
+        // pointers.
         if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
             @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
         }
@@ -3317,7 +3339,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
-                // we sent everything, but there's some body leftover
+                // we sent everything, but there's some body left over
                 if (try_sending_more_data) {
                     this.onWritable(false, is_ssl, socket);
                 }
@@ -3761,6 +3783,20 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     this.closeAndFail(error.Aborted, comptime is_ssl, socket);
 }
 
+fn completeConnectingProcess(this: *HTTPClient) void {
+    if (this.flags.defer_fail_until_connecting_is_complete) {
+        this.flags.defer_fail_until_connecting_is_complete = false;
+        if (this.state.stage == .fail) {
+            const callback = this.result_callback;
+            const result = this.toResult();
+            this.state.reset(this.allocator);
+            this.flags.proxy_tunneling = false;
+
+            callback.run(@fieldParentPtr("client", this), result);
+        }
+    }
+}
+
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
 
@@ -3775,12 +3811,14 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         this.state.fail = err;
         this.state.stage = .fail;
 
-        const callback = this.result_callback;
-        const result = this.toResult();
-        this.state.reset(this.allocator);
-        this.flags.proxy_tunneling = false;
+        if (!this.flags.defer_fail_until_connecting_is_complete) {
+            const callback = this.result_callback;
+            const result = this.toResult();
+            this.state.reset(this.allocator);
+            this.flags.proxy_tunneling = false;
 
-        callback.run(@fieldParentPtr("client", this), result);
+            callback.run(@fieldParentPtr("client", this), result);
+        }
     }
 }
 
@@ -4565,20 +4603,36 @@ pub fn handleResponseMetadata(
                     // locationURL’s origin, then for each headerName of CORS
                     // non-wildcard request-header name, delete headerName from
                     // request’s header list.
+                    // var authorization_removed = false;
+                    // var proxy_authorization_removed = false;
+                    // var cookie_removed = false;
+                    // References:
+                    // https://github.com/nodejs/undici/commit/6805746680d27a5369d7fb67bc05f95a28247d75#diff-ea7696549c3a0b60a4a7e07cc79b6d4e950c7cb1068d47e368a510967d77e7e5R206
+                    // https://github.com/denoland/deno/commit/7456255cd10286d71363fc024e51b2662790448a#diff-6e35f325f0a4e1ae3214fde20c9108e9b3531df5d284ba3c93becb99bbfc48d5R70
                     if (!is_same_origin and this.header_entries.len > 0) {
-                        const authorization_header_hash = comptime hashHeaderConst("Authorization");
-                        for (this.header_entries.items(.name), 0..) |name_ptr, i| {
-                            const name = this.headerStr(name_ptr);
-                            if (name.len == "Authorization".len) {
-                                const hash = hashHeaderName(name);
-                                if (hash == authorization_header_hash) {
-                                    this.header_entries.orderedRemove(i);
-                                    break;
+                        const headers_to_remove: []const struct {
+                            name: []const u8,
+                            hash: u64,
+                        } = &.{
+                            .{ .name = "Authorization", .hash = authorization_header_hash },
+                            .{ .name = "Proxy-Authorization", .hash = proxy_authorization_header_hash },
+                            .{ .name = "Cookie", .hash = cookie_header_hash },
+                        };
+                        inline for (headers_to_remove) |header| {
+                            const names = this.header_entries.items(.name);
+
+                            for (names, 0..) |name_ptr, i| {
+                                const name = this.headerStr(name_ptr);
+                                if (name.len == header.name.len) {
+                                    const hash = hashHeaderName(name);
+                                    if (hash == header.hash) {
+                                        this.header_entries.orderedRemove(i);
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
-
                     this.state.flags.is_redirect_pending = true;
                     if (this.method.hasRequestBody()) {
                         this.state.flags.resend_request_body_on_redirect = true;

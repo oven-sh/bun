@@ -190,6 +190,14 @@ pub fn IntegerBitSet(comptime size: u16) type {
             return @ctz(mask);
         }
 
+        /// Finds the index of the first unset bit.
+        /// If all bits are set, returns null.
+        pub fn findFirstUnset(self: Self) ?usize {
+            const mask = ~self.mask;
+            if (mask == 0) return null;
+            return @ctz(mask);
+        }
+
         /// Finds the index of the first set bit, and unsets it.
         /// If no bits are set, returns null.
         pub fn toggleFirstSet(self: *Self) ?usize {
@@ -868,6 +876,11 @@ pub const DynamicBitSetUnmanaged = struct {
     /// is present in the set, false otherwise.
     pub fn isSet(self: Self, index: usize) bool {
         if (comptime Environment.allow_assert) bun.assert(index < self.bit_length);
+        return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
+    }
+
+    pub fn isSetAllowOutOfBound(self: Self, index: usize, out_of_bounds: bool) bool {
+        if (index >= self.bit_length) return out_of_bounds;
         return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
     }
 

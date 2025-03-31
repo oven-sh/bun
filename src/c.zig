@@ -1,3 +1,13 @@
+//! Adding to this namespace is considered deprecated.
+//!
+//! If the declaration truly came from C, it should be perfectly possible to
+//! translate the definition and put it in `c-headers-for-zig.h`, and available
+//! via the lowercase `c` namespace. Wrappers around functions should go in a
+//! more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
+//!
+//! By avoiding manual transcription of C headers into Zig, we avoid bugs due to
+//! different definitions between platforms, as well as very common mistakes
+//! that can be made when porting definitions. It also keeps code much cleaner.
 const std = @import("std");
 const bun = @import("root").bun;
 const Environment = @import("./env.zig");
@@ -423,27 +433,20 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
 
     const Wrapper = struct {
         pub var function: Type = undefined;
-        pub var loaded: LazyStatus = LazyStatus.pending;
-    };
-
-    if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
-
-        if (result) |ptr| {
-            Wrapper.function = bun.cast(Type, ptr);
-            Wrapper.loaded = .loaded;
-            return Wrapper.function;
-        } else {
-            Wrapper.loaded = .failed;
-            return null;
+        var failed = false;
+        pub var once = std.once(loadOnce);
+        fn loadOnce() void {
+            function = bun.cast(Type, _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name) orelse {
+                failed = true;
+                return;
+            });
         }
+    };
+    Wrapper.once.call();
+    if (Wrapper.failed) {
+        return null;
     }
-
-    if (Wrapper.loaded == .loaded) {
-        return Wrapper.function;
-    }
-
-    return null;
+    return Wrapper.function;
 }
 
 pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
@@ -476,6 +479,15 @@ pub extern fn set_process_priority(pid: i32, priority: i32) i32;
 
 pub extern fn strncasecmp(s1: [*]const u8, s2: [*]const u8, n: usize) i32;
 pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
+
+pub fn move(dest: []u8, src: []const u8) void {
+    if (comptime Environment.allow_assert) {
+        if (src.len != dest.len) {
+            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
+        }
+    }
+    memmove(dest.ptr, src.ptr, src.len);
+}
 
 // https://man7.org/linux/man-pages/man3/fmod.3.html
 pub extern fn fmod(f64, f64) f64;

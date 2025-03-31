@@ -16,7 +16,7 @@ const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
@@ -62,25 +62,13 @@ pub const ShellErr = union(enum) {
         };
     }
 
-    pub fn fmt(this: @This()) []const u8 {
-        switch (this) {
-            .sys => {
-                const err = this.sys;
-                const str = std.fmt.allocPrint(bun.default_allocator, "bun: {s}: {}\n", .{ err.message, err.path }) catch bun.outOfMemory();
-                return str;
-            },
-            .custom => {
-                return std.fmt.allocPrint(bun.default_allocator, "bun: {s}\n", .{this.custom}) catch bun.outOfMemory();
-            },
-            .invalid_arguments => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bun: invalid arguments: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
-                return str;
-            },
-            .todo => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bun: TODO: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
-                return str;
-            },
-        }
+    pub fn format(this: *const ShellErr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (this.*) {
+            .sys => |e| writer.print("bun: {s}: {}", .{ e.message, e.path }),
+            .custom => |msg| writer.print("bun: {s}", .{msg}),
+            .invalid_arguments => |args| writer.print("bun: invalid arguments: {s}", .{args.val}),
+            .todo => |msg| writer.print("bun: TODO: {s}", .{msg}),
+        };
     }
 
     pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
@@ -111,21 +99,18 @@ pub const ShellErr = union(enum) {
         switch (this) {
             .sys => |err| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
-                bun.Global.exit(1);
             },
             .custom => |custom| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>{s}<r>", .{custom});
-                bun.Global.exit(1);
             },
             .invalid_arguments => |invalid_arguments| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {s}<r>", .{invalid_arguments.val});
-                bun.Global.exit(1);
             },
             .todo => |todo| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>TODO: {s}<r>", .{todo});
-                bun.Global.exit(1);
             },
         }
+        bun.Global.exit(1);
     }
 
     pub fn deinit(this: @This(), allocator: Allocator) void {
@@ -3859,7 +3844,7 @@ pub fn handleTemplateValue(
 
         if (template_value.isObject()) {
             if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
-                const bunstr = try maybe_str.toBunString2(globalThis);
+                const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
                     return globalThis.throw("Shell script string contains invalid UTF-16", .{});
@@ -3907,7 +3892,7 @@ pub const ShellSrcBuilder = struct {
     }
 
     pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) bun.JSError!bool {
-        const bunstr = try jsval.toBunString2(this.globalThis);
+        const bunstr = try jsval.toBunString(this.globalThis);
         defer bunstr.deref();
 
         return try this.appendBunStr(bunstr, allow_escape);
@@ -3994,8 +3979,7 @@ const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
     }
     break :brk table;
 };
-pub fn assertSpecialChar(c: u8) void {
-    bun.assertComptime();
+pub fn assertSpecialChar(comptime c: u8) void {
     bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
 }
 /// Characters that need to be backslashed inside double quotes
@@ -4316,7 +4300,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
         };
 
-        const bunstr = try string.toBunString2(globalThis);
+        const bunstr = try string.toBunString(globalThis);
         defer bunstr.deref();
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();

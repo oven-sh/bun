@@ -81,6 +81,10 @@ pub const Request = struct {
         return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
     }
 
+    pub export fn Request__setCookiesOnRequestContext(this: *Request, cookieMap: ?*JSC.WebCore.CookieMap) void {
+        this.request_context.setCookies(cookieMap);
+    }
+
     pub export fn Request__getUWSRequest(
         this: *Request,
     ) ?*uws.Request {
@@ -113,12 +117,10 @@ pub const Request = struct {
     }
 
     pub const InternalJSEventCallback = struct {
-        function: JSC.Strong = .{},
+        function: JSC.Strong = .empty,
 
-        pub const EventType = enum(u8) {
-            timeout = 0,
-            abort = 1,
-        };
+        pub const EventType = JSC.API.NodeHTTPResponse.AbortEvent;
+
         pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSEventCallback {
             return InternalJSEventCallback{
                 .function = JSC.Strong.create(function, globalThis),
@@ -271,7 +273,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable.get()) |stream| {
+                if (this.body.value.Locked.readable.get(this.body.value.Locked.global)) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -583,7 +585,7 @@ pub const Request = struct {
             url_or_object.as(JSC.DOMURL) != null;
 
         if (is_first_argument_a_url) {
-            const str = try bun.String.fromJS2(arguments[0], globalThis);
+            const str = try bun.String.fromJS(arguments[0], globalThis);
             req.url = str;
 
             if (!req.url.isEmpty())
@@ -685,7 +687,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis);
+                    req.url = try bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -693,7 +695,7 @@ pub const Request = struct {
                 } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const str = bun.String.tryFromJS(value, globalThis) orelse return error.JSError;
+                    const str = try bun.String.fromJS(value, globalThis);
                     req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
@@ -820,14 +822,14 @@ pub const Request = struct {
         const js_wrapper = cloned.toJS(globalThis);
         if (js_wrapper != .zero) {
             if (cloned.body.value == .Locked) {
-                if (cloned.body.value.Locked.readable.get()) |readable| {
+                if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
                     // If we are teed, then we need to update the cached .body
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned request
                     // but especially the original request since it will have a stale .body value now.
                     Request.bodySetCached(js_wrapper, globalThis, readable.value);
 
-                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                    if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
                         Request.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }

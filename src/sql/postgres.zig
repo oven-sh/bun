@@ -12,7 +12,7 @@ pub const short = u16;
 pub const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
-const BoringSSL = @import("../boringssl.zig");
+const BoringSSL = bun.BoringSSL;
 pub const AnyPostgresError = error{
     ConnectionClosed,
     ExpectedRequest,
@@ -45,6 +45,7 @@ pub const AnyPostgresError = error{
     UnsupportedIntegerSize,
     UnsupportedArrayFormat,
     UnsupportedNumericFormat,
+    UnknownFormatCode,
 };
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -77,6 +78,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
         error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
         error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
+        error.UnknownFormatCode => JSC.Error.ERR_POSTGRES_UNKNOWN_FORMAT_CODE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -235,8 +237,8 @@ const SocketMonitor = struct {
 pub const PostgresSQLContext = struct {
     tcp: ?*uws.SocketContext = null,
 
-    onQueryResolveFn: JSC.Strong = .{},
-    onQueryRejectFn: JSC.Strong = .{},
+    onQueryResolveFn: JSC.Strong = .empty,
+    onQueryRejectFn: JSC.Strong = .empty,
 
     pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var ctx = &globalObject.bunVM().rareData().postgresql_context;
@@ -652,7 +654,7 @@ pub const PostgresSQLQuery = struct {
         this_value.ensureStillAlive();
 
         ptr.* = .{
-            .query = try query.toBunString2(globalThis),
+            .query = try query.toBunString(globalThis),
             .thisValue = JSRef.initWeak(this_value),
             .flags = .{
                 .bigint = bigint,
@@ -851,6 +853,7 @@ pub const PostgresSQLQuery = struct {
                     connection.prepared_statement_id += 1;
                     stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
                     this.statement = stmt;
+
                     entry_value.* = stmt;
                 } else {
                     stmt.* = .{ .signature = signature, .ref_count = 1, .status = if (can_execute) .parsing else .pending };
@@ -916,9 +919,11 @@ pub const PostgresRequest = struct {
 
         var iter = QueryBindingIterator.init(values_array, columns_value, globalObject);
         for (0..len) |i| {
-            const tag: types.Tag = @enumFromInt(@as(short, @intCast(parameter_fields[i])));
+            const parameter_field = parameter_fields[i];
+            const is_custom_type = std.math.maxInt(short) < parameter_field;
+            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
 
-            const force_text = tag.isBinaryFormatSupported() and brk: {
+            const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
                 iter.to(@truncate(i));
                 if (iter.next()) |value| {
                     break :brk value.isString();
@@ -927,7 +932,7 @@ pub const PostgresRequest = struct {
                     return error.InvalidQueryBinding;
                 }
                 break :brk false;
-            };
+            });
 
             if (force_text) {
                 // If they pass a value as a string, let's avoid attempting to
@@ -952,7 +957,21 @@ pub const PostgresRequest = struct {
         iter.to(0);
         var i: usize = 0;
         while (iter.next()) |value| : (i += 1) {
-            const tag: types.Tag = @enumFromInt(@as(short, @intCast(parameter_fields[i])));
+            const tag: types.Tag = brk: {
+                if (i >= len) {
+                    // parameter in array but not in parameter_fields
+                    // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
+                    // with will describe better the error saying exactly how many parameters are missing and are expected
+                    // Example:
+                    // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
+                    // errno: "08P01",
+                    // code: "ERR_POSTGRES_SERVER_ERROR"
+                    break :brk .text;
+                }
+                const parameter_field = parameter_fields[i];
+                const is_custom_type = std.math.maxInt(short) < parameter_field;
+                break :brk if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
+            };
             if (value.isEmptyOrUndefinedOrNull()) {
                 debug("  -> NULL", .{});
                 //  As a special case, -1 indicates a
@@ -1019,7 +1038,7 @@ pub const PostgresRequest = struct {
                 },
 
                 else => {
-                    const str = try String.fromJS2(value, globalObject);
+                    const str = try String.fromJS(value, globalObject);
                     if (str.tag == .Dead) return error.OutOfMemory;
                     defer str.deref();
                     const slice = str.toUTF8WithoutRef(bun.default_allocator);
@@ -1222,6 +1241,7 @@ pub const PostgresSQLConnection = struct {
     database: []const u8 = "",
     user: []const u8 = "",
     password: []const u8 = "",
+    path: []const u8 = "",
     options: []const u8 = "",
     options_buf: []const u8 = "",
 
@@ -1321,7 +1341,7 @@ pub const PostgresSQLConnection = struct {
         };
 
         fn hmac(password: []const u8, data: []const u8) ?[32]u8 {
-            var buf = std.mem.zeroes([bun.BoringSSL.EVP_MAX_MD_SIZE]u8);
+            var buf = std.mem.zeroes([bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8);
 
             // TODO: I don't think this is failable.
             const result = bun.hmac.generate(password, data, .sha256, &buf) orelse return null;
@@ -1368,7 +1388,7 @@ pub const PostgresSQLConnection = struct {
         pub fn nonce(this: *SASL) []const u8 {
             if (this.nonce_len == 0) {
                 var bytes: [nonce_byte_len]u8 = .{0} ** nonce_byte_len;
-                bun.rand(&bytes);
+                bun.csprng(&bytes);
                 this.nonce_len = @intCast(bun.base64.encode(&this.nonce_base64_bytes, &bytes));
             }
             return this.nonce_base64_bytes[0..this.nonce_len];
@@ -1694,8 +1714,8 @@ pub const PostgresSQLConnection = struct {
                             return;
                         }
 
-                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                                 this.failWithJSValue(ssl_error.toJS(this.globalObject));
@@ -1828,16 +1848,16 @@ pub const PostgresSQLConnection = struct {
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments_old(14).slice();
-        const hostname_str = try arguments[0].toBunString2(globalObject);
+        const arguments = callframe.arguments_old(15).slice();
+        const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
 
-        const username_str = try arguments[2].toBunString2(globalObject);
+        const username_str = try arguments[2].toBunString(globalObject);
         defer username_str.deref();
-        const password_str = try arguments[3].toBunString2(globalObject);
+        const password_str = try arguments[3].toBunString(globalObject);
         defer password_str.deref();
-        const database_str = try arguments[4].toBunString2(globalObject);
+        const database_str = try arguments[4].toBunString(globalObject);
         defer database_str.deref();
         const ssl_mode: SSLMode = switch (arguments[5].toInt32()) {
             0 => .disable,
@@ -1897,13 +1917,17 @@ pub const PostgresSQLConnection = struct {
         var password: []const u8 = "";
         var database: []const u8 = "";
         var options: []const u8 = "";
+        var path: []const u8 = "";
 
-        const options_str = try arguments[7].toBunString2(globalObject);
+        const options_str = try arguments[7].toBunString(globalObject);
         defer options_str.deref();
+
+        const path_str = try arguments[8].toBunString(globalObject);
+        defer path_str.deref();
 
         const options_buf: []u8 = brk: {
             var b = bun.StringBuilder{};
-            b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1;
+            b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1 + path_str.utf8ByteLength() + 1;
 
             b.allocate(bun.default_allocator) catch {};
             var u = username_str.toUTF8WithoutRef(bun.default_allocator);
@@ -1922,15 +1946,19 @@ pub const PostgresSQLConnection = struct {
             defer o.deinit();
             options = b.append(o.slice());
 
+            var _path = path_str.toUTF8WithoutRef(bun.default_allocator);
+            defer _path.deinit();
+            path = b.append(_path.slice());
+
             break :brk b.allocatedSlice();
         };
 
-        const on_connect = arguments[8];
-        const on_close = arguments[9];
-        const idle_timeout = arguments[10].toInt32();
-        const connection_timeout = arguments[11].toInt32();
-        const max_lifetime = arguments[12].toInt32();
-        const use_unnamed_prepared_statements = arguments[13].asBoolean();
+        const on_connect = arguments[9];
+        const on_close = arguments[10];
+        const idle_timeout = arguments[11].toInt32();
+        const connection_timeout = arguments[12].toInt32();
+        const max_lifetime = arguments[13].toInt32();
+        const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
         const ptr: *PostgresSQLConnection = try bun.default_allocator.create(PostgresSQLConnection);
 
@@ -1940,6 +1968,7 @@ pub const PostgresSQLConnection = struct {
             .database = database,
             .user = username,
             .password = password,
+            .path = path,
             .options = options,
             .options_buf = options_buf,
             .socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
@@ -1979,17 +2008,29 @@ pub const PostgresSQLConnection = struct {
                 break :brk ctx_;
             };
 
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-
+            if (path.len > 0) {
+                ptr.socket = .{
+                    .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                        tls_config.deinit();
+                        if (tls_ctx) |tls| {
+                            tls.deinit(true);
+                        }
+                        ptr.deinit();
+                        return globalObject.throwError(err, "failed to connect to postgresql");
+                    },
+                };
+            } else {
+                ptr.socket = .{
+                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                        tls_config.deinit();
+                        if (tls_ctx) |tls| {
+                            tls.deinit(true);
+                        }
+                        ptr.deinit();
+                        return globalObject.throwError(err, "failed to connect to postgresql");
+                    },
+                };
+            }
             ptr.resetConnectionTimeout();
         }
 
@@ -2103,7 +2144,9 @@ pub const PostgresSQLConnection = struct {
         this.write_buffer.deinit(bun.default_allocator);
         this.read_buffer.deinit(bun.default_allocator);
         this.backend_parameters.deinit();
-        bun.default_allocator.free(this.options_buf);
+
+        bun.freeSensitive(bun.default_allocator, this.options_buf);
+
         this.tls_config.deinit();
         bun.default_allocator.destroy(this);
     }
@@ -2835,8 +2878,8 @@ pub const PostgresSQLConnection = struct {
             return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
         }
 
-        pub fn fromBytes(binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
-            switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
+        pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+            switch (oid) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
                     if (binary) {
@@ -3294,8 +3337,9 @@ pub const PostgresSQLConnection = struct {
                 if (is_raw) {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
+                    const tag = if (std.math.maxInt(short) < oid) .text else @as(types.Tag, @enumFromInt(@as(short, @intCast(oid))));
                     cell.* = if (optional_bytes) |data|
-                        try DataCell.fromBytes(this.binary, this.bigint, oid, data.slice(), this.globalObject)
+                        try DataCell.fromBytes((field.binary or this.binary) and tag.isBinaryFormatSupported(), this.bigint, tag, data.slice(), this.globalObject)
                     else
                         DataCell{
                             .tag = .null,
@@ -3591,7 +3635,8 @@ pub const PostgresSQLConnection = struct {
                 try reader.eatMessage(protocol.ParseComplete);
                 const request = this.current() orelse return error.ExpectedRequest;
                 if (request.statement) |statement| {
-                    if (statement.status == .parsing) {
+                    // if we have params wait for parameter description
+                    if (statement.status == .parsing and statement.signature.fields.len == 0) {
                         statement.status = .prepared;
                     }
                 }
@@ -3602,6 +3647,9 @@ pub const PostgresSQLConnection = struct {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 statement.parameters = description.parameters;
+                if (statement.status == .parsing) {
+                    statement.status = .prepared;
+                }
             },
             .RowDescription => {
                 var description: protocol.RowDescription = undefined;
@@ -3928,7 +3976,7 @@ pub const PostgresSQLConnection = struct {
 };
 
 pub const PostgresCachedStructure = struct {
-    structure: JSC.Strong = .{},
+    structure: JSC.Strong = .empty,
     // only populated if more than JSC.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,
 

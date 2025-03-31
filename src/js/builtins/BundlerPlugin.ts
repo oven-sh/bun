@@ -1,6 +1,9 @@
 import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
 type AnyFunction = (...args: any[]) => any;
 
+/**
+ * @see `JSBundlerPlugin.h`
+ */
 interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
@@ -58,6 +61,14 @@ export function loadAndResolvePluginsForServe(
     root: bunfig_folder,
   };
 
+  class InvalidBundlerPluginError extends TypeError {
+    pluginName: string;
+    constructor(pluginName: string, reason: string) {
+      super(`"${pluginName}" is not a valid bundler plugin: ${reason}`);
+      this.pluginName = pluginName;
+    }
+  }
+
   let bundlerPlugin = this;
   let promiseResult = (async (
     plugins: string[],
@@ -74,9 +85,9 @@ export function loadAndResolvePluginsForServe(
         throw new TypeError(`Expected "${plugins[i]}" to be a module which default exports a bundler plugin.`);
       }
       let pluginModule = pluginModuleRaw.default;
-      if (!pluginModule || pluginModule.name === undefined || pluginModule.setup === undefined) {
-        throw new TypeError(`"${plugins[i]}" is not a valid bundler plugin.`);
-      }
+      if (!pluginModule) throw new InvalidBundlerPluginError(plugins[i], "default export is missing");
+      if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(plugins[i], "name is missing");
+      if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(plugins[i], "setup() is missing");
       onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
         pluginModule.setup,
         config,
@@ -108,10 +119,10 @@ export function runSetupFunction(
   promises: Array<Promise<any>> | undefined,
   is_last: boolean,
   isBake: boolean,
-): Promise<Array<Promise<any>>> | undefined {
+): Promise<Promise<any>[]> | Promise<any>[] | undefined {
   this.promises = promises;
-  var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
-  var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback][]>();
+  var onResolvePlugins = new Map<string, [filter: RegExp, OnResolveCallback][]>();
   var onBeforeParsePlugins = new Map<
     string,
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
@@ -172,23 +183,27 @@ export function runSetupFunction(
     }
   }
 
-  function onLoad(filterObject, callback) {
+  function onLoad(this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
     validate(filterObject, callback, onLoadPlugins, undefined, undefined);
+    return this;
   }
 
-  function onResolve(filterObject, callback) {
+  function onResolve(this: PluginBuilder, filterObject: PluginConstraints, callback): PluginBuilder {
     validate(filterObject, callback, onResolvePlugins, undefined, undefined);
+    return this;
   }
 
   function onBeforeParse(
-    filterObject,
+    this: PluginBuilder,
+    filterObject: PluginConstraints,
     { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
-  ) {
+  ): PluginBuilder {
     validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
+    return this;
   }
 
   const self = this;
-  function onStart(callback) {
+  function onStart(this: PluginBuilder, callback): PluginBuilder {
     if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
@@ -203,6 +218,7 @@ export function runSetupFunction(
         self.promises.push(ret);
       }
     }
+    return this;
   }
 
   const processSetupResult = () => {
@@ -210,14 +226,14 @@ export function runSetupFunction(
       anyOnResolve = false,
       anyOnBeforeParse = false;
 
-    for (var [namespace, callbacks] of onLoadPlugins.entries()) {
+    for (let [namespace, callbacks] of onLoadPlugins.entries()) {
       for (var [filter] of callbacks) {
         this.addFilter(filter, namespace, 1);
         anyOnLoad = true;
       }
     }
 
-    for (var [namespace, callbacks] of onResolvePlugins.entries()) {
+    for (let [namespace, callbacks] of onResolvePlugins.entries()) {
       for (var [filter] of callbacks) {
         this.addFilter(filter, namespace, 0);
         anyOnResolve = true;
@@ -236,7 +252,7 @@ export function runSetupFunction(
       if (!onResolveObject) {
         this.onResolve = onResolvePlugins;
       } else {
-        for (var [namespace, callbacks] of onResolvePlugins.entries()) {
+        for (let [namespace, callbacks] of onResolvePlugins.entries()) {
           var existing = onResolveObject.$get(namespace) as [RegExp, AnyFunction][];
 
           if (!existing) {
@@ -253,7 +269,7 @@ export function runSetupFunction(
       if (!onLoadObject) {
         this.onLoad = onLoadPlugins;
       } else {
-        for (var [namespace, callbacks] of onLoadPlugins.entries()) {
+        for (let [namespace, callbacks] of onLoadPlugins.entries()) {
           var existing = onLoadObject.$get(namespace) as [RegExp, AnyFunction][];
 
           if (!existing) {
@@ -284,6 +300,9 @@ export function runSetupFunction(
     module: () => {
       throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
     },
+    addPreload: () => {
+      throw new TypeError("addPreload() is not supported in Bun.build() yet.");
+    },
     // esbuild's options argument is different, we provide some interop
     initialOptions: {
       ...config,
@@ -297,7 +316,7 @@ export function runSetupFunction(
       platform: config.target === "bun" ? "node" : config.target,
     },
     esbuild: {},
-  } satisfies PluginBuilderExt as PluginBuilder);
+  } as PluginBuilderExt);
 
   if (setupResult && $isPromise(setupResult)) {
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {

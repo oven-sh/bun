@@ -93,14 +93,12 @@ pub const StringRefList = struct {
 
 pub const SplitBundlerOptions = struct {
     plugin: ?*Plugin = null,
-    all: BuildConfigSubset = .{},
     client: BuildConfigSubset = .{},
     server: BuildConfigSubset = .{},
     ssr: BuildConfigSubset = .{},
 
     pub const empty: SplitBundlerOptions = .{
         .plugin = null,
-        .all = .{},
         .client = .{},
         .server = .{},
         .ssr = .{},
@@ -156,12 +154,7 @@ const BuildConfigSubset = struct {
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
     env: bun.Schema.Api.DotEnvBehavior = ._none,
     env_prefix: ?[]const u8 = null,
-
-    pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
-        _ = config; // autofix
-        _ = value; // autofix
-        _ = arena; // autofix
-    }
+    define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
 };
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
@@ -368,7 +361,7 @@ pub const Framework = struct {
         arena: Allocator,
     ) !Framework {
         if (opts.isString()) {
-            const str = try opts.toBunString2(global);
+            const str = try opts.toBunString(global);
             defer str.deref();
 
             // Deprecated
@@ -408,7 +401,7 @@ pub const Framework = struct {
                 return global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
             };
 
-            const str = try prop.toBunString2(global);
+            const str = try prop.toBunString(global);
             defer str.deref();
 
             break :brk .{
@@ -594,7 +587,7 @@ pub const Framework = struct {
 
     pub fn initTranspiler(
         framework: *Framework,
-        allocator: std.mem.Allocator,
+        arena: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
         renderer: Graph,
@@ -602,7 +595,7 @@ pub const Framework = struct {
         bundler_options: *const BuildConfigSubset,
     ) !void {
         out.* = try bun.Transpiler.init(
-            allocator, // TODO: this is likely a memory leak
+            arena,
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
             null,
@@ -634,13 +627,16 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(allocator, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
         if (mode == .development) {
             // Support `esm-env` package using this condition.
             try out.options.conditions.appendSlice(&.{"development"});
+        }
+        if (bundler_options.conditions.count() > 0) {
+            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }
 
         out.options.production = mode != .development;
@@ -650,10 +646,14 @@ pub const Framework = struct {
         out.options.minify_whitespace = mode != .development;
         out.options.css_chunking = true;
         out.options.framework = framework;
+        out.options.inline_entrypoint_import_meta_main = true;
+        if (bundler_options.ignoreDCEAnnotations) |ignore|
+            out.options.ignore_dce_annotations = ignore;
 
         out.options.source_map = switch (mode) {
-            // Source maps must always be linked, as DevServer special cases the
-            // linking and part of the generation of these.
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
             .development => .external,
             // TODO: follow user configuration
             else => .none,
@@ -669,10 +669,24 @@ pub const Framework = struct {
 
         out.options.jsx.development = mode == .development;
 
-        try addImportMetaDefines(allocator, out.options.define, mode, switch (renderer) {
+        try addImportMetaDefines(arena, out.options.define, mode, switch (renderer) {
             .client => .client,
             .server, .ssr => .server,
         });
+
+        if ((bundler_options.define.keys.len + bundler_options.drop.count()) > 0) {
+            for (bundler_options.define.keys, bundler_options.define.values) |k, v| {
+                const parsed = try bun.options.Define.Data.parse(k, v, false, false, log, arena);
+                try out.options.define.insert(arena, k, parsed);
+            }
+
+            for (bundler_options.drop.keys()) |drop_item| {
+                if (drop_item.len > 0) {
+                    const parsed = try bun.options.Define.Data.parse(drop_item, "", true, true, log, arena);
+                    try out.options.define.insert(arena, drop_item, parsed);
+                }
+            }
+        }
 
         if (mode != .development) {
             // Hide information about the source repository, at the cost of debugging quality.
@@ -696,7 +710,7 @@ fn getOptionalString(
         return null;
     if (value == .undefined or value == .null)
         return null;
-    const str = try value.toBunString2(global);
+    const str = try value.toBunString(global);
     return allocations.track(str.toUTF8(arena));
 }
 
@@ -794,14 +808,6 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
-
-    if (mode != .development) {
-        try define.insert(
-            allocator,
-            "import.meta.hot",
-            Define.Data.initBoolean(false),
-        );
-    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{

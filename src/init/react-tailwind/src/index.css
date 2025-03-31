@@ -40,3 +40,11 @@ body::before {
     transform: rotate(360deg);
   }
 }
+
+@media (prefers-reduced-motion) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+  }
+}

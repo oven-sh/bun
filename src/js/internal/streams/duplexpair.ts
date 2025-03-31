@@ -7,10 +7,10 @@ const kInitOtherSide = Symbol("InitOtherSide");
 
 class DuplexSide extends Duplex {
   #otherSide = null;
+  [kCallback]: (() => void) | null = null;
 
   constructor(options) {
     super(options);
-    this[kCallback] = null;
     this.#otherSide = null;
   }
 

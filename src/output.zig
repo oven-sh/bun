@@ -468,16 +468,6 @@ pub fn isVerbose() bool {
     return false;
 }
 
-// var _source_for_test: if (Environment.isTest) Source else void = undefined;
-// var _source_for_test_set = false;
-// pub fn initTest() void {
-//     if (_source_for_test_set) return;
-//     _source_for_test_set = true;
-//     const in = std.io.getStdErr();
-//     const out = std.io.getStdOut();
-//     _source_for_test = Source.init(File.from(out), File.from(in));
-//     Source.set(&_source_for_test);
-// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -712,7 +702,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = comptime brk: {
+    const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
             else => tag,
@@ -733,7 +723,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             pub inline fn isVisible() bool {
                 return false;
             }
-            pub inline fn log(comptime _: string, _: anytype) void {}
+            pub fn log(comptime _: string, _: anytype) callconv(bun.callconv_inline) void {}
         };
     }
 
@@ -787,6 +777,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             if (ScopedDebugWriter.disable_inside_log > 0) {
                 return;
             }
+
+            if (bun.crash_handler.isPanicking()) return;
 
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
@@ -1181,10 +1173,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;

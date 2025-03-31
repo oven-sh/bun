@@ -102,7 +102,7 @@ static bool KeyObject__IsASN1Sequence(const unsigned char* data, size_t size,
     if (data[1] & 0x80) {
         // Long form.
         size_t n_bytes = data[1] & ~0x80;
-        if (n_bytes + 2 > size || n_bytes > sizeof(size_t))
+        if (n_bytes > size || n_bytes > sizeof(size_t))
             return false;
         size_t length = 0;
         for (size_t i = 0; i < n_bytes; i++)
@@ -405,7 +405,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
         break;
     }
     default: {
-        if (auto* keyObj = jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
+        if (jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
             if (format != "jwk"_s) {
                 JSC::throwTypeError(globalObject, scope, "format should be 'jwk' when key type is 'object'"_s);
                 return {};
@@ -780,7 +780,29 @@ static JSC::EncodedJSValue KeyObject__createECFromPrivate(JSC::JSGlobalObject* g
     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
 }
 
-static JSC::EncodedJSValue KeyObject__createOKPFromPrivate(JSC::JSGlobalObject* globalObject, const WebCore::CryptoKeyOKP::KeyMaterial keyData, CryptoKeyOKP::NamedCurve namedCurve, WebCore::CryptoAlgorithmIdentifier alg)
+static JSC::EncodedJSValue KeyObject__createOKPEd25519FromPublicKey(JSC::JSGlobalObject* globalObject, Vector<uint8_t>& keyData)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (keyData.size() != ED25519_PUBLIC_KEY_LEN) {
+        throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 key material"_s));
+        return {};
+    }
+
+    auto result = CryptoKeyOKP::create(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, CryptoKeyType::Public, WTFMove(keyData), true, CryptoKeyUsageVerify);
+    if (UNLIKELY(result == nullptr)) {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+        return {};
+    }
+    auto impl = result.releaseNonNull();
+
+    Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* structure = zigGlobalObject->JSCryptoKeyStructure();
+
+    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+}
+static JSC::EncodedJSValue KeyObject__createOKPFromKeyMaterial(JSC::JSGlobalObject* globalObject, const WebCore::CryptoKeyOKP::KeyMaterial keyData, CryptoKeyOKP::NamedCurve namedCurve, WebCore::CryptoAlgorithmIdentifier alg)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -788,6 +810,10 @@ static JSC::EncodedJSValue KeyObject__createOKPFromPrivate(JSC::JSGlobalObject* 
     Vector<unsigned char> public_key(ED25519_PUBLIC_KEY_LEN);
 
     if (namedCurve == CryptoKeyOKP::NamedCurve::Ed25519) {
+        if (keyData.size() != ED25519_PRIVATE_KEY_LEN + ED25519_PUBLIC_KEY_LEN) {
+            throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 key material"_s));
+            return {};
+        }
         memcpy(public_key.data(), keyData.data() + ED25519_PRIVATE_KEY_LEN, ED25519_PUBLIC_KEY_LEN);
     } else {
         X25519_public_from_private(public_key.data(), keyData.data());
@@ -842,7 +868,19 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
         }
         EC_KEY_free(ec_key);
         return KeyObject__createECFromPrivate(globalObject, pkey, curve, CryptoAlgorithmIdentifier::ECDSA);
-    } else if (pKeyID == EVP_PKEY_ED25519 || pKeyID == EVP_PKEY_X25519) {
+    } else if (pKeyID == EVP_PKEY_ED25519) {
+        size_t out_len = 0;
+        if (!EVP_PKEY_get_raw_public_key(pkey, nullptr, &out_len)) {
+            throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
+            return {};
+        }
+        Vector<uint8_t> out(out_len);
+        if (!EVP_PKEY_get_raw_public_key(pkey, out.data(), &out_len) || out_len != out.size()) {
+            throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
+            return {};
+        }
+        return KeyObject__createOKPEd25519FromPublicKey(globalObject, out);
+    } else if (pKeyID == EVP_PKEY_X25519) {
         size_t out_len = 0;
         if (!EVP_PKEY_get_raw_private_key(pkey, nullptr, &out_len)) {
             throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
@@ -853,7 +891,7 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
             throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
             return {};
         }
-        return KeyObject__createOKPFromPrivate(globalObject, out, pKeyID == EVP_PKEY_ED25519 ? CryptoKeyOKP::NamedCurve::Ed25519 : CryptoKeyOKP::NamedCurve::X25519, CryptoAlgorithmIdentifier::Ed25519);
+        return KeyObject__createOKPFromKeyMaterial(globalObject, out, CryptoKeyOKP::NamedCurve::X25519, CryptoAlgorithmIdentifier::X25519);
     } else {
         throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key type"_s));
         return {};
@@ -907,7 +945,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
         }
         case CryptoKeyClass::OKP: {
             auto& impl = downcast<WebCore::CryptoKeyOKP>(wrapped);
-            return KeyObject__createOKPFromPrivate(globalObject, impl.exportKey(), impl.namedCurve(), wrapped.algorithmIdentifier());
+            return KeyObject__createOKPFromKeyMaterial(globalObject, impl.exportKey(), impl.namedCurve(), wrapped.algorithmIdentifier());
         }
         default: {
             JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type, expected private"_s);
@@ -969,7 +1007,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
         break;
     }
     default: {
-        if (auto* keyObj = jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
+        if (jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
             if (format != "jwk"_s) {
                 JSC::throwTypeError(globalObject, scope, "format should be 'jwk' when key type is 'object'"_s);
                 return {};
@@ -985,7 +1023,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
                     }
                     auto impl = result.releaseNonNull();
                     if (impl->type() == CryptoKeyType::Private) {
-                        return KeyObject__createOKPFromPrivate(globalObject, impl.get().exportKey(), CryptoKeyOKP::NamedCurve::Ed25519, CryptoAlgorithmIdentifier::Ed25519);
+                        return KeyObject__createOKPFromKeyMaterial(globalObject, impl.get().exportKey(), CryptoKeyOKP::NamedCurve::Ed25519, CryptoAlgorithmIdentifier::Ed25519);
                     }
                     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                 } else if (jwk.crv == "X25519"_s) {
@@ -996,7 +1034,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
                     }
                     auto impl = result.releaseNonNull();
                     if (impl->type() == CryptoKeyType::Private) {
-                        return KeyObject__createOKPFromPrivate(globalObject, impl.get().exportKey(), CryptoKeyOKP::NamedCurve::X25519, CryptoAlgorithmIdentifier::Ed25519);
+                        return KeyObject__createOKPFromKeyMaterial(globalObject, impl.get().exportKey(), CryptoKeyOKP::NamedCurve::X25519, CryptoAlgorithmIdentifier::Ed25519);
                     }
                     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                 } else {
@@ -1319,7 +1357,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexi
     return {};
 }
 
-ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
+ExceptionOr<std::span<const uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
 {
     if (!bufferArg.isCell()) {
         return Exception { OperationError };
@@ -1343,13 +1381,10 @@ ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
         JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
-
-        void* data = view->vector();
-        size_t byteLength = view->length();
-        if (UNLIKELY(!data)) {
+        if (view->isDetached()) {
             break;
         }
-        return Vector<uint8_t>(std::span { (uint8_t*)data, byteLength });
+        return view->span();
     }
     case ArrayBufferType: {
         auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
@@ -1357,12 +1392,10 @@ ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
             break;
         }
         auto* buffer = jsBuffer->impl();
-        void* data = buffer->data();
-        size_t byteLength = buffer->byteLength();
-        if (UNLIKELY(!data)) {
+        if (buffer->isDetached()) {
             break;
         }
-        return Vector<uint8_t>(std::span { (uint8_t*)data, byteLength });
+        return buffer->span();
     }
     default: {
         break;
@@ -2959,40 +2992,78 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__SymmetricKeySize, (JSC::JSGlobalObject * glo
 {
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
         auto& wrapped = key->wrapped();
-        auto id = wrapped.keyClass();
-        size_t size = 0;
-        switch (id) {
-        case CryptoKeyClass::HMAC: {
-            const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
-            auto keyData = hmac.key();
-            size = keyData.size();
-            break;
+        auto size = getSymmetricKeySize(wrapped);
+        if (size.has_value() && size.value() > 0) {
+            return JSC::JSValue::encode(jsNumber(size.value()));
         }
-        case CryptoKeyClass::AES: {
-            const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
-            auto keyData = aes.key();
-            size = keyData.size();
-            break;
-        }
-        case CryptoKeyClass::Raw: {
-            const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
-            auto keyData = raw.key();
-            size = keyData.size();
-            break;
-        }
-        default: {
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-        }
-
-        if (!size) {
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-
-        return JSC::JSValue::encode(JSC::jsNumber(size));
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+std::optional<size_t> getSymmetricKeySize(const WebCore::CryptoKey& key)
+{
+    auto id = key.keyClass();
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(key);
+        return hmac.key().size();
+    }
+    case CryptoKeyClass::AES: {
+        const auto& aes = downcast<WebCore::CryptoKeyAES>(key);
+        return aes.key().size();
+    }
+    case CryptoKeyClass::Raw: {
+        const auto& raw = downcast<WebCore::CryptoKeyRaw>(key);
+        return raw.key().size();
+    }
+    default: {
+        return std::nullopt;
+    }
+    }
+}
+
+const uint8_t* getSymmetricKeyData(const WebCore::CryptoKey& key)
+{
+    auto id = key.keyClass();
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(key);
+        return hmac.key().data();
+    }
+    case CryptoKeyClass::AES: {
+        const auto& aes = downcast<WebCore::CryptoKeyAES>(key);
+        return aes.key().data();
+    }
+    case CryptoKeyClass::Raw: {
+        const auto& raw = downcast<WebCore::CryptoKeyRaw>(key);
+        return raw.key().data();
+    }
+    default: {
+        return nullptr;
+    }
+    }
+}
+std::optional<std::span<const uint8_t>> getSymmetricKey(const WebCore::CryptoKey& key)
+{
+    auto id = key.keyClass();
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(key);
+        return hmac.key().span();
+    }
+    case CryptoKeyClass::AES: {
+        const auto& aes = downcast<WebCore::CryptoKeyAES>(key);
+        return aes.key().span();
+    }
+    case CryptoKeyClass::Raw: {
+        const auto& raw = downcast<WebCore::CryptoKeyRaw>(key);
+        return raw.key().span();
+    }
+    default: {
+        return std::nullopt;
+    }
+    }
 }
 
 static EncodedJSValue doAsymmetricCipher(JSGlobalObject* globalObject, CallFrame* callFrame, bool encrypt)

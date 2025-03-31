@@ -58,21 +58,6 @@ pub const PackageJSON = struct {
 
     pub usingnamespace bun.New(@This());
 
-    pub fn generateHash(package_json: *PackageJSON) void {
-        var hashy: [1024]u8 = undefined;
-        @memset(&hashy, 0);
-        var used: usize = 0;
-        bun.copy(u8, &hashy, package_json.name);
-        used = package_json.name.len;
-
-        hashy[used] = '@';
-        used += 1;
-        bun.copy(u8, hashy[used..], package_json.version);
-        used += package_json.version.len;
-
-        package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
-    }
-
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 
     pub fn nameForImport(this: *const PackageJSON, allocator: std.mem.Allocator) !string {
@@ -103,7 +88,6 @@ pub const PackageJSON = struct {
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
     version: string = "",
-    hash: u32 = 0xDEADBEEF,
 
     scripts: ?*ScriptsMap = null,
     config: ?*bun.StringArrayHashMap(string) = null,
@@ -172,10 +156,6 @@ pub const PackageJSON = struct {
             };
         }
     };
-
-    pub inline fn isAppPackage(this: *const PackageJSON) bool {
-        return this.hash == 0xDEADBEEF;
-    }
 
     fn loadDefineDefaults(
         env: *options.Env,
@@ -603,9 +583,7 @@ pub const PackageJSON = struct {
         package_id: ?Install.PackageID,
         comptime include_scripts_: enum { ignore_scripts, include_scripts },
         comptime include_dependencies: enum { main, local, none },
-        comptime generate_hash_: enum { generate_hash, no_hash },
     ) ?PackageJSON {
-        const generate_hash = generate_hash_ == .generate_hash;
         const include_scripts = include_scripts_ == .include_scripts;
 
         // TODO: remove this extra copy
@@ -659,7 +637,6 @@ pub const PackageJSON = struct {
         var package_json = PackageJSON{
             .name = "",
             .version = "",
-            .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
             .browser_map = BrowserMap.init(allocator, false),
@@ -679,10 +656,10 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.asProperty("name")) |version_json| {
-            if (version_json.expr.asString(allocator)) |version_str| {
-                if (version_str.len > 0) {
-                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
+        if (json.asProperty("name")) |name_json| {
+            if (name_json.expr.asString(allocator)) |name_str| {
+                if (name_str.len > 0) {
+                    package_json.name = allocator.dupe(u8, name_str) catch unreachable;
                 }
             }
         }
@@ -1008,12 +985,6 @@ pub const PackageJSON = struct {
             }
             if (json.asPropertyStringMap("config", allocator)) |config| {
                 package_json.config = config;
-            }
-        }
-
-        if (generate_hash) {
-            if (package_json.name.len > 0 and package_json.version.len > 0) {
-                package_json.generateHash();
             }
         }
 

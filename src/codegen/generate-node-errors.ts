@@ -56,7 +56,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 
-fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) type {
+pub fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) type {
   return struct {
       globalThis: *JSC.JSGlobalObject,
       args: Args,
@@ -88,6 +88,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   if (name == null) name = constructor.name;
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
+  zig += `    /// ${name}: ${code} (instanceof ${constructor.name})\n`;
   zig += `    ${code} = ${i},\n`;
   listForUsingNamespace += ` /// ${name}: ${code} (instanceof ${constructor.name})\n`;
   listForUsingNamespace += ` pub inline fn ${code}(globalThis: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) ErrorBuilder(Error.${code}, fmt, @TypeOf(args)) {\n`;
@@ -100,6 +101,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
     if (name == null) name = con.name;
     enumHeader += `    ${code}_${con.name} = ${i},\n`;
     listHeader += `    { JSC::ErrorType::${con.name}, "${con.name}"_s, "${code}"_s },\n`;
+    zig += `    /// ${name}: ${code} (instanceof ${con.name})\n`;
     zig += `    ${code}_${con.name} = ${i},\n`;
     listForUsingNamespace += ` /// ${name}: ${code} (instanceof ${con.name})\n`;
     listForUsingNamespace += ` pub inline fn ${code}_${con.name}(globalThis: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) ErrorBuilder(Error.${code}_${con.name}, fmt, @TypeOf(args)) {\n`;

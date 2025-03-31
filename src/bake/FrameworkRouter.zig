@@ -423,14 +423,14 @@ pub const Style = union(enum) {
 
     pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
         if (value.isString()) {
-            const bun_string = try value.toBunString2(global);
+            const bun_string = try value.toBunString(global);
             var sfa = std.heap.stackFallback(4096, bun.default_allocator);
             const utf8 = bun_string.toUTF8(sfa.get());
             defer utf8.deinit();
             if (map.get(utf8.slice())) |style| {
                 return style;
             }
-        } else if (value.isCallable(global.vm())) {
+        } else if (value.isCallable()) {
             return .{ .javascript_defined = JSC.Strong.create(value, global) };
         }
 
@@ -810,7 +810,7 @@ fn newRoute(fr: *FrameworkRouter, alloc: Allocator, route_data: Route) !Route.In
 }
 
 fn newEdge(fr: *FrameworkRouter, alloc: Allocator, edge_data: Route.Edge) !Route.Edge.Index {
-    if (fr.freed_edges.popOrNull()) |i| {
+    if (fr.freed_edges.pop()) |i| {
         fr.edges.items[i.get()] = edge_data;
         return i;
     } else {
@@ -1166,7 +1166,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const path_js = callframe.argumentsAsArray(1)[0];
-        const path_str = try path_js.toBunString2(global);
+        const path_str = try path_js.toBunString(global);
         defer path_str.deref();
         const path_slice = path_str.toSlice(bun.default_allocator);
         defer path_slice.deinit();

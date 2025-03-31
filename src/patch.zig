@@ -1085,13 +1085,13 @@ pub const TestingAPIs = struct {
         const old_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
         };
-        const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
+        const old_folder_bunstr = try old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
         const new_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
         };
-        const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
+        const new_folder_bunstr = try new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
 
         const old_folder = old_folder_bunstr.toUTF8(bun.default_allocator);
@@ -1147,7 +1147,7 @@ pub const TestingAPIs = struct {
         const patchfile_src_js = arguments.nextEat() orelse {
             return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
         };
-        const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
+        const patchfile_src_bunstr = try patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
@@ -1174,7 +1174,7 @@ pub const TestingAPIs = struct {
         };
 
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
-            var bunstr = dir_js.toBunString(globalThis);
+            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.undefined);
             defer bunstr.deref();
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
@@ -1188,7 +1188,7 @@ pub const TestingAPIs = struct {
             };
         } else bun.FileDescriptor.cwd();
 
-        const patchfile_bunstr = patchfile_js.toBunString(globalThis);
+        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.undefined);
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
@@ -1381,26 +1381,27 @@ pub fn gitDiffInternal(
     try map.put("USERPROFILE", "");
 
     child_proc.env_map = &map;
-    var stdout = std.ArrayList(u8).init(allocator);
-    var stderr = std.ArrayList(u8).init(allocator);
+    var stdout: std.ArrayListUnmanaged(u8) = .empty;
+    var stderr: std.ArrayListUnmanaged(u8) = .empty;
     var deinit_stdout = true;
     var deinit_stderr = true;
     defer {
-        if (deinit_stdout) stdout.deinit();
-        if (deinit_stderr) stderr.deinit();
+        if (deinit_stdout) stdout.deinit(allocator);
+        if (deinit_stderr) stderr.deinit(allocator);
     }
     try child_proc.spawn();
-    try child_proc.collectOutput(&stdout, &stderr, 1024 * 1024 * 4);
+    try child_proc.collectOutput(allocator, &stdout, &stderr, 1024 * 1024 * 4);
     _ = try child_proc.wait();
     if (stderr.items.len > 0) {
         deinit_stderr = false;
-        return .{ .err = stderr };
+        return .{ .err = stderr.toManaged(allocator) };
     }
 
     debug("Before postprocess: {s}\n", .{stdout.items});
-    try gitDiffPostprocess(&stdout, old_folder, new_folder);
+    var stdout_managed = stdout.toManaged(allocator);
+    try gitDiffPostprocess(&stdout_managed, old_folder, new_folder);
     deinit_stdout = false;
-    return .{ .result = stdout };
+    return .{ .result = stdout_managed };
 }
 
 /// Now we need to do the equivalent of these regex subtitutions.
@@ -1535,9 +1536,9 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
 fn shouldSkipLine(line: []const u8) bool {
     return line.len == 0 or
         (switch (line[0]) {
-        ' ', '-', '+' => true,
-        else => false,
-    } and
-        // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
-        (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
+            ' ', '-', '+' => true,
+            else => false,
+        } and
+            // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
+            (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }

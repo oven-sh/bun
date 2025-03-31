@@ -84,7 +84,7 @@ var require_src = __commonJS((exports, module) => {
       // This branch should never happen because all URLSearchParams entries
       // should already be converted to USVString. But, included for
       // completion's sake anyway.
-      if (i >= len) throw $ERR_INVALID_URI("URI malformed");
+      if (i >= len) throw $ERR_INVALID_URI();
 
       const c2 = StringPrototypeCharCodeAt.$call(str, i) & 0x3ff;
 

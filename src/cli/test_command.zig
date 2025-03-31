@@ -378,6 +378,14 @@ pub const JunitReporter = struct {
                 //     try this.contents.appendSlice(bun.default_allocator, "\"");
                 // }
             },
+            .fail_because_failing_test_passed => {
+                this.testcases_metrics.failures += 1;
+                try this.contents.writer(bun.default_allocator).print(
+                    \\>
+                    \\      <failure message="test marked with .failing() did not throw" type="AssertionError"/>
+                    \\    </testcase>
+                , .{});
+            },
             .fail_because_expected_assertion_count => {
                 this.testcases_metrics.failures += 1;
                 // TODO: add the failure message
@@ -752,21 +760,15 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
-        const trace = bun.tracy.traceNamed(@src(), comptime brk: {
-            if (reporters.text and reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCovAndText";
-            }
-
-            if (reporters.text) {
-                break :brk "TestCommand.printCodeCoverageText";
-            }
-
-            if (reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCov";
-            }
-
+        const trace = if (reporters.text and reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text)
+            bun.perf.trace("TestCommand.printCodeCoverageText")
+        else if (reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else
             @compileError("No reporters enabled");
-        });
+
         defer trace.end();
 
         if (comptime !reporters.text and !reporters.lcov) {
@@ -834,7 +836,7 @@ pub const CommandLineReporter = struct {
             // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
             var base64_bytes: [8]u8 = undefined;
             var shortname_buf: [512]u8 = undefined;
-            bun.rand(&base64_bytes);
+            bun.csprng(&base64_bytes);
             const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(
@@ -1327,7 +1329,7 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "./") or
                     strings.startsWith(arg, "../") or
                     (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+                        strings.startsWith(arg, "..\\")))) break true;
             } else false) {
                 // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
                 for (ctx.positionals[1..]) |arg| {
@@ -1445,9 +1447,9 @@ pub const TestCommand = struct {
 
                     if (has_file_like == null and
                         (strings.hasSuffixComptime(filter, ".ts") or
-                        strings.hasSuffixComptime(filter, ".tsx") or
-                        strings.hasSuffixComptime(filter, ".js") or
-                        strings.hasSuffixComptime(filter, ".jsx")))
+                            strings.hasSuffixComptime(filter, ".tsx") or
+                            strings.hasSuffixComptime(filter, ".js") or
+                            strings.hasSuffixComptime(filter, ".jsx")))
                     {
                         has_file_like = i;
                     }

@@ -1614,7 +1614,14 @@ pub extern fn ares_set_servers_csv(channel: *Channel, servers: [*c]const u8) c_i
 pub extern fn ares_set_servers_ports_csv(channel: *Channel, servers: [*c]const u8) c_int;
 pub extern fn ares_get_servers(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
 pub extern fn ares_get_servers_ports(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
+/// https://c-ares.org/docs/ares_inet_ntop.html
 pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) ?[*:0]const u8;
+/// https://c-ares.org/docs/ares_inet_pton.html
+///
+/// ## Returns
+/// - `1` if `src` was valid for the specified address family
+/// - `0` if `src` was not parseable in the specified address family
+/// - `-1` if some system error occurred. `errno` will have been set.
 pub extern fn ares_inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 pub const ARES_SUCCESS = 0;
 pub const ARES_ENODATA = 1;
@@ -2010,7 +2017,8 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
     const addr_arg = args.nextEat().?;
 
-    if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
+    const addr = try bun.String.fromJS(addr_arg, globalThis);
+    {
         defer addr.deref();
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
@@ -2039,10 +2047,6 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
-    } else {
-        if (!globalThis.hasException())
-            return globalThis.throwInvalidArguments("address must be a string", .{});
-        return error.JSError;
     }
 }
 

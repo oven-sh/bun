@@ -1734,7 +1734,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -1777,7 +1777,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "throwIfNoEntry")) |throw_if_no_entry_val| {
@@ -1813,7 +1813,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -1916,7 +1916,7 @@ pub const Arguments = struct {
                     }
                     if (next_val.isString()) {
                         arguments.eat();
-                        var str = try next_val.toBunString2(ctx);
+                        var str = try next_val.toBunString(ctx);
                         defer str.deref();
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
@@ -2485,7 +2485,7 @@ pub const Arguments = struct {
             };
 
             const buffer_value = arguments.next();
-            const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
+            const buffer = try StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
@@ -3724,7 +3724,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
@@ -3850,7 +3850,7 @@ pub const NodeFS = struct {
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
         return switch (Syscall.fstat(args.fd)) {
-            .result => |result| .{ .result = .init(result, args.big_int) },
+            .result => |*result| .{ .result = .init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
     }
@@ -3927,7 +3927,7 @@ pub const NodeFS = struct {
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
         return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
+            .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
@@ -4234,7 +4234,8 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.StatFS).initResult(Return.StatFS.init(req.ptrAs(*align(1) bun.StatFS).*, args.big_int));
+        const statfs_ = req.ptrAs(*align(1) bun.StatFS).*;
+        return Maybe(Return.StatFS).initResult(Return.StatFS.init(&statfs_, args.big_int));
     }
 
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, _: Flavor) Maybe(Return.OpenDir) {
@@ -5748,7 +5749,7 @@ pub const NodeFS = struct {
 
     pub fn statfs(this: *NodeFS, args: Arguments.StatFS, _: Flavor) Maybe(Return.StatFS) {
         return switch (Syscall.statfs(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
+            .result => |*result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
             .err => |err| Maybe(Return.StatFS){ .err = err },
         };
     }
@@ -5756,13 +5757,13 @@ pub const NodeFS = struct {
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
         if (bun.StandaloneModuleGraph.get()) |graph| {
-            if (graph.stat(path)) |result| {
+            if (graph.stat(path)) |*result| {
                 return .{ .result = .{ .stats = .init(result, args.big_int) } };
             }
         }
 
         return switch (Syscall.stat(path)) {
-            .result => |result| .{
+            .result => |*result| .{
                 .result = .{ .stats = .init(result, args.big_int) },
             },
             .err => |err| brk: {
@@ -6464,7 +6465,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {

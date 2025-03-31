@@ -1,0 +1,55 @@
+name: Packages CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/**"
+      - .prettierrc
+      - .prettierignore
+      - tsconfig.json
+      - oxlint.json
+      - "!**/*.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/**"
+      - .prettierrc
+      - .prettierignore
+      - tsconfig.json
+      - oxlint.json
+      - "!**/*.md"
+
+env:
+  BUN_VERSION: "canary"
+
+jobs:
+  bun-plugin-svelte:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          bun install
+          pushd ./packages/bun-plugin-svelte && bun install
+
+      - name: Lint
+        run: |
+          bunx oxlint@0.15 --format github --deny-warnings
+          bunx prettier --config ../../.prettierrc --check .
+        working-directory: ./packages/bun-plugin-svelte
+
+      - name: Check types
+        run: bun check:types
+        working-directory: ./packages/bun-plugin-svelte
+
+      - name: Test
+        run: bun test
+        working-directory: ./packages/bun-plugin-svelte

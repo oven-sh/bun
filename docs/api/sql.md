@@ -87,7 +87,7 @@ await sql`INSERT INTO users ${sql(users)}`;
 
 ### Picking columns to insert
 
-You can use `sql(object, Array<string>)` to pick which columns to insert. Each of the columns must be defined on the object.
+You can use `sql(object, ...string)` to pick which columns to insert. Each of the columns must be defined on the object.
 
 ```ts
 const user = {
@@ -96,7 +96,7 @@ const user = {
   age: 25,
 };
 
-await sql`INSERT INTO users ${sql(user, ["name", "email"])}`;
+await sql`INSERT INTO users ${sql(user, "name", "email")}`;
 // Only inserts name and email columns, ignoring other fields
 ```
 
@@ -165,6 +165,31 @@ await sql`
 `;
 ```
 
+### Dynamic columns in updates
+
+You can use `sql(object, ...string)` to pick which columns to update. Each of the columns must be defined on the object. If the columns are not informed all keys will be used to update the row.
+
+```ts
+await sql`UPDATE users SET ${sql(user, "name", "email")} WHERE id = ${user.id}`;
+// uses all keys from the object to update the row
+await sql`UPDATE users SET ${sql(user)} WHERE id = ${user.id}`;
+```
+
+### Dynamic values and `where in`
+
+Value lists can also be created dynamically, making where in queries simple too. Optionally you can pass a array of objects and inform what key to use to create the list.
+
+```ts
+await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+
+const users = [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+  { id: 3, name: "Charlie" },
+];
+await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
+```
+
 ## `sql``.simple()`
 
 The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.
@@ -215,7 +240,7 @@ const result = await sql.unsafe(
 
 ### Execute and Cancelling Queries
 
-Bun's SQL is lazy that means its will only start executing when awaited or executed with `.execute()`.
+Bun's SQL is lazy, which means it will only start executing when awaited or executed with `.execute()`.
 You can cancel a query that is currently executing by calling the `cancel()` method on the query object.
 
 ```ts

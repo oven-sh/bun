@@ -7,7 +7,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const Bun = JSC.API.Bun;
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = bun.JSC.WebCore.Blob.Store.CopyFilePromiseTask;
@@ -19,6 +19,7 @@ const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+const NapiFinalizerTask = bun.JSC.napi.NapiFinalizerTask;
 
 const Waker = bun.Async.Waker;
 
@@ -201,6 +202,12 @@ pub const ManagedTask = struct {
         const ctx = this.ctx;
         callback(ctx.?);
         bun.default_allocator.destroy(this);
+    }
+
+    pub fn cancel(this: *ManagedTask) void {
+        this.callback = &struct {
+            fn f(_: *anyopaque) void {}
+        }.f;
     }
 
     pub fn New(comptime Type: type, comptime Callback: anytype) type {
@@ -448,7 +455,8 @@ const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
-const TimerObject = JSC.BunTimer.TimerObject;
+const TimeoutObject = JSC.BunTimer.TimeoutObject;
+const ImmediateObject = JSC.BunTimer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
@@ -484,6 +492,7 @@ pub const Task = TaggedPointerUnion(.{
     Futimes,
     GetAddrInfoRequestTask,
     HotReloadTask,
+    ImmediateObject,
     JSCDeferredWorkTask,
     Lchmod,
     Lchown,
@@ -494,6 +503,7 @@ pub const Task = TaggedPointerUnion(.{
     Mkdir,
     Mkdtemp,
     napi_async_work,
+    NapiFinalizerTask,
     NativeBrotli,
     NativeZlib,
     Open,
@@ -535,7 +545,7 @@ pub const Task = TaggedPointerUnion(.{
     StatFS,
     Symlink,
     ThreadSafeFunction,
-    TimerObject,
+    TimeoutObject,
     Truncate,
     Unlink,
     Utimes,
@@ -953,6 +963,23 @@ pub const EventLoop = struct {
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
+    fn externRunCallback1(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue) callconv(.c) void {
+        const vm = global.bunVM();
+        var loop = vm.eventLoop();
+        loop.runCallback(callback, global, thisValue, &.{arg0});
+    }
+
+    fn externRunCallback2(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue, arg1: JSC.JSValue) callconv(.c) void {
+        const vm = global.bunVM();
+        var loop = vm.eventLoop();
+        loop.runCallback(callback, global, thisValue, &.{ arg0, arg1 });
+    }
+
+    comptime {
+        @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
+        @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
+    }
+
     pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
         this.enter();
         defer this.exit();
@@ -1001,6 +1028,7 @@ pub const EventLoop = struct {
         }
 
         while (@field(this, queue_name).readItem()) |task| {
+            log("run {s}", .{@tagName(task.tag())});
             defer counter += 1;
             switch (task.tag()) {
                 @field(Task.Tag, @typeName(ShellAsync)) => {
@@ -1329,8 +1357,12 @@ pub const EventLoop = struct {
                     var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                     any.drain();
                 },
-                @field(Task.Tag, @typeName(TimerObject)) => {
-                    var any: *TimerObject = task.get(TimerObject).?;
+                @field(Task.Tag, @typeName(TimeoutObject)) => {
+                    var any: *TimeoutObject = task.get(TimeoutObject).?;
+                    any.runImmediateTask(virtual_machine);
+                },
+                @field(Task.Tag, @typeName(ImmediateObject)) => {
+                    var any: *ImmediateObject = task.get(ImmediateObject).?;
                     any.runImmediateTask(virtual_machine);
                 },
                 @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
@@ -1343,6 +1375,9 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, @typeName(PosixSignalTask)) => {
                     PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
+                },
+                @field(Task.Tag, @typeName(NapiFinalizerTask)) => {
+                    task.get(NapiFinalizerTask).?.runOnJSThread();
                 },
                 @field(Task.Tag, @typeName(StatFS)) => {
                     var any: *StatFS = task.get(StatFS).?;

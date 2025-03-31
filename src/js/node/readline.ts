@@ -162,54 +162,6 @@ function stripVTControlCharacters(str) {
 const kUTF16SurrogateThreshold = 0x10000; // 2 ** 16
 const kEscape = "\x1b";
 const kSubstringSearch = Symbol("kSubstringSearch");
-const kIsNodeError = Symbol("kIsNodeError");
-
-// Errors
-var errorBases = {};
-var VALID_NODE_ERROR_BASES = {
-  TypeError,
-  RangeError,
-  Error,
-};
-
-function getNodeErrorByName(typeName) {
-  var base = errorBases[typeName];
-  if (base) {
-    return base;
-  }
-  if (!ObjectKeys(VALID_NODE_ERROR_BASES).includes(typeName)) {
-    throw new Error("Invalid NodeError type");
-  }
-
-  var Base = VALID_NODE_ERROR_BASES[typeName];
-
-  class NodeError extends Base {
-    [kIsNodeError] = true;
-    code;
-    constructor(msg, opts) {
-      super(msg, opts);
-      this.code = opts?.code || "ERR_GENERIC";
-    }
-
-    toString() {
-      return `${this.name} [${this.code}]: ${this.message}`;
-    }
-  }
-  errorBases[typeName] = NodeError;
-  return NodeError;
-}
-
-var NodeError = getNodeErrorByName("Error");
-var NodeTypeError = getNodeErrorByName("TypeError");
-var NodeRangeError = getNodeErrorByName("RangeError");
-
-class ERR_USE_AFTER_CLOSE extends NodeError {
-  constructor() {
-    super("This socket has been ended by the other party", {
-      code: "ERR_USE_AFTER_CLOSE",
-    });
-  }
-}
 
 // ----------------------------------------------------------------------------
 // Section: Utils
@@ -723,7 +675,7 @@ function* emitKeys(stream) {
       key.meta = escaped;
     } else if (!escaped && ch <= "\x1a") {
       // ctrl+letter
-      key.name = StringFromCharCode(StringPrototypeCharCodeAt.$call(ch) + StringPrototypeCharCodeAt.$call("a") - 1);
+      key.name = StringFromCharCode(StringPrototypeCharCodeAt.$call(ch, 0) + StringPrototypeCharCodeAt.$call("a", 0) - 1); // prettier-ignore
       key.ctrl = true;
     } else if (RegExpPrototypeExec.$call(/^[0-9A-Za-z]$/, ch) !== null) {
       // Letter, number, shift+letter
@@ -1299,8 +1251,6 @@ ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
 // ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
-  // TODO: Enumerate all the properties of the class
-
   // eslint-disable-next-line no-useless-constructor
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);
@@ -1344,7 +1294,7 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @param {boolean} [preserveCursor]
    * @returns {void}
    */
-  prompt(preserveCursor) {
+  prompt(preserveCursor?) {
     if (this.paused) this.resume();
     if (this.terminal && process.env.TERM !== "dumb") {
       if (!preserveCursor) this.cursor = 0;
@@ -1356,7 +1306,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
   [kQuestion](query, cb) {
     if (this.closed) {
-      throw new ERR_USE_AFTER_CLOSE("readline");
+      throw $ERR_USE_AFTER_CLOSE("readline");
     }
     if (this[kQuestionCallback]) {
       this.prompt();
@@ -2382,133 +2332,111 @@ ObjectDefineProperties(Interface.prototype, {
   // Redirect internal prototype methods to the underscore notation for backward
   // compatibility.
   [kSetRawMode]: {
-    __proto__: null,
     get() {
       return this._setRawMode;
     },
   },
   [kOnLine]: {
-    __proto__: null,
     get() {
       return this._onLine;
     },
   },
   [kWriteToOutput]: {
-    __proto__: null,
     get() {
       return this._writeToOutput;
     },
   },
   [kAddHistory]: {
-    __proto__: null,
     get() {
       return this._addHistory;
     },
   },
   [kRefreshLine]: {
-    __proto__: null,
     get() {
       return this._refreshLine;
     },
   },
   [kNormalWrite]: {
-    __proto__: null,
     get() {
       return this._normalWrite;
     },
   },
   [kInsertString]: {
-    __proto__: null,
     get() {
       return this._insertString;
     },
   },
   [kTabComplete]: {
-    __proto__: null,
     get() {
       return this._tabComplete;
     },
   },
   [kWordLeft]: {
-    __proto__: null,
     get() {
       return this._wordLeft;
     },
   },
   [kWordRight]: {
-    __proto__: null,
     get() {
       return this._wordRight;
     },
   },
   [kDeleteLeft]: {
-    __proto__: null,
     get() {
       return this._deleteLeft;
     },
   },
   [kDeleteRight]: {
-    __proto__: null,
     get() {
       return this._deleteRight;
     },
   },
   [kDeleteWordLeft]: {
-    __proto__: null,
     get() {
       return this._deleteWordLeft;
     },
   },
   [kDeleteWordRight]: {
-    __proto__: null,
     get() {
       return this._deleteWordRight;
     },
   },
   [kDeleteLineLeft]: {
-    __proto__: null,
     get() {
       return this._deleteLineLeft;
     },
   },
   [kDeleteLineRight]: {
-    __proto__: null,
     get() {
       return this._deleteLineRight;
     },
   },
   [kLine]: {
-    __proto__: null,
     get() {
       return this._line;
     },
   },
   [kHistoryNext]: {
-    __proto__: null,
     get() {
       return this._historyNext;
     },
   },
   [kHistoryPrev]: {
-    __proto__: null,
     get() {
       return this._historyPrev;
     },
   },
   [kGetDisplayPos]: {
-    __proto__: null,
     get() {
       return this._getDisplayPos;
     },
   },
   [kMoveCursor]: {
-    __proto__: null,
     get() {
       return this._moveCursor;
     },
   },
   [kTtyWrite]: {
-    __proto__: null,
     get() {
       return this._ttyWrite;
     },
@@ -2517,7 +2445,6 @@ ObjectDefineProperties(Interface.prototype, {
   // Defining proxies for the internal instance properties for backward
   // compatibility.
   _decoder: {
-    __proto__: null,
     get() {
       return this[kDecoder];
     },
@@ -2526,7 +2453,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _line_buffer: {
-    __proto__: null,
     get() {
       return this[kLine_buffer];
     },
@@ -2535,7 +2461,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _oldPrompt: {
-    __proto__: null,
     get() {
       return this[kOldPrompt];
     },
@@ -2544,7 +2469,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _previousKey: {
-    __proto__: null,
     get() {
       return this[kPreviousKey];
     },
@@ -2553,7 +2477,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _prompt: {
-    __proto__: null,
     get() {
       return this[kPrompt];
     },
@@ -2562,7 +2485,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _questionCallback: {
-    __proto__: null,
     get() {
       return this[kQuestionCallback];
     },
@@ -2571,7 +2493,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _sawKeyPress: {
-    __proto__: null,
     get() {
       return this[kSawKeyPress];
     },
@@ -2580,7 +2501,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _sawReturnAt: {
-    __proto__: null,
     get() {
       return this[kSawReturnAt];
     },

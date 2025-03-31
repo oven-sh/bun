@@ -48,6 +48,20 @@ pub fn encode(destination: []u8, source: []const u8) usize {
     return bun.simdutf.base64.encode(source, destination, false);
 }
 
+pub fn simdutfEncodeLenUrlSafe(source_len: usize) usize {
+    return bun.simdutf.base64.encode_len(source_len, true);
+}
+
+/// Encode with the following differences from regular `encode` function:
+///
+/// * No padding is added (the extra `=` characters at the end)
+/// * `-` and `_` are used instead of `+` and `/`
+///
+/// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
+pub fn simdutfEncodeUrlSafe(destination: []u8, source: []const u8) usize {
+    return bun.simdutf.base64.encode(source, destination, true);
+}
+
 pub fn decodeLenUpperBound(len: usize) usize {
     return zig_base64.standard.Decoder.calcSizeUpperBound(len) catch {
         //fallback

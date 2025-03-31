@@ -104,8 +104,8 @@ pub const InternalMsgHolder = struct {
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
     callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
-    worker: JSC.Strong = .{},
-    cb: JSC.Strong = .{},
+    worker: JSC.Strong = .empty,
+    cb: JSC.Strong = .empty,
     messages: std.ArrayListUnmanaged(JSC.Strong) = .{},
 
     pub fn isReady(this: *InternalMsgHolder) bool {
@@ -237,7 +237,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
             const ack = p.toInt32();
             if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
-                defer cbstrong.clear();
+                defer cbstrong.deinit();
                 _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
                 event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
@@ -260,8 +260,6 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 //
 //
 
-extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
-
 pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).ptr;
 
@@ -273,6 +271,34 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
 
     const enabled = arguments[0].toBoolean();
-    Bun__setChannelRef(globalObject, enabled);
+    const vm = globalObject.bunVM();
+    vm.channel_ref_overridden = true;
+    if (enabled) {
+        vm.channel_ref.ref(vm);
+    } else {
+        vm.channel_ref.unref(vm);
+    }
     return .undefined;
+}
+
+export fn Bun__refChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.ref(vm);
+    }
+}
+export fn Bun__unrefChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.unref(vm);
+    }
+}
+pub fn channelIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalObject.bunVM();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    return .false;
+}
+export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject) bool {
+    const vm = globalObject.bunVM();
+    return vm.channel_ref_should_ignore_one_disconnect_event_listener;
 }

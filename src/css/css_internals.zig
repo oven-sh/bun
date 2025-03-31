@@ -9,8 +9,6 @@ const JSValue = bun.JSC.JSValue;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 
-threadlocal var arena_: ?Arena = null;
-
 const TestKind = enum {
     normal,
     minify,
@@ -53,10 +51,8 @@ pub fn _test(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 }
 
 pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind, comptime test_category: TestCategory) bun.JSError!JSC.JSValue {
-    var arena = arena_ orelse brk: {
-        break :brk Arena.init() catch @panic("oopsie arena no good");
-    };
-    defer arena.reset();
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(3);
@@ -67,7 +63,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     if (!source_arg.isString()) {
         return globalThis.throw("minifyTestWithOptions: expected source to be a string", .{});
     }
-    const source_bunstr = try source_arg.toBunString2(globalThis);
+    const source_bunstr = try source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
     const source = source_bunstr.toUTF8(bun.default_allocator);
     defer source.deinit();
@@ -78,7 +74,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     if (!expected_arg.isString()) {
         return globalThis.throw("minifyTestWithOptions: expected `expected` arg to be a string", .{});
     }
-    const expected_bunstr = try expected_arg.toBunString2(globalThis);
+    const expected_bunstr = try expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
@@ -119,23 +115,32 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         source.slice(),
         parser_options,
         &import_records,
+        bun.bundle_v2.Index.invalid,
     )) {
-        .result => |stylesheet_| {
-            var stylesheet = stylesheet_;
+        .result => |ret| {
+            var stylesheet, var extra = ret;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
             minify_options.targets.browsers = browsers;
-            _ = stylesheet.minify(alloc, minify_options).assert();
+            _ = stylesheet.minify(alloc, minify_options, &extra).assert();
 
-            const result = switch (stylesheet.toCss(alloc, bun.css.PrinterOptions{
-                .minify = switch (test_kind) {
-                    .minify => true,
-                    .normal => false,
-                    .prefix => false,
+            const symbols = bun.JSAst.Symbol.Map{};
+            var local_names = bun.css.LocalsResultsMap{};
+            const result = switch (stylesheet.toCss(
+                alloc,
+                bun.css.PrinterOptions{
+                    .minify = switch (test_kind) {
+                        .minify => true,
+                        .normal => false,
+                        .prefix => false,
+                    },
+                    .targets = .{
+                        .browsers = minify_options.targets.browsers,
+                    },
                 },
-                .targets = .{
-                    .browsers = minify_options.targets.browsers,
-                },
-            }, .initOutsideOfBundler(&import_records))) {
+                .initOutsideOfBundler(&import_records),
+                &local_names,
+                &symbols,
+            )) {
                 .result => |result| result,
                 .err => |err| {
                     return err.toJSString(alloc, globalThis);
@@ -159,7 +164,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
         if (val.isArray()) {
             var iter = val.arrayIterator(globalThis);
             while (iter.next()) |item| {
-                const bunstr = try item.toBunString2(globalThis);
+                const bunstr = try item.toBunString(globalThis);
                 defer bunstr.deref();
                 const str = bunstr.toUTF8(bun.default_allocator);
                 defer str.deinit();
@@ -259,10 +264,8 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bu
 }
 
 pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var arena = arena_ orelse brk: {
-        break :brk Arena.init() catch @panic("oopsie arena no good");
-    };
-    defer arena.reset();
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(4);
@@ -273,7 +276,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     if (!source_arg.isString()) {
         return globalThis.throw("attrTest: expected source to be a string", .{});
     }
-    const source_bunstr = try source_arg.toBunString2(globalThis);
+    const source_bunstr = try source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
     const source = source_bunstr.toUTF8(bun.default_allocator);
     defer source.deinit();
@@ -284,7 +287,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     if (!expected_arg.isString()) {
         return globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
     }
-    const expected_bunstr = try expected_arg.toBunString2(globalThis);
+    const expected_bunstr = try expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
@@ -307,7 +310,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     const parser_options = bun.css.ParserOptions.default(alloc, &log);
 
     var import_records = bun.BabyList(bun.ImportRecord){};
-    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options, &import_records)) {
+    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options, &import_records, bun.bundle_v2.Index.invalid)) {
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();

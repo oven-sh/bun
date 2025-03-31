@@ -261,6 +261,17 @@ pub const Route = struct {
             config.minify.syntax = true;
         }
 
+        if (bun.CLI.Command.get().args.serve_define) |define| {
+            bun.assert(define.keys.len == define.values.len);
+            try config.define.map.ensureUnusedCapacity(define.keys.len);
+            config.define.map.unmanaged.entries.len = define.keys.len;
+            @memcpy(config.define.map.keys(), define.keys);
+            for (config.define.map.values(), define.values) |*to, from| {
+                to.* = config.define.map.allocator.dupe(u8, from) catch bun.outOfMemory();
+            }
+            try config.define.map.reIndex();
+        }
+
         if (!is_development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
             config.jsx.development = false;

@@ -30,6 +30,16 @@ function convertZigEnum(zig: string, names: string[]) {
   return output;
 }
 
+function css(file: string, is_development: boolean): string {
+  const { success, stdout, stderr } = Bun.spawnSync({
+    cmd: [process.execPath, "build", file, "--minify"],
+    cwd: import.meta.dir,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (!success) throw new Error(stderr.toString("utf-8"));
+  return stdout.toString("utf-8");
+}
+
 async function run() {
   const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
   writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
@@ -43,11 +53,13 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
+          OVERLAY_CSS: css("../bake/client/overlay.css", !!debug),
         },
         minify: {
           syntax: !debug,
         },
         target: side === "server" ? "bun" : "browser",
+        drop: debug ? [] : ["DEBUG"],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -57,7 +69,7 @@ async function run() {
       // A second pass is used to convert global variables into parameters, while
       // allowing for renaming to properly function when minification is enabled.
       const in_names = [
-        file !== "error" && "input_graph",
+        file !== "error" && "unloadedModuleRegistry",
         file !== "error" && "config",
         file === "server" && "server_exports",
         file === "server" && "$separateSSRGraph",
@@ -79,6 +91,7 @@ async function run() {
       result = await Bun.build({
         entrypoints: [generated_entrypoint],
         minify: !debug,
+        drop: debug ? [] : ["DEBUG"],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -120,8 +133,8 @@ async function run() {
             : `${code};return ${outName("server_exports")};`;
 
           const params = `${outName("$separateSSRGraph")},${outName("$importMeta")}`;
-          code = code.replaceAll("import.meta", outName("$importMeta"));
-          code = `let ${outName("input_graph")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
+          code = code.replaceAll("import.meta", outName("$importMeta")).replaceAll(outName("$importMeta") + ".hot", "import.meta.hot");
+          code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
         } else {

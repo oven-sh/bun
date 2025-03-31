@@ -581,7 +581,7 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        // TODO(@paperdave): make this configurable. the rationale for disabling
+        // TODO(@paperclover): make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
         // - bundle the dependency itself. dynamic `require`/`import` could be
@@ -660,7 +660,7 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
-        const tracer = bun.tracy.traceNamed(@src(), "ModuleResolver.resolve");
+        const tracer = bun.perf.trace("ModuleResolver.resolve");
         defer tracer.end();
 
         // Only setting 'current_action' in debug mode because module resolution
@@ -713,7 +713,7 @@ pub const Resolver = struct {
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
                 strings.hasPrefixComptime(import_path, "bun:") or
-                bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target))
+                bun.JSC.HardcodedModule.Alias.has(import_path, r.opts.target))
             {
                 return .{
                     .success = Result{
@@ -733,17 +733,17 @@ pub const Resolver = struct {
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if (kind != .entry_point_build and kind != .entry_point_run and
             (r.isExternalPattern(import_path) or
-            // "fill: url(#filter);"
-            (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
+                // "fill: url(#filter);"
+                (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 
-            // "background: url(http://example.com/images/image.png);"
-            strings.startsWith(import_path, "http://") or
+                // "background: url(http://example.com/images/image.png);"
+                strings.startsWith(import_path, "http://") or
 
-            // "background: url(https://example.com/images/image.png);"
-            strings.startsWith(import_path, "https://") or
+                // "background: url(https://example.com/images/image.png);"
+                strings.startsWith(import_path, "https://") or
 
-            // "background: url(//example.com/images/image.png);"
-            strings.startsWith(import_path, "//")))
+                // "background: url(//example.com/images/image.png);"
+                strings.startsWith(import_path, "//")))
         {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this path as implicitly external");
@@ -876,6 +876,13 @@ pub const Resolver = struct {
         // r.mutex.lock();
         // defer r.mutex.unlock();
         errdefer (r.flushDebugLogs(.fail) catch {});
+
+        // A path with a null byte cannot exist on the filesystem. Continuing
+        // anyways would cause assertion failures.
+        if (bun.strings.indexOfChar(import_path, 0) != null) {
+            r.flushDebugLogs(.fail) catch {};
+            return .{ .not_found = {} };
+        }
 
         var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
 
@@ -1108,6 +1115,24 @@ pub const Resolver = struct {
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
         if (std.fs.path.isAbsolute(import_path)) {
+            // Collapse relative directory specifiers if they exist. Extremely
+            // loose check to avoid always doing this copy, but avoid spending
+            // too much time on the check.
+            if (bun.strings.indexOf(import_path, "..") != null) {
+                const platform = bun.path.Platform.auto;
+                const ends_with_dir = platform.isSeparator(import_path[import_path.len - 1]) or
+                    (import_path.len > 3 and
+                        platform.isSeparator(import_path[import_path.len - 3]) and
+                        import_path[import_path.len - 2] == '.' and
+                        import_path[import_path.len - 1] == '.');
+                const buf = bufs(.relative_abs_path);
+                import_path = r.fs.absBuf(&.{import_path}, buf);
+                if (ends_with_dir) {
+                    buf[import_path.len] = platform.separator();
+                    import_path.len += 1;
+                }
+            }
+
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
             }
@@ -1281,7 +1306,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.JSC.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
                         return .{ .not_found = {} };
                     }
 
@@ -1299,7 +1324,7 @@ pub const Resolver = struct {
                 // Always mark "fs" as disabled, matching Webpack v4 behavior
                 if (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[2] == '/'))
+                        import_path_without_node_prefix[2] == '/'))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
@@ -1628,7 +1653,7 @@ pub const Resolver = struct {
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
-    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source: []const u8, specifier: []const u8) bool {
+    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source_file: []const u8, specifier: []const u8) bool {
         if (std.fs.path.isAbsolute(specifier)) {
             const dir = bun.path.dirname(specifier, .auto);
             const a = r.bustDirCache(dir);
@@ -1638,9 +1663,10 @@ pub const Resolver = struct {
 
         if (!(bun.strings.startsWith(specifier, "./") or
             bun.strings.startsWith(specifier, "../"))) return false;
-        if (!std.fs.path.isAbsolute(import_source)) return false;
+        if (!std.fs.path.isAbsolute(import_source_file))
+            return false;
 
-        const joined = bun.path.joinAbs(import_source, .auto, specifier);
+        const joined = bun.path.joinAbs(bun.path.dirname(import_source_file, .auto), .auto, specifier);
         const dir = bun.path.dirname(joined, .auto);
 
         const a = r.bustDirCache(dir);
@@ -1762,7 +1788,7 @@ pub const Resolver = struct {
                             if (package_json.exports) |exports_map| {
 
                                 // The condition set is determined by the kind of import
-                                var module_type = options.ModuleType.unknown;
+                                var module_type = package_json.module_type;
                                 var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
@@ -2443,6 +2469,7 @@ pub const Resolver = struct {
                     }
                     break :brk entry_query.entry.abs_path.slice();
                 };
+                const module_type = if (resolved_dir_info.package_json) |pkg| pkg.module_type else .unknown;
 
                 return MatchResult{
                     .path_pair = PathPair{
@@ -2454,6 +2481,7 @@ pub const Resolver = struct {
                     .diff_case = entry_query.diff_case,
                     .is_node_module = true,
                     .package_json = resolved_dir_info.package_json orelse package_json,
+                    .module_type = module_type,
                 };
             },
             .Inexact => {
@@ -2563,7 +2591,6 @@ pub const Resolver = struct {
                 package_id,
                 .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2573,7 +2600,6 @@ pub const Resolver = struct {
                 package_id,
                 .include_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         }
 
@@ -2588,6 +2614,7 @@ pub const Resolver = struct {
         return try r.dirInfoCachedMaybeLog(path, false, true);
     }
 
+    /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn readDirInfoIgnoreError(r: *ThisResolver, path: string) ?*const DirInfo {
         return r.dirInfoCachedMaybeLog(path, false, true) catch null;
     }
@@ -2630,7 +2657,7 @@ pub const Resolver = struct {
             }
         }
 
-        assert(std.fs.path.isAbsolute(input_path));
+        bun.assertf(std.fs.path.isAbsolute(input_path), "cannot resolve DirInfo for non-absolute path: {s}", .{input_path});
 
         const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);
@@ -3003,7 +3030,7 @@ pub const Resolver = struct {
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
                     (prefix.len > longest_match_prefix_length or
-                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
+                        (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));
@@ -3106,10 +3133,10 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
+                if (JSC.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
-                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
                             .is_external = true,
                         },
                     };
@@ -3379,90 +3406,66 @@ pub const Resolver = struct {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
         }
 
-        const in_str = try argument.toBunString2(globalThis);
+        const in_str = try argument.toBunString(globalThis);
         defer in_str.deref();
-        const r = &globalThis.bunVM().transpiler.resolver;
-        return nodeModulePathsJSValue(r, in_str, globalThis);
+        return nodeModulePathsJSValue(in_str, globalThis);
     }
 
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         bun.JSC.markBinding(@src());
 
         const in_str = bun.String.init(".");
-        const r = &globalThis.bunVM().transpiler.resolver;
-        return nodeModulePathsJSValue(r, in_str, globalThis);
+        return nodeModulePathsJSValue(in_str, globalThis);
     }
 
-    pub fn nodeModulePathsJSValue(
-        r: *ThisResolver,
-        in_str: bun.String,
-        globalObject: *bun.JSC.JSGlobalObject,
-    ) bun.JSC.JSValue {
-        var list = std.ArrayList(bun.String).init(bun.default_allocator);
-        defer list.deinit();
-
-        const sliced = in_str.toUTF8(bun.default_allocator);
-        defer sliced.deinit();
-
-        const str = brk: {
-            if (std.fs.path.isAbsolute(sliced.slice())) {
-                if (comptime Environment.isWindows) {
-                    const dir_path_buf = bufs(.node_modules_paths_buf);
-                    var normalizer = bun.path.PosixToWinNormalizer{};
-                    const normalized = normalizer.resolveCWD(sliced.slice()) catch {
-                        @panic("Failed to get cwd for _nodeModulesPaths");
-                    };
-                    break :brk bun.path.normalizeBuf(normalized, dir_path_buf, .windows);
-                }
-                break :brk sliced.slice();
-            }
-            const dir_path_buf = bufs(.node_modules_paths_buf);
-            break :brk bun.path.joinStringBuf(dir_path_buf, &[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
-        };
+    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
         const alloc = stack_fallback_allocator.get();
 
-        if (r.readDirInfo(str) catch null) |result| {
-            var dir_info = result;
+        var list = std.ArrayList(bun.String).init(alloc);
+        defer list.deinit();
 
-            while (true) {
-                const path_without_trailing_slash = strings.withoutTrailingSlash(dir_info.abs_path);
-                const path_parts = brk: {
-                    if (path_without_trailing_slash.len == 1 and path_without_trailing_slash[0] == '/') {
-                        break :brk [2]string{ "", std.fs.path.sep_str ++ "node_modules" };
-                    }
+        const sliced = in_str.toUTF8(bun.default_allocator);
+        defer sliced.deinit();
+        const buf = bufs(.node_modules_paths_buf);
 
-                    break :brk [2]string{ path_without_trailing_slash, std.fs.path.sep_str ++ "node_modules" };
-                };
-                const nodemodules_path = bun.strings.concat(alloc, &path_parts) catch unreachable;
-                bun.path.posixToPlatformInPlace(u8, nodemodules_path);
-                list.append(bun.String.createUTF8(nodemodules_path)) catch unreachable;
-                dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
-            }
-        } else {
-            // does not exist
-            const full_path = std.fs.path.resolve(r.allocator, &[1][]const u8{str}) catch unreachable;
-            var path = strings.withoutTrailingSlash(full_path);
-            while (true) {
-                const path_without_trailing_slash = strings.withoutTrailingSlash(path);
+        const full_path = bun.path.joinAbsStringBuf(
+            bun.fs.FileSystem.instance.top_level_dir,
+            buf,
+            &.{sliced.slice()},
+            .auto,
+        );
+        const root_index = switch (bun.Environment.os) {
+            .windows => bun.path.windowsFilesystemRoot(full_path).len,
+            else => 1,
+        };
+        var root_path: []const u8 = full_path[0..root_index];
+        if (full_path.len > root_path.len) {
+            var it = std.mem.splitBackwardsScalar(u8, full_path[root_index..], std.fs.path.sep);
+            while (it.next()) |part| {
+                if (strings.eqlComptime(part, "node_modules"))
+                    continue;
 
-                list.append(
-                    bun.String.createUTF8(
-                        bun.strings.concat(
-                            alloc,
-                            &[_]string{
-                                path_without_trailing_slash,
-                                std.fs.path.sep_str ++ "node_modules",
-                            },
-                        ) catch unreachable,
-                    ),
-                ) catch unreachable;
-
-                path = path[0 .. strings.lastIndexOfChar(path, std.fs.path.sep) orelse break];
+                list.append(bun.String.createFormat(
+                    "{s}{s}" ++ std.fs.path.sep_str ++ "node_modules",
+                    .{
+                        root_path,
+                        it.buffer[0 .. (if (it.index) |i| i + 1 else 0) + part.len],
+                    },
+                ) catch bun.outOfMemory()) catch bun.outOfMemory();
             }
         }
+
+        while (root_path.len > 0 and bun.path.Platform.auto.isSeparator(root_path[root_path.len - 1])) {
+            root_path.len -= 1;
+        }
+
+        list.append(bun.String.createFormat(
+            "{s}" ++ std.fs.path.sep_str ++ "node_modules",
+            .{root_path},
+        ) catch bun.outOfMemory()) catch bun.outOfMemory();
 
         return bun.String.toJSArray(globalObject, list.items);
     }
@@ -4168,10 +4171,10 @@ pub const Resolver = struct {
                         }
                     }
 
-                    var merged_config = parent_configs.pop();
+                    var merged_config = parent_configs.pop().?;
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
-                    while (parent_configs.popOrNull()) |parent_config| {
+                    while (parent_configs.pop()) |parent_config| {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;

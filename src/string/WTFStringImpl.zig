@@ -96,7 +96,7 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn deref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        bun.assert(current_count > 0);
+        bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         Bun__WTFStringImpl__deref(self);
         if (comptime bun.Environment.allow_assert) {
             if (current_count > 1) {
@@ -108,9 +108,14 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn ref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        bun.assert(current_count > 0);
+        bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         Bun__WTFStringImpl__ref(self);
         bun.assert(self.refCount() > current_count or self.isStatic());
+    }
+
+    pub inline fn hasAtLeastOneRef(self: WTFStringImpl) bool {
+        // WTF::StringImpl::hasAtLeastOneRef
+        return self.m_refCount > 0;
     }
 
     pub fn toLatin1Slice(this: WTFStringImpl) ZigString.Slice {
@@ -203,7 +208,7 @@ pub const WTFStringImplStruct = extern struct {
             return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU8(input.ptr, input.len, .utf8) else 0;
         } else {
             const input = this.utf16Slice();
-            return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU16(input.ptr, input.len, .utf8) else 0;
+            return if (input.len > 0) bun.strings.elementLengthUTF16IntoUTF8([]const u16, input) else 0;
         }
     }
 
@@ -227,7 +232,7 @@ pub const WTFStringImplStruct = extern struct {
 };
 
 pub const StringImplAllocator = struct {
-    fn alloc(ptr: *anyopaque, len: usize, _: u8, _: usize) ?[*]u8 {
+    fn alloc(ptr: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
         var this = bun.cast(WTFStringImpl, ptr);
         const len_ = this.byteLength();
 
@@ -242,14 +247,10 @@ pub const StringImplAllocator = struct {
         return @constCast(this.m_ptr.latin1);
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
     pub fn free(
         ptr: *anyopaque,
         buf: []u8,
-        _: u8,
+        _: std.mem.Alignment,
         _: usize,
     ) void {
         var this = bun.cast(WTFStringImpl, ptr);
@@ -260,7 +261,8 @@ pub const StringImplAllocator = struct {
 
     pub const VTable = std.mem.Allocator.VTable{
         .alloc = &alloc,
-        .resize = &resize,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
         .free = &free,
     };
 

@@ -3429,7 +3429,7 @@ pub const FileSink = struct {
     writer: IOWriter = .{},
     event_loop_handle: JSC.EventLoopHandle,
     written: usize = 0,
-    ref_count: bun.ptr.RefCount(FileSink, "ref_count", deinit),
+    ref_count: bun.ptr.RefCount(FileSink, "ref_count", deinit, .{}),
     pending: StreamResult.Writable.Pending = .{
         .result = .{ .done = {} },
     },
@@ -3454,7 +3454,7 @@ pub const FileSink = struct {
 
     // TODO: this usingnamespace is load-bearing, likely due to a compiler bug.
     pub usingnamespace brk: {
-        const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit);
+        const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
         break :brk struct {
             pub const ref = RefCount.ref;
             pub const deref = RefCount.deref;

@@ -222,7 +222,7 @@ pub const Sendfile = struct {
 };
 
 const ProxyTunnel = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
     pub const ref = ProxyTunnel.RefCount.ref;
     pub const deref = ProxyTunnel.RefCount.deref;
 

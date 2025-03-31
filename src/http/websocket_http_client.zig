@@ -206,7 +206,7 @@ const CppWebSocket = opaque {
 
 pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
     return struct {
-        pub const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+        pub const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -990,7 +990,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
 
-        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
 

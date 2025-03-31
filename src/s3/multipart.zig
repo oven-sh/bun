@@ -146,7 +146,7 @@ pub const MultiPartUpload = struct {
     callback_context: *anyopaque,
 
     const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 

@@ -1918,7 +1918,7 @@ pub const BundleV2 = struct {
     };
 
     pub const JSBundleCompletionTask = struct {
-        pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit);
+        pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit, .{});
         // pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
 

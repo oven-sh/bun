@@ -18,7 +18,7 @@ const std = @import("std");
 /// the virtual memory. So we should only really use this for large blobs of
 /// data that we expect to be cloned multiple times. Such as Blob in FormData.
 pub const LinuxMemFdAllocator = struct {
-    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit);
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
     pub const new = bun.TrivialNew(@This());
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;

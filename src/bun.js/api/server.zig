@@ -4914,7 +4914,7 @@ const ServePlugins = struct {
     ref_count: RefCount,
 
     /// Reference count is incremented while there are other objects that are waiting on plugin loads.
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 

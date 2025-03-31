@@ -115,7 +115,7 @@ export class ClassDefinition {
    * Example with ref counting:
    * ```
    * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
    *   pub const ref = RefCount.ref;
    *   pub const deref = RefCount.deref;
    *

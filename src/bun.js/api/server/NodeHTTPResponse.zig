@@ -2,7 +2,7 @@ const NodeHTTPResponse = @This();
 const log = bun.Output.scoped(.NodeHTTPResponse, false);
 
 pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 

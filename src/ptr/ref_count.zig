@@ -1,5 +1,10 @@
 const enable_debug = bun.Environment.isDebug;
 
+pub const RefCountOptions = struct {
+    /// Defaults to the type basename.
+    debug_name: ?[]const u8 = null,
+};
+
 /// Add managed reference counting to a struct type. This implements a `ref()`
 /// and `deref()` method to add to the struct itself. This mixin doesn't handle
 /// memory management, but is very easy to integrate with bun.new + bun.destroy.
@@ -7,7 +12,7 @@ const enable_debug = bun.Environment.isDebug;
 /// Avoid reference counting when an object only has one owner.
 ///
 ///     const Thing = struct {
-///         const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+///         const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 ///         // expose `ref` and `deref` as public methods
 ///         pub const ref = RefCount.ref;
 ///         pub const deref = RefCount.deref;
@@ -57,11 +62,14 @@ const enable_debug = bun.Environment.isDebug;
 ///
 ///     const ref_ptr = RefPtr(T).initRef(existing_raw_pointer);
 ///
-pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void) type {
+pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, options: RefCountOptions) type {
     return struct {
         active_counts: u32,
         thread: ?bun.DebugThreadLock,
         debug: if (enable_debug) DebugData(false) else void,
+
+        const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
+        pub const scope = bun.Output.Scoped(debug_name, true);
 
         pub fn init() @This() {
             return .initExactRefs(1);
@@ -81,12 +89,22 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void) type 
 
         pub fn ref(self: *T) void {
             const counter = getCounter(self);
+            scope.log("0x{x}   ref {d} -> {d}", .{
+                @intFromPtr(self),
+                counter.active_counts,
+                counter.active_counts + 1,
+            });
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts += 1;
         }
 
         pub fn deref(self: *T) void {
             const counter = getCounter(self);
+            scope.log("0x{x} deref {d} -> {d}", .{
+                @intFromPtr(self),
+                counter.active_counts,
+                counter.active_counts - 1,
+            });
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts -= 1;
             if (counter.active_counts == 0) {
@@ -146,10 +164,13 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void) type 
 ///
 /// Avoid reference counting when an object only has one owner.
 /// Avoid thread-safe reference counting when only one thread allocates and frees.
-pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) void) type {
+pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) void, options: RefCountOptions) type {
     return struct {
         active_counts: std.atomic.Value(u32),
         debug: if (enable_debug) DebugData(true) else void,
+
+        const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
+        pub const scope = bun.Output.Scoped(debug_name, true);
 
         pub fn init() @This() {
             return .initExactRefs(1);
@@ -169,12 +190,22 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn ref(self: *T) void {
             const counter = getCounter(self);
             const new_count = counter.active_counts.fetchAdd(1, .seq_cst);
+            scope.log("0x{x}   ref {d} -> {d}", .{
+                @intFromPtr(self),
+                new_count - 1,
+                new_count,
+            });
             bun.debugAssert(new_count > 0);
         }
 
         pub fn deref(self: *T) void {
             const counter = getCounter(self);
             const new_count = counter.active_counts.fetchSub(1, .seq_cst);
+            scope.log("0x{x} deref {d} -> {d}", .{
+                @intFromPtr(self),
+                new_count + 1,
+                new_count,
+            });
             bun.debugAssert(new_count > 0);
             if (new_count == 1) {
                 if (enable_debug) {

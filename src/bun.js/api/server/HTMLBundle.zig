@@ -4,7 +4,7 @@
 pub const HTMLBundle = @This();
 pub usingnamespace JSC.Codegen.JSHTMLBundle;
 /// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
@@ -44,7 +44,7 @@ pub const HTMLBundleRoute = Route;
 /// html file on multiple endpoints.
 pub const Route = struct {
     /// One HTMLBundle.Route can be specified multiple times
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{});
     pub const ref = Route.RefCount.ref;
     pub const deref = Route.RefCount.deref;
 

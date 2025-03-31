@@ -2,7 +2,7 @@
 //! code for `Bun.spawnSync`
 const Subprocess = @This();
 pub usingnamespace JSC.Codegen.JSSubprocess;
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit);
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
@@ -919,8 +919,8 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         buffer: []const u8 = "",
 
         // It seems there is a bug in the Zig compiler. We'll get back to this one later
-        const WriterRefCount = bun.ptr.RefCount(This, "ref_count", _deinit);
-        pub usingnamespace bun.ptr.RefCount(This, "ref_count", _deinit);
+        const WriterRefCount = bun.ptr.RefCount(This, "ref_count", _deinit, .{});
+        pub usingnamespace bun.ptr.RefCount(This, "ref_count", _deinit, .{});
 
         const This = @This();
         const print = bun.Output.scoped(.StaticPipeWriter, false);
@@ -1036,7 +1036,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
 }
 
 pub const PipeReader = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", PipeReader.deinit);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", PipeReader.deinit, .{});
     pub const ref = PipeReader.RefCount.ref;
     pub const deref = PipeReader.RefCount.deref;
 

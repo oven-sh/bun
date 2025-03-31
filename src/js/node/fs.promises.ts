@@ -161,7 +161,7 @@ const exports = {
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
-    return new FileHandle(await fs.open(path, flags, mode), flags);
+    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags);
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
@@ -252,7 +252,7 @@ function asyncWrap(fn: any, name: string) {
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
-  var FileHandle = (private_symbols.FileHandle = class FileHandle extends EventEmitter {
+  class FileHandle extends EventEmitter {
     constructor(fd, flag) {
       super();
       this[kFd] = fd ? fd : -1;
@@ -597,7 +597,8 @@ function asyncWrap(fn: any, name: string) {
         this.close().$then(this[kCloseResolve], this[kCloseReject]);
       }
     }
-  });
+  }
+  private_symbols.FileHandle = FileHandle;
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {

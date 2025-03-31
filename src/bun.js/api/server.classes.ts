@@ -100,9 +100,12 @@ export default [
         fn: "writeHead",
         length: 3,
       },
+      writeContinue: {
+        fn: "writeContinue",
+      },
       write: {
         fn: "write",
-        length: 2,
+        length: 3,
       },
       end: {
         fn: "end",
@@ -125,6 +128,7 @@ export default [
       pause: {
         fn: "doPause",
         length: 0,
+        passThis: true,
       },
       drainRequestBody: {
         fn: "drainRequestBody",
@@ -133,6 +137,7 @@ export default [
       dumpRequestBody: {
         fn: "dumpRequestBody",
         length: 0,
+        passThis: true,
       },
       resume: {
         fn: "doResume",
@@ -143,6 +148,9 @@ export default [
       },
       aborted: {
         getter: "getAborted",
+      },
+      flags: {
+        getter: "getFlags",
       },
       finished: {
         getter: "getFinished",
@@ -156,10 +164,18 @@ export default [
       ondata: {
         getter: "getOnData",
         setter: "setOnData",
+        this: true,
       },
       onabort: {
         getter: "getOnAbort",
         setter: "setOnAbort",
+      },
+      hasCustomOnData: {
+        getter: "getHasCustomOnData",
+        setter: "setHasCustomOnData",
+      },
+      upgraded: {
+        getter: "getUpgraded",
       },
       // ontimeout: {
       //   getter: "getOnTimeout",
@@ -168,11 +184,13 @@ export default [
       onwritable: {
         getter: "getOnWritable",
         setter: "setOnWritable",
+        this: true,
       },
     },
     klass: {},
     finalize: true,
     noConstructor: true,
+    values: ["onAborted", "onWritable", "onData"],
   }),
 
   define({
@@ -289,6 +307,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
+    values: ["socket"],
   }),
 
   define({

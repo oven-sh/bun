@@ -23,6 +23,7 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import type { AddressInfo } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -1297,7 +1298,7 @@ describe("server.address should be valid IP", () => {
 
       expect(res.socket).toBe(socket);
       expect(socket._httpMessage).toBe(res);
-      expect(() => res.assignSocket(socket)).toThrow("ServerResponse has an already assigned socket");
+      expect(() => res.assignSocket(socket)).toThrow("Socket already assigned");
       socket.emit("close");
       doneSocket();
     } catch (err) {
@@ -2219,4 +2220,154 @@ it("should allow Strict-Transport-Security when using node:http", async () => {
   const response = await fetch(`http://localhost:${server.address().port}`);
   expect(response.status).toBe(200);
   expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
+});
+
+it("should support localAddress", async () => {
+  await new Promise(resolve => {
+    const server = http.createServer((req, res) => {
+      const { localAddress, localFamily, localPort } = req.socket;
+      res.end();
+      server.close();
+      expect(localAddress).toStartWith("127.");
+      expect(localFamily).toBe("IPv4");
+      expect(localPort).toBeGreaterThan(0);
+      resolve();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      http.request(`http://localhost:${server.address().port}`).end();
+    });
+  });
+
+  await new Promise(resolve => {
+    const server = http.createServer((req, res) => {
+      const { localAddress, localFamily, localPort } = req.socket;
+      res.end();
+      server.close();
+      expect(localAddress).toStartWith("::");
+      expect(localFamily).toBe("IPv6");
+      expect(localPort).toBeGreaterThan(0);
+      resolve();
+    });
+    server.listen(0, "::1", () => {
+      http.request(`http://[::1]:${server.address().port}`).end();
+    });
+  });
+});
+
+it("should not emit/throw error when writing after socket.end", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Connection": "close" });
+
+    res.socket.end();
+    res.on("error", reject);
+    try {
+      const result = res.write("Hello, world!");
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+  });
+  try {
+    await once(server.listen(0), "listening");
+    const url = `http://localhost:${server.address().port}`;
+
+    await fetch(url, {
+      method: "POST",
+      body: Buffer.allocUnsafe(1024 * 1024 * 10),
+    })
+      .then(res => res.bytes())
+      .catch(err => {});
+
+    expect(await promise).toBeTrue();
+  } finally {
+    server.close();
+  }
+});
+
+it("should handle data if not immediately handled", async () => {
+  // Create a local server to receive data from
+  const server = http.createServer();
+
+  // Listen to the request event
+  server.on("request", (request, res) => {
+    setTimeout(() => {
+      const body: Uint8Array[] = [];
+      request.on("data", chunk => {
+        body.push(chunk);
+      });
+      request.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(Buffer.concat(body));
+      });
+    }, 100);
+  });
+  try {
+    await once(server.listen(0), "listening");
+    const url = `http://localhost:${server.address().port}`;
+    const payload = "Hello, world!".repeat(10).toString();
+    const res = await fetch(url, {
+      method: "POST",
+      body: payload,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(payload);
+  } finally {
+    server.close();
+  }
+});
+
+it("Empty requests should not be Transfer-Encoding: chunked", async () => {
+  const server = http.createServer((req, res) => {
+    res.end(JSON.stringify(req.headers));
+  });
+  await once(server.listen(0), "listening");
+  const url = `http://localhost:${server.address().port}`;
+  try {
+    for (let method of ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      http
+        .request(
+          url,
+          {
+            method,
+          },
+          res => {
+            const body: Uint8Array[] = [];
+            res.on("data", chunk => {
+              body.push(chunk);
+            });
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(Buffer.concat(body).toString()));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          },
+        )
+        .on("error", reject)
+        .end();
+
+      const headers = (await promise) as Record<string, string | undefined>;
+      expect(headers).toBeDefined();
+      expect(headers["transfer-encoding"]).toBeUndefined();
+      switch (method) {
+        case "GET":
+        case "DELETE":
+        case "OPTIONS":
+          // Content-Length will not be present for GET, DELETE, and OPTIONS
+          // aka DELETE in node.js will be undefined and in bun it will be 0
+          // this is not outside the spec but is different between node.js and bun
+          expect(headers["content-length"]).toBeOneOf(["0", undefined]);
+          break;
+        default:
+          expect(headers["content-length"]).toBeDefined();
+          break;
+      }
+    }
+  } finally {
+    server.close();
+  }
 });

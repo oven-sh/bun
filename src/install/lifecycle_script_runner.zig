@@ -485,8 +485,8 @@ pub const LifecycleScriptSubprocess = struct {
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]const u8,
         optional: bool,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime foreground: bool,
+        log_level: PackageManager.Options.LogLevel,
+        foreground: bool,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
@@ -497,7 +497,7 @@ pub const LifecycleScriptSubprocess = struct {
             .optional = optional,
         });
 
-        if (comptime log_level.isVerbose()) {
+        if (log_level.isVerbose()) {
             Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });

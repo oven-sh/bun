@@ -118,19 +118,14 @@ public:
         }
 
         /* if write was called and there was previously no Content-Length header set */
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            /* Do not allow sending 0 chunk here */
-            if (data.length()) {
-                Super::write("\r\n", 2);
-                writeUnsignedHex((unsigned int) data.length());
-                Super::write("\r\n", 2);
-
-                /* Ignoring optional for now */
-                Super::write(data.data(), (int) data.length());
-            }
+            
+            /* Write the chunked data if there is any (this will not send zero chunks) */
+            this->write(data, nullptr);
+            
 
             /* Terminating 0 chunk */
             Super::write("\r\n0\r\n\r\n", 7);
@@ -480,9 +475,43 @@ public:
             return true;
         }
 
+        size_t length = data.length();
+
+        // Special handling for extremely large data (greater than UINT_MAX bytes)
+        // most clients expect a max of UINT_MAX, so we need to split the write into multiple writes
+        if (length > UINT_MAX) {
+            bool has_failed = false;
+            size_t total_written = 0;
+            // Process full-sized chunks until remaining data is less than UINT_MAX
+            while (length > UINT_MAX) {
+                size_t written = 0;
+                // Write a UINT_MAX-sized chunk and check for failure
+                // even after failure we continue writing because the data will be buffered
+                if(!this->write(data.substr(0, UINT_MAX), &written)) {
+                    has_failed = true;
+                }
+                total_written += written;
+                length -= UINT_MAX;
+                data = data.substr(UINT_MAX);
+            }
+            // Handle the final chunk (less than UINT_MAX bytes)
+            if (length > 0) {
+                size_t written = 0;
+                if(!this->write(data, &written)) {
+                    has_failed = true;
+                }
+                total_written += written;
+            }
+            if (writtenPtr) {
+                *writtenPtr = total_written;
+            }
+            return !has_failed;
+        }
+        
+
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
@@ -499,17 +528,36 @@ public:
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
+        size_t total_written = 0;
+        bool has_failed = false;
 
-        auto [written, failed] = Super::write(data.data(), (int) data.length());
+        // Handle data larger than INT_MAX by writing it in chunks of INT_MAX bytes
+        while (length > INT_MAX) {
+            // Write the maximum allowed chunk size (INT_MAX)
+            auto [written, failed] = Super::write(data.data(), INT_MAX);
+            // If the write failed, set the has_failed flag we continue writting because the data will be buffered
+            has_failed = has_failed || failed;
+            total_written += written;
+            length -= INT_MAX;
+            data = data.substr(INT_MAX);
+        }
+        // Handle the remaining data (less than INT_MAX bytes)
+        if (length > 0) {
+            // Write the final chunk with exact remaining length
+            auto [written, failed] = Super::write(data.data(), (int) length);
+            has_failed = has_failed || failed;
+            total_written += written;
+        }
+        
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
-            *writtenPtr = written;
+            *writtenPtr = total_written;
         }
 
         /* If we did not fail the write, accept more */
-        return !failed;
+        return !has_failed;
     }
 
     /* Get the current byte write offset for this Http response */
@@ -658,12 +706,6 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->socketData;
-    }
-
-    void setSocketData(void* socketData) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->socketData = socketData;
     }
 
     void setWriteOffset(uint64_t offset) {

@@ -9,6 +9,8 @@
     "@types/puppeteer": "7.0.4"
   },
   "dependencies": {
+    "@astrojs/node": "9.1.3",
+    "astro": "5.5.5",
     "@azure/service-bus": "7.9.4",
     "@duckdb/node-api": "1.1.3-alpha.7",
     "@electric-sql/pglite": "0.2.17",
@@ -82,6 +84,7 @@
     "supertest": "6.3.3",
     "svelte": "5.20.4",
     "test262-parser-tests": "git://github.com/tc39/test262-parser-tests#0e808c74fbec780646434cad17bb22dc52461003",
+    "tsyringe": "4.8.0",
     "type-graphql": "2.0.0-rc.2",
     "typeorm": "0.3.20",
     "typescript": "5.0.2",

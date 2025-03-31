@@ -20,6 +20,7 @@ const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const getAllocator = @import("../base.zig").getAllocator;
+const JSError = bun.JSError;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -46,11 +47,12 @@ const libuv = bun.windows.libuv;
 const S3 = bun.S3;
 const S3Credentials = S3.S3Credentials;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
-const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
-const NewReadFileHandler = @import("./blob/ReadFile.zig").NewReadFileHandler;
+const PathLike = JSC.Node.PathLike;
+const WriteFilePromise = @import("blob/WriteFile.zig").WriteFilePromise;
+const WriteFileWaitFromLockedValueTask = @import("blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
+const NewReadFileHandler = @import("blob/ReadFile.zig").NewReadFileHandler;
 
-const S3File = @import("./S3File.zig");
+const S3File = @import("S3File.zig");
 
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
@@ -58,13 +60,13 @@ pub const Blob = struct {
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
 
-    const rf = @import("./blob/ReadFile.zig");
+    const rf = @import("blob/ReadFile.zig");
     pub const ReadFile = rf.ReadFile;
     pub const ReadFileUV = rf.ReadFileUV;
     pub const ReadFileTask = rf.ReadFileTask;
     pub const ReadFileResultType = rf.ReadFileResultType;
 
-    const wf = @import("./blob/WriteFile.zig");
+    const wf = @import("blob/WriteFile.zig");
     pub const WriteFile = wf.WriteFile;
     pub const WriteFileWindows = wf.WriteFileWindows;
     pub const WriteFileTask = wf.WriteFileTask;
@@ -857,42 +859,100 @@ pub const Blob = struct {
         return .no;
     }
 
-    pub fn writeFileWithSourceDestination(
+    /// Write an empty string to a file by truncating it.
+    ///
+    /// This behavior matches what we do with the fast path.
+    ///
+    /// Returns an encoded `*JSPromise` that resolves if the file
+    /// - doesn't exist and is created
+    /// - exists and is truncated
+    fn writeFileWithEmptySourceToDestination(
         ctx: JSC.C.JSContextRef,
-        source_blob: *Blob,
         destination_blob: *Blob,
         options: WriteFileOptions,
     ) JSC.JSValue {
-        const destination_type = std.meta.activeTag(destination_blob.store.?.data);
+        // SAFETY: null-checked by caller
+        const destination_store = destination_blob.store.?;
+        defer destination_blob.detach();
 
-        // Writing an empty string to a file truncates it
-        // This matches the behavior we do with the fast path.
-        // This case only really happens on Windows.
-        if (source_blob.store == null) {
-            defer destination_blob.detach();
-            if (destination_type == .file) {
+        switch (destination_store.data) {
+            .file => |file| {
                 // TODO: make this async
-                // TODO: mkdirp()
-                var result = ctx.bunVM().nodeFS().truncate(.{
-                    .path = destination_blob.store.?.data.file.pathlike,
+                const node_fs = ctx.bunVM().nodeFS();
+                var result = node_fs.truncate(.{
+                    .path = file.pathlike,
                     .len = 0,
                     .flags = bun.O.CREAT,
                 }, .sync);
+
                 if (result == .err) {
-                    // it might return EPERM when the parent directory doesn't exist
-                    // #6336
-                    if (result.err.getErrno() == .PERM) {
-                        result.err.errno = @intCast(@intFromEnum(bun.C.E.NOENT));
+                    const errno = result.err.getErrno();
+                    var was_eperm = false;
+                    err: switch (errno) {
+                        // truncate might return EPERM when the parent directory doesn't exist
+                        // #6336
+                        .PERM => {
+                            was_eperm = true;
+                            result.err.errno = @intCast(@intFromEnum(bun.C.E.NOENT));
+                            continue :err .NOENT;
+                        },
+                        .NOENT => {
+                            if (options.mkdirp_if_not_exists == false) break :err;
+                            // NOTE: if .err is PERM, it ~should~ really is a
+                            // permissions issue
+                            const dirpath: []const u8 = switch (file.pathlike) {
+                                .path => |path| std.fs.path.dirname(path.slice()) orelse break :err,
+                                .fd => {
+                                    // NOTE: if this is an fd, it means the file
+                                    // exists, so we shouldn't try to mkdir it
+                                    // also means PERM is _actually_ a
+                                    // permissions issue
+                                    if (was_eperm) result.err.errno = @intCast(@intFromEnum(bun.C.E.PERM));
+                                    break :err;
+                                },
+                            };
+                            const mkdir_result = node_fs.mkdirRecursive(.{
+                                .path = .{ .string = bun.PathString.init(dirpath) },
+                                // TODO: Do we really want .mode to be 0o777?
+                                .recursive = true,
+                                .always_return_none = true,
+                            });
+                            if (mkdir_result == .err) {
+                                result.err = mkdir_result.err;
+                                break :err;
+                            }
+
+                            // SAFETY: we check if `file.pathlike` is an fd or
+                            // not above, returning if it is.
+                            var buf: bun.PathBuffer = undefined;
+                            // TODO: respect `options.mode`
+                            const mode: bun.Mode = JSC.Node.default_permission;
+                            while (true) {
+                                const open_res = bun.sys.open(file.pathlike.path.sliceZ(&buf), bun.O.CREAT | bun.O.TRUNC, mode);
+                                switch (open_res) {
+                                    // errors fall through and are handled below
+                                    .err => |err| {
+                                        if (err.getErrno() == .INTR) continue;
+                                        result.err = open_res.err;
+                                        break :err;
+                                    },
+                                    .result => |fd| {
+                                        _ = bun.sys.close(fd);
+                                        return JSC.JSPromise.resolvedPromiseValue(ctx, .jsNumber(0));
+                                    },
+                                }
+                            }
+                        },
+                        else => {},
                     }
 
-                    result.err = result.err.withPathLike(destination_blob.store.?.data.file.pathlike);
-
+                    result.err = result.err.withPathLike(file.pathlike);
                     return JSC.JSPromise.rejectedPromiseValue(ctx, result.toJS(ctx));
                 }
-            } else if (destination_type == .s3) {
+            },
+            .s3 => |*s3| {
 
                 // create empty file
-                const s3 = &destination_blob.store.?.data.s3;
                 var aws_options = s3.getCredentialsWithOptions(options.extra_options, ctx) catch |err| {
                     return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.takeException(err));
                 };
@@ -925,7 +985,7 @@ pub const Blob = struct {
                 const promise_value = promise.value();
                 const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
                 const proxy_url = if (proxy) |p| p.href else null;
-                destination_blob.store.?.ref();
+                destination_store.ref();
                 S3.upload(
                     &aws_options.credentials,
                     s3.path(),
@@ -937,17 +997,38 @@ pub const Blob = struct {
                     Wrapper.resolve,
                     Wrapper.new(.{
                         .promise = promise,
-                        .store = destination_blob.store.?,
+                        .store = destination_store,
                         .global = ctx,
                     }),
                 );
                 return promise_value;
-            }
-
-            return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0));
+            },
+            // Writing to a buffer-backed blob should be a type error,
+            // making this unreachable. TODO: `{}` -> `unreachable`
+            .bytes => {},
         }
 
-        const source_type = std.meta.activeTag(source_blob.store.?.data);
+        return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0));
+    }
+
+    pub fn writeFileWithSourceDestination(
+        ctx: JSC.C.JSContextRef,
+        source_blob: *Blob,
+        destination_blob: *Blob,
+        options: WriteFileOptions,
+    ) JSC.JSValue {
+        const destination_store = destination_blob.store orelse Output.panic("Destination blob is detached", .{});
+        const destination_type = std.meta.activeTag(destination_store.data);
+
+        // TODO: make sure this invariant isn't being broken elsewhere (outside
+        // its usage from `Blob.writeFileInternal`), then upgrade this to
+        // Environment.allow_assert
+        if (Environment.isDebug) {
+            bun.assertf(destination_type != .bytes, "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller. Please report it to the Bun team.", .{});
+        }
+
+        const source_store = source_blob.store orelse return writeFileWithEmptySourceToDestination(ctx, destination_blob, options);
+        const source_type = std.meta.activeTag(source_store.data);
 
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.new(WriteFilePromise, .{
@@ -993,7 +1074,7 @@ pub const Blob = struct {
             if (comptime Environment.isWindows) {
                 return Store.CopyFileWindows.init(
                     destination_blob.store.?,
-                    source_blob.store.?,
+                    source_store,
                     ctx.bunVM().eventLoop(),
                     options.mkdirp_if_not_exists orelse true,
                     destination_blob.size,
@@ -1002,7 +1083,7 @@ pub const Blob = struct {
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
                 destination_blob.store.?,
-                source_blob.store.?,
+                source_store,
 
                 destination_blob.offset,
                 destination_blob.size,
@@ -1012,7 +1093,7 @@ pub const Blob = struct {
             file_copier.schedule();
             return file_copier.promise.value();
         } else if (destination_type == .file and source_type == .s3) {
-            const s3 = &source_blob.store.?.data.s3;
+            const s3 = &source_store.data.s3;
             if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
                 ctx,
                 source_blob,
@@ -1045,10 +1126,9 @@ pub const Blob = struct {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.takeException(err));
             };
             defer aws_options.deinit();
-            const store = source_blob.store.?;
             const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
-            switch (store.data) {
+            switch (source_store.data) {
                 .bytes => |bytes| {
                     if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
                         if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
@@ -1094,7 +1174,7 @@ pub const Blob = struct {
                                 this.store.deref();
                             }
                         };
-                        store.ref();
+                        source_store.ref();
                         const promise = JSC.JSPromise.Strong.init(ctx);
                         const promise_value = promise.value();
 
@@ -1108,7 +1188,7 @@ pub const Blob = struct {
                             aws_options.storage_class,
                             Wrapper.resolve,
                             Wrapper.new(.{
-                                .store = store,
+                                .store = source_store,
                                 .promise = promise,
                                 .global = ctx,
                             }),
@@ -1150,21 +1230,26 @@ pub const Blob = struct {
         mkdirp_if_not_exists: ?bool = null,
         extra_options: ?JSValue = null,
     };
+
+    /// ## Errors
+    /// - If `path_or_blob` is a detached blob
+    /// ## Panics
+    /// - If `path_or_blob` is a `Blob` backed by a byte store
     pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOrBlob, data: JSC.JSValue, options: WriteFileOptions) bun.JSError!JSC.JSValue {
         if (data.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         }
         var path_or_blob = path_or_blob_.*;
         if (path_or_blob == .blob) {
-            if (path_or_blob.blob.store == null) {
+            const blob_store = path_or_blob.blob.store orelse {
                 return globalThis.throwInvalidArguments("Blob is detached", .{});
-            } else {
-                // TODO only reset last_modified on success paths instead of
-                // resetting last_modified at the beginning for better performance.
-                if (path_or_blob.blob.store.?.data == .file) {
-                    // reset last_modified to force getLastModified() to reload after writing.
-                    path_or_blob.blob.store.?.data.file.last_modified = JSC.init_timestamp;
-                }
+            };
+            bun.assertWithLocation(blob_store.data != .bytes, @src());
+            // TODO only reset last_modified on success paths instead of
+            // resetting last_modified at the beginning for better performance.
+            if (blob_store.data == .file) {
+                // reset last_modified to force getLastModified() to reload after writing.
+                blob_store.data.file.last_modified = JSC.init_timestamp;
             }
         }
 
@@ -1274,11 +1359,18 @@ pub const Blob = struct {
 
         // if path_or_blob is a path, convert it into a file blob
         var destination_blob: Blob = if (path_or_blob == .path) brk: {
-            break :brk Blob.findOrCreateFileFromPath(&path_or_blob_.path, globalThis, true);
+            const new_blob = Blob.findOrCreateFileFromPath(&path_or_blob_.path, globalThis, true);
+            if (new_blob.store == null) {
+                return globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
+            }
+            break :brk new_blob;
         } else path_or_blob.blob.dupe();
 
-        if (destination_blob.store == null) {
-            return globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
+        if (bun.Environment.allow_assert and path_or_blob == .blob) {
+            // sanity check. Should never happen because
+            // 1. destination blobs passed via path_or_blob are null checked at the very start
+            // 2. newly created blobs from paths get null checked immediately after creation.
+            bun.unsafeAssert(path_or_blob.blob.store != null);
         }
 
         // TODO: implement a writeev() fast path
@@ -1432,8 +1524,10 @@ pub const Blob = struct {
 
         return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
     }
+
+    /// `Bun.write(destination, input, options?)`
     pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(3).slice();
+        const arguments = callframe.arguments();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
@@ -1442,6 +1536,15 @@ pub const Blob = struct {
         defer {
             if (path_or_blob == .path) {
                 path_or_blob.path.deinit();
+            }
+        }
+        // "Blob" must actually be a BunFile, not a webcore blob.
+        if (path_or_blob == .blob) {
+            const store = path_or_blob.blob.store orelse {
+                return globalThis.throw("Cannot write to a detached Blob", .{});
+            };
+            if (store.data == .bytes) {
+                return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
             }
         }
 
@@ -1663,12 +1766,7 @@ pub const Blob = struct {
             return globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
         }
         {
-            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-                if (!globalThis.hasException()) {
-                    return globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-                }
-                return error.JSError;
-            };
+            const name_value_str = try bun.String.fromJS(args[1], globalThis);
             defer name_value_str.deref();
 
             blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
@@ -2066,6 +2164,7 @@ pub const Blob = struct {
             return store;
         }
 
+        /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) *Store {
             const store = Blob.Store.new(.{
                 .data = .{
@@ -3655,6 +3754,8 @@ pub const Blob = struct {
         /// Used by standalone module graph and the File constructor
         stored_name: bun.PathString = bun.PathString.empty,
 
+        /// Takes ownership of `bytes`, which must have been allocated with
+        /// `allocator`.
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
@@ -4100,7 +4201,6 @@ pub const Blob = struct {
         }
     };
 
-    pub const shim = JSC.Shimmer("Bun", "FileStreamWrapper", @This());
     pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
@@ -4132,16 +4232,13 @@ pub const Blob = struct {
         }
         return .undefined;
     }
-    pub const Export = shim.exportFunctions(.{
-        .onResolveRequestStream = onFileStreamResolveRequestStream,
-        .onRejectRequestStream = onFileStreamRejectRequestStream,
-    });
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFunction(onFileStreamResolveRequestStream);
-        @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        @export(&jsonResolveRequestStream, .{ .name = "Bun__FileStreamWrapper__onResolveRequestStream" });
         const jsonRejectRequestStream = JSC.toJSHostFunction(onFileStreamRejectRequestStream);
-        @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        @export(&jsonRejectRequestStream, .{ .name = "Bun__FileStreamWrapper__onRejectRequestStream" });
     }
+
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {
             return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
@@ -4705,6 +4802,8 @@ pub const Blob = struct {
         jsThis: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
         value: JSValue,
+
+        // TODO: support JSError for getters/setters
     ) bool {
         // by default we don't have a name so lets allow it to be set undefined
         if (value.isEmptyOrUndefinedOrNull()) {
@@ -4716,8 +4815,13 @@ pub const Blob = struct {
         if (value.isString()) {
             const old_name = this.name;
 
-            this.name = bun.String.tryFromJS(value, globalThis) orelse {
-                // Handle allocation failure.
+            this.name = bun.String.fromJS(value, globalThis) catch |err| {
+                switch (err) {
+                    error.JSError => {},
+                    error.OutOfMemory => {
+                        globalThis.throwOutOfMemory() catch {};
+                    },
+                }
                 this.name = bun.String.empty;
                 return false;
             };
@@ -5004,6 +5108,7 @@ pub const Blob = struct {
         };
     }
 
+    /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = @as(SizeType, @truncate(bytes.len)),

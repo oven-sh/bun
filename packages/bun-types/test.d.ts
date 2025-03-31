@@ -16,6 +16,8 @@
 declare module "bun:test" {
   /**
    * -- Mocks --
+   *
+   * @category Testing
    */
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
@@ -149,6 +151,10 @@ declare module "bun:test" {
     methodOrPropertyValue: K,
   ): Mock<T[K] extends (...args: any[]) => any ? T[K] : never>;
 
+  interface FunctionLike {
+    readonly name: string;
+  }
+
   /**
    * Describes a group of related tests.
    *
@@ -164,11 +170,9 @@ declare module "bun:test" {
    *
    * @param label the label for the tests
    * @param fn the function that defines the tests
+   *
+   * @category Testing
    */
-
-  interface FunctionLike {
-    readonly name: string;
-  }
   export interface Describe {
     (fn: () => void): void;
 
@@ -352,6 +356,8 @@ declare module "bun:test" {
    * @param label the label for the test
    * @param fn the test function
    * @param options the test timeout or options
+   *
+   * @category Testing
    */
   export interface Test {
     (
@@ -420,7 +426,6 @@ declare module "bun:test" {
      *
      * @param label the label for the test
      * @param fn the test function
-     * @param options the test timeout or options
      */
     failing(label: string, fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
     /**
@@ -1776,10 +1781,6 @@ declare module "bun:test" {
   }
 
   type MatcherContext = MatcherUtils & MatcherState;
-}
-
-declare module "test" {
-  export type * from "bun:test";
 }
 
 declare namespace JestMock {

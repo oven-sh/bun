@@ -21,8 +21,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsFunctionProcessModuleCommonJSGetter,
 {
 
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)
-                               ->processObject()
-                               ->get(globalObject, propertyName));
+            ->processObject()
+            ->get(globalObject, propertyName));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsFunctionProcessModuleCommonJSSetter,

@@ -320,9 +320,7 @@ pub const PublishCommand = struct {
                     },
                 };
 
-                return switch (manager.options.log_level) {
-                    inline else => |log_level| Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true),
-                };
+                return Pack.pack(&pack_ctx, manager.original_package_json_path, true);
             }
         };
     }

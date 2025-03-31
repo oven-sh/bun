@@ -90,7 +90,7 @@ declare module "bun" {
      *
      * @example
      *     // Setting public read access
-     *     const file = s3("public-file.txt", {
+     *     const file = s3.file("public-file.txt", {
      *       acl: "public-read",
      *       bucket: "my-bucket"
      *     });
@@ -113,24 +113,24 @@ declare module "bun" {
       | "log-delivery-write";
 
     /**
-     * The S3 bucket name. Can be set via `S3_BUCKET` or `AWS_BUCKET` environment variables.
+     * The S3 bucket name. Defaults to `S3_BUCKET` or `AWS_BUCKET` environment variables.
      *
      * @example
      *     // Using explicit bucket
-     *     const file = s3("my-file.txt", { bucket: "my-bucket" });
+     *     const file = s3.file("my-file.txt", { bucket: "my-bucket" });
      *
      * @example
      *     // Using environment variables
      *     // With S3_BUCKET=my-bucket in .env
-     *     const file = s3("my-file.txt");
+     *     const file = s3.file("my-file.txt");
      */
     bucket?: string;
 
     /**
-     * The AWS region. Can be set via `S3_REGION` or `AWS_REGION` environment variables.
+     * The AWS region. Defaults to `S3_REGION` or `AWS_REGION` environment variables.
      *
      * @example
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       bucket: "my-bucket",
      *       region: "us-west-2"
      *     });
@@ -139,23 +139,23 @@ declare module "bun" {
 
     /**
      * The access key ID for authentication.
-     * Can be set via `S3_ACCESS_KEY_ID` or `AWS_ACCESS_KEY_ID` environment variables.
+     * Defaults to `S3_ACCESS_KEY_ID` or `AWS_ACCESS_KEY_ID` environment variables.
      */
     accessKeyId?: string;
 
     /**
      * The secret access key for authentication.
-     * Can be set via `S3_SECRET_ACCESS_KEY` or `AWS_SECRET_ACCESS_KEY` environment variables.
+     * Defaults to `S3_SECRET_ACCESS_KEY` or `AWS_SECRET_ACCESS_KEY` environment variables.
      */
     secretAccessKey?: string;
 
     /**
      * Optional session token for temporary credentials.
-     * Can be set via `S3_SESSION_TOKEN` or `AWS_SESSION_TOKEN` environment variables.
+     * Defaults to `S3_SESSION_TOKEN` or `AWS_SESSION_TOKEN` environment variables.
      *
      * @example
      *     // Using temporary credentials
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       accessKeyId: tempAccessKey,
      *       secretAccessKey: tempSecretKey,
      *       sessionToken: tempSessionToken
@@ -165,29 +165,29 @@ declare module "bun" {
 
     /**
      * The S3-compatible service endpoint URL.
-     * Can be set via `S3_ENDPOINT` or `AWS_ENDPOINT` environment variables.
+     * Defaults to `S3_ENDPOINT` or `AWS_ENDPOINT` environment variables.
      *
      * @example
      *     // AWS S3
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       endpoint: "https://s3.us-east-1.amazonaws.com"
      *     });
      *
      * @example
      *     // Cloudflare R2
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       endpoint: "https://<account-id>.r2.cloudflarestorage.com"
      *     });
      *
      * @example
      *     // DigitalOcean Spaces
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       endpoint: "https://<region>.digitaloceanspaces.com"
      *     });
      *
      * @example
      *     // MinIO (local development)
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       endpoint: "http://localhost:9000"
      *     });
      */
@@ -198,7 +198,7 @@ declare module "bun" {
      *
      * @example
      *     // Using virtual hosted style
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       virtualHostedStyle: true,
      *       endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com"
      *     });
@@ -213,7 +213,7 @@ declare module "bun" {
      *
      * @example
      *     // Configuring multipart uploads
-     *     const file = s3("large-file.dat", {
+     *     const file = s3.file("large-file.dat", {
      *       partSize: 10 * 1024 * 1024, // 10 MiB parts
      *       queueSize: 4  // Upload 4 parts in parallel
      *     });
@@ -240,7 +240,7 @@ declare module "bun" {
      *
      * @example
      *    // Setting retry attempts
-     *     const file = s3("my-file.txt", {
+     *     const file = s3.file("my-file.txt", {
      *       retry: 5 // Retry failed uploads up to 5 times
      *     });
      */
@@ -252,7 +252,7 @@ declare module "bun" {
      *
      * @example
      *    // Setting explicit content type
-     *     const file = s3("data.bin", {
+     *     const file = s3.file("data.bin", {
      *       type: "application/octet-stream"
      *     });
      */
@@ -263,7 +263,7 @@ declare module "bun" {
      *
      * @example
      *    // Setting explicit Storage class
-     *     const file = s3("my-file.json", {
+     *     const file = s3.file("my-file.json", {
      *       storageClass: "STANDARD_IA"
      *     });
      */
@@ -340,6 +340,8 @@ declare module "bun" {
   /**
    * Represents a file in an S3-compatible storage service.
    * Extends the Blob interface for compatibility with web APIs.
+   *
+   * @category Cloud Storage
    */
   interface S3File extends Blob {
     /**
@@ -469,7 +471,7 @@ declare module "bun" {
      * The name or path of the file in the bucket.
      *
      * @example
-     * const file = s3("folder/image.jpg");
+     * const file = s3.file("folder/image.jpg");
      * console.log(file.name); // "folder/image.jpg"
      */
     readonly name?: string;
@@ -478,7 +480,7 @@ declare module "bun" {
      * The bucket name containing the file.
      *
      * @example
-     *    const file = s3("s3://my-bucket/file.txt");
+     *    const file = s3.file("s3://my-bucket/file.txt");
      *    console.log(file.bucket); // "my-bucket"
      */
     readonly bucket?: string;
@@ -629,12 +631,14 @@ declare module "bun" {
    *     });
    *
    *     // Get file instance
-   *     const file = bucket("image.jpg");
+   *     const file = bucket.file("image.jpg");
    *
    *     // Common operations
    *     await bucket.write("data.json", JSON.stringify({hello: "world"}));
    *     const url = bucket.presign("file.pdf");
    *     await bucket.unlink("old.txt");
+   *
+   * @category Cloud Storage
    */
   class S3Client {
     prototype: S3Client;
@@ -678,7 +682,7 @@ declare module "bun" {
      * @example
      * const file = bucket.file("image.jpg");
      * await file.write(imageData);
-     * const configFile = bucket("config.json", {
+     * const configFile = bucket.file("config.json", {
      *   type: "application/json",
      *   acl: "private"
      * });
@@ -793,7 +797,7 @@ declare module "bun" {
      * @example
      *     // Check existence
      *     if (await bucket.exists("config.json")) {
-     *       const file = bucket("config.json");
+     *       const file = bucket.file("config.json");
      *       const config = await file.json();
      *     }
      *
@@ -820,6 +824,8 @@ declare module "bun" {
    * A default instance of S3Client
    *
    * Pulls credentials from environment variables. Use `new Bun.S3Client()` if you need to explicitly set credentials.
+   *
+   * @category Cloud Storage
    */
   var s3: S3Client;
 }

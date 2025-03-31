@@ -1230,6 +1230,9 @@ pub const PackageManifest = struct {
                 pub const new = bun.TrivialNew(@This());
 
                 pub fn run(task: *bun.ThreadPool.Task) void {
+                    const tracer = bun.perf.trace("PackageManifest.Serializer.save");
+                    defer tracer.end();
+
                     const save_task: *@This() = @fieldParentPtr("task", task);
                     defer bun.destroy(save_task);
 
@@ -1293,6 +1296,8 @@ pub const PackageManifest = struct {
         }
 
         pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: File) !?PackageManifest {
+            const tracer = bun.perf.trace("PackageManifest.Serializer.loadByFile");
+            defer tracer.end();
             const bytes = try manifest_file.readToEnd(allocator).unwrap();
             errdefer allocator.free(bytes);
 

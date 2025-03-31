@@ -135,11 +135,6 @@ const DataURL = @import("../resolver/resolver.zig").DataURL;
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
-
-fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
-    return bun.tracy.traceNamed(src, "Transpiler." ++ name);
-}
-
 pub const ThreadPool = struct {
     /// macOS holds an IORWLock on every file open.
     /// This causes massive contention after about 4 threads as of macOS 15.2
@@ -268,9 +263,6 @@ pub const ThreadPool = struct {
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
-        const trace = tracer(@src(), "getWorker");
-        defer trace.end();
-
         var worker: *Worker = undefined;
         {
             this.workers_assignments_lock.lock();
@@ -344,7 +336,7 @@ pub const ThreadPool = struct {
             worker.ast_memory_allocator.push();
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                worker.heap.gc(true);
+                worker.heap.helpCatchMemoryIssues();
             }
 
             return worker;
@@ -352,7 +344,7 @@ pub const ThreadPool = struct {
 
         pub fn unget(this: *Worker) void {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.heap.gc(true);
+                this.heap.helpCatchMemoryIssues();
             }
 
             this.ast_memory_allocator.pop();
@@ -370,7 +362,7 @@ pub const ThreadPool = struct {
         }
 
         fn create(this: *Worker, ctx: *BundleV2) void {
-            const trace = tracer(@src(), "Worker.create");
+            const trace = bun.perf.trace("Bundler.Worker.create");
             defer trace.end();
 
             this.has_created = true;
@@ -678,7 +670,7 @@ pub const BundleV2 = struct {
     };
 
     pub fn findReachableFiles(this: *BundleV2) ![]Index {
-        const trace = tracer(@src(), "findReachableFiles");
+        const trace = bun.perf.trace("Bundler.findReachableFiles");
         defer trace.end();
 
         // Create a quick index for server-component boundaries.
@@ -1333,7 +1325,7 @@ pub const BundleV2 = struct {
     }
 
     fn cloneAST(this: *BundleV2) !void {
-        const trace = tracer(@src(), "cloneAST");
+        const trace = bun.perf.trace("Bundler.cloneAST");
         defer trace.end();
         this.linker.allocator = this.transpiler.allocator;
         this.linker.graph.allocator = this.transpiler.allocator;
@@ -1345,8 +1337,7 @@ pub const BundleV2 = struct {
             }
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
-                bun.Mimalloc.mi_collect(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
 
             module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
@@ -2197,7 +2188,7 @@ pub const BundleV2 = struct {
         defer load.deinit();
         defer {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
         }
         const log = this.transpiler.log;
@@ -2315,7 +2306,7 @@ pub const BundleV2 = struct {
 
         defer {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
         }
 
@@ -3396,7 +3387,7 @@ pub const BundleV2 = struct {
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
-        const trace = tracer(@src(), "onParseTaskComplete");
+        const trace = bun.perf.trace("Bundler.onParseTaskComplete");
         defer trace.end();
         if (parse_result.external.function != null) {
             const source = switch (parse_result.value) {
@@ -4248,7 +4239,7 @@ pub const ParseTask = struct {
     ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
-                const trace = tracer(@src(), "ParseJS");
+                const trace = bun.perf.trace("Bundler.ParseJS");
                 defer trace.end();
                 return if (try resolver.caches.js.parse(
                     transpiler.allocator,
@@ -4270,13 +4261,13 @@ pub const ParseTask = struct {
                 };
             },
             .json, .jsonc => |v| {
-                const trace = tracer(@src(), "ParseJSON");
+                const trace = bun.perf.trace("Bundler.ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
-                const trace = tracer(@src(), "ParseTOML");
+                const trace = bun.perf.trace("Bundler.ParseTOML");
                 defer trace.end();
                 var temp_log = bun.logger.Log.init(allocator);
                 defer {
@@ -4559,7 +4550,7 @@ pub const ParseTask = struct {
     ) !CacheEntry {
         return switch (task.contents_or_fd) {
             .fd => |contents| brk: {
-                const trace = tracer(@src(), "readFile");
+                const trace = bun.perf.trace("Bundler.readFile");
                 defer trace.end();
 
                 if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
@@ -6505,7 +6496,7 @@ pub const LinkerContext = struct {
         server_component_boundaries: ServerComponentBoundary.List,
         reachable: []Index,
     ) !void {
-        const trace = tracer(@src(), "CloneLinkerGraph");
+        const trace = bun.perf.trace("Bundler.CloneLinkerGraph");
         defer trace.end();
         this.parse_graph = &bundle.graph;
 
@@ -6664,7 +6655,7 @@ pub const LinkerContext = struct {
     fn checkForMemoryCorruption(this: *LinkerContext) void {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        this.parse_graph.heap.gc(true);
+        this.parse_graph.heap.helpCatchMemoryIssues();
     }
 
     const JSChunkKeyFormatter = struct {
@@ -6680,7 +6671,7 @@ pub const LinkerContext = struct {
         this: *LinkerContext,
         unique_key: u64,
     ) ![]Chunk {
-        const trace = tracer(@src(), "computeChunks");
+        const trace = bun.perf.trace("Bundler.computeChunks");
         defer trace.end();
 
         bun.assert(this.dev_server == null); // use
@@ -7027,7 +7018,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
-        const trace = tracer(@src(), "findAllImportedPartsInJSOrder");
+        const trace = bun.perf.trace("Bundler.findAllImportedPartsInJSOrder");
         defer trace.end();
 
         var part_ranges_shared = std.ArrayList(PartRange).init(temp_allocator);
@@ -7117,7 +7108,7 @@ pub const LinkerContext = struct {
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = if (comptime with_code_splitting)
+                var is_file_in_chunk = if (with_code_splitting and v.c.graph.ast.items(.css)[source_index] == null)
                     // when code splitting, include the file in the chunk if ALL of the entry points overlap
                     v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index])
                 else
@@ -8399,7 +8390,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
-        const outer_trace = tracer(@src(), "scanImportsAndExports");
+        const outer_trace = bun.perf.trace("Bundler.scanImportsAndExports");
         defer outer_trace.end();
         const reachable = this.graph.reachable_files;
         const output_format = this.options.output_format;
@@ -8429,7 +8420,7 @@ pub const LinkerContext = struct {
 
             // Step 1: Figure out what modules must be CommonJS
             for (reachable) |source_index_| {
-                const trace = tracer(@src(), "FigureOutCommonJS");
+                const trace = bun.perf.trace("Bundler.FigureOutCommonJS");
                 defer trace.end();
                 const id = source_index_.get();
 
@@ -8598,7 +8589,7 @@ pub const LinkerContext = struct {
             // bundle time.
 
             {
-                const trace = tracer(@src(), "WrapDependencies");
+                const trace = bun.perf.trace("Bundler.WrapDependencies");
                 defer trace.end();
                 var dependency_wrapper = DependencyWrapper{
                     .linker = this,
@@ -8649,7 +8640,7 @@ pub const LinkerContext = struct {
             // are ignored for those modules.
             {
                 var export_star_ctx: ?ExportStarContext = null;
-                const trace = tracer(@src(), "ResolveExportStarStatements");
+                const trace = bun.perf.trace("Bundler.ResolveExportStarStatements");
                 defer trace.end();
                 defer {
                     if (export_star_ctx) |*export_ctx| {
@@ -8710,7 +8701,7 @@ pub const LinkerContext = struct {
             // export stars because imports can bind to export star re-exports.
             {
                 this.cycle_detector.clearRetainingCapacity();
-                const trace = tracer(@src(), "MatchImportsWithExports");
+                const trace = bun.perf.trace("Bundler.MatchImportsWithExports");
                 defer trace.end();
                 const wrapper_part_indices = this.graph.meta.items(.wrapper_part_index);
                 const imports_to_bind = this.graph.meta.items(.imports_to_bind);
@@ -8781,7 +8772,7 @@ pub const LinkerContext = struct {
         // parts that declare the export to all parts that use the import. Also
         // generate wrapper parts for wrapped files.
         {
-            const trace = tracer(@src(), "BindImportsToExports");
+            const trace = bun.perf.trace("Bundler.BindImportsToExports");
             defer trace.end();
             // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
 
@@ -9739,7 +9730,7 @@ pub const LinkerContext = struct {
     /// imported using an import star statement.
     pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
         const source_index = source_index_.get();
-        const trace = tracer(@src(), "CreateNamespaceExports");
+        const trace = bun.perf.trace("Bundler.CreateNamespaceExports");
         defer trace.end();
 
         const id = source_index;
@@ -9981,7 +9972,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
-        const trace = tracer(@src(), "treeShakingAndCodeSplitting");
+        const trace = bun.perf.trace("Bundler.treeShakingAndCodeSplitting");
         defer trace.end();
 
         const parts = c.graph.ast.items(.parts);
@@ -9993,7 +9984,7 @@ pub const LinkerContext = struct {
         const distances = c.graph.files.items(.distance_from_entry_point);
 
         {
-            const trace2 = tracer(@src(), "markFileLiveForTreeShaking");
+            const trace2 = bun.perf.trace("Bundler.markFileLiveForTreeShaking");
             defer trace2.end();
 
             // Tree shaking: Each entry point marks all files reachable from itself
@@ -10010,7 +10001,7 @@ pub const LinkerContext = struct {
         }
 
         {
-            const trace2 = tracer(@src(), "markFileReachableForCodeSplitting");
+            const trace2 = bun.perf.trace("Bundler.markFileReachableForCodeSplitting");
             defer trace2.end();
 
             const file_entry_bits: []AutoBitSet = c.graph.files.items(.entry_bits);
@@ -10496,7 +10487,7 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
         files_in_order: []const u32,
     ) !renamer.Renamer {
-        const trace = tracer(@src(), "renameSymbolsInChunk");
+        const trace = bun.perf.trace("Bundler.renameSymbolsInChunk");
         defer trace.end();
         const all_module_scopes = c.graph.ast.items(.module_scope);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
@@ -10793,7 +10784,7 @@ pub const LinkerContext = struct {
     }
 
     fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, imports_in_chunk_index: u32) CompileResult {
-        const trace = tracer(@src(), "generateCodeForFileInChunkCss");
+        const trace = bun.perf.trace("Bundler.generateCodeForFileInChunkCss");
         defer trace.end();
 
         var arena = &worker.temporary_arena;
@@ -10946,7 +10937,7 @@ pub const LinkerContext = struct {
     }
 
     fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, part_range: PartRange) CompileResult {
-        const trace = tracer(@src(), "generateCodeForFileInChunkJS");
+        const trace = bun.perf.trace("Bundler.generateCodeForFileInChunkJS");
         defer trace.end();
 
         // Client bundles for Bake must be globally allocated,
@@ -11643,7 +11634,7 @@ pub const LinkerContext = struct {
 
     // This runs after we've already populated the compile results
     fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
-        const trace = tracer(@src(), "postProcessJSChunk");
+        const trace = bun.perf.trace("Bundler.postProcessJSChunk");
         defer trace.end();
 
         _ = chunk_index;
@@ -12069,7 +12060,7 @@ pub const LinkerContext = struct {
         chunk_abs_dir: string,
         can_have_shifts: bool,
     ) !sourcemap.SourceMapPieces {
-        const trace = tracer(@src(), "generateSourceMapForChunk");
+        const trace = bun.perf.trace("Bundler.generateSourceMapForChunk");
         defer trace.end();
 
         var j = StringJoiner{ .allocator = worker.allocator };
@@ -12214,7 +12205,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn generateIsolatedHash(c: *LinkerContext, chunk: *const Chunk) u64 {
-        const trace = tracer(@src(), "generateIsolatedHash");
+        const trace = bun.perf.trace("Bundler.generateIsolatedHash");
         defer trace.end();
 
         var hasher = ContentHasher{};
@@ -14542,7 +14533,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
-        const trace = tracer(@src(), "generateChunksInParallel");
+        const trace = bun.perf.trace("Bundler.generateChunksInParallel");
         defer trace.end();
 
         c.mangleLocalCss();
@@ -15155,7 +15146,7 @@ pub const LinkerContext = struct {
         chunks: []Chunk,
         output_files: *std.ArrayList(options.OutputFile),
     ) !void {
-        const trace = tracer(@src(), "writeOutputFilesToDisk");
+        const trace = bun.perf.trace("Bundler.writeOutputFilesToDisk");
         defer trace.end();
         var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
             if (err == error.NotDir) {
@@ -15192,7 +15183,7 @@ pub const LinkerContext = struct {
         var pathbuf: bun.PathBuffer = undefined;
 
         for (chunks) |*chunk| {
-            const trace2 = tracer(@src(), "writeChunkToDisk");
+            const trace2 = bun.perf.trace("Bundler.writeChunkToDisk");
             defer trace2.end();
             defer max_heap_allocator.reset();
 
@@ -16645,7 +16636,7 @@ pub const LinkerContext = struct {
         j: *StringJoiner,
         count: u32,
     ) !Chunk.IntermediateOutput {
-        const trace = tracer(@src(), "breakOutputIntoPieces");
+        const trace = bun.perf.trace("Bundler.breakOutputIntoPieces");
         defer trace.end();
 
         const OutputPiece = Chunk.OutputPiece;

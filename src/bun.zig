@@ -24,16 +24,6 @@ pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./allocators/memory_allocator.zig").z_allocator;
 
-pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./allocators/memory_allocator.zig").huge_allocator;
-
-pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./allocators/memory_allocator.zig").auto_allocator;
-
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
@@ -4056,6 +4046,7 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
     hasher.update(std.mem.asBytes(&thing));
 }
 
+pub const perf = @import("./perf.zig");
 pub inline fn isComptimeKnown(x: anytype) bool {
     return comptime @typeInfo(@TypeOf(.{x})).@"struct".fields[0].is_comptime;
 }

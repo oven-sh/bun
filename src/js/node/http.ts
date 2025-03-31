@@ -27,6 +27,14 @@ const enum NodeHTTPBodyReadState {
   hasBufferedDataDuringPause = 1 << 3,
 }
 
+// Must be kept in sync with NodeHTTPResponse.Flags
+const enum NodeHTTPResponseFlags {
+  socket_closed = 1 << 0,
+  request_has_completed = 1 << 1,
+
+  closed_or_completed = socket_closed | request_has_completed,
+}
+
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
 const kEmitState = Symbol("emitState");
@@ -72,7 +80,13 @@ const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject, validateInteger } = require("internal/validators");
+const {
+  validateFunction,
+  checkIsHttpToken,
+  validateLinkHeaderValue,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
 const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
@@ -343,7 +357,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const req = message?.req;
     if (req && !req.complete) {
       // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy(new ConnResetException("aborted"));
+      req.destroy();
     }
   }
   #onClose() {
@@ -938,6 +952,8 @@ const ServerPrototype = {
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
+          // start buffering data if any, the user will need to resume() or .on("data") to read it
+          handle.pause();
           drainMicrotasks();
 
           let capturedError;
@@ -1922,6 +1938,10 @@ function callWriteHeadIfObservable(self, headerState) {
   }
 }
 
+function allowWritesToContinue() {
+  this._callPendingCallbacks();
+  this.emit("drain");
+}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -2019,6 +2039,12 @@ const ServerResponsePrototype = {
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);
 
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
+    }
     if (headerState !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -2112,6 +2138,13 @@ const ServerResponsePrototype = {
       }
     }
 
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
+    }
+
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -2119,11 +2152,10 @@ const ServerResponsePrototype = {
         // If handle.writeHead throws, we don't want headersSent to be set to true.
         // So we set it here.
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-        result = handle.write(chunk, encoding);
+        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
       });
     } else {
-      result = handle.write(chunk, encoding);
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
     }
 
     if (result < 0) {
@@ -2721,8 +2753,10 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      // no body and not finished
+      const isDuplex = customBody === undefined && !this.finished;
 
-      if (customBody === undefined) {
+      if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
@@ -2731,7 +2765,7 @@ function ClientRequest(input, options, cb) {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
-        } else {
+        } else if (isDuplex) {
           fetchOptions.body = async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();

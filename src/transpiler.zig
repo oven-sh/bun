@@ -822,7 +822,10 @@ pub const Transpiler = struct {
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
     ) !usize {
-        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
+        const tracer = if (enable_source_map)
+            bun.perf.trace("JSPrinter.printWithSourceMap")
+        else
+            bun.perf.trace("JSPrinter.print");
         defer tracer.end();
 
         const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
@@ -992,6 +995,12 @@ pub const Transpiler = struct {
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
+        /// `"type"` from `package.json`. Used to make sure the parser defaults
+        /// to CommonJS or ESM based on what the package.json says, when it
+        /// doesn't otherwise know from reading the source code.
+        ///
+        /// See: https://nodejs.org/api/packages.html#type
+        module_type: options.ModuleType = .unknown,
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
@@ -1133,6 +1142,7 @@ pub const Transpiler = struct {
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.module_type = this_parse.module_type;
 
                 opts.tree_shaking = transpiler.options.tree_shaking;
                 opts.features.inlining = transpiler.options.inlining;

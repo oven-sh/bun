@@ -27,7 +27,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "alloc.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "usingnamespace": { reason: "This brings Bun away from incremental / faster compile times.", limit: 494 }, 
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 246, regex: true },
+  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 492 },
 };
 const words_keys = [...Object.keys(words)];
 

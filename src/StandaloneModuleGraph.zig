@@ -326,7 +326,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format) ![]u8 {
-        var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
+        var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
         var entry_point_id: ?usize = null;

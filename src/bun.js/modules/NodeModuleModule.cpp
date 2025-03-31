@@ -952,6 +952,21 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             init.set(resolveFilenameFunction);
         });
 
+    globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSFunction* resolveFilenameFunction = JSFunction::create(
+                init.vm, init.owner, 2, "_compile"_s,
+                functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, functionJSCommonJSModule_compile);
+            init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
+            init.set(requireESM);
+        });
+
     globalObject->m_lazyRequireCacheObject.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
             JSC::VM& vm = init.vm;

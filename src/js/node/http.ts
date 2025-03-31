@@ -1960,7 +1960,7 @@ function allowWritesToContinue() {
   this.emit("drain");
 }
 function getPlatformHighWaterMark() {
-  // 256kb is for macOS 1MB is for unix/windows
+  // 256kb is for macOS 4MB is for unix/windows
   // this is not quite correct, but it's close enough for now
   switch (process.platform) {
     case "darwin":
@@ -1968,7 +1968,7 @@ function getPlatformHighWaterMark() {
     case "win32":
     // unix
     default:
-      return 1024 * 1024;
+      return 4 * 1024 * 1024;
   }
 }
 const ServerResponsePrototype = {

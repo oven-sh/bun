@@ -3,6 +3,8 @@
 #if OS(LINUX) || OS(DARWIN)
 
 #include <pthread.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 // libuv does the annoying thing of #undef'ing these
 #include <errno.h>

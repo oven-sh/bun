@@ -2,6 +2,7 @@
 #include "uv-posix-polyfills.h"
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <stdlib.h>
 
 static uv_once_t once = UV_ONCE_INIT;
 static mach_timebase_info_data_t timebase;

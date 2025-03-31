@@ -1863,7 +1863,7 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
     inside_native_plugin = name;
 }
 
-fn unsupportUVFunction(name: ?[*:0]const u8) callconv(.C) void {
+export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
     std.debug.panic("unsupported uv function: {s}", .{name.?});
@@ -1883,9 +1883,13 @@ export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
     }
 }
 
+pub fn fixDeadCodeElimination() void {
+    std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
+}
 comptime {
     _ = &Bun__crashHandler;
     if (!bun.Environment.isWindows) {
-        @export(&unsupportUVFunction, .{ .name = "CrashHandler__unsupportedUVFunction" });
+        std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
+        // @export(&unsupportUVFunction, .{ .name = "CrashHandler__unsupportedUVFunction", .linkage = .strong });
     }
 }

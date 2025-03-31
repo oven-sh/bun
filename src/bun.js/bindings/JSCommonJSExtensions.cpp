@@ -231,6 +231,10 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
     JSC::JSObject* modValue = callFrame->argument(0).getObject();
+    if (!modValue) {
+        throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
+        return JSC::JSValue::encode({});
+    }
     Bun::JSCommonJSModule* mod = jsDynamicCast<Bun::JSCommonJSModule*>(modValue);
     if (!mod) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);

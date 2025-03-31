@@ -51,7 +51,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLoaderJSON, (JSC::JSGlobalObject * globalObject, JSC:
 //
 // Since developers are not even aware of some of these hooks, some are disabled
 // automatically. Some hooks have genuine use cases, such as adding new loaders.
-bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject) {
+bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject)
+{
     JSC::VM& vm = globalObject->vm();
     WTF::Vector<JSC::StackFrame> stackFrames;
     vm.interpreter.getStackTrace(globalObject, stackFrames, 0, 1);
@@ -235,7 +236,8 @@ extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalOb
 // - Evaluates the module
 //     - Calls `module._compile(code, filename)`, which is often overridden.
 // - Returns `undefined`
-JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType) {
+JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType)
+{
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
     JSC::JSObject* modValue = callFrame->argument(0).getObject();
@@ -267,8 +269,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         mod,
         specifierWtfString,
         loaderType,
-        scope
-    );
+        scope);
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
         // ESM

@@ -68,7 +68,7 @@ public:
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
     // If compile is overridden, it is assigned to this field. The default
-    // compile function is not stored here, but in 
+    // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
 
     bool ignoreESModuleAnnotation { false };
@@ -91,7 +91,8 @@ public:
 
     void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
     void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
-    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource) {
+    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
+    {
         return evaluate(globalObject, sourceURL, resolvedSource, false);
     }
 

@@ -723,7 +723,7 @@ JSValue fetchCommonJSModule(
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
-template <bool isExtension>
+template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
@@ -736,8 +736,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
-    JSC::ThrowScope& scope
-) {
+    JSC::ThrowScope& scope)
+{
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {

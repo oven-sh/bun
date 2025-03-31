@@ -114,7 +114,7 @@ JSValue fetchCommonJSModule(
     BunString* referrer,
     BunString* typeAttribute);
 
-template <bool isExtension>
+template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,

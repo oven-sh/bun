@@ -1,6 +1,6 @@
 type IfEquals<T, U, Y = true, N = false> = (<G>() => G extends T ? 1 : 2) extends <G>() => G extends U ? 1 : 2 ? Y : N;
 
-export declare function expectType<T>(): {
+export function expectType<T>(arg?: T): {
   /**
    * @example
    * ```ts
@@ -12,13 +12,11 @@ export declare function expectType<T>(): {
    * expectType<Uint8Array>().is<Uint8Array>(); // pass
    * ```
    */
-  is<X extends T>(...args: IfEquals<X, T> extends true ? [] : [X]): void;
+  is<X extends T>(...args: IfEquals<X, T> extends true ? [] : [expected: X, butGot: T]): void;
 };
-
-/**
- * @deprecated - Use the `.is()` helper instead, which is much stricter and checks for `any` types.
- */
-export declare function expectType<T>(expression: T): void;
+export function expectType<T>(arg?: T) {
+  return { is() {} };
+}
 
 export declare const expectAssignable: <T>(expression: T) => void;
 export declare const expectNotAssignable: <T>(expression: any) => void;

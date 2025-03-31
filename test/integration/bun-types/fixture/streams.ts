@@ -22,11 +22,11 @@ new ReadableStream({
 declare const uint8stream: ReadableStream<Uint8Array<ArrayBuffer>>;
 
 for await (const chunk of uint8stream) {
-  expectType<typeof chunk>().is<Uint8Array<ArrayBuffer>>();
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
 }
 
 declare const uint8Array: Uint8Array<ArrayBuffer>;
-expectType<typeof uint8Array>().is<Uint8Array<ArrayBuffer>>();
+expectType(uint8Array).is<Uint8Array<ArrayBuffer>>();
 
 declare const uint8Writable: WritableStream<Uint8Array<ArrayBuffer>>;
 declare const uint8Transform: TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>;
@@ -36,5 +36,5 @@ await writer.write(uint8Array);
 await writer.close();
 
 for await (const chunk of uint8Transform.readable) {
-  expectType<typeof chunk>().is<Uint8Array<ArrayBuffer>>();
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
 }

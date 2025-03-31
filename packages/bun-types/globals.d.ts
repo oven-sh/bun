@@ -1746,6 +1746,8 @@ interface BunFetchRequestInit extends RequestInit {
    * Override the default S3 options
    */
   s3?: Bun.S3Options;
+
+  unix?: string;
 }
 
 /**

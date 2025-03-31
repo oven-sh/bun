@@ -266,17 +266,56 @@ test(
   {
     unix: "/tmp/bun.sock",
     fetch(req, server) {
-      return new Response();
+      if (server.upgrade(req)) {
+        return;
+      }
+
+      return new Response("failed to upgrade", { status: 500 });
     },
-    // websocket: {
-    //   message: console.log,
-    // },
+    websocket: {
+      message: (ws, data) => {},
+    },
   },
   {
-    overrideExpectBehavior: server => {
+    overrideExpectBehavior: async server => {
       expect(server.hostname).toBeUndefined();
       expect(server.port).toBeUndefined();
       expect(server.url.toString()).toStartWith("unix://");
+
+      async function cheapRequest(request: string) {
+        const p = Promise.withResolvers<void>();
+
+        let chunks: string[] = [];
+
+        const sock = await Bun.connect({
+          unix: server.url.toString(),
+          socket: {
+            data: (socket, chunk) => {
+              chunks.push(chunk.toString());
+
+              if (chunks.length === 1) {
+                p.resolve();
+              }
+            },
+          },
+        });
+
+        sock.write(request);
+
+        await p.promise;
+        return chunks.join("\n");
+      }
+
+      const result = await cheapRequest("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+
+      expect(result).toContain("HTTP/1.1 200 OK\r\nDate:");
+      expect(result).toContain("\r\nContent-Length: 0\r\n\r\n");
+
+      // const res = await Bun.fetch("https://definitelydoesnotexist.bun.sh", {
+      //   unix: server.url.toString(),
+      // });
+
+      // expect(res.status).toBe(101);
     },
   },
 );

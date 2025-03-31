@@ -3061,8 +3061,6 @@ declare module "bun" {
   /**
    * A fast WebSocket designed for servers.
    *
-   * @category HTTP & Networking
-   *
    * Features:
    * - **Message compression** - Messages can be compressed
    * - **Backpressure** - If the client is not ready to receive data, the server will tell you.
@@ -3088,6 +3086,8 @@ declare module "bun" {
    *     },
    *   }
    * });
+   *
+   * @category HTTP & Networking
    */
   interface ServerWebSocket<T = undefined> {
     /**
@@ -4037,13 +4037,13 @@ declare module "bun" {
    *
    * To start the server, see {@link serve}
    *
-   * @category HTTP & Networking
-   *
    * For performance, Bun pre-allocates most of the data for 2048 concurrent requests.
    * That means starting a new server allocates about 500 KB of memory. Try to
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
-   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
+   *
+   * @category HTTP & Networking
    */
   interface Server extends Disposable {
     /**

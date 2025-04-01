@@ -3,7 +3,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { isCI, printEnvironment, startGroup } from "./utils.mjs";
+import { isCI, parseAnnotations, printEnvironment, reportAnnotationToBuildKite, startGroup } from "./utils.mjs";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -222,16 +222,24 @@ async function spawn(command, args, options, label) {
     timestamp = Date.now();
   });
 
+  let stdoutBuffer = "";
+
   let done;
   if (pipe) {
     const stdout = new Promise(resolve => {
       subprocess.stdout.on("end", resolve);
-      subprocess.stdout.on("data", data => process.stdout.write(data));
+      subprocess.stdout.on("data", data => {
+        stdoutBuffer += data.toString();
+        process.stdout.write(data);
+      });
     });
 
     const stderr = new Promise(resolve => {
       subprocess.stderr.on("end", resolve);
-      subprocess.stderr.on("data", data => process.stderr.write(data));
+      subprocess.stderr.on("data", data => {
+        stdoutBuffer += data.toString();
+        process.stderr.write(data);
+      });
     });
 
     done = Promise.all([stdout, stderr]);
@@ -252,9 +260,21 @@ async function spawn(command, args, options, label) {
     return;
   }
 
-  if (error) {
-    console.error(error);
-  } else if (signalCode) {
+  try {
+    const { annotations } = parseAnnotations(stdoutBuffer);
+    for (const annotation of annotations) {
+      const { filename, content } = annotation;
+      reportAnnotationToBuildKite({
+        priority: 10,
+        label: filename,
+        content,
+      });
+    }
+  } catch (error) {
+    console.error(`Failed to parse annotations:`, error);
+  }
+
+  if (signalCode) {
     console.error(`Command killed: ${signalCode}`);
   } else {
     console.error(`Command exited: code ${exitCode}`);

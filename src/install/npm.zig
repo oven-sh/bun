@@ -1227,14 +1227,16 @@ pub const PackageManifest = struct {
                 cache_dir: std.fs.Dir,
 
                 task: bun.ThreadPool.Task = .{ .callback = &run },
-                pub const new = bun.TrivialNew(@This());
+                pub usingnamespace bun.New(@This());
 
                 pub fn run(task: *bun.ThreadPool.Task) void {
                     const tracer = bun.perf.trace("PackageManifest.Serializer.save");
                     defer tracer.end();
 
                     const save_task: *@This() = @fieldParentPtr("task", task);
-                    defer bun.destroy(save_task);
+                    defer {
+                        save_task.destroy();
+                    }
 
                     Serializer.save(&save_task.manifest, save_task.scope, save_task.tmpdir, save_task.cache_dir) catch |err| {
                         if (PackageManager.verbose_install) {

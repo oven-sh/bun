@@ -110,7 +110,7 @@ pub const MultiPartUpload = struct {
     available: bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE) = bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull(),
 
     currentPartNumber: u16 = 1,
-    ref_count: RefCount,
+    ref_count: u16 = 1,
     ended: bool = false,
 
     options: MultiPartUploadOptions = .{},
@@ -145,10 +145,7 @@ pub const MultiPartUpload = struct {
     callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
 
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     const log = bun.Output.scoped(.S3MultiPartUpload, true);
 
@@ -295,7 +292,7 @@ pub const MultiPartUpload = struct {
             this.multipart_etags.deinit(bun.default_allocator);
         if (this.multipart_upload_list.cap > 0)
             this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
-        bun.destroy(this);
+        this.destroy();
     }
 
     pub fn singleSendUploadResponse(result: S3SimpleRequest.S3UploadResult, this: *@This()) void {

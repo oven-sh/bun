@@ -8,7 +8,7 @@ pub const CryptoHasher = union(enum) {
     const Digest = EVP.Digest;
 
     pub usingnamespace JSC.Codegen.JSCryptoHasher;
-    pub const new = bun.TrivialNew(@This());
+    usingnamespace bun.New(@This());
 
     // For using only CryptoHasherZig in c++
     pub const Extern = struct {
@@ -364,13 +364,16 @@ pub const CryptoHasher = union(enum) {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const copied: CryptoHasher = switch (this.*) {
-            .evp => |*inner| .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() },
-            .hmac => |inner| brk: {
+        var new: CryptoHasher = undefined;
+        switch (this.*) {
+            .evp => |*inner| {
+                new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
+            },
+            .hmac => |inner| {
                 const hmac = inner orelse {
                     return throwHmacConsumed(globalObject);
                 };
-                break :brk .{
+                new = .{
                     .hmac = hmac.copy() catch {
                         const err = createCryptoError(globalObject, BoringSSL.ERR_get_error());
                         BoringSSL.ERR_clear_error();
@@ -378,9 +381,11 @@ pub const CryptoHasher = union(enum) {
                     },
                 };
             },
-            .zig => |*inner| .{ .zig = inner.copy() },
-        };
-        return CryptoHasher.new(copied).toJS(globalObject);
+            .zig => |*inner| {
+                new = .{ .zig = inner.copy() };
+            },
+        }
+        return CryptoHasher.new(new).toJS(globalObject);
     }
 
     pub fn digest_(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.Node.StringOrBuffer) bun.JSError!JSC.JSValue {
@@ -472,7 +477,7 @@ pub const CryptoHasher = union(enum) {
                 }
             },
         }
-        bun.destroy(this);
+        this.destroy();
     }
 };
 

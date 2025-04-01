@@ -952,7 +952,7 @@ pub const FetchTasklet = struct {
                 error.INVALID_CALL => bun.String.static("Invalid certificate verification context"),
                 error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
                 error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
-                error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
+                error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
                 else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
                     @errorName(e),
@@ -2525,7 +2525,7 @@ pub fn Bun__fetch_(
                 url_proxy_buffer: []const u8,
                 global: *JSC.JSGlobalObject,
 
-                pub const new = bun.TrivialNew(@This());
+                pub usingnamespace bun.New(@This());
 
                 pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                     const global = self.global;
@@ -2565,7 +2565,7 @@ pub fn Bun__fetch_(
                         },
                     }
                     bun.default_allocator.free(self.url_proxy_buffer);
-                    bun.destroy(self);
+                    self.destroy();
                 }
             };
             if (method != .PUT and method != .POST) {

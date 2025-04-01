@@ -617,7 +617,7 @@ pub const Loop = extern struct {
 
         // This log may be helpful if you are curious where KeepAlives are being created from
         // if (Env.isDebug) {
-        //     std.debug.dumpCurrentStackTrace(@returnAddress(), .{});
+        //     std.debug.dumpCurrentStackTrace(@returnAddress());
         // }
         this.active_handles += 1;
     }

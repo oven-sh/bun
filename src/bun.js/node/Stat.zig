@@ -1,9 +1,7 @@
 /// Stats and BigIntStats classes from node:fs
 pub fn StatType(comptime big: bool) type {
     return struct {
-        pub const new = bun.TrivialNew(@This());
-        pub const deinit = bun.TrivialDeinit(@This());
-
+        pub usingnamespace bun.New(@This());
         value: bun.Stat,
 
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
@@ -24,7 +22,7 @@ pub fn StatType(comptime big: bool) type {
         }
 
         fn toTimeMS(ts: StatTimespec) Float {
-            // On windows, Node.js purposefully misinterprets time values
+            // On windows, Node.js purposefully mis-interprets time values
             // > On win32, time is stored in uint64_t and starts from 1601-01-01.
             // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
             // > which causes Y2038 overflow. On the other platforms it is safe to treat

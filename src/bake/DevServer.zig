@@ -1350,7 +1350,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            try entry_points.append(alloc, html.html_bundle.bundle.data.path, .{ .client = true });
+            try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
         },
     }
 
@@ -1487,7 +1487,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     const before_head_end = bundled_html[0..script_injection_offset];
     const after_head_end = bundled_html[script_injection_offset..];
 
-    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.bundle.data.path), ".html");
+    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
     // TODO: function for URL safe chars
     if (!bun.strings.isAllASCII(display_name)) display_name = "page";
 
@@ -2622,7 +2622,7 @@ pub fn finalizeBundle(
             else
                 null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
-            .html => |html| dev.relativePath(html.html_bundle.bundle.data.path),
+            .html => |html| dev.relativePath(html.html_bundle.html_bundle.path),
             .framework => |fw| file_name: {
                 const route = dev.router.routePtr(fw.route_index);
                 const opaque_id = route.file_page.unwrap() orelse
@@ -2872,7 +2872,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 .cached_css_file_array = .empty,
             } },
             .html => |html| brk: {
-                const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.bundle.data.path, false, true);
+                const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.html_bundle.path, false, true);
                 dev.client_graph.source_maps.items[incremental_graph_index.get()].extra.empty.html_bundle_route_index = .init(bundle_index.get());
                 break :brk .{ .html = .{
                     .html_bundle = html,

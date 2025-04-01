@@ -1205,11 +1205,11 @@ pub const Closer = struct {
     fd: bun.FileDescriptor,
     task: JSC.WorkPoolTask = .{ .callback = &onClose },
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     pub fn close(
         fd: bun.FileDescriptor,
-        /// for compatibility with windows version
+        /// for compatibiltiy with windows version
         _: anytype,
     ) void {
         bun.assert(fd != bun.invalid_fd);
@@ -1218,7 +1218,7 @@ pub const Closer = struct {
 
     fn onClose(task: *JSC.WorkPoolTask) void {
         const closer: *Closer = @fieldParentPtr("task", task);
-        defer bun.destroy(closer);
+        defer closer.destroy();
         _ = bun.sys.close(closer.fd);
     }
 };

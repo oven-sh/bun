@@ -311,14 +311,11 @@ const CountedKeepAlive = struct {
 };
 
 pub const SNativeZlib = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSNativeZlib;
     pub usingnamespace CompressionStream(@This());
 
-    ref_count: RefCount,
+    ref_count: u32 = 1,
     mode: bun.zlib.NodeMode,
     globalThis: *JSC.JSGlobalObject,
     stream: ZlibContext = .{},
@@ -346,8 +343,7 @@ pub const SNativeZlib = struct {
             return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
         }
 
-        const ptr = bun.new(SNativeZlib, .{
-            .ref_count = .init(),
+        const ptr = SNativeZlib.new(.{
             .mode = @enumFromInt(mode_int),
             .globalThis = globalThis,
         });
@@ -408,11 +404,11 @@ pub const SNativeZlib = struct {
         return .undefined;
     }
 
-    fn deinit(this: *@This()) void {
+    pub fn deinit(this: *@This()) void {
         this.this_value.deinit();
         this.poll_ref.deinit();
         this.stream.close();
-        bun.destroy(this);
+        this.destroy();
     }
 };
 
@@ -681,14 +677,11 @@ const ZlibContext = struct {
 pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
 
 pub const SNativeBrotli = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSNativeBrotli;
     pub usingnamespace CompressionStream(@This());
 
-    ref_count: RefCount,
+    ref_count: u32 = 1,
     mode: bun.zlib.NodeMode,
     globalThis: *JSC.JSGlobalObject,
     stream: BrotliContext = .{},
@@ -718,8 +711,7 @@ pub const SNativeBrotli = struct {
             return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
         }
 
-        const ptr = bun.new(@This(), .{
-            .ref_count = .init(),
+        const ptr = @This().new(.{
             .mode = @enumFromInt(mode_int),
             .globalThis = globalThis,
         });
@@ -783,14 +775,14 @@ pub const SNativeBrotli = struct {
         return .undefined;
     }
 
-    fn deinit(this: *@This()) void {
+    pub fn deinit(this: *@This()) void {
         this.this_value.deinit();
         this.poll_ref.deinit();
         switch (this.stream.mode) {
             .BROTLI_ENCODE, .BROTLI_DECODE => this.stream.close(),
             else => {},
         }
-        bun.destroy(this);
+        this.destroy();
     }
 };
 

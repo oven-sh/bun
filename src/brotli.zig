@@ -59,7 +59,7 @@ pub const BrotliReaderArrayList = struct {
     finishFlushOp: BrotliEncoder.Operation,
     fullFlushOp: BrotliEncoder.Operation,
 
-    pub const new = bun.TrivialNew(BrotliReaderArrayList);
+    pub usingnamespace bun.New(BrotliReaderArrayList);
 
     pub fn newWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !*BrotliReaderArrayList {
         return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options, .process, .finish, .flush));
@@ -180,7 +180,7 @@ pub const BrotliReaderArrayList = struct {
 
     pub fn deinit(this: *BrotliReaderArrayList) void {
         this.brotli.destroyInstance();
-        bun.destroy(this);
+        this.destroy();
     }
 };
 

@@ -1685,7 +1685,7 @@ pub const Error = enum(i32) {
         hostname: ?bun.String,
         promise: JSC.JSPromise.Strong,
 
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
 
         pub fn init(errno: Error, syscall: []const u8, hostname: ?bun.String, promise: JSC.JSPromise.Strong) *Deferred {
             return Deferred.new(.{
@@ -1734,7 +1734,7 @@ pub const Error = enum(i32) {
                 hostname.deref();
             }
             this.promise.deinit();
-            bun.destroy(this);
+            this.destroy();
         }
     };
 

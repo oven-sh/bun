@@ -12,11 +12,6 @@ const strings = bun.strings;
 const DotEnv = bun.DotEnv;
 
 pub const S3Credentials = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
-    ref_count: RefCount,
     accessKeyId: []const u8,
     secretAccessKey: []const u8,
     region: []const u8,
@@ -28,6 +23,8 @@ pub const S3Credentials = struct {
     insecure_http: bool = false,
     /// indicates if the endpoint is a virtual hosted style bucket
     virtual_hosted_style: bool = false,
+    ref_count: u32 = 1,
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn estimatedSize(this: *const @This()) usize {
         return @sizeOf(S3Credentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;
@@ -219,8 +216,7 @@ pub const S3Credentials = struct {
         return new_credentials;
     }
     pub fn dupe(this: *const @This()) *S3Credentials {
-        return bun.new(S3Credentials, .{
-            .ref_count = .init(),
+        return S3Credentials.new(.{
             .accessKeyId = if (this.accessKeyId.len > 0)
                 bun.default_allocator.dupe(u8, this.accessKeyId) catch bun.outOfMemory()
             else
@@ -255,7 +251,7 @@ pub const S3Credentials = struct {
             .virtual_hosted_style = this.virtual_hosted_style,
         });
     }
-    fn deinit(this: *@This()) void {
+    pub fn deinit(this: *@This()) void {
         if (this.accessKeyId.len > 0) {
             bun.default_allocator.free(this.accessKeyId);
         }
@@ -274,7 +270,7 @@ pub const S3Credentials = struct {
         if (this.sessionToken.len > 0) {
             bun.default_allocator.free(this.sessionToken);
         }
-        bun.destroy(this);
+        this.destroy();
     }
 
     const log = bun.Output.scoped(.AWS, false);

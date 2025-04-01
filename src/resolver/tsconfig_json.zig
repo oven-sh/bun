@@ -27,9 +27,6 @@ fn FlagSet(comptime Type: type) type {
 const JSXFieldSet = FlagSet(options.JSX.Pragma);
 
 pub const TSConfigJSON = struct {
-    pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
-
     abs_path: string,
 
     // The absolute path of "compilerOptions.baseUrl"
@@ -60,6 +57,7 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
+    pub usingnamespace bun.New(@This());
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -344,14 +342,13 @@ pub const TSConfigJSON = struct {
                                                     allocator,
                                                 ) and
                                                     (has_base_url or
-                                                        TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(
-                                                            str,
-                                                            log,
-                                                            &source,
-                                                            allocator,
-                                                            expr.loc,
-                                                        )))
-                                                {
+                                                    TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(
+                                                    str,
+                                                    log,
+                                                    &source,
+                                                    allocator,
+                                                    expr.loc,
+                                                ))) {
                                                     values[count] = str;
                                                     count += 1;
                                                 }

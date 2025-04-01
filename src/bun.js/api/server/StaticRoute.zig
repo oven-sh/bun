@@ -2,13 +2,8 @@
 //! Response object, or from globally allocated bytes.
 const StaticRoute = @This();
 
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-pub const ref = RefCount.ref;
-pub const deref = RefCount.deref;
-
 // TODO: Remove optional. StaticRoute requires a server object or else it will
 // not ensure it is alive while sending a large blob.
-ref_count: RefCount,
 server: ?AnyServer = null,
 status_code: u16,
 blob: AnyBlob,
@@ -17,6 +12,9 @@ has_content_disposition: bool = false,
 headers: Headers = .{
     .allocator = bun.default_allocator,
 },
+ref_count: u32 = 1,
+
+pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
     server: ?AnyServer,
@@ -32,8 +30,7 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
         }
     }
-    return bun.new(StaticRoute, .{
-        .ref_count = .init(),
+    return StaticRoute.new(.{
         .blob = blob.*,
         .cached_blob_size = blob.size(),
         .has_content_disposition = false,
@@ -54,15 +51,14 @@ fn deinit(this: *StaticRoute) void {
     this.blob.detach();
     this.headers.deinit();
 
-    bun.destroy(this);
+    this.destroy();
 }
 
 pub fn clone(this: *StaticRoute, globalThis: *JSC.JSGlobalObject) !*StaticRoute {
     var blob = this.blob.toBlob(globalThis);
     this.blob = .{ .Blob = blob };
 
-    return bun.new(StaticRoute, .{
-        .ref_count = .init(),
+    return StaticRoute.new(.{
         .blob = .{ .Blob = blob.dupe() },
         .cached_blob_size = this.cached_blob_size,
         .has_content_disposition = this.has_content_disposition,
@@ -136,8 +132,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .allocator = bun.default_allocator,
             };
 
-        return bun.new(StaticRoute, .{
-            .ref_count = .init(),
+        return StaticRoute.new(.{
             .blob = blob,
             .cached_blob_size = blob.size(),
             .has_content_disposition = has_content_disposition,

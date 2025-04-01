@@ -42,7 +42,7 @@ pub const Job = struct {
     any_task: JSC.AnyTask = undefined,
     poll: Async.KeepAlive = .{},
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     pub fn runTask(task: *JSC.WorkPoolTask) void {
         const job: *PBKDF2.Job = @fieldParentPtr("task", task);
@@ -90,7 +90,7 @@ pub const Job = struct {
         this.pbkdf2.deinitAndUnprotect();
         this.promise.deinit();
         bun.default_allocator.free(this.output);
-        bun.destroy(this);
+        this.destroy();
     }
 
     pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, data: *const PBKDF2) *Job {

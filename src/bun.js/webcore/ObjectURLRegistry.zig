@@ -11,7 +11,7 @@ map: std.AutoHashMap(UUID, *RegistryEntry) = std.AutoHashMap(UUID, *RegistryEntr
 pub const RegistryEntry = struct {
     blob: JSC.WebCore.Blob,
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
     pub fn init(blob: *const JSC.WebCore.Blob) *RegistryEntry {
         return RegistryEntry.new(.{
             .blob = blob.dupeWithContentType(true),
@@ -20,7 +20,7 @@ pub const RegistryEntry = struct {
 
     pub fn deinit(this: *RegistryEntry) void {
         this.blob.deinit();
-        bun.destroy(this);
+        this.destroy();
     }
 };
 

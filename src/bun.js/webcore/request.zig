@@ -57,14 +57,14 @@ pub const Request = struct {
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
-    weak_ptr_data: WeakRef.Data = .empty,
+    weak_ptr_data: bun.WeakPtrData = .{},
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
     internal_event_callback: InternalJSEventCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     pub const getText = RequestMixin.getText;
     pub const getBytes = RequestMixin.getBytes;
@@ -75,7 +75,7 @@ pub const Request = struct {
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
-    pub const WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data");
+    pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
 
     pub fn memoryCost(this: *const Request) usize {
         return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
@@ -382,7 +382,7 @@ pub const Request = struct {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
         if (this.weak_ptr_data.onFinalize()) {
-            bun.destroy(this);
+            this.destroy();
         }
     }
 

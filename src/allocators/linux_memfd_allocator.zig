@@ -18,20 +18,32 @@ const std = @import("std");
 /// the virtual memory. So we should only really use this for large blobs of
 /// data that we expect to be cloned multiple times. Such as Blob in FormData.
 pub const LinuxMemFdAllocator = struct {
-    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
-    pub const new = bun.TrivialNew(@This());
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
     fd: bun.FileDescriptor = .zero,
-    ref_count: RefCount,
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     size: usize = 0,
 
     var memfd_counter = std.atomic.Value(usize).init(0);
 
-    fn deinit(this: *LinuxMemFdAllocator) void {
-        _ = bun.sys.close(this.fd);
-        bun.destroy(this);
+    pub usingnamespace bun.New(LinuxMemFdAllocator);
+
+    pub fn ref(this: *LinuxMemFdAllocator) void {
+        _ = this.ref_count.fetchAdd(1, .monotonic);
+    }
+
+    pub fn deref(this: *LinuxMemFdAllocator) void {
+        switch (this.ref_count.fetchSub(1, .monotonic)) {
+            1 => {
+                _ = bun.sys.close(this.fd);
+                this.destroy();
+            },
+            0 => {
+                // TODO: @branchHint(.cold) after Zig 0.14 upgrade
+                if (comptime bun.Environment.isDebug) {
+                    std.debug.panic("LinuxMemFdAllocator ref_count underflow", .{});
+                }
+            },
+            else => {},
+        }
     }
 
     pub fn allocator(this: *LinuxMemFdAllocator) std.mem.Allocator {
@@ -170,7 +182,7 @@ pub const LinuxMemFdAllocator = struct {
 
         var linux_memfd_allocator = LinuxMemFdAllocator.new(.{
             .fd = fd,
-            .ref_count = .init(),
+            .ref_count = std.atomic.Value(u32).init(1),
             .size = bytes.len,
         });
 
@@ -183,5 +195,7 @@ pub const LinuxMemFdAllocator = struct {
                 return .{ .err = err };
             },
         }
+
+        unreachable;
     }
 };

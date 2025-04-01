@@ -979,10 +979,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         next: ?*@This() = null,
         name: []const u8,
 
-        pub fn new(data: @This()) *@This() {
-            bun.assert(data.allocated); // deinit will not free this otherwise
-            return bun.new(@This(), data);
-        }
+        pub usingnamespace bun.New(@This());
 
         pub fn init(resolver: ?*DNSResolver, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator, name: []const u8) !*@This() {
             if (resolver) |resolver_| {
@@ -1043,7 +1040,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             }
 
             if (this.allocated) {
-                bun.destroy(this);
+                this.destroy();
             }
         }
     };
@@ -1185,7 +1182,7 @@ pub const InternalDNS = struct {
     }
 
     pub const Request = struct {
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
         const Key = struct {
             host: ?[:0]const u8,
             hash: u64,
@@ -1274,7 +1271,7 @@ pub const InternalDNS = struct {
                 bun.default_allocator.free(host);
             }
 
-            bun.destroy(this);
+            this.destroy();
         }
     };
 
@@ -1768,18 +1765,14 @@ comptime {
 }
 
 pub const DNSResolver = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
     const log = Output.scoped(.DNSResolver, false);
 
-    ref_count: RefCount,
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
     polls: PollsMap,
     options: c_ares.ChannelOptions = .{},
 
+    ref_count: u32 = 1,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .DNSResolver,
@@ -1803,6 +1796,7 @@ pub const DNSResolver = struct {
     pending_nameinfo_cache_cares: NameInfoPendingCache,
 
     pub usingnamespace JSC.Codegen.JSDNSResolver;
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 
@@ -1812,9 +1806,6 @@ pub const DNSResolver = struct {
         Async.FilePoll;
 
     const UvDnsPoll = struct {
-        pub const new = bun.TrivialNew(@This());
-        pub const destroy = bun.TrivialDeinit(@This());
-
         parent: *DNSResolver,
         socket: c_ares.ares_socket_t,
         poll: bun.windows.libuv.uv_poll_t,
@@ -1822,11 +1813,12 @@ pub const DNSResolver = struct {
         pub fn fromPoll(poll: *bun.windows.libuv.uv_poll_t) *UvDnsPoll {
             return @fieldParentPtr("poll", poll);
         }
+
+        pub usingnamespace bun.New(@This());
     };
 
     pub fn setup(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) DNSResolver {
         return .{
-            .ref_count = .init(),
             .vm = vm,
             .polls = DNSResolver.PollsMap.init(allocator),
             .pending_host_cache_cares = PendingCache.empty,
@@ -1850,19 +1842,19 @@ pub const DNSResolver = struct {
 
     pub fn init(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) *DNSResolver {
         log("init", .{});
-        return bun.new(DNSResolver, .setup(allocator, vm));
+        return DNSResolver.new(.setup(allocator, vm));
     }
 
     pub fn finalize(this: *DNSResolver) void {
         this.deref();
     }
 
-    fn deinit(this: *DNSResolver) void {
+    pub fn deinit(this: *DNSResolver) void {
         if (this.channel) |channel| {
             channel.deinit();
         }
 
-        bun.destroy(this);
+        this.destroy();
     }
 
     pub const Order = enum(u8) {

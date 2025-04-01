@@ -581,7 +581,7 @@ pub const ShellArgs = struct {
     /// Root ast node
     script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     pub fn arena_allocator(this: *ShellArgs) std.mem.Allocator {
         return this.__arena.allocator();
@@ -590,7 +590,7 @@ pub const ShellArgs = struct {
     pub fn deinit(this: *ShellArgs) void {
         this.__arena.deinit();
         bun.destroy(this.__arena);
-        bun.destroy(this);
+        this.destroy();
     }
 
     pub fn init() *ShellArgs {
@@ -5338,14 +5338,11 @@ pub const Interpreter = struct {
             };
 
             const Blob = struct {
-                const RefCount = bun.ptr.RefCount(@This(), "ref_count", Blob.deinit, .{});
-                pub const ref = Blob.RefCount.ref;
-                pub const deref = Blob.RefCount.deref;
-
-                ref_count: Blob.RefCount,
+                ref_count: usize = 1,
                 blob: bun.JSC.WebCore.Blob,
+                pub usingnamespace bun.NewRefCounted(Blob, _deinit, null);
 
-                fn deinit(this: *Blob) void {
+                fn _deinit(this: *Blob) void {
                     this.blob.deinit();
                     bun.destroy(this);
                 }
@@ -5560,7 +5557,6 @@ pub const Interpreter = struct {
                             defer original_blob.deinit();
 
                             const blob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
-                                .ref_count = .init(),
                                 .blob = original_blob.dupe(),
                             });
 
@@ -5585,7 +5581,7 @@ pub const Interpreter = struct {
                                 return .yield;
                             }
 
-                            const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{ .ref_count = .init(), .blob = blob.dupe() });
+                            const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{ .blob = blob.dupe() });
 
                             if (node.redirect.stdin) {
                                 cmd.exec.bltn.stdin.deref();
@@ -11125,16 +11121,12 @@ pub const Interpreter = struct {
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
     pub const IOReader = struct {
-        const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
-        pub const ref = RefCount.ref;
-        pub const deref = RefCount.deref;
-
         fd: bun.FileDescriptor,
         reader: ReaderImpl,
         buf: std.ArrayListUnmanaged(u8) = .{},
         readers: Readers = .{ .inlined = .{} },
         read: usize = 0,
-        ref_count: RefCount,
+        ref_count: u32 = 1,
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
         concurrent_task: JSC.EventLoopTask,
@@ -11143,6 +11135,8 @@ pub const Interpreter = struct {
 
         pub const ChildPtr = IOReaderChildPtr;
         pub const ReaderImpl = bun.io.BufferedReader;
+
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOReaderRefCount");
 
         const InitFlags = packed struct(u8) {
             pollable: bool = false,
@@ -11165,8 +11159,7 @@ pub const Interpreter = struct {
         }
 
         pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *IOReader {
-            const this = bun.new(IOReader, .{
-                .ref_count = .init(),
+            const this = IOReader.new(.{
                 .fd = fd,
                 .reader = ReaderImpl.init(@This()),
                 .evtloop = evtloop,
@@ -11300,12 +11293,12 @@ pub const Interpreter = struct {
             }
         }
 
-        fn asyncDeinit(this: *@This()) void {
+        pub fn asyncDeinit(this: *@This()) void {
             log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
-            this.async_deinit.enqueue(); // calls `asyncDeinitCallback`
+            this.async_deinit.enqueue();
         }
 
-        fn asyncDeinitCallback(this: *@This()) void {
+        pub fn __deinit(this: *@This()) void {
             if (this.fd != bun.invalid_fd) {
                 // windows reader closes the file descriptor
                 if (bun.Environment.isWindows) {
@@ -11380,7 +11373,7 @@ pub const Interpreter = struct {
 
         pub fn runFromMainThread(this: *AsyncDeinitReader) void {
             const ioreader: *IOReader = @alignCast(@fieldParentPtr("async_deinit", this));
-            ioreader.asyncDeinitCallback();
+            ioreader.__deinit();
         }
 
         pub fn runFromMainThreadMini(this: *AsyncDeinitReader, _: *void) void {
@@ -11389,11 +11382,6 @@ pub const Interpreter = struct {
     };
 
     pub const IOWriter = struct {
-        const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
-        pub const ref = RefCount.ref;
-        pub const deref = RefCount.deref;
-        const This = @This();
-
         writer: WriterImpl = if (bun.Environment.isWindows) .{} else .{
             .close_fd = false,
         },
@@ -11405,7 +11393,7 @@ pub const Interpreter = struct {
         winbuf: if (bun.Environment.isWindows) std.ArrayListUnmanaged(u8) else u0 = if (bun.Environment.isWindows) .{} else 0,
         __idx: usize = 0,
         total_bytes_written: usize = 0,
-        ref_count: RefCount,
+        ref_count: u32 = 1,
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
         concurrent_task: JSC.EventLoopTask,
@@ -11425,6 +11413,8 @@ pub const Interpreter = struct {
 
         pub const auto_poll = false;
 
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOWriterRefCount");
+        const This = @This();
         pub const WriterImpl = bun.io.BufferedWriter(
             This,
             onWrite,
@@ -11451,8 +11441,7 @@ pub const Interpreter = struct {
         };
 
         pub fn init(fd: bun.FileDescriptor, flags: InitFlags, evtloop: JSC.EventLoopHandle) *This {
-            const this = bun.new(IOWriter, .{
-                .ref_count = .init(),
+            const this = IOWriter.new(.{
                 .fd = fd,
                 .evtloop = evtloop,
                 .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
@@ -11846,6 +11835,7 @@ pub const Interpreter = struct {
 
         pub fn __deinit(this: *This) void {
             debug("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
+            if (bun.Environment.allow_assert) assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
             if (comptime bun.Environment.isPosix) {
                 if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
@@ -11854,7 +11844,7 @@ pub const Interpreter = struct {
             } else this.winbuf.deinit(bun.default_allocator);
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             this.writer.disableKeepingProcessAlive(this.evtloop);
-            bun.destroy(this);
+            this.destroy();
         }
 
         pub fn isLastIdx(this: *This, idx: usize) bool {

@@ -11014,7 +11014,7 @@ pub const PackageManager = struct {
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var written = JSPrinter.printJSON(
+        _ = JSPrinter.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
             current_package_json.root,
@@ -11155,7 +11155,7 @@ pub const PackageManager = struct {
                 preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
 
-            written = JSPrinter.printJSON(
+            _ = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer_two),
                 &package_json_writer_two,
                 new_package_json,

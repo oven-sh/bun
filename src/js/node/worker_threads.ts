@@ -127,7 +127,7 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return postMessage(...args);
+      return postMessage.$apply(null, args);
     },
   });
 
@@ -308,7 +308,7 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
-    return this.#worker.postMessage(...args);
+    return this.#worker.postMessage.$apply(this.#worker, args);
   }
 
   #onClose(e) {

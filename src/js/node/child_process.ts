@@ -1364,20 +1364,33 @@ class ChildProcess extends EventEmitter {
         }
       }
     } catch (ex) {
-      if (ex == null || typeof ex !== "object" || !Object.hasOwn(ex, "errno")) throw ex;
-      this.#handle = null;
-      ex.syscall = "spawn " + this.spawnfile;
-      ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
-      if (ex.code === "EMFILE") {
-        // emfile error; set stdio streams to undefined
-        this.#stdioOptions[0] = "undefined";
-        this.#stdioOptions[1] = "undefined";
-        this.#stdioOptions[2] = "undefined";
+      if (
+        ex != null &&
+        typeof ex === "object" &&
+        Object.hasOwn(ex, "code") &&
+        // node sends these errors on the next tick rather than throwing
+        (ex.code === "EACCES" ||
+          ex.code === "EAGAIN" ||
+          ex.code === "EMFILE" ||
+          ex.code === "ENFILE" ||
+          ex.code === "ENOENT")
+      ) {
+        this.#handle = null;
+        ex.syscall = "spawn " + this.spawnfile;
+        ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        process.nextTick(() => {
+          this.emit("error", ex);
+          this.emit("close", (ex as SystemError).errno ?? -1);
+        });
+        if (ex.code === "EMFILE" || ex.code === "ENFILE") {
+          // emfile/enfile error; in this case node does not initialize stdio streams.
+          this.#stdioOptions[0] = "undefined";
+          this.#stdioOptions[1] = "undefined";
+          this.#stdioOptions[2] = "undefined";
+        }
+      } else {
+        throw ex;
       }
-      process.nextTick(() => {
-        this.emit("error", ex);
-        this.emit("close", (ex as SystemError).errno ?? -1);
-      });
     }
   }
 

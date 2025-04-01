@@ -4027,6 +4027,8 @@ pub const VirtualMachine = struct {
         }
 
         if (is_error_instance) {
+            const is_shell_error = if (mode == .js) bun.shell.isShellError(this.global, error_instance) else false;
+
             var saw_cause = false;
             const Iterator = JSC.JSPropertyIterator(.{
                 .include_value = true,
@@ -4077,7 +4079,8 @@ pub const VirtualMachine = struct {
                     }
                     formatter.max_depth = 1;
                     formatter.quote_strings = true;
-                    formatter.disable_inspect_custom = true;
+                    const disable_inspect_custom = !is_shell_error;
+                    formatter.disable_inspect_custom = disable_inspect_custom;
 
                     const pad_left = longest_name -| field.length();
                     is_first_property = false;
@@ -4096,7 +4099,7 @@ pub const VirtualMachine = struct {
                         JSC.Formatter.Tag.getAdvanced(
                             value,
                             this.global,
-                            .{ .disable_inspect_custom = true, .hide_global = true },
+                            .{ .disable_inspect_custom = disable_inspect_custom, .hide_global = true },
                         ),
                         Writer,
                         writer,

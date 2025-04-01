@@ -45,6 +45,11 @@ pub const STDERR_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDI
 pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
 pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
+pub extern fn ShellError__isShellError(globalObject: *JSGlobalObject, value: JSC.JSValue) bool;
+pub fn isShellError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+    return ShellError__isShellError(globalObject, value);
+}
+
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
     sys: JSC.SystemError,
@@ -2381,9 +2386,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             const whitespace_preceding =
                                 if (self.chars.prev) |prev|
-                                Chars.isWhitespace(prev)
-                            else
-                                true;
+                                    Chars.isWhitespace(prev)
+                                else
+                                    true;
                             if (!whitespace_preceding) break :escaped;
                             try self.break_word(true);
                             self.eatComment();
@@ -2744,10 +2749,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             ) {
                 const tok: Token =
                     switch (self.chars.state) {
-                    .Normal => @unionInit(Token, "Text", .{ .start = start, .end = end }),
-                    .Single => @unionInit(Token, "SingleQuotedText", .{ .start = start, .end = end }),
-                    .Double => @unionInit(Token, "DoubleQuotedText", .{ .start = start, .end = end }),
-                };
+                        .Normal => @unionInit(Token, "Text", .{ .start = start, .end = end }),
+                        .Single => @unionInit(Token, "SingleQuotedText", .{ .start = start, .end = end }),
+                        .Double => @unionInit(Token, "DoubleQuotedText", .{ .start = start, .end = end }),
+                    };
                 try self.tokens.append(tok);
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);
@@ -2755,39 +2760,40 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             } else if ((in_normal_space or in_operator) and self.tokens.items.len > 0 and
                 // whether or not to add a delimiter token
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var,
-                .VarArgv,
-                .Text,
-                .SingleQuotedText,
-                .DoubleQuotedText,
-                .BraceBegin,
-                .Comma,
-                .BraceEnd,
-                .CmdSubstEnd,
-                .Asterisk,
-                => true,
+                    .Var,
+                    .VarArgv,
+                    .Text,
+                    .SingleQuotedText,
+                    .DoubleQuotedText,
+                    .BraceBegin,
+                    .Comma,
+                    .BraceEnd,
+                    .CmdSubstEnd,
+                    .Asterisk,
+                    => true,
 
-                .Pipe,
-                .DoublePipe,
-                .Ampersand,
-                .DoubleAmpersand,
-                .Redirect,
-                .Dollar,
-                .DoubleAsterisk,
-                .Eq,
-                .Semicolon,
-                .Newline,
-                .CmdSubstBegin,
-                .CmdSubstQuoted,
-                .OpenParen,
-                .CloseParen,
-                .JSObjRef,
-                .DoubleBracketOpen,
-                .DoubleBracketClose,
-                .Delimit,
-                .Eof,
-                => false,
-            }) {
+                    .Pipe,
+                    .DoublePipe,
+                    .Ampersand,
+                    .DoubleAmpersand,
+                    .Redirect,
+                    .Dollar,
+                    .DoubleAsterisk,
+                    .Eq,
+                    .Semicolon,
+                    .Newline,
+                    .CmdSubstBegin,
+                    .CmdSubstQuoted,
+                    .OpenParen,
+                    .CloseParen,
+                    .JSObjRef,
+                    .DoubleBracketOpen,
+                    .DoubleBracketClose,
+                    .Delimit,
+                    .Eof,
+                    => false,
+                })
+            {
                 try self.tokens.append(.Delimit);
                 self.delimit_quote = false;
             }

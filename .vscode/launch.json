@@ -146,6 +146,21 @@
         "action": "openExternally",
       },
     },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "ZACK",
+      "program": "${workspaceFolder}/build/debug/bun-debug",
+      "args": ["./index.ts"],
+      "cwd": "/Users/zackradisic/Code/dd-trace-bun",
+      "env": {
+        "FORCE_COLOR": "0",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+      "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+    },
     // bun run [file]
     {
       "type": "lldb",

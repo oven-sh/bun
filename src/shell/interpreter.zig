@@ -665,6 +665,10 @@ pub const ParsedShellScript = struct {
         return .undefined;
     }
 
+    pub fn getQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.quiet);
+    }
+
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value1 = callframe.argument(0).getObject() orelse {
             return globalThis.throwInvalidArguments("env must be an object", .{});

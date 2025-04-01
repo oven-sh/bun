@@ -148,6 +148,7 @@ export default [
       },
       aborted: {
         getter: "getAborted",
+        passThis: true,
       },
       flags: {
         getter: "getFlags",

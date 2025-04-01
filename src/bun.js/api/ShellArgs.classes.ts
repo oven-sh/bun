@@ -22,6 +22,10 @@ export default [
         fn: "setQuiet",
         length: 0,
       },
+      getQuiet: {
+        fn: "getQuiet",
+        length: 0,
+      },
     },
   }),
 ];

@@ -337,7 +337,50 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
     return fetchFn;
 }
 
-static JSValue constructBunShell(VM& vm, JSObject* bunObject)
+extern "C" bool ShellError__isShellError(JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    // this sus, will it be scanned by GC? make it a Ref
+    static JSC::JSObject* cachedShellErrorConstructor = nullptr;
+
+    // Get the ShellError constructor from cache or look it up
+    JSC::JSObject* shellErrorConstructor = cachedShellErrorConstructor;
+    if (!shellErrorConstructor) {
+        // Get the Bun object from the global object
+        JSC::JSValue bunObject = globalObject->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "Bun"_s));
+        if (!bunObject.isObject())
+            return false;
+
+        // Get the shell module from the Bun object
+        JSC::JSValue shellModule = bunObject.getObject()->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "$"_s));
+        if (!shellModule.isObject())
+            return false;
+
+        // Get the ShellError constructor from the shell module
+        JSC::JSValue shellErrorValue = shellModule.getObject()->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "ShellError"_s));
+        if (!shellErrorValue.isObject())
+            return false;
+
+        shellErrorConstructor = shellErrorValue.getObject();
+        cachedShellErrorConstructor = shellErrorConstructor;
+    }
+
+    // Check if the value is an instance of ShellError
+    JSC::JSValue jsValue = JSC::JSValue::decode(value);
+    if (!jsValue.isObject())
+        return false;
+
+    // Check if the value is an instance of ShellError
+    JSC::JSObject* jsObject = jsValue.getObject();
+
+    // Get the constructor property from the object
+    JSC::JSValue constructor = jsObject->get(globalObject, globalObject->vm().propertyNames->constructor);
+
+    // Compare with the ShellError constructor
+    return constructor.isObject() && constructor.getObject() == shellErrorConstructor;
+}
+
+static JSValue
+constructBunShell(VM& vm, JSObject* bunObject)
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
@@ -896,7 +939,6 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         exportValues.append(value);
     }
 }
-
 }
 
 namespace Zig {

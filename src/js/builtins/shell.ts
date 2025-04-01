@@ -8,6 +8,9 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
   }
+  function bufferInspect(this: Buffer) {
+    return require("node:util").inspect(this.toString());
+  }
 
   class ShellError extends Error {
     #output?: ShellOutput = undefined;
@@ -21,7 +24,8 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     }
 
     initialize(output: ShellOutput, code: number) {
-      this.message = `Failed with exit code ${code}`;
+      const stderrString = output.stderr.toString();
+      this.message = stderrString;
       this.#output = output;
       this.name = "ShellError";
 
@@ -30,7 +34,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       Object.defineProperty(this, "info", {
         value: {
           exitCode: code,
-          stderr: output.stderr,
+          stderr: stderrString,
           stdout: output.stdout,
         },
         writable: true,
@@ -39,11 +43,13 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       });
 
       this.info.stdout.toJSON = lazyBufferToHumanReadableString;
-      this.info.stderr.toJSON = lazyBufferToHumanReadableString;
+      // this.info.stderr.toJSON = lazyBufferToHumanReadableString;
 
       this.stdout = output.stdout;
       this.stderr = output.stderr;
       this.exitCode = code;
+      this.stdout[Bun.inspect.custom] = bufferInspect;
+      this.stderr[Bun.inspect.custom] = bufferInspect;
     }
 
     text(encoding) {

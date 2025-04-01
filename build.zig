@@ -17,6 +17,7 @@ const Arch = std.Target.Cpu.Arch;
 const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
+const protobuf = @import("protobuf");
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
 const recommended_zig_version = "0.14.0";
@@ -283,6 +284,36 @@ pub fn build(b: *Build) !void {
         var bun_obj = addBunObject(b, &build_options);
         step.dependOn(&bun_obj.step);
         step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
+
+        const protobuf_dep = b.dependency("protobuf", .{
+            .target = target,
+            .optimize = optimize,
+        });
+
+        // and lastly use the dependency as a module
+        bun_obj.root_module.addImport("protobuf", protobuf_dep.module("protobuf"));
+
+        const gen_proto = b.step("gen-proto", "generates zig files from protocol buffer definitions");
+
+        const protoc_step = protobuf.RunProtocStep.create(b, protobuf_dep.builder, target, .{
+            // out directory for the generated zig files
+            .destination_directory = b.path("src"),
+            .source_files = &.{
+                "opentelemetry/proto/collector/logs/v1/logs_service.proto",
+                "opentelemetry/proto/collector/metrics/v1/metrics_service.proto",
+                "opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+                "opentelemetry/proto/collector/trace/v1/trace_service.proto",
+                "opentelemetry/proto/common/v1/common.proto",
+                "opentelemetry/proto/logs/v1/logs.proto",
+                "opentelemetry/proto/metrics/v1/metrics.proto",
+                "opentelemetry/proto/profiles/v1development/profiles.proto",
+                "opentelemetry/proto/resource/v1/resource.proto",
+                "opentelemetry/proto/trace/v1/trace.proto",
+            },
+            .include_directories = &.{},
+        });
+
+        gen_proto.dependOn(&protoc_step.step);
     }
 
     // zig build windows-shim

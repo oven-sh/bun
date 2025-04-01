@@ -45,8 +45,8 @@ pub const STDERR_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDI
 pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
 pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
-pub extern fn ShellError__isShellError(globalObject: *JSGlobalObject, value: JSC.JSValue) bool;
-pub fn isShellError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+pub extern fn ShellError__isShellError(globalObject: *JSGlobalObject, value: *JSC.JSObject) bool;
+pub fn isShellError(globalObject: *JSC.JSGlobalObject, value: *JSC.JSObject) bool {
     return ShellError__isShellError(globalObject, value);
 }
 

@@ -4027,7 +4027,9 @@ pub const VirtualMachine = struct {
         }
 
         if (is_error_instance) {
-            const is_shell_error = if (mode == .js) bun.shell.isShellError(this.global, error_instance) else false;
+            // SAFETY: error instances are always objects
+            const error_obj = error_instance.getObject().?;
+            const is_shell_error = if (mode == .js) bun.shell.isShellError(this.global, error_obj) else false;
 
             var saw_cause = false;
             const Iterator = JSC.JSPropertyIterator(.{
@@ -4037,8 +4039,6 @@ pub const VirtualMachine = struct {
                 .observable = false,
                 .only_non_index_properties = true,
             });
-            // SAFETY: error instances are always objects
-            const error_obj = error_instance.getObject().?;
             var iterator = try Iterator.init(this.global, error_obj);
             defer iterator.deinit();
             const longest_name = @min(iterator.getLongestPropertyName(), 10);

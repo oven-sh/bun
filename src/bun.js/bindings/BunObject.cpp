@@ -337,10 +337,9 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
     return fetchFn;
 }
 
-extern "C" bool ShellError__isShellError(JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+extern "C" bool ShellError__isShellError(JSGlobalObject* globalObject, JSC::JSObject* jsObject)
 {
-    // this sus, will it be scanned by GC? make it a Ref
-    static JSC::JSObject* cachedShellErrorConstructor = nullptr;
+    static JSC::JSObject* cachedShellErrorConstructor(nullptr);
 
     // Get the ShellError constructor from cache or look it up
     JSC::JSObject* shellErrorConstructor = cachedShellErrorConstructor;
@@ -363,14 +362,6 @@ extern "C" bool ShellError__isShellError(JSGlobalObject* globalObject, JSC::Enco
         shellErrorConstructor = shellErrorValue.getObject();
         cachedShellErrorConstructor = shellErrorConstructor;
     }
-
-    // Check if the value is an instance of ShellError
-    JSC::JSValue jsValue = JSC::JSValue::decode(value);
-    if (!jsValue.isObject())
-        return false;
-
-    // Check if the value is an instance of ShellError
-    JSC::JSObject* jsObject = jsValue.getObject();
 
     // Get the constructor property from the object
     JSC::JSValue constructor = jsObject->get(globalObject, globalObject->vm().propertyNames->constructor);

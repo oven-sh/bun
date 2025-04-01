@@ -2237,14 +2237,14 @@ pub fn spawnMaybeSync(
         @ptrCast(argv.items.ptr),
         @ptrCast(env_array.items.ptr),
     ) catch |err| switch (err) {
-        error.EMFILE => {
+        error.EMFILE, error.ENFILE => {
             spawn_options.deinit();
             const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
                 std.mem.sliceTo(argv.items[0].?, 0)
             else
                 "";
-            var systemerror = bun.sys.Error.fromCode(.MFILE, .posix_spawn).withPath(display_path).toSystemError();
-            systemerror.errno = -bun.C.UV_EMFILE;
+            var systemerror = bun.sys.Error.fromCode(if (err == error.EMFILE) .MFILE else .NFILE, .posix_spawn).withPath(display_path).toSystemError();
+            systemerror.errno = if (err == error.EMFILE) -bun.C.UV_EMFILE else -bun.C.UV_ENFILE;
             return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
         },
         else => {

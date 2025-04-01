@@ -679,3 +679,15 @@ it("encoding should not throw in null, undefined or in valid encodings in create
     expect(hmac.digest("hex")?.length).toBe(64);
   }
 });
+
+it("verifyError should not be on the prototype of DiffieHellman and DiffieHellmanGroup", () => {
+  const dh = crypto.createDiffieHellman(512);
+  expect("verifyError" in crypto.DiffieHellman.prototype).toBeFalse();
+  expect("verifyError" in dh).toBeTrue();
+  expect(dh.verifyError).toBe(0);
+
+  const dhg = crypto.createDiffieHellmanGroup("modp5");
+  expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
+  expect("verifyError" in dhg).toBeTrue();
+  expect(dhg.verifyError).toBe(0);
+});

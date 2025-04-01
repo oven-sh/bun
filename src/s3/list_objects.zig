@@ -520,7 +520,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "continuationToken")) |val| {
         if (val.isString()) {
-            const str = bun.String.fromJS(val, globalThis);
+            const str = try bun.String.fromJS(val, globalThis);
 
             if (str.tag != .Empty and str.tag != .Dead) {
                 listObjectsOptions._continuation_token = str.toUTF8(bun.default_allocator);
@@ -531,7 +531,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "delimiter")) |val| {
         if (val.isString()) {
-            const str = bun.String.fromJS(val, globalThis);
+            const str = try bun.String.fromJS(val, globalThis);
 
             if (str.tag != .Empty and str.tag != .Dead) {
                 listObjectsOptions._delimiter = str.toUTF8(bun.default_allocator);
@@ -542,7 +542,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "encodingType")) |val| {
         if (val.isString()) {
-            const str = bun.String.fromJS(val, globalThis);
+            const str = try bun.String.fromJS(val, globalThis);
 
             if (str.tag != .Empty and str.tag != .Dead) {
                 listObjectsOptions._encoding_type = str.toUTF8(bun.default_allocator);
@@ -563,7 +563,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "prefix")) |val| {
         if (val.isString()) {
-            const str = bun.String.fromJS(val, globalThis);
+            const str = try bun.String.fromJS(val, globalThis);
 
             if (str.tag != .Empty and str.tag != .Dead) {
                 listObjectsOptions._prefix = str.toUTF8(bun.default_allocator);
@@ -574,7 +574,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "startAfter")) |val| {
         if (val.isString()) {
-            const str = bun.String.fromJS(val, globalThis);
+            const str = try bun.String.fromJS(val, globalThis);
 
             if (str.tag != .Empty and str.tag != .Dead) {
                 listObjectsOptions._start_after = str.toUTF8(bun.default_allocator);

@@ -3720,12 +3720,15 @@ pub const Blob = struct {
                 promise: JSC.JSPromise.Strong,
                 store: *Store,
                 resolvedlistOptions: S3.S3ListObjectsOptions,
+                global: *JSC.JSGlobalObject,
 
                 pub usingnamespace bun.New(@This());
 
-                pub fn resolve(result: S3.S3ListObjectsResult, self: *@This()) void {
+                pub fn resolve(result: S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+                    const self: *@This() = @ptrCast(@alignCast(opaque_self));
                     defer self.deinit();
-                    const globalObject = self.promise.globalObject().?;
+                    const globalObject = self.global;
+
                     switch (result) {
                         .success => |list_result| {
                             defer list_result.deinit();
@@ -3759,6 +3762,7 @@ pub const Blob = struct {
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
                 .resolvedlistOptions = options,
+                .global = globalThis,
             }), proxy);
             store.ref();
 

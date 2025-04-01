@@ -581,7 +581,7 @@ void evaluateCommonJSCustomExtension(
     Bun::JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
     JSValue extension = extensions->m_registeredFunctions[extensionIndex].get();
 
-    if (!extension || !extension.isCallable()) {
+    if (!extension) {
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
     }

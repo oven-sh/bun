@@ -59,9 +59,9 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject)
     if (stackFrames.size() == 0) return true;
     JSC::StackFrame& frame = stackFrames[0];
 
-    // When adding to this list, please comment why the package is using extensions incorrectly.
 
     WTF::String url = frame.sourceURL(vm);
+    if (!url) return true;
 
 #if OS(WINDOWS)
 #define CHECK_PATH(url, _, windows) (url.contains(windows))
@@ -69,6 +69,7 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject)
 #define CHECK_PATH(url, posix, _) (url.contains(posix))
 #endif
 
+    // When adding to this list, please comment why the package is using extensions incorrectly.
     if (CHECK_PATH(url, "dist/build/next-config-ts/"_s, "dist\\build\\next-config-ts\\"_s))
         return false; // Next.js adds SWC support to add features Bun already has.
     if (CHECK_PATH(url, "@meteorjs/babel"_s, "@meteorjs\\babel"_s))
@@ -145,24 +146,22 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
 {
     if (propertyName.isSymbol()) return;
     auto* name = propertyName.publicName();
-    if (!name->startsWith("."_s)) return;
+    if (!name->startsWith('.')) return;
     BunString ext = Bun::toString(name);
     uint32_t kind = 0;
-    if (value.isCallable()) {
-        JSC::CallData callData = JSC::getCallData(value);
-        if (callData.type == JSC::CallData::Type::Native) {
-            auto* untaggedPtr = callData.native.function.untaggedPtr();
-            if (untaggedPtr == &jsLoaderJS) {
-                kind = 1;
-            } else if (untaggedPtr == &jsLoaderJSON) {
-                kind = 2;
-            } else if (untaggedPtr == &jsLoaderNode) {
-                kind = 3;
-            } else if (untaggedPtr == &jsLoaderTS) {
-                kind = 4;
-            }
+    JSC::CallData callData = JSC::getCallData(value);
+    if (callData.type == JSC::CallData::Type::Native) {
+        auto* untaggedPtr = callData.native.function.untaggedPtr();
+        if (untaggedPtr == &jsLoaderJS) {
+            kind = 1;
+        } else if (untaggedPtr == &jsLoaderJSON) {
+            kind = 2;
+        } else if (untaggedPtr == &jsLoaderNode) {
+            kind = 3;
+        } else if (untaggedPtr == &jsLoaderTS) {
+            kind = 4;
         }
-    } else {
+    } else if (callData.type == JSC::CallData::Type::None) {
         kind = -1;
     }
     NodeModuleModule__onRequireExtensionModify(globalObject, &ext, kind, value);

@@ -4015,6 +4015,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_moduleResolveFilenameFunction.visit(visitor);
     thisObject->m_modulePrototypeUnderscoreCompileFunction.visit(visitor);
+    thisObject->m_commonJSRequireESMFromHijackedExtensionFunction.visit(visitor);
     thisObject->m_moduleRunMainFunction.visit(visitor);
     thisObject->m_nodeModuleConstructor.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);

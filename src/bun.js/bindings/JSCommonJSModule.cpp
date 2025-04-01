@@ -1316,16 +1316,17 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!compileFunction || !compileFunction.isCallable()) {
-            throwTypeError(globalObject, scope, makeString("overridden module._compile is not a function (called from overridden Module._extensions)"_s));
+        if (!compileFunction) {
+            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
         }
         JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
         if (callData.type == JSC::CallData::Type::None) {
-            throwTypeError(globalObject, scope, makeString("overridden module._compile is not a function (called from overridden Module._extensions)"_s));
+            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
+        RETURN_IF_EXCEPTION(scope, );
         if (source.needsDeref) {
             source.needsDeref = false;
             source.source_code.deref();

@@ -1270,6 +1270,7 @@ pub const VirtualMachine = struct {
         if (!handled) {
             // TODO maybe we want a separate code path for uncaught exceptions
             this.unhandled_error_counter += 1;
+            this.exit_handler.exit_code = 1;
             this.onUnhandledRejection(this, globalObject, err);
         }
         return handled;

@@ -274,6 +274,8 @@ function asyncWrap(fn: any, name: string) {
     [kFlag];
     [kClosePromise];
     [kRefs];
+    // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
+    [Symbol("messaging_transfer_symbol")]() {}
 
     async appendFile(data, options) {
       const fd = this[kFd];

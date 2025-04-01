@@ -261,10 +261,10 @@ pub fn RefPtr(T: type) type {
         data: *T,
         debug: DebugId,
 
-        // For simplicity, RefPtr only supports `ref_count` as the field name
-        const kind = implementsRefCount(T, "ref_count");
         comptime {
-            bun.assert(kind != .not_ref_counted);
+            const RefCountMixin = @FieldType(T, "ref_count");
+            bun.assert(@field(T, "ref") == @field(RefCountMixin, "ref"));
+            bun.assert(@field(T, "deref") == @field(RefCountMixin, "deref"));
         }
         const DebugId = if (enable_debug) TrackedRef.Id else void;
 
@@ -466,22 +466,6 @@ fn genericDump(
             bun.Output.prettyError("  {d} omitted ...\n", .{map.count() - i});
             break;
         }
-    }
-}
-
-fn implementsRefCount(T: type, field_name: []const u8) enum { threadsafe, normal, not_ref_counted } {
-    comptime {
-        if (!@hasField(T, field_name)) return .not_ref_counted;
-        const R = @FieldType(T, field_name);
-        if (!@hasField(R, "debug")) return .not_ref_counted;
-        const kind = switch (@FieldType(R, "debug")) {
-            DebugData(false) => .normal,
-            DebugData(true) => .threadsafe,
-            else => return .not_ref_counted,
-        };
-        bun.assert(@field(T, "ref") == @field(R, "ref"));
-        bun.assert(@field(T, "deref") == @field(R, "deref"));
-        return kind;
     }
 }
 

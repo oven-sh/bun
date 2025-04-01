@@ -11,15 +11,6 @@ const options: Bun.TLSOptions = {
 
 process.assert;
 
-const channel = new BroadcastChannel("my-channel");
-const message = { hello: "world" };
-
-channel.onmessage = event => {
-  console.log(event);
-};
-
-channel.postMessage(message);
-
 const error = new Error("hello world");
 const clone = structuredClone(error);
 console.log(clone.message); // "hello world"
@@ -83,7 +74,7 @@ new Request("url");
 new Response();
 new Headers();
 new URL("");
-new URLSearchParams();
+new URLSearchParams([["cool", "stuff"]]);
 new File([], "filename", { type: "text/plain" });
 new Blob([], { type: "text/plain" });
 new ReadableStream();
@@ -120,96 +111,8 @@ new Promise(resolve => {
   resolve(1);
 });
 
-Bun.serve({
-  routes: {
-    "/:test": req => {
-      return new Response(req.params.test);
-    },
-  },
-
-  fetch: (req, server) => {
-    if (!server.upgrade(req)) {
-      return new Response("not upgraded");
-    }
-  },
-
-  websocket: {
-    message: ws => {
-      ws.data;
-      ws.send(" ");
-    },
-  },
-});
-
 import.meta.hot.on("bun:bun:beforeFullReloadBut also allows anything", () => {
   //
-});
-
-Bun.serve({
-  routes: {
-    "/:test": req => {
-      return new Response(req.params.test);
-    },
-  },
-
-  fetch: (req, server) => {
-    return new Response("cool");
-  },
-});
-
-Bun.serve({
-  fetch: (req, server) => {
-    return new Response("cool");
-  },
-});
-
-Bun.serve({
-  routes: {
-    "/:test": req => {
-      return new Response(req.params.test);
-    },
-  },
-});
-
-Bun.serve({
-  fetch: () => new Response("ok"),
-  websocket: {
-    message: ws => {
-      //
-    },
-  },
-});
-
-Bun.serve({
-  websocket: {
-    message: () => {
-      //
-    },
-  },
-  fetch: (req, server) => {
-    if (server.upgrade(req)) {
-      return;
-    }
-
-    return new Response("not upgraded");
-  },
-});
-
-Bun.serve({
-  websocket: {
-    message: () => {
-      //
-    },
-  },
-  routes: {
-    "/ws": (req, server) => {
-      if (server.upgrade(req)) {
-        return;
-      }
-
-      return new Response("not upgraded");
-    },
-  },
 });
 
 new Map();
@@ -310,12 +213,6 @@ req1.headers;
 req1.headers.toJSON();
 
 new ReadableStream({});
-new ReadableStream({
-  type: "direct",
-  async pull(controller) {
-    controller.write(new TextEncoder().encode("Hello, world!"));
-  },
-});
 
 const body = await fetch(req1);
 

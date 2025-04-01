@@ -1410,7 +1410,7 @@ pub const Symbol = struct {
         }
 
         pub fn followAll(symbols: *Map) void {
-            const trace = bun.tracy.traceNamed(@src(), "Symbols.followAll");
+            const trace = bun.perf.trace("Symbols.followAll");
             defer trace.end();
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
@@ -2407,12 +2407,6 @@ pub const E = struct {
         }
 
         pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
-            if (Expr.Data.Store.memory_allocator) |mem| {
-                if (mem == GlobalStoreHandle.global_store_ast) {
-                    return str.string(allocator);
-                }
-            }
-
             if (str.isUTF8()) {
                 return allocator.dupe(u8, str.string(allocator) catch unreachable);
             }
@@ -8762,32 +8756,6 @@ pub const ServerComponentBoundary = struct {
             }
         };
     };
-};
-
-pub const GlobalStoreHandle = struct {
-    prev_memory_allocator: ?*ASTMemoryAllocator = null,
-
-    var global_store_ast: ?*ASTMemoryAllocator = null;
-    var global_store_threadsafe: std.heap.ThreadSafeAllocator = undefined;
-
-    pub fn get() ?*ASTMemoryAllocator {
-        if (global_store_ast == null) {
-            var global = bun.default_allocator.create(ASTMemoryAllocator) catch unreachable;
-            global.allocator = bun.default_allocator;
-            global.bump_allocator = bun.default_allocator;
-            global_store_ast = global;
-        }
-
-        const prev = Stmt.Data.Store.memory_allocator;
-        Stmt.Data.Store.memory_allocator = global_store_ast;
-        Expr.Data.Store.memory_allocator = global_store_ast;
-        return prev;
-    }
-
-    pub fn unget(handle: ?*ASTMemoryAllocator) void {
-        Stmt.Data.Store.memory_allocator = handle;
-        Expr.Data.Store.memory_allocator = handle;
-    }
 };
 
 extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;

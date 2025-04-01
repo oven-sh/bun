@@ -739,6 +739,9 @@ pub const JSGlobalObject = opaque {
         eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
+        const trace = bun.perf.trace("JSGlobalObject.create");
+        defer trace.end();
+
         v.eventLoop().ensureWaker();
         const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
 

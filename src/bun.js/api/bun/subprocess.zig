@@ -2,8 +2,11 @@
 //! code for `Bun.spawnSync`
 const Subprocess = @This();
 pub usingnamespace JSC.Codegen.JSSubprocess;
-pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
+ref_count: RefCount,
 process: *Process,
 stdin: Writable,
 stdout: Readable,
@@ -32,7 +35,6 @@ ipc_callback: JSC.Strong = .empty,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
-ref_count: u32 = 1,
 abort_signal: ?*JSC.AbortSignal = null,
 
 event_loop_timer_refd: bool = false,
@@ -913,10 +915,13 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         source: Source = .{ .detached = {} },
         process: *ProcessType = undefined,
         event_loop: JSC.EventLoopHandle,
-        ref_count: u32 = 1,
+        ref_count: WriterRefCount,
         buffer: []const u8 = "",
 
-        pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
+        // It seems there is a bug in the Zig compiler. We'll get back to this one later
+        const WriterRefCount = bun.ptr.RefCount(This, "ref_count", _deinit, .{});
+        pub usingnamespace bun.ptr.RefCount(This, "ref_count", _deinit, .{});
+
         const This = @This();
         const print = bun.Output.scoped(.StaticPipeWriter, false);
 
@@ -949,7 +954,8 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         }
 
         pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This {
-            const this = This.new(.{
+            const this = bun.new(This, .{
+                .ref_count = .init(),
                 .event_loop = JSC.EventLoopHandle.init(event_loop),
                 .process = subprocess,
                 .stdio_result = result,
@@ -1006,7 +1012,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         fn _deinit(this: *This) void {
             this.writer.end();
             this.source.detach();
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn memoryCost(this: *const This) usize {
@@ -1030,10 +1036,14 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
 }
 
 pub const PipeReader = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", PipeReader.deinit, .{});
+    pub const ref = PipeReader.RefCount.ref;
+    pub const deref = PipeReader.RefCount.deref;
+
     reader: IOReader = undefined,
     process: ?*Subprocess = null,
     event_loop: *JSC.EventLoop = undefined,
-    ref_count: u32 = 1,
+    ref_count: PipeReader.RefCount,
     state: union(enum) {
         pending: void,
         done: []u8,
@@ -1043,8 +1053,6 @@ pub const PipeReader = struct {
 
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
-
-    pub usingnamespace bun.NewRefCounted(PipeReader, _deinit, null);
 
     pub fn memoryCost(this: *const PipeReader) usize {
         return this.reader.memoryCost();
@@ -1063,7 +1071,8 @@ pub const PipeReader = struct {
     }
 
     pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult) *PipeReader {
-        var this = PipeReader.new(.{
+        var this = bun.new(PipeReader, .{
+            .ref_count = .init(),
             .process = process,
             .reader = IOReader.init(@This()),
             .event_loop = event_loop,
@@ -1211,7 +1220,7 @@ pub const PipeReader = struct {
         return this.event_loop.virtual_machine.uwsLoop();
     }
 
-    fn _deinit(this: *PipeReader) void {
+    fn deinit(this: *PipeReader) void {
         if (comptime Environment.isPosix) {
             bun.assert(this.reader.isDone());
         }
@@ -1225,7 +1234,7 @@ pub const PipeReader = struct {
         }
 
         this.reader.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -1448,10 +1457,10 @@ const Writable = union(enum) {
                     // So, let's not do that.
                     // https://github.com/oven-sh/bun/pull/14092
                     bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
-                    const debug_ref_count: if (Environment.isDebug) u32 else u0 = if (Environment.isDebug) subprocess.ref_count else 0;
+                    const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
                     pipe.onAttachedProcessExit();
-                    if (comptime Environment.isDebug) {
-                        bun.debugAssert(subprocess.ref_count == debug_ref_count);
+                    if (Environment.isDebug) {
+                        bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
                     }
                     return pipe.toJS(globalThis);
                 } else {
@@ -1699,9 +1708,9 @@ pub fn finalizeStreams(this: *Subprocess) void {
     this.on_disconnect_callback.deinit();
 }
 
-pub fn deinit(this: *Subprocess) void {
+fn deinit(this: *Subprocess) void {
     log("deinit", .{});
-    this.destroy();
+    bun.destroy(this);
 }
 
 fn clearAbortSignal(this: *Subprocess) void {
@@ -2266,7 +2275,8 @@ pub fn spawnMaybeSync(
 
     const process = spawned.toProcess(loop, is_sync);
 
-    var subprocess = Subprocess.new(.{
+    var subprocess = bun.new(Subprocess, .{
+        .ref_count = .init(),
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
@@ -2323,7 +2333,7 @@ pub fn spawnMaybeSync(
         ),
         // 1. JavaScript.
         // 2. Process.
-        .ref_count = 2,
+        .ref_count = .initExactRefs(2),
         .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
         .on_exit_callback = JSC.Strong.create(on_exit_callback, globalThis),
         .on_disconnect_callback = JSC.Strong.create(on_disconnect_callback, globalThis),

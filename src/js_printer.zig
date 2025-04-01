@@ -5935,7 +5935,7 @@ pub fn print(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
-    const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
+    const trace = bun.perf.trace("JSPrinter.print");
     defer trace.end();
 
     const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };

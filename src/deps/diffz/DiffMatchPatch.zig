@@ -522,7 +522,7 @@ fn diffBisect(
             var y2: isize = x2 - k2;
             while (x2 < before_length and y2 < after_length and
                 before[@intCast(before_length - x2 - 1)] ==
-                after[@intCast(after_length - y2 - 1)])
+                    after[@intCast(after_length - y2 - 1)])
             {
                 x2 += 1;
                 y2 += 1;
@@ -1231,9 +1231,9 @@ fn diffCleanupSemanticScore(one: []const u8, two: []const u8) usize {
     const blankLine2 = lineBreak2 and
         // BLANKLINESTART.IsMatch(two);
         (std.mem.startsWith(u8, two, "\n\n") or
-        std.mem.startsWith(u8, two, "\r\n\n") or
-        std.mem.startsWith(u8, two, "\n\r\n") or
-        std.mem.startsWith(u8, two, "\r\n\r\n"));
+            std.mem.startsWith(u8, two, "\r\n\n") or
+            std.mem.startsWith(u8, two, "\n\r\n") or
+            std.mem.startsWith(u8, two, "\r\n\r\n"));
 
     if (blankLine1 or blankLine2) {
         // Five points for blank lines.
@@ -1314,8 +1314,8 @@ pub fn diffCleanupEfficiency(
             // <ins>A</ins><del>B</del>X<del>C</del>
             if ((last_equality.Length != 0) and
                 ((pre_ins and pre_del and post_ins and post_del) or
-                ((last_equality.Length < dmp.diff_edit_cost / 2) and
-                ((if (pre_ins) 1 else 0) + (if (pre_del) 1 else 0) + (if (post_ins) 1 else 0) + (if (post_del) 1 else 0)) == 3)))
+                    ((last_equality.Length < dmp.diff_edit_cost / 2) and
+                        ((if (pre_ins) 1 else 0) + (if (pre_del) 1 else 0) + (if (post_ins) 1 else 0) + (if (post_del) 1 else 0)) == 3)))
             {
                 // Duplicate record.
                 try diffs.insert(

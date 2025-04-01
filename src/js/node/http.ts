@@ -2753,8 +2753,10 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      // no body and not finished
+      const isDuplex = customBody === undefined && !this.finished;
 
-      if (customBody === undefined) {
+      if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
@@ -2763,7 +2765,7 @@ function ClientRequest(input, options, cb) {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
-        } else {
+        } else if (isDuplex) {
           fetchOptions.body = async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();

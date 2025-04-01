@@ -6,9 +6,9 @@ declare module "bun" {
   }
 }
 expectType<"FOO">(Bun.env.FOO);
+expectType<"FOO">(process.env.FOO);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace NodeJS {
     interface ProcessEnv {
       BAR: "BAR";

@@ -402,6 +402,7 @@ pub const WebWorker = struct {
         assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
         vm.preload = this.preloads;
+        WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
             this.flushLogs();
             this.exitAndDeinit();
@@ -422,7 +423,6 @@ pub const WebWorker = struct {
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});
-        WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         this.setStatus(.running);
 
         // don't run the GC if we don't actually need to

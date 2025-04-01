@@ -26,13 +26,16 @@ export enum InvalidThisBehavior {
 }
 
 export type Field =
-  | ({
+  | /* Field is a getter */ ({
       getter: string;
       cache?: true | string;
       /**
        * Allow overriding the value of the property
        */
       writable?: boolean;
+      /**
+       * Whether or not the `this` JSValue should be passed to the function.
+       */
       this?: boolean;
     } & PropertyAttribute)
   | { value: string }

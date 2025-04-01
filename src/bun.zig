@@ -3870,7 +3870,7 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
     };
 }
 
-pub const DebugThreadLock = if (Environment.allow_assert)
+pub const DebugThreadLock = if (Environment.isDebug)
     struct {
         owning_thread: ?std.Thread.Id,
         locked_at: crash_handler.StoredTrace,

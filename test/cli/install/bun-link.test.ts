@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { access, copyFile, exists, mkdir, realpath, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -229,6 +229,10 @@ it("should link package", async () => {
     "1 package installed",
   ]);
   expect(await exited2).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", link_name].sort());
+  expect(await realpath(join(package_dir, "node_modules", link_name))).toEqual(
+    link_dir,
+  );
 
   const {
     stdout: stdout3,
@@ -263,6 +267,34 @@ it("should link package", async () => {
   expect(err4).toContain(`error: Package "${link_name}" is not linked`);
   expect(await new Response(stdout4).text()).toEqual(expect.stringContaining("bun link v1."));
   expect(await exited4).toBe(1);
+
+  const {
+    stdout: stdout5,
+    stderr: stderr5,
+    exited: exited5,
+  } = spawn({
+    cmd: [bunExe(), "unlink", link_name],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err5 = stderrForInstall(await new Response(stderr5).text());
+  expect(err5.split(/\r?\n/)).toEqual([""]);
+  const out5 = await new Response(stdout5).text();
+  expect(out5.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun unlink v1."),
+    "",
+    expect.stringContaining("done"),
+    "",
+  ]);
+  expect(await exited5).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache"].sort());
+  expect(await exists(join(package_dir, "node_modules", link_name))).toBe(
+    false,
+  );
 });
 
 it("should link scoped package", async () => {
@@ -322,6 +354,9 @@ it("should link scoped package", async () => {
     "1 package installed",
   ]);
   expect(await exited2).toBe(0);
+  expect(await realpath(join(package_dir, "node_modules", link_name))).toEqual(
+    link_dir,
+  );
 
   const {
     stdout: stdout3,
@@ -356,6 +391,28 @@ it("should link scoped package", async () => {
   expect(err4).toContain(`error: Package "${link_name}" is not linked`);
   expect((await new Response(stdout4).text()).split(/\r?\n/)).toEqual([expect.stringContaining("bun link v1."), ""]);
   expect(await exited4).toBe(1);
+  expect(await realpath(join(package_dir, "node_modules", link_name))).toEqual(
+    link_dir,
+  );
+
+  const {
+    stderr: stderr5,
+    exited: exited5,
+  } = spawn({
+    cmd: [bunExe(), "unlink", link_name],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err5 = stderrForInstall(await new Response(stderr5).text());
+  expect(await exited5).toBe(0);
+  expect(err5.split(/\r?\n/)).toEqual([""]);
+  expect(await exists(join(package_dir, "node_modules", link_name))).toBe(
+    false,
+  );
 });
 
 it("should link dependency without crashing", async () => {
@@ -417,6 +474,9 @@ it("should link dependency without crashing", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", link_name))).toEqual(
     ["package.json", `${link_name}.js`].sort(),
   );
+  expect(await realpath(join(package_dir, "node_modules", link_name))).toEqual(
+    link_dir,
+  );
   await access(join(package_dir, "bun.lockb"));
 
   const {
@@ -462,3 +522,128 @@ it("should link dependency without crashing", async () => {
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
 });
+
+
+it("should link over an existing dependency", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const tarball = "baz-0.0.3.tgz";
+  const absolutePath = join(__dirname, tarball);
+  await copyFile(absolutePath, join(package_dir, tarball));
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", tarball],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed baz@baz-0.0.3.tgz with binaries:",
+    " - baz-run",
+    "",
+    "1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
+  expect(package_json.name).toBe("baz");
+  expect(package_json.version).toBe("0.0.3");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+    await access(join(package_dir, "bun.lockb"));
+
+  const link_name = "baz";
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: link_name,
+      version: "0.0.1",
+    }),
+  );
+
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: link_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err1 = stderrForInstall(await new Response(stderr1).text());
+  expect(err1.split(/\r?\n/)).toEqual([""]);
+  expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
+  expect(await exited1).toBe(0);
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "link", link_name],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err2 = stderrForInstall(await new Response(stderr2).text());
+  expect(err2.split(/\r?\n/)).toEqual([""]);
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun link v1."),
+    "",
+    `installed ${link_name}@link:${link_name}`,
+    "",
+    "1 package installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(await realpath(join(package_dir, "node_modules", link_name))).toEqual(
+    link_dir,
+  );
+
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "unlink", link_name],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err3 = stderrForInstall(await new Response(stderr3).text());
+  expect(err3.split(/\r?\n/)).toEqual([""]);
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun unlink v1."),
+    "",
+    "installed baz@baz-0.0.3.tgz with binaries:",
+    " - baz-run",
+    "",
+    "1 package installed"
+  ]);
+
+  const package_json1 = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
+  expect(package_json1.name).toBe("baz");
+  expect(package_json1.version).toBe("0.0.3");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+    await access(join(package_dir, "bun.lockb"));
+});
+

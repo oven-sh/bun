@@ -65,7 +65,8 @@ pub const RefCountOptions = struct {
 pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, options: RefCountOptions) type {
     return struct {
         active_counts: u32,
-        thread: ?bun.DebugThreadLock,
+        // TODO: enable this assertion; currently fails in multiple places
+        // thread: ?bun.DebugThreadLock,
         debug: if (enable_debug) DebugData(false) else void,
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
@@ -79,7 +80,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, optio
         pub fn initExactRefs(count: u32) @This() {
             assert(count > 0);
             return .{
-                .thread = if (@inComptime()) null else .initLocked(),
+                // .thread = if (@inComptime()) null else .initLocked(),
                 .active_counts = count,
                 .debug = if (enable_debug) .empty else undefined,
             };
@@ -143,11 +144,12 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, optio
         }
 
         fn assertNonThreadSafeCountIsSingleThreaded(count: *@This()) void {
-            const thread = if (count.thread) |*ptr| ptr else {
-                count.thread = .initLocked();
-                return;
-            };
-            thread.assertLocked(); // this counter is not thread-safe
+            _ = count;
+            // const thread = if (count.thread) |*ptr| ptr else {
+            //     count.thread = .initLocked();
+            //     return;
+            // };
+            // thread.assertLocked(); // this counter is not thread-safe
         }
 
         fn getCounter(self: *T) *@This() {

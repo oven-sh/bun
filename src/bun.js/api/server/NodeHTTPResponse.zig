@@ -895,22 +895,22 @@ pub fn getOnWritable(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValu
     return this.onWritableCallback.get() orelse .undefined;
 }
 
-pub fn getOnAbort(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getOnAbort(this: *NodeHTTPResponse, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
     if (this.flags.socket_closed) {
         return .undefined;
     }
-    return NodeHTTPResponse.onAbortedGetCached(this.getThisValue()) orelse .undefined;
+    return NodeHTTPResponse.onAbortedGetCached(this_value) orelse .undefined;
 }
 
-pub fn setOnAbort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnAbort(this: *NodeHTTPResponse, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
     if (this.flags.socket_closed) {
         return true;
     }
 
     if (this.isDone() or value == .undefined) {
-        NodeHTTPResponse.onAbortedSetCached(this.getThisValue(), globalObject, .zero);
+        NodeHTTPResponse.onAbortedSetCached(this_value, globalObject, .zero);
     } else {
-        NodeHTTPResponse.onAbortedSetCached(this.getThisValue(), globalObject, value.withAsyncContextIfNeeded(globalObject));
+        NodeHTTPResponse.onAbortedSetCached(this_value, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
 
     return true;

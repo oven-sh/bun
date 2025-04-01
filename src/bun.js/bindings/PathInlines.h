@@ -62,7 +62,7 @@ ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetC
 {
     if (isAbsolutePath(input))
         return input;
-    BunString in = Bun::toString(input);
+    BunString in = Bun::toStringNonRef(input);
     BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(globalToGetCwdFrom, in);
     return out.transferToWTFString();
 }

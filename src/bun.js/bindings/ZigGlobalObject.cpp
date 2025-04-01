@@ -1043,7 +1043,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         return {};
     }
 
-    auto specifier = Bun::toString(moduleKey);
+    auto specifier = Bun::toStringNonRef(moduleKey);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -4479,7 +4479,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    auto moduleKeyBun = Bun::toString(moduleKey);
+    auto moduleKeyBun = Bun::toStringNonRef(moduleKey);
     auto sourceString = String("undefined"_s);
     auto typeAttributeString = String();
 
@@ -4499,8 +4499,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         }
     }
 
-    auto source = Bun::toString(sourceString);
-    auto typeAttribute = Bun::toString(typeAttributeString);
+    auto source = Bun::toStringNonRef(sourceString);
+    auto typeAttribute = Bun::toStringNonRef(typeAttributeString);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;

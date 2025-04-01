@@ -528,7 +528,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
-            BunString from = Bun::toString(fromString);
+            BunString from = Bun::toStringNonRef(fromString);
             auto catchScope = DECLARE_CATCH_SCOPE(vm);
             auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
             if (catchScope.exception()) {

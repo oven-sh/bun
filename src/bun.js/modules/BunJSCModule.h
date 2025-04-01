@@ -887,7 +887,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     }
 
     return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.data(),
+        globalObject, Bun::toStringNonRef(fileName), basicBlocks.data(),
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 

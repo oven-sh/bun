@@ -588,11 +588,11 @@ pub const RunCommand = struct {
                                 const is_probably_trying_to_run_a_pkg_script =
                                     original_script_for_bun_run != null and
                                     ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
-                                    (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
-                                    "install",
-                                    "kill",
-                                    "link",
-                                }) and ctx.positionals.len == 1));
+                                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                                            "install",
+                                            "kill",
+                                            "link",
+                                        }) and ctx.positionals.len == 1));
 
                                 if (is_probably_trying_to_run_a_pkg_script) {
                                     // if you run something like `bun run test`, you get a confusing message because

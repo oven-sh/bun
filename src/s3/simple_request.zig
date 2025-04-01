@@ -80,7 +80,7 @@ pub const S3HttpSimpleTask = struct {
     range: ?[]const u8,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
-    usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
     pub const Callback = union(enum) {
         stat: *const fn (S3StatResult, *anyopaque) void,
         download: *const fn (S3DownloadResult, *anyopaque) void,
@@ -120,6 +120,7 @@ pub const S3HttpSimpleTask = struct {
             }
         }
     };
+
     pub fn deinit(this: *@This()) void {
         if (this.result.certificate_info) |*certificate| {
             certificate.deinit(bun.default_allocator);
@@ -135,7 +136,7 @@ pub const S3HttpSimpleTask = struct {
         if (this.result.metadata) |*metadata| {
             metadata.deinit(bun.default_allocator);
         }
-        this.destroy();
+        bun.destroy(this);
     }
 
     const ErrorType = enum {

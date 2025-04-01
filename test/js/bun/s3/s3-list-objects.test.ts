@@ -1053,6 +1053,26 @@ describe("S3 - List Objects", () => {
       ],
     });
   });
+
+  it("Should throw error when no creds is found from instance method", async () => {
+    const client = new S3Client();
+
+    try {
+      await client.list();
+      expect.unreachable();
+    } catch (error: any) {
+      expect(error.code).toBe("ERR_S3_MISSING_CREDENTIALS");
+    }
+  });
+
+  it("Should throw error when no creds is found from static method", async () => {
+    try {
+      await S3Client.list();
+      expect.unreachable();
+    } catch (error: any) {
+      expect(error.code).toBe("ERR_S3_MISSING_CREDENTIALS");
+    }
+  });
 });
 
 const optionsFromEnv: S3Options = {

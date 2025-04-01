@@ -3757,6 +3757,7 @@ pub const Blob = struct {
             defer aws_options.deinit();
 
             const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+            store.ref();
 
             S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
@@ -3764,7 +3765,6 @@ pub const Blob = struct {
                 .resolvedlistOptions = options,
                 .global = globalThis,
             }), proxy);
-            store.ref();
 
             return value;
         }

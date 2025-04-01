@@ -5,6 +5,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { validateObject, validateBoolean } = require("internal/validators");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
@@ -205,6 +206,7 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
+  #isRunning = false;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -289,6 +291,7 @@ class Worker extends EventEmitter {
   }
 
   terminate() {
+    this.#isRunning = false;
     const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
@@ -312,11 +315,13 @@ class Worker extends EventEmitter {
   }
 
   #onClose(e) {
+    this.#isRunning = false;
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
+    this.#isRunning = false;
     let error = event?.error;
     if (!error) {
       error = new Error(event.message, { cause: event });
@@ -339,10 +344,22 @@ class Worker extends EventEmitter {
   }
 
   #onOpen() {
+    this.#isRunning = true;
     this.emit("online");
   }
 
-  async getHeapSnapshot() {
+  getHeapSnapshot(options: any) {
+    if (options !== undefined) {
+      // These errors must be thrown synchronously.
+      validateObject(options, "options");
+      validateBoolean(options.exposeInternals, "options.exposeInternals");
+      validateBoolean(options.exposeNumericValues, "options.exposeNumericValues");
+    }
+    if (!this.#isRunning) {
+      const err = new Error("Worker instance not running");
+      err.code = "ERR_WORKER_NOT_RUNNING";
+      return Promise.$reject(err);
+    }
     throwNotImplemented("worker_threads.Worker.getHeapSnapshot");
   }
 }

@@ -355,14 +355,17 @@ export default {
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
-    page("api/transpiler", "Transpiler", {
-      description: `Bun exposes its internal transpiler as a pluggable API.`,
-    }), // "`Bun.Transpiler`"),
+    page("api/html-rewriter", "HTMLRewriter", {
+      description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
+    }), // "`HTMLRewriter`"),
     page("api/hashing", "Hashing", {
       description: `Native support for a range of fast hashing algorithms.`,
     }), // "`Bun.serve`"),
     page("api/console", "Console", {
       description: `Bun implements a Node.js-compatible \`console\` object with colorized output and deep pretty-printing.`,
+    }), // "`Node-API`"),
+    page("api/cookie", "Cookie", {
+      description: "Bun's native Cookie API simplifies working with HTTP cookies.",
     }), // "`Node-API`"),
     page("api/ffi", "FFI", {
       description: `Call native code from JavaScript with Bun's foreign function interface (FFI) API.`,
@@ -370,9 +373,6 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
-    page("api/html-rewriter", "HTMLRewriter", {
-      description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
-    }), // "`HTMLRewriter`"),
     page("api/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),
@@ -398,6 +398,9 @@ export default {
     page("api/color", "Color", {
       description: `Bun's color function leverages Bun's CSS parser for parsing, normalizing, and converting colors from user input to a variety of output formats.`,
     }), // "`Color`"),
+    page("api/transpiler", "Transpiler", {
+      description: `Bun exposes its internal transpiler as a pluggable API.`,
+    }), // "`Bun.Transpiler`"),
 
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),

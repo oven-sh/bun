@@ -9,8 +9,6 @@ const JSValue = bun.JSC.JSValue;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 
-threadlocal var arena_: ?Arena = null;
-
 const TestKind = enum {
     normal,
     minify,
@@ -53,10 +51,8 @@ pub fn _test(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 }
 
 pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind, comptime test_category: TestCategory) bun.JSError!JSC.JSValue {
-    var arena = arena_ orelse brk: {
-        break :brk Arena.init() catch @panic("oopsie arena no good");
-    };
-    defer arena.reset();
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(3);
@@ -268,10 +264,8 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bu
 }
 
 pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var arena = arena_ orelse brk: {
-        break :brk Arena.init() catch @panic("oopsie arena no good");
-    };
-    defer arena.reset();
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(4);

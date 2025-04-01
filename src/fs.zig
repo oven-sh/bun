@@ -147,12 +147,26 @@ pub const FileSystem = struct {
 
         pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: *const bun.DirIterator.IteratorResult, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const name_slice = entry.name.slice();
-            const _kind: Entry.Kind = switch (entry.kind) {
+            const found_kind: ?Entry.Kind = switch (entry.kind) {
                 .directory => .dir,
-                // This might be wrong!
-                .sym_link => .file,
                 .file => .file,
-                else => return,
+
+                // For a symlink, we will need to stat the target later
+                .sym_link,
+                // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
+                // (often because it would be slow to look up the kind). If we get this, then code that
+                // needs the kind will have to find it out later by calling stat().
+                .unknown,
+                => null,
+
+                .block_device,
+                .character_device,
+                .named_pipe,
+                .unix_domain_socket,
+                .whiteout,
+                .door,
+                .event_port,
+                => return,
             };
 
             const stored = try brk: {
@@ -166,10 +180,14 @@ pub const FileSystem = struct {
                         defer existing.mutex.unlock();
                         existing.dir = dir.dir;
 
-                        existing.need_stat = existing.need_stat or existing.cache.kind != _kind;
+                        existing.need_stat = existing.need_stat or
+                            found_kind == null or
+                            existing.cache.kind != found_kind;
                         // TODO: is this right?
-                        if (existing.cache.kind != _kind) {
-                            existing.cache.kind = _kind;
+                        if (existing.cache.kind != found_kind) {
+                            // if found_kind is null, we have set need_stat above, so we
+                            // store an arbitrary kind
+                            existing.cache.kind = found_kind orelse .file;
 
                             existing.cache.symlink = PathString.empty;
                         }
@@ -198,10 +216,12 @@ pub const FileSystem = struct {
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .sym_link,
+                    .need_stat = found_kind == null,
                     .cache = .{
                         .symlink = PathString.empty,
-                        .kind = _kind,
+                        // if found_kind is null, we have set need_stat above, so we
+                        // store an arbitrary kind
+                        .kind = found_kind orelse .file,
                     },
                 });
             };
@@ -215,7 +235,7 @@ pub const FileSystem = struct {
             }
 
             if (comptime FeatureFlags.verbose_fs) {
-                if (_kind == .dir) {
+                if (found_kind == .dir) {
                     Output.prettyln("   + {s}/", .{stored_name});
                 } else {
                     Output.prettyln("   + {s}", .{stored_name});
@@ -1695,13 +1715,19 @@ pub const Path = struct {
     /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
     /// The location of this resource. For the `file` namespace, this is
-    /// an absolute path with native slashes.
+    /// usually an absolute path with native slashes or an empty string.
     text: string,
     namespace: string,
-    // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
+    // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
+
+    const ns_blob = "blob";
+    const ns_bun = "bun";
+    const ns_dataurl = "dataurl";
+    const ns_file = "file";
+    const ns_macro = "macro";
 
     pub fn isFile(this: *const Path) bool {
         return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
@@ -1768,15 +1794,15 @@ pub const Path = struct {
     }
 
     pub fn isDataURL(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "dataurl");
+        return strings.eqlComptime(this.namespace, ns_dataurl);
     }
 
     pub fn isBun(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "bun");
+        return strings.eqlComptime(this.namespace, ns_bun);
     }
 
     pub fn isMacro(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "macro");
+        return strings.eqlComptime(this.namespace, ns_macro);
     }
 
     pub const PackageRelative = struct {
@@ -1844,7 +1870,7 @@ pub const Path = struct {
             if ((FileSystem.FilenameStore.instance.exists(this.text) or
                 FileSystem.DirnameStore.instance.exists(this.text)) and
                 (FileSystem.FilenameStore.instance.exists(this.pretty) or
-                FileSystem.DirnameStore.instance.exists(this.pretty)))
+                    FileSystem.DirnameStore.instance.exists(this.pretty)))
             {
                 return this.*;
             }
@@ -1948,13 +1974,6 @@ pub const Path = struct {
             .namespace = namespace,
             .name = PathName.init(package),
         };
-    }
-
-    pub fn isBefore(a: *Path, b: Path) bool {
-        return a.namespace > b.namespace ||
-            (a.namespace == b.namespace and (a.text < b.text ||
-            (a.text == b.text and (a.flags < b.flags ||
-            (a.flags == b.flags)))));
     }
 
     pub fn isNodeModule(this: *const Path) bool {

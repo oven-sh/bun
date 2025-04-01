@@ -10,6 +10,7 @@ const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
 const mem = std.mem;
+const page_size_min = std.heap.page_size_min;
 const mode_t = posix.mode_t;
 const libc = std.posix.system;
 
@@ -1834,11 +1835,11 @@ pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
         return null;
     }
 
-    return closeAllowingStdoutAndStderr(fd);
+    return closeAllowingStdinStdoutAndStderr(fd);
 }
 
-pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
-    return bun.FDImpl.decode(fd).closeAllowingStdoutAndStderr();
+pub fn closeAllowingStdinStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
+    return bun.FDImpl.decode(fd).closeAllowingStdinStdoutAndStderr();
 }
 
 pub const max_count = switch (builtin.os.tag) {
@@ -2315,11 +2316,20 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
 
 pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
-            return Maybe(void).errnoSysFd(0, .ftruncate, fd) orelse Maybe(void).success;
-        }
+        var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+        var eof_info = std.os.windows.FILE_END_OF_FILE_INFORMATION{
+            .EndOfFile = @bitCast(size),
+        };
 
-        return Maybe(void).success;
+        const rc = windows.ntdll.NtSetInformationFile(
+            fd.cast(),
+            &io_status_block,
+            &eof_info,
+            @sizeOf(std.os.windows.FILE_END_OF_FILE_INFORMATION),
+            .FileEndOfFileInformation,
+        );
+
+        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
     }
 
     return while (true) {
@@ -2766,26 +2776,27 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
 /// * SIGSEGV - Attempted write into a region mapped as read-only.
 /// * SIGBUS - Attempted  access to a portion of the buffer that does not correspond to the file
 pub fn mmap(
-    ptr: ?[*]align(mem.page_size) u8,
+    ptr: ?[*]align(page_size_min) u8,
     length: usize,
     prot: u32,
     flags: std.posix.MAP,
     fd: bun.FileDescriptor,
     offset: u64,
-) Maybe([]align(mem.page_size) u8) {
+) Maybe([]align(page_size_min) u8) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     const rc = std.c.mmap(ptr, length, prot, flags, fd.cast(), ioffset);
     const fail = std.c.MAP_FAILED;
     if (rc == fail) {
-        return Maybe([]align(mem.page_size) u8){
-            .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))), .syscall = .mmap },
-        };
+        return .initErr(.{
+            .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))),
+            .syscall = .mmap,
+        });
     }
 
-    return Maybe([]align(mem.page_size) u8){ .result = @as([*]align(mem.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
+    return .initResult(@as([*]align(page_size_min) u8, @ptrCast(@alignCast(rc)))[0..length]);
 }
 
-pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
+pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(page_size_min) u8) {
     assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,
@@ -2945,7 +2956,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
     return Maybe([2]bun.FileDescriptor){ .result = .{ bun.toFD(fds_i[0]), bun.toFD(fds_i[1]) } };
 }
 
-pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
+pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(syscall.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
     } else return Maybe(void).success;
@@ -3346,7 +3357,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             // from libuv: directories cannot be read-only
             // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
             (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
+                basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
 
         const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and

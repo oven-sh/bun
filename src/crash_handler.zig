@@ -53,10 +53,7 @@ var panic_mutex = bun.Mutex{};
 threadlocal var panic_stage: usize = 0;
 
 threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
-
-export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
-    inside_native_plugin = name;
-}
+threadlocal var unsupported_uv_function: ?[*:0]const u8 = null;
 
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
@@ -69,7 +66,6 @@ pub threadlocal var current_action: ?Action = null;
 
 var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
 
-// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
@@ -137,6 +133,8 @@ pub const Action = union(enum) {
         kind: bun.ImportKind,
     } else void,
 
+    dlopen: []const u8,
+
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
@@ -168,6 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
+            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
         }
     }
 };
@@ -247,6 +246,20 @@ pub fn crashHandler(
                             \\
                         ;
                         writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    } else if (bun.analytics.Features.unsupported_uv_function > 0) {
+                        const name = unsupported_uv_function orelse "<unknown>";
+                        const fmt =
+                            \\Bun encountered a crash when running a NAPI module that tried to call 
+                            \\the <red>{s}<r> libuv function.
+                            \\
+                            \\Bun is actively working on supporting all libuv functions for POSIX
+                            \\systems, please see this issue to track our progress:
+                            \\
+                            \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                            \\
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{name}) catch std.posix.abort();
                     }
                 } else {
                     if (Output.enable_ansi_colors) {
@@ -346,6 +359,20 @@ pub fn crashHandler(
                                 \\
                                 \\
                             , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (bun.analytics.Features.unsupported_uv_function > 0) {
+                            const name = unsupported_uv_function orelse "<unknown>";
+                            const fmt =
+                                \\Bun encountered a crash when running a NAPI module that tried to call 
+                                \\the <red>{s}<r> libuv function.
+                                \\
+                                \\Bun is actively working on supporting all libuv functions for POSIX
+                                \\systems, please see this issue to track our progress:
+                                \\
+                                \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                                \\
+                                \\
+                            ;
+                            writer.print(Output.prettyFmt(fmt, true), .{name}) catch std.posix.abort();
                         } else if (reason == .out_of_memory) {
                             writer.writeAll(
                                 \\Bun has run out of memory.
@@ -1594,7 +1621,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperdave): see if zig 0.14 fixes this
+            // TODO(@paperclover): see if zig 0.14 fixes this
         },
         else => {
             stdDumpStackTrace(trace);
@@ -1831,10 +1858,33 @@ pub fn isPanicking() bool {
     return panicking.load(.monotonic) > 0;
 }
 
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
+
+fn unsupportUVFunction(name: ?[*:0]const u8) callconv(.C) void {
+    bun.analytics.Features.unsupported_uv_function += 1;
+    unsupported_uv_function = name;
+    std.debug.panic("unsupported uv function: {s}", .{name.?});
+}
+
 export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
     crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
 }
 
+export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
+    if (action) |str| {
+        bun.debugAssert(current_action == null);
+        current_action = .{ .dlopen = bun.sliceTo(str, 0) };
+    } else {
+        bun.debugAssert(current_action != null and current_action.? == .dlopen);
+        current_action = null;
+    }
+}
+
 comptime {
     _ = &Bun__crashHandler;
+    if (!bun.Environment.isWindows) {
+        @export(&unsupportUVFunction, .{ .name = "CrashHandler__unsupportedUVFunction" });
+    }
 }

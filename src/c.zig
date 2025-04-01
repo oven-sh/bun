@@ -433,27 +433,20 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
 
     const Wrapper = struct {
         pub var function: Type = undefined;
-        pub var loaded: LazyStatus = LazyStatus.pending;
-    };
-
-    if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
-
-        if (result) |ptr| {
-            Wrapper.function = bun.cast(Type, ptr);
-            Wrapper.loaded = .loaded;
-            return Wrapper.function;
-        } else {
-            Wrapper.loaded = .failed;
-            return null;
+        var failed = false;
+        pub var once = std.once(loadOnce);
+        fn loadOnce() void {
+            function = bun.cast(Type, _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name) orelse {
+                failed = true;
+                return;
+            });
         }
+    };
+    Wrapper.once.call();
+    if (Wrapper.failed) {
+        return null;
     }
-
-    if (Wrapper.loaded == .loaded) {
-        return Wrapper.function;
-    }
-
-    return null;
+    return Wrapper.function;
 }
 
 pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {

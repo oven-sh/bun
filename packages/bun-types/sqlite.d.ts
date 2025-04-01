@@ -58,6 +58,8 @@ declare module "bun:sqlite" {
      * ```ts
      * const db = new Database("mydb.sqlite", {readonly: true});
      * ```
+     *
+     * @category Database
      */
     constructor(
       filename?: string,
@@ -566,6 +568,8 @@ declare module "bun:sqlite" {
    * A prepared statement.
    *
    * This is returned by {@link Database.prepare} and {@link Database.query}.
+   *
+   * @category Database
    *
    * @example
    * ```ts

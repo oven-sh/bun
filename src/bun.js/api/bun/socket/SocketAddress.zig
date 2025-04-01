@@ -36,13 +36,13 @@ pub const Options = struct {
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a| addr: {
             if (!a.isString()) return global.throwInvalidArgumentTypeValue("options.address", "string", a);
-            break :addr try bun.String.fromJS2(a, global);
+            break :addr try bun.String.fromJS(a, global);
         } else null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             // "ipv4" or "ipv6", ignoring case
             if (fam.isString()) {
-                const fam_str = try bun.String.fromJS2(fam, global);
+                const fam_str = try bun.String.fromJS(fam, global);
                 defer fam_str.deref();
                 if (fam_str.length() != 4)
                     return throwBadFamilyIP(global, fam);
@@ -129,7 +129,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     const input = blk: {
         const input_arg = callframe.argument(0);
         if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
-        break :blk try bun.String.fromJS2(input_arg, global);
+        break :blk try bun.String.fromJS(input_arg, global);
     };
     defer input.deref();
 
@@ -197,7 +197,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
         ._addr = sockaddr.@"127.0.0.1",
         ._presentation = .empty,
         // ._presentation = WellKnownAddress.@"127.0.0.1"(),
-        // ._presentation = bun.String.fromJS2(global.commonStrings().@"127.0.0.1"()) catch unreachable,
+        // ._presentation = bun.String.fromJS(global.commonStrings().@"127.0.0.1"()) catch unreachable,
     });
     options_obj.ensureStillAlive();
 

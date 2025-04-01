@@ -1,14 +1,17 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
-const Shimmer = JSC.Shimmer;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
-pub const JSObject = extern struct {
-    pub const shim = Shimmer("JSC", "JSObject", @This());
-    const cppFn = shim.cppFn;
+pub const JSObject = opaque {
+    extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
+    extern fn JSC__JSObject__putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, len: usize) void;
+    extern fn Bun__JSObject__getCodePropertyVMInquiry(global: *JSGlobalObject, obj: *JSObject) JSValue;
+    extern fn JSC__createStructure(global: *JSC.JSGlobalObject, owner: *JSC.JSCell, length: u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
+    extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
 
     pub fn toJS(obj: *JSObject) JSValue {
         return JSValue.fromCell(obj);
@@ -74,6 +77,10 @@ pub const JSObject = extern struct {
         return obj;
     }
 
+    pub fn get(obj: *JSObject, global: *JSGlobalObject, prop: anytype) JSError!?JSValue {
+        return obj.toJS().get(global, prop);
+    }
+
     pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
         obj.toJS().put(global, key, value);
     }
@@ -84,7 +91,11 @@ pub const JSObject = extern struct {
         }
     }
 
-    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
+    /// When the GC sees a JSValue referenced in the stack, it knows not to free it
+    /// This mimics the implementation in JavaScriptCore's C++
+    pub inline fn ensureStillAlive(this: *JSObject) void {
+        std.mem.doNotOptimizeAway(this);
+    }
 
     pub const ExternColumnIdentifier = extern struct {
         tag: u8 = 0,
@@ -106,13 +117,13 @@ pub const JSObject = extern struct {
             }
         }
     };
+
     pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         JSC.markBinding(@src());
         return JSC__createStructure(global, owner.asCell(), length, names);
     }
 
     const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
-    extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
@@ -128,18 +139,12 @@ pub const JSObject = extern struct {
     }
 
     pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
-        return cppFn("getIndex", .{
-            this,
-            globalThis,
-            i,
-        });
+        return JSC__JSObject__getIndex(this, globalThis, i);
     }
 
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
-        return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
+        return JSC__JSObject__putRecord(this, global, key, values.ptr, values.len);
     }
-
-    extern fn Bun__JSObject__getCodePropertyVMInquiry(*JSGlobalObject, *JSObject) JSValue;
 
     /// This will not call getters or be observable from JavaScript.
     pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {

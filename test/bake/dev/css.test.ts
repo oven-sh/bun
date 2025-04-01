@@ -477,10 +477,8 @@ devTest("css import before create project relative", {
       },
     );
     await c.expectNoWebSocketActivity(async () => {
-      await dev.write("assets/bun.png", imageFixtures.bun, {
-        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
-      });
-      await dev.delete("assets/bun.png", { wait: false });
+      await dev.write("assets/bun.png", imageFixtures.bun, { errors: null });
+      await dev.delete("assets/bun.png", { errors: null });
     });
     await dev.fetch("/").expect.not.toContain("HELLO");
     await dev.write(

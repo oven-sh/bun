@@ -3,21 +3,13 @@ const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const JSC = bun.JSC;
-const Shimmer = JSC.Shimmer;
 const JSHostFunctionType = JSC.JSHostFunctionType;
 const ZigString = JSC.ZigString;
 const String = bun.String;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 
-pub const JSFunction = extern struct {
-    pub const shim = Shimmer("JSC", "JSFunction", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSFunction.h";
-    pub const name = "JSC::JSFunction";
-    pub const namespace = "JSC";
-
+pub const JSFunction = opaque {
     const ImplementationVisibility = enum(u8) {
         public,
         private,
@@ -67,8 +59,9 @@ pub const JSFunction = extern struct {
         );
     }
 
+    pub extern fn JSC__JSFunction__optimizeSoon(value: JSValue) void;
     pub fn optimizeSoon(value: JSValue) void {
-        cppFn("optimizeSoon", .{value});
+        JSC__JSFunction__optimizeSoon(value);
     }
 
     extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
@@ -77,12 +70,4 @@ pub const JSFunction = extern struct {
         var str: ZigString = undefined;
         return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
     }
-
-    pub const Extern = [_][]const u8{
-        "fromString",
-        "getName",
-        "displayName",
-        "calculatedDisplayName",
-        "optimizeSoon",
-    };
 };

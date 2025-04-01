@@ -3064,14 +3064,14 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
-            bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
+            bun.crash_handler.dumpCurrentStackTrace(null);
             break :brk .INVAL;
         } else .INVAL,
 
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
-                bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
+                bun.crash_handler.dumpCurrentStackTrace(null);
             }
             return .UNKNOWN;
         },

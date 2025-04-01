@@ -94,44 +94,21 @@ export class ClassDefinition {
   /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
-   * 
-   * Example for pointers only owned by JavaScript classes:
    * ```zig
    * pub const NativeClass = struct {
+   *   pub usingnamespace bun.New(NativeClass);
    *
    *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
    *     // do stuff
-   *     return bun.new(NativeClass, .{
+   *     return NativeClass.new(.{
    *       // ...
    *     });
    *   }
    *
    *   fn finalize(this: *NativeClass) void {
    *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
+   *     this.destroy();
    *   }
-   * };
-   * ```
-   * Example with ref counting:
-   * ```
-   * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-   *   pub const ref = RefCount.ref;
-   *   pub const deref = RefCount.deref;
-   *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   * 
-   *   fn deinit(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   *
-   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
    * };
    * ```
    * @todo remove this and require all classes to implement `finalize`.

@@ -155,8 +155,7 @@ pub fn writableStream(
     };
     const proxy_url = (proxy orelse "");
     this.ref(); // ref the credentials
-    const task = bun.new(MultiPartUpload, .{
-        .ref_count = .init(),
+    const task = MultiPartUpload.new(.{
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -194,19 +193,16 @@ pub fn writableStream(
 }
 
 const S3UploadStreamWrapper = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
-    ref_count: RefCount,
     readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
     sink: *JSC.WebCore.NetworkSink,
     task: *MultiPartUpload,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
+    ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
     global: *JSC.JSGlobalObject,
 
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
@@ -227,12 +223,12 @@ const S3UploadStreamWrapper = struct {
         }
     }
 
-    fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         self.readable_stream_ref.deinit();
         self.sink.finalize();
-        self.sink.deinit();
+        self.sink.destroy();
         self.task.deref();
-        bun.destroy(self);
+        self.destroy();
     }
 };
 
@@ -324,8 +320,7 @@ pub fn uploadStream(
         else => {},
     }
 
-    const task = bun.new(MultiPartUpload, .{
-        .ref_count = .init(),
+    const task = MultiPartUpload.new(.{
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -354,8 +349,7 @@ pub fn uploadStream(
     task.ref(); // + 1 for the stream wrapper
 
     const endPromise = response_stream.sink.endPromise.value();
-    const ctx = bun.new(S3UploadStreamWrapper, .{
-        .ref_count = .init(),
+    const ctx = S3UploadStreamWrapper.new(.{
         .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
         .sink = &response_stream.sink,
         .callback = callback,
@@ -574,7 +568,7 @@ pub fn readableStream(
     const readable_value = reader.toReadableStream(globalThis);
 
     const S3DownloadStreamWrapper = struct {
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
 
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         path: []const u8,
@@ -612,7 +606,7 @@ pub fn readableStream(
         pub fn deinit(self: *@This()) void {
             self.readable_stream_ref.deinit();
             bun.default_allocator.free(self.path);
-            bun.destroy(self);
+            self.destroy();
         }
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {

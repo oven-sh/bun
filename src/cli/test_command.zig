@@ -177,7 +177,7 @@ pub const JunitReporter = struct {
         );
     }
 
-    pub const new = bun.TrivialNew(JunitReporter);
+    pub usingnamespace bun.New(JunitReporter);
 
     fn generatePropertiesList(this: *JunitReporter) !void {
         const PropertiesList = struct {

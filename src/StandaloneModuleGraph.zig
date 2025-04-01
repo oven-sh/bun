@@ -254,7 +254,7 @@ pub const StandaloneModuleGraph = struct {
                     stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none };
                     stored.is_standalone_module_graph = true;
 
-                    const parsed = bun.new(SourceMap.ParsedSourceMap, stored);
+                    const parsed = stored.new(); // allocate this on the heap
                     parsed.ref(); // never free
                     this.* = .{ .parsed = parsed };
                     return parsed;

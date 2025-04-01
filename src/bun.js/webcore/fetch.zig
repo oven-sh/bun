@@ -2525,7 +2525,7 @@ pub fn Bun__fetch_(
                 url_proxy_buffer: []const u8,
                 global: *JSC.JSGlobalObject,
 
-                pub const new = bun.TrivialNew(@This());
+                pub usingnamespace bun.New(@This());
 
                 pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                     const global = self.global;
@@ -2565,7 +2565,7 @@ pub fn Bun__fetch_(
                         },
                     }
                     bun.default_allocator.free(self.url_proxy_buffer);
-                    bun.destroy(self);
+                    self.destroy();
                 }
             };
             if (method != .PUT and method != .POST) {

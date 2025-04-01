@@ -57,7 +57,7 @@ const S3File = @import("S3File.zig");
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
 
     const rf = @import("blob/ReadFile.zig");
@@ -649,10 +649,10 @@ pub const Blob = struct {
     }
 
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
-        const this = bun.cast(*Blob, ptr);
-        const new_ptr = new(this.dupeWithContentType(true));
-        new_ptr.allocator = bun.default_allocator;
-        return new_ptr;
+        var this = bun.cast(*Blob, ptr);
+        var new = Blob.new(this.dupeWithContentType(true));
+        new.allocator = bun.default_allocator;
+        return new;
     }
 
     export fn Blob__destroy(this: *Blob) void {
@@ -963,7 +963,7 @@ pub const Blob = struct {
                     store: *Store,
                     global: *JSC.JSGlobalObject,
 
-                    pub const new = bun.TrivialNew(@This());
+                    pub usingnamespace bun.New(@This());
 
                     pub fn resolve(result: S3.S3UploadResult, opaque_this: *anyopaque) void {
                         const this: *@This() = @ptrCast(@alignCast(opaque_this));
@@ -977,7 +977,7 @@ pub const Blob = struct {
                     fn deinit(this: *@This()) void {
                         this.promise.deinit();
                         this.store.deref();
-                        bun.destroy(this);
+                        this.destroy();
                     }
                 };
 
@@ -1158,7 +1158,7 @@ pub const Blob = struct {
                             promise: JSC.JSPromise.Strong,
                             global: *JSC.JSGlobalObject,
 
-                            pub const new = bun.TrivialNew(@This());
+                            pub usingnamespace bun.New(@This());
 
                             pub fn resolve(result: S3.S3UploadResult, opaque_self: *anyopaque) void {
                                 const this: *@This() = @ptrCast(@alignCast(opaque_self));
@@ -2023,7 +2023,7 @@ pub const Blob = struct {
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
 
         pub fn memoryCost(this: *const Store) usize {
             return if (this.hasOneRef()) @sizeOf(@This()) + switch (this.data) {
@@ -2212,7 +2212,7 @@ pub const Blob = struct {
                 },
             }
 
-            bun.destroy(this);
+            this.destroy();
         }
 
         const SerializeTag = enum(u8) {
@@ -2660,7 +2660,7 @@ pub const Blob = struct {
                 this.onComplete(this.read_write_loop.written);
             }
 
-            pub const new = bun.TrivialNew(@This());
+            pub usingnamespace bun.New(@This());
 
             pub fn init(
                 destination_file_store: *Store,
@@ -2961,7 +2961,7 @@ pub const Blob = struct {
                 this.source_file_store.deref();
                 this.promise.deinit();
                 this.io_request.deinit();
-                bun.destroy(this);
+                this.destroy();
             }
 
             fn mkdirp(
@@ -3673,7 +3673,7 @@ pub const Blob = struct {
                 store: *Store,
                 global: *JSC.JSGlobalObject,
 
-                pub const new = bun.TrivialNew(@This());
+                pub usingnamespace bun.New(@This());
 
                 pub fn resolve(result: S3.S3DeleteResult, opaque_self: *anyopaque) void {
                     const self: *@This() = @ptrCast(@alignCast(opaque_self));
@@ -3689,10 +3689,10 @@ pub const Blob = struct {
                     }
                 }
 
-                fn deinit(wrap: *@This()) void {
-                    wrap.store.deref();
-                    wrap.promise.deinit();
-                    bun.destroy(wrap);
+                fn deinit(self: *@This()) void {
+                    self.store.deref();
+                    self.promise.deinit();
+                    self.destroy();
                 }
             };
             const promise = JSC.JSPromise.Strong.init(globalThis);
@@ -4049,7 +4049,7 @@ pub const Blob = struct {
         poll_ref: bun.Async.KeepAlive = .{},
 
         handler: S3ReadHandler,
-        pub const new = bun.TrivialNew(S3BlobDownloadTask);
+        usingnamespace bun.New(S3BlobDownloadTask);
         pub const S3ReadHandler = *const fn (this: *Blob, globalthis: *JSGlobalObject, raw_bytes: []u8) JSValue;
 
         pub fn callHandler(this: *S3BlobDownloadTask, raw_bytes: []u8) JSValue {
@@ -4104,7 +4104,7 @@ pub const Blob = struct {
             this.blob.store.?.deref();
             this.poll_ref.unref(this.globalThis.bunVM());
             this.promise.deinit();
-            bun.destroy(this);
+            this.destroy();
         }
     };
 
@@ -4191,13 +4191,13 @@ pub const Blob = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         sink: *JSC.WebCore.FileSink,
 
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
 
         pub fn deinit(this: *@This()) void {
             this.promise.deinit();
             this.readable_stream_ref.deinit();
             this.sink.deref();
-            bun.destroy(this);
+            this.destroy();
         }
     };
 
@@ -4218,7 +4218,7 @@ pub const Blob = struct {
     pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
-        defer this.sink.deref();
+        defer this.sink.deinit();
         const err = args.ptr[0];
 
         var strong = this.readable_stream_ref;
@@ -5269,13 +5269,13 @@ pub const Blob = struct {
     pub fn deinit(this: *Blob) void {
         this.detach();
         this.name.deref();
-        this.name = .dead;
+        this.name = bun.String.dead;
 
         // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;
             bun.debugAssert(alloc.vtable == bun.default_allocator.vtable);
-            bun.destroy(this);
+            this.destroy();
         }
     }
 

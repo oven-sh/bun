@@ -56,7 +56,7 @@ pub const PackageJSON = struct {
         production,
     };
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 

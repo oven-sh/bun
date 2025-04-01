@@ -43,7 +43,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
             var this = This.new(.{
@@ -84,7 +84,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub fn deinit(this: *This) void {
             this.promise.deinit();
-            bun.destroy(this);
+            this.destroy();
         }
     };
 }
@@ -105,9 +105,11 @@ pub fn WorkTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
-            var this = bun.new(This, .{
+            var this = This.new(.{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
@@ -117,11 +119,6 @@ pub fn WorkTask(comptime Context: type) type {
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
-        }
-
-        pub fn deinit(this: *This) void {
-            this.ref.unref(this.event_loop.virtual_machine);
-            bun.destroy(this);
         }
 
         pub fn runFromThreadPool(task: *TaskType) void {
@@ -151,6 +148,11 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn onFinish(this: *This) void {
             this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+        }
+
+        pub fn deinit(this: *This) void {
+            this.ref.unref(this.event_loop.virtual_machine);
+            this.destroy();
         }
     };
 }
@@ -307,8 +309,6 @@ pub const CppTask = opaque {
 };
 
 pub const ConcurrentCppTask = struct {
-    pub const new = bun.TrivialNew(@This());
-
     cpp_task: *EventLoopTaskNoContext,
     workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
 
@@ -328,17 +328,19 @@ pub const ConcurrentCppTask = struct {
     };
 
     pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
-        const this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
+        var this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
         // Extract all the info we need from `this` and `cpp_task` before we call functions that
         // free them
         const cpp_task = this.cpp_task;
         const maybe_vm = cpp_task.getVM();
-        bun.destroy(this);
+        this.destroy();
         cpp_task.run();
         if (maybe_vm) |vm| {
             vm.event_loop.unrefConcurrently();
         }
     }
+
+    pub usingnamespace bun.New(@This());
 
     pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
         JSC.markBinding(@src());
@@ -559,8 +561,7 @@ pub const ConcurrentTask = struct {
     auto_delete: bool = false,
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
-    pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
+    pub usingnamespace bun.New(@This());
 
     pub const AutoDeinit = enum {
         manual_deinit,
@@ -1474,7 +1475,7 @@ pub const EventLoop = struct {
         while (iter.next()) |task| {
             if (to_destroy) |dest| {
                 to_destroy = null;
-                dest.deinit();
+                dest.destroy();
             }
 
             if (task.auto_delete) {
@@ -1488,7 +1489,7 @@ pub const EventLoop = struct {
         }
 
         if (to_destroy) |dest| {
-            dest.deinit();
+            dest.destroy();
         }
 
         return this.tasks.count - start_count;
@@ -2468,7 +2469,7 @@ pub const PosixSignalHandle = struct {
 
     const log = bun.Output.scoped(.PosixSignalHandle, true);
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     /// Called by the signal handler (single producer).
     /// Returns `true` if enqueued successfully, or `false` if the ring is full.
@@ -2546,7 +2547,7 @@ pub const PosixSignalTask = struct {
     number: u8,
     extern "c" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
     pub fn runFromJSThread(number: u8, globalObject: *JSC.JSGlobalObject) void {
         Bun__onSignalForJS(number, globalObject);
     }

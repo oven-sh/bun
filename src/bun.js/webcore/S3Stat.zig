@@ -4,7 +4,7 @@ const JSC = bun.JSC;
 pub const S3Stat = struct {
     const log = bun.Output.scoped(.S3Stat, false);
     pub usingnamespace JSC.Codegen.JSS3Stat;
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     size: u64,
     etag: bun.String,
@@ -53,6 +53,6 @@ pub const S3Stat = struct {
     pub fn finalize(this: *@This()) void {
         this.etag.deref();
         this.contentType.deref();
-        bun.destroy(this);
+        this.destroy();
     }
 };

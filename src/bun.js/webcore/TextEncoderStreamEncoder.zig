@@ -3,10 +3,10 @@ pending_lead_surrogate: ?u16 = null,
 const log = Output.scoped(.TextEncoderStreamEncoder, false);
 
 pub usingnamespace JSC.Codegen.JSTextEncoderStreamEncoder;
-pub const new = bun.TrivialNew(TextEncoderStreamEncoder);
+pub usingnamespace bun.New(TextEncoderStreamEncoder);
 
 pub fn finalize(this: *TextEncoderStreamEncoder) void {
-    bun.destroy(this);
+    this.destroy();
 }
 
 pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*TextEncoderStreamEncoder {

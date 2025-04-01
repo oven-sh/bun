@@ -530,18 +530,15 @@ pub const All = struct {
 const uws = bun.uws;
 
 pub const TimeoutObject = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
-    pub usingnamespace JSC.Codegen.JSTimeout;
-
-    ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .TimeoutObject,
     },
     internals: TimerObjectInternals,
+    ref_count: u32 = 1,
+
+    pub usingnamespace JSC.Codegen.JSTimeout;
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn init(
         globalThis: *JSGlobalObject,
@@ -552,7 +549,7 @@ pub const TimeoutObject = struct {
         arguments_array_or_zero: JSValue,
     ) JSValue {
         // internals are initialized by init()
-        const timeout = bun.new(TimeoutObject, .{ .ref_count = .init(), .internals = undefined });
+        const timeout = TimeoutObject.new(.{ .internals = undefined });
         const js = timeout.toJS(globalThis);
         defer js.ensureStillAlive();
         timeout.internals.init(
@@ -567,9 +564,8 @@ pub const TimeoutObject = struct {
         return js;
     }
 
-    fn deinit(this: *TimeoutObject) void {
+    pub fn deinit(this: *TimeoutObject) void {
         this.internals.deinit();
-        bun.destroy(this);
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !*TimeoutObject {
@@ -619,18 +615,15 @@ pub const TimeoutObject = struct {
 };
 
 pub const ImmediateObject = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
-    pub usingnamespace JSC.Codegen.JSImmediate;
-
-    ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .ImmediateObject,
     },
     internals: TimerObjectInternals,
+    ref_count: u32 = 1,
+
+    pub usingnamespace JSC.Codegen.JSImmediate;
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn init(
         globalThis: *JSGlobalObject,
@@ -639,7 +632,7 @@ pub const ImmediateObject = struct {
         arguments_array_or_zero: JSValue,
     ) JSValue {
         // internals are initialized by init()
-        const immediate = bun.new(ImmediateObject, .{ .ref_count = .init(), .internals = undefined });
+        const immediate = ImmediateObject.new(.{ .internals = undefined });
         const js = immediate.toJS(globalThis);
         defer js.ensureStillAlive();
         immediate.internals.init(
@@ -654,9 +647,8 @@ pub const ImmediateObject = struct {
         return js;
     }
 
-    fn deinit(this: *ImmediateObject) void {
+    pub fn deinit(this: *ImmediateObject) void {
         this.internals.deinit();
-        bun.destroy(this);
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !*ImmediateObject {
@@ -1093,8 +1085,8 @@ const TimerObjectInternals = struct {
 
         this.setEnableKeepingEventLoopAlive(vm, false);
         switch (kind) {
-            .setImmediate => (@as(*ImmediateObject, @fieldParentPtr("internals", this))).ref_count.assertNoRefs(),
-            .setTimeout, .setInterval => (@as(*TimeoutObject, @fieldParentPtr("internals", this))).ref_count.assertNoRefs(),
+            .setImmediate => @as(*ImmediateObject, @fieldParentPtr("internals", this)).destroy(),
+            .setTimeout, .setInterval => @as(*TimeoutObject, @fieldParentPtr("internals", this)).destroy(),
         }
     }
 };
@@ -1347,7 +1339,7 @@ pub const WTFTimer = struct {
     repeat: bool,
     lock: bun.Mutex = .{},
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
         const this = WTFTimer.new(.{
@@ -1425,7 +1417,7 @@ pub const WTFTimer = struct {
 
     pub fn deinit(this: *WTFTimer) void {
         this.cancel();
-        bun.destroy(this);
+        this.destroy();
     }
 
     export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {

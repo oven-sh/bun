@@ -139,7 +139,6 @@ pub const Loader = struct {
             session_token = token;
         }
         this.aws_credentials = .{
-            .ref_count = .init(),
             .accessKeyId = accessKeyId,
             .secretAccessKey = secretAccessKey,
             .region = region,

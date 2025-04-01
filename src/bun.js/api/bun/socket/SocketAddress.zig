@@ -5,8 +5,6 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();
-pub usingnamespace JSC.Codegen.JSSocketAddress;
-pub const new = bun.TrivialNew(SocketAddress);
 
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.
 // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -116,6 +114,9 @@ pub const Options = struct {
         return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
     }
 };
+
+pub usingnamespace JSC.Codegen.JSSocketAddress;
+pub usingnamespace bun.New(SocketAddress);
 
 // =============================================================================
 // ============================== STATIC METHODS ===============================
@@ -316,15 +317,15 @@ pub fn initIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAd
 // ================================ DESTRUCTORS ================================
 // =============================================================================
 
-fn deinit(this: *SocketAddress) void {
+pub fn deinit(this: *SocketAddress) void {
     // .deref() on dead strings is a no-op.
     this._presentation.deref();
-    bun.destroy(this);
 }
 
 pub fn finalize(this: *SocketAddress) void {
     JSC.markBinding(@src());
     this.deinit();
+    this.destroy();
 }
 
 // =============================================================================

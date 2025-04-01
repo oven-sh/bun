@@ -320,7 +320,7 @@ pub const SavedSourceMap = struct {
                 defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                const result = bun.new(ParsedSourceMap, saved.toMapping(default_allocator, path) catch {
+                const result = ParsedSourceMap.new(saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return .{};
                 });
@@ -4413,13 +4413,12 @@ pub const VirtualMachine = struct {
     };
 
     pub const IPCInstance = struct {
-        pub const new = bun.TrivialNew(@This());
-        pub const deinit = bun.TrivialDeinit(@This());
-
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
         has_disconnect_called: bool = false,
+
+        pub usingnamespace bun.New(@This());
 
         const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
@@ -4469,7 +4468,7 @@ pub const VirtualMachine = struct {
                 uws.us_socket_context_free(0, this.context);
             }
             vm.channel_ref.disable();
-            this.deinit();
+            this.destroy();
         }
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
@@ -4510,7 +4509,7 @@ pub const VirtualMachine = struct {
                 this.ipc = .{ .initialized = instance };
 
                 const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
-                    instance.deinit();
+                    instance.destroy();
                     this.ipc = null;
                     Output.warn("Unable to start IPC socket", .{});
                     return null;
@@ -4531,7 +4530,7 @@ pub const VirtualMachine = struct {
                 this.ipc = .{ .initialized = instance };
 
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
-                    instance.deinit();
+                    instance.destroy();
                     this.ipc = null;
                     Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
                     return null;

@@ -618,7 +618,7 @@ pub const WriteFileWindows = struct {
         if (rc.int() != 0) bun.Output.panic("unexpected return code from uv_fs_write: {d}", .{rc.int()});
     }
 
-    pub const new = bun.TrivialNew(@This());
+    pub usingnamespace bun.New(@This());
 
     pub fn deinit(this: *@This()) void {
         const fd = this.fd;
@@ -628,7 +628,7 @@ pub const WriteFileWindows = struct {
         this.file_blob.store.?.deref();
         this.bytes_blob.store.?.deref();
         uv.uv_fs_req_cleanup(&this.io_request);
-        bun.destroy(this);
+        this.destroy();
     }
 
     pub fn create(

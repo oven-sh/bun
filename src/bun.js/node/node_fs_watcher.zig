@@ -19,8 +19,6 @@ const log = Output.scoped(.@"fs.watch", true);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
 
 pub const FSWatcher = struct {
-    pub usingnamespace JSC.Codegen.JSFSWatcher;
-
     ctx: *VirtualMachine,
     verbose: bool = false,
 
@@ -40,6 +38,9 @@ pub const FSWatcher = struct {
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     current_task: FSWatchTask = undefined,
 
+    pub usingnamespace JSC.Codegen.JSFSWatcher;
+    pub usingnamespace bun.New(@This());
+
     pub fn eventLoop(this: FSWatcher) *EventLoop {
         return this.ctx.eventLoop();
     }
@@ -51,15 +52,11 @@ pub const FSWatcher = struct {
     pub fn deinit(this: *FSWatcher) void {
         // stop all managers and signals
         this.detach();
-        bun.destroy(this);
+        this.destroy();
     }
-
-    pub const finalize = deinit;
 
     pub const FSWatchTask = if (Environment.isWindows) FSWatchTaskWindows else FSWatchTaskPosix;
     pub const FSWatchTaskPosix = struct {
-        pub const new = bun.TrivialNew(@This());
-
         ctx: *FSWatcher,
         count: u8 = 0,
 
@@ -70,14 +67,6 @@ pub const FSWatcher = struct {
             event: Event,
             needs_free: bool,
         };
-
-        pub fn deinit(this: *FSWatchTask) void {
-            this.cleanEntries();
-            if (comptime Environment.allow_assert) {
-                bun.assert(&this.ctx.current_task != this);
-            }
-            bun.destroy(this);
-        }
 
         pub fn append(this: *FSWatchTask, event: Event, needs_free: bool) void {
             if (this.count == 8) {
@@ -147,6 +136,16 @@ pub const FSWatcher = struct {
             }
             this.count = 0;
         }
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn deinit(this: *FSWatchTask) void {
+            this.cleanEntries();
+            if (comptime Environment.allow_assert) {
+                bun.assert(&this.ctx.current_task != this);
+            }
+            this.destroy();
+        }
     };
 
     pub const EventPathString = switch (Environment.os) {
@@ -203,6 +202,8 @@ pub const FSWatcher = struct {
         /// Unused: To match the API of the posix version
         count: u0 = 0,
 
+        pub usingnamespace bun.New(@This());
+
         pub const StringOrBytesToDecode = union(enum) {
             string: bun.String,
             bytes_to_free: []const u8,
@@ -227,7 +228,7 @@ pub const FSWatcher = struct {
 
         pub fn appendAbort(this: *FSWatchTaskWindows) void {
             const ctx = this.ctx;
-            const task = bun.new(FSWatchTaskWindows, .{
+            const task = FSWatchTaskWindows.new(.{
                 .ctx = ctx,
                 .event = .abort,
             });
@@ -266,7 +267,7 @@ pub const FSWatcher = struct {
 
         pub fn deinit(this: *FSWatchTaskWindows) void {
             this.event.deinit();
-            bun.destroy(this);
+            this.destroy();
         }
     };
 
@@ -310,7 +311,7 @@ pub const FSWatcher = struct {
             return;
         }
 
-        const task = bun.new(FSWatchTaskWindows, .{
+        const task = FSWatchTaskWindows.new(.{
             .ctx = this,
             .event = event,
         });
@@ -637,6 +638,10 @@ pub const FSWatcher = struct {
         return .undefined;
     }
 
+    pub fn finalize(this: *FSWatcher) void {
+        this.deinit();
+    }
+
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
         var buf: bun.PathBuffer = undefined;
         var slice = args.path.slice();
@@ -667,7 +672,7 @@ pub const FSWatcher = struct {
 
         const vm = args.global_this.bunVM();
 
-        const ctx = bun.new(FSWatcher, .{
+        var ctx = FSWatcher.new(.{
             .ctx = vm,
             .current_task = .{
                 .ctx = undefined,

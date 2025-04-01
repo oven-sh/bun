@@ -142,18 +142,13 @@ pub const ProcessExitHandler = struct {
 pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
-    const Self = @This();
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
     pid: pid_t = 0,
     pidfd: PidFDType = 0,
     status: Status = Status{ .running = {} },
     poller: Poller = Poller{
         .detached = {},
     },
-    ref_count: RefCount,
+    ref_count: u32 = 1,
     exit_handler: ProcessExitHandler = ProcessExitHandler{},
     sync: bool = false,
     event_loop: JSC.EventLoopHandle,
@@ -161,6 +156,8 @@ pub const Process = struct {
     pub fn memoryCost(_: *const Process) usize {
         return @sizeOf(@This());
     }
+
+    pub usingnamespace bun.NewRefCounted(Process, deinit, null);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
         this.exit_handler.init(handler);
@@ -179,8 +176,7 @@ pub const Process = struct {
         event_loop: anytype,
         sync_: bool,
     ) *Process {
-        return bun.new(Process, .{
-            .ref_count = .init(),
+        return Process.new(.{
             .pid = posix.pid,
             .pidfd = posix.pidfd orelse 0,
             .event_loop = JSC.EventLoopHandle.init(event_loop),
@@ -491,7 +487,7 @@ pub const Process = struct {
 
     fn deinit(this: *Process) void {
         this.poller.deinit();
-        bun.destroy(this);
+        this.destroy();
     }
 
     pub fn kill(this: *Process, signal: u8) Maybe(void) {
@@ -749,8 +745,7 @@ const WaiterThreadPosix = struct {
                 process: *T,
                 next: ?*TaskQueueEntry = null,
 
-                pub const new = bun.TrivialNew(@This());
-                pub const deinit = bun.TrivialDeinit(@This());
+                pub usingnamespace bun.New(@This());
             };
             pub const ConcurrentQueue = bun.UnboundedQueue(TaskQueueEntry, .next);
 
@@ -759,7 +754,7 @@ const WaiterThreadPosix = struct {
                 subprocess: *T,
                 rusage: Rusage,
 
-                pub const new = bun.TrivialNew(@This());
+                pub usingnamespace bun.New(@This());
 
                 pub const runFromJSThread = runFromMainThread;
 
@@ -767,7 +762,7 @@ const WaiterThreadPosix = struct {
                     const result = self.result;
                     const subprocess = self.subprocess;
                     const rusage = self.rusage;
-                    bun.destroy(self);
+                    self.destroy();
                     subprocess.onWaitPidFromWaiterThread(&result, &rusage);
                 }
 
@@ -781,14 +776,14 @@ const WaiterThreadPosix = struct {
                 subprocess: *T,
                 task: JSC.AnyTaskWithExtraContext = .{},
 
-                pub const new = bun.TrivialNew(@This());
+                pub usingnamespace bun.New(@This());
 
                 pub const runFromJSThread = runFromMainThread;
 
                 pub fn runFromMainThread(self: *@This()) void {
                     const result = self.result;
                     const subprocess = self.subprocess;
-                    bun.destroy(self);
+                    self.destroy();
                     subprocess.onWaitPidFromWaiterThread(&result, &std.mem.zeroes(Rusage));
                 }
 
@@ -812,7 +807,7 @@ const WaiterThreadPosix = struct {
                     this.active.ensureUnusedCapacity(batch.count) catch unreachable;
                     while (iter.next()) |task| {
                         this.active.appendAssumeCapacity(task.process);
-                        task.deinit();
+                        task.destroy();
                     }
                 }
 
@@ -1678,8 +1673,7 @@ pub fn spawnProcessWindows(
     uv_process_options.stdio_count = @intCast(stdio_containers.items.len);
 
     uv_process_options.exit_cb = &Process.onExitUV;
-    const process = bun.new(Process, .{
-        .ref_count = .init(),
+    const process = Process.new(.{
         .event_loop = options.windows.loop,
         .pid = 0,
     });
@@ -1835,7 +1829,7 @@ pub const sync = struct {
         onDoneCallback: *const fn (*SyncWindowsProcess, tag: bun.FDTag, chunks: []const []u8, err: bun.C.E) void = &SyncWindowsProcess.onReaderDone,
         tag: bun.FDTag = .none,
 
-        pub const new = bun.TrivialNew(@This());
+        pub usingnamespace bun.New(@This());
 
         fn onAlloc(_: *SyncWindowsPipeReader, suggested_size: usize) []u8 {
             return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
@@ -1870,15 +1864,14 @@ pub const sync = struct {
     };
 
     const SyncWindowsProcess = struct {
-        pub const new = bun.TrivialNew(@This());
-        pub const deinit = bun.TrivialDeinit(@This());
-
         stderr: []const []u8 = &.{},
         stdout: []const []u8 = &.{},
         err: bun.C.E = .SUCCESS,
         waiting_count: u8 = 1,
         process: *Process,
         status: ?Status = null,
+
+        pub usingnamespace bun.New(@This());
 
         pub fn onProcessExit(this: *SyncWindowsProcess, status: Status, _: *const Rusage) void {
             this.status = status;
@@ -1958,14 +1951,14 @@ pub const sync = struct {
         var loop: JSC.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
-            .result => |process| process,
+            .result => |proces| proces,
         };
-        const this = SyncWindowsProcess.new(.{
+        var this = SyncWindowsProcess.new(.{
             .process = spawned.toProcess(undefined, true),
         });
         this.process.ref();
         this.process.setExitHandler(this);
-        defer this.deinit();
+        defer this.destroy();
         this.process.enableKeepingEventLoopAlive();
         inline for (.{ .stdout, .stderr }) |tag| {
             if (@field(spawned, @tagName(tag)) == .buffer) {

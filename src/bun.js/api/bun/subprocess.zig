@@ -2236,9 +2236,21 @@ pub fn spawnMaybeSync(
         &spawn_options,
         @ptrCast(argv.items.ptr),
         @ptrCast(env_array.items.ptr),
-    ) catch |err| {
-        spawn_options.deinit();
-        return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
+    ) catch |err| switch (err) {
+        error.EMFILE => {
+            spawn_options.deinit();
+            const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
+                std.mem.sliceTo(argv.items[0].?, 0)
+            else
+                "";
+            var systemerror = bun.sys.Error.fromCode(.MFILE, .posix_spawn).withPath(display_path).toSystemError();
+            systemerror.errno = -bun.C.UV_EMFILE;
+            return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
+        },
+        else => {
+            spawn_options.deinit();
+            return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
+        },
     }) {
         .err => |err| {
             spawn_options.deinit();

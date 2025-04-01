@@ -1163,6 +1163,8 @@ class ChildProcess extends EventEmitter {
             return null;
           case "destroyed":
             return new ShimmedStdin();
+          case "undefined":
+            return undefined;
           default:
             return null;
         }
@@ -1183,6 +1185,8 @@ class ChildProcess extends EventEmitter {
           }
           case "destroyed":
             return new ShimmedStdioOutStream();
+          case "undefined":
+            return undefined;
           default:
             return null;
         }
@@ -1213,6 +1217,9 @@ class ChildProcess extends EventEmitter {
     for (let i = 0; i < length; i++) {
       const element = opts[i];
 
+      if (element === "undefined") {
+        return undefined;
+      }
       if (element !== "pipe") {
         result[i] = null;
         continue;
@@ -1361,6 +1368,12 @@ class ChildProcess extends EventEmitter {
       this.#handle = null;
       ex.syscall = "spawn " + this.spawnfile;
       ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+      if (ex.code === "EMFILE") {
+        // emfile error; set stdio streams to undefined
+        this.#stdioOptions[0] = "undefined";
+        this.#stdioOptions[1] = "undefined";
+        this.#stdioOptions[2] = "undefined";
+      }
       process.nextTick(() => {
         this.emit("error", ex);
         this.emit("close", (ex as SystemError).errno ?? -1);

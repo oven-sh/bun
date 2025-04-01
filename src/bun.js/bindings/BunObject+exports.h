@@ -33,6 +33,7 @@
     macro(embeddedFiles) \
     macro(S3Client) \
     macro(s3) \
+    macro(SourceMap) \
     macro(CSRF) \
 
 // --- Callbacks ---

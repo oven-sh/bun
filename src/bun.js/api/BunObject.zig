@@ -71,6 +71,7 @@ pub const BunObject = struct {
     pub const unsafe = toJSGetter(Bun.getUnsafe);
     pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     pub const s3 = toJSGetter(Bun.getS3DefaultClient);
+    pub const SourceMap = toJSGetter(Bun.getSourceMapConstructor);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -130,6 +131,7 @@ pub const BunObject = struct {
         @export(&BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         @export(&BunObject.S3Client, .{ .name = getterName("S3Client") });
         @export(&BunObject.s3, .{ .name = getterName("s3") });
+        @export(&BunObject.SourceMap, .{ .name = getterName("SourceMap") });
 
         // --- Getters --
 
@@ -1231,6 +1233,10 @@ pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject)
 }
 pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
+}
+
+pub fn getSourceMapConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return @import("./JSParsedSourceMap.zig").getSourceMapConstructor(globalThis);
 }
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();

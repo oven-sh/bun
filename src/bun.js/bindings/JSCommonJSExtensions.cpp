@@ -59,7 +59,6 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject)
     if (stackFrames.size() == 0) return true;
     JSC::StackFrame& frame = stackFrames[0];
 
-
     WTF::String url = frame.sourceURL(vm);
     if (!url) return true;
 

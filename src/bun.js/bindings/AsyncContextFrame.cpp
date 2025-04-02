@@ -113,11 +113,11 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 }
 JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
-    return call(global, functionObject, thisValue, args);
+    return AsyncContextFrame::call(global, functionObject, thisValue, args);
 }
 JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
-    return call(global, functionObject, thisValue, args, returnedException);
+    return AsyncContextFrame::call(global, functionObject, thisValue, args, returnedException);
 }
 
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

@@ -1779,8 +1779,7 @@ pub const Process = struct {
             // argv also omits the script name
             args_count + 2,
         ) catch bun.outOfMemory();
-        var args_list = std.ArrayListUnmanaged(bun.String){ .items = args, .capacity = args.len };
-        args_list.items.len = 0;
+        var args_list: std.ArrayListUnmanaged(bun.String) = .initBuffer(args);
 
         if (vm.standalone_module_graph != null) {
             // Don't break user's code because they did process.argv.slice(2)
@@ -1799,7 +1798,11 @@ pub const Process = struct {
             !strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
             !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
         {
-            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            if (vm.worker != null and vm.worker.?.eval_mode) {
+                args_list.appendAssumeCapacity(bun.String.static("[worker eval]"));
+            } else {
+                args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            }
         }
 
         defer allocator.free(args);

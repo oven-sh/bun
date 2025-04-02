@@ -226,7 +226,6 @@ class Worker extends EventEmitter {
         // we convert the code to a blob, it will succeed.
         this.#urlToRevoke = filename;
       }
-      delete options[builtinsGeneratorHatesEval];
     }
     try {
       this.#worker = new WebWorker(filename, options);

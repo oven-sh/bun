@@ -129,7 +129,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     auto options = WorkerOptions {};
-    options.unref = false;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
         if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name)) {
@@ -146,6 +145,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         if (auto ref = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
             options.unref = !ref.toBoolean(lexicalGlobalObject);
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        if (auto eval = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "eval"_s))) {
+            options.evalMode = eval.toBoolean(lexicalGlobalObject);
         }
         RETURN_IF_EXCEPTION(throwScope, {});
 

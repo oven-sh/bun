@@ -118,6 +118,7 @@ extern "C" void* WebWorker__create(
     uint32_t contextId,
     bool miniMode,
     bool unrefByDefault,
+    bool evalMode,
     StringImpl** argvPtr,
     size_t argvLen,
     bool defaultExecArgv,
@@ -162,9 +163,6 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     BunString errorMessage = BunStringEmpty;
     BunString nameStr = Bun::toString(worker->m_options.name);
 
-    bool miniMode = worker->m_options.mini;
-    bool unrefByDefault = worker->m_options.unref;
-
     auto& preloadModuleStrings = worker->m_options.preloadModules;
     Vector<BunString> preloadModules;
     preloadModules.reserveInitialCapacity(preloadModuleStrings.size());
@@ -198,8 +196,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         &errorMessage,
         static_cast<uint32_t>(context.identifier()),
         static_cast<uint32_t>(worker->m_clientIdentifier),
-        miniMode,
-        unrefByDefault,
+        worker->m_options.mini,
+        worker->m_options.unref,
+        worker->m_options.evalMode,
         reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.data()),
         worker->m_options.argv.size(),
         !worker->m_options.execArgv.has_value(),

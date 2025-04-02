@@ -27,7 +27,12 @@ pub const WebWorker = struct {
     arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
-    mini: bool = false,
+    mini: bool,
+    // Most of our code doesn't care whether `eval` was passed, because worker_threads.ts
+    // automatically passes a Blob URL instead of a file path if `eval` is true. But, if `eval` is
+    // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
+    // Blob URL.
+    eval_mode: bool,
 
     /// `user_keep_alive` is the state of the user's .ref()/.unref() calls
     /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
@@ -179,6 +184,7 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
+        eval_mode: bool,
         argv_ptr: ?[*]WTFStringImpl,
         argv_len: usize,
         inherit_execArgv: bool,
@@ -227,6 +233,7 @@ pub const WebWorker = struct {
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
+            .eval_mode = eval_mode,
             .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .store_fd = parent.transpiler.resolver.store_fd,
             .name = brk: {

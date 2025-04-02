@@ -1554,7 +1554,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     var existing_stdin_value = JSC.JSValue.zero;
     if (this_jsvalue != .zero) {
         if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
-            if (existing_stdin_value.isCell()) {
+            if (existing_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
                     stdin = @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(existing_value)));

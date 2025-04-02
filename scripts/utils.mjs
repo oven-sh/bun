@@ -2637,6 +2637,9 @@ export function parseAnnotations(content, options = {}) {
  * @param {BuildkiteAnnotation} annotation
  */
 export function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
+  if (!isBuildkite) {
+    return;
+  }
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
     ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],

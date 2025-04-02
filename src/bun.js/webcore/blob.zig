@@ -3722,8 +3722,6 @@ pub const Blob = struct {
                 resolvedlistOptions: S3.S3ListObjectsOptions,
                 global: *JSC.JSGlobalObject,
 
-                pub usingnamespace bun.New(@This());
-
                 pub fn resolve(result: S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
                     const self: *@This() = @ptrCast(@alignCast(opaque_self));
                     defer self.deinit();
@@ -3747,6 +3745,10 @@ pub const Blob = struct {
                     self.resolvedlistOptions.deinit();
                     self.destroy();
                 }
+
+                pub inline fn destroy(self: *@This()) void {
+                    bun.destroy(self);
+                }
             };
 
             const promise = JSC.JSPromise.Strong.init(globalThis);
@@ -3759,7 +3761,7 @@ pub const Blob = struct {
             const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
             store.ref();
 
-            S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+            S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
                 .resolvedlistOptions = options,

@@ -2,7 +2,7 @@
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
   isCI,
@@ -279,6 +279,7 @@ async function spawn(command, args, options, label) {
     }
     if (!annotations.length) {
       const content = formatAnnotationToHtml({
+        filename: relative(process.cwd(), import.meta.filename),
         title: "build failed",
         content: stdoutBuffer,
         source: "build",

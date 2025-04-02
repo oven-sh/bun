@@ -76,6 +76,7 @@
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
+#include "JSCommonJSExtensions.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
@@ -298,12 +299,31 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
+    return JSValue::encode(thisObject->lazyRequireExtensionsObject());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
+    return true;
+}
+
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
 
 static const HashTableValue RequireFunctionPrototypeValues[] = {
     { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
+    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireExtensionsSetter } },
 };
 
 Structure* RequireFunctionPrototype::createStructure(
@@ -366,13 +386,6 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
         JSC::Identifier::fromString(vm, "main"_s),
         JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, requireDotMainFunction),
         PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
-
-    auto extensions = constructEmptyObject(globalObject);
-    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
-    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
-    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);
-
-    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), extensions, 0);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -593,6 +606,30 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        return JSValue::encode(jsUndefined());
+    }
+    if (thisObject->m_overriddenCompile) {
+        return JSValue::encode(thisObject->m_overriddenCompile.get());
+    }
+    return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+    JSValue decodedValue = JSValue::decode(value);
+    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
@@ -655,7 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 }
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
-    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionJSCommonJSModule_compile, 2 } },
+    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
@@ -1151,7 +1188,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // This is always a new JSCommonJSModule object; cast cannot fail.
     JSCommonJSModule* child = jsCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
 
-    BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
     BunString typeAttributeStr = { BunStringTag::Dead };
     String typeAttribute = String();
@@ -1182,7 +1218,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         globalObject,
         child,
         specifierValue,
-        &specifierStr,
+        specifier,
         &referrerStr,
         LIKELY(typeAttribute.isEmpty())
             ? nullptr
@@ -1269,8 +1305,53 @@ void JSCommonJSModule::evaluate(
     this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
+}
 
-    return;
+void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
+    Zig::GlobalObject* globalObject,
+    const WTF::String& key,
+    JSValue keyJSString,
+    ResolvedSource& source)
+{
+    if (JSValue compileFunction = this->m_overriddenCompile.get()) {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!compileFunction) {
+            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
+            return;
+        }
+        JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
+        if (callData.type == JSC::CallData::Type::None) {
+            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
+            return;
+        }
+        WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
+        RETURN_IF_EXCEPTION(scope, );
+        if (source.needsDeref) {
+            source.needsDeref = false;
+            source.source_code.deref();
+        }
+        // Remove the wrapper from the source string, since the transpiler has added it.
+        auto trimStart = sourceString.find('\n');
+        WTF::String sourceStringWithoutWrapper;
+        if (trimStart != WTF::notFound) {
+            auto wrapperStart = globalObject->m_moduleWrapperStart;
+            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
+            sourceStringWithoutWrapper = sourceString.substring(trimStart, sourceString.length() - trimStart - 4);
+        } else {
+            sourceStringWithoutWrapper = sourceString;
+        }
+        RETURN_IF_EXCEPTION(scope, );
+
+        // _compile(source, filename)
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsString(vm, sourceStringWithoutWrapper));
+        arguments.append(keyJSString);
+        JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
+        RETURN_IF_EXCEPTION(scope, );
+        return;
+    }
+    this->evaluate(globalObject, key, source, false);
 }
 
 std::optional<JSC::SourceCode> createCommonJSModule(

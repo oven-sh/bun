@@ -961,7 +961,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
 
-    JSC::CallData callData = getCallData(callbackObject);
     args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));
 
@@ -994,7 +993,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
 
     WTF::NakedPtr<JSC::Exception> exception;
-    JSValue returnValue = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, jsUndefined(), args, exception);
+    JSValue returnValue = AsyncContextFrame::call(globalObject, callbackObject, jsUndefined(), args, exception);
     if (exception) {
         auto* ptr = exception.get();
         exception.clear();

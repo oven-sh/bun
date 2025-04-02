@@ -984,12 +984,15 @@ const ServerPrototype = {
           }
 
           socket[kRequest] = http_req;
+          const is_upgrade = http_req.headers.upgrade;
 
-          if (canUseInternalAssignSocket) {
-            // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-            assignSocketInternal(http_res, socket);
-          } else {
-            http_res.assignSocket(socket);
+          if (!is_upgrade) {
+            if (canUseInternalAssignSocket) {
+              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+              assignSocketInternal(http_res, socket);
+            } else {
+              http_res.assignSocket(socket);
+            }
           }
 
           function onClose() {
@@ -1003,8 +1006,16 @@ const ServerPrototype = {
             http_res.writeHead(503);
             http_res.end();
             socket.destroy();
-          } else if (http_req.headers.upgrade) {
+          } else if (is_upgrade) {
             server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            if (!socket._httpMessage) {
+              if (canUseInternalAssignSocket) {
+                // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+                assignSocketInternal(http_res, socket);
+              } else {
+                http_res.assignSocket(socket);
+              }
+            }
           } else if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
               server.emit("checkContinue", http_req, http_res);
@@ -2204,7 +2215,6 @@ const ServerResponsePrototype = {
       socket.removeListener("close", onServerResponseClose);
       socket._httpMessage = null;
     }
-
     this.socket = null;
   },
 

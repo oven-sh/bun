@@ -670,3 +670,12 @@ it("x25519", () => {
     });
   }).toThrow();
 });
+
+it("encoding should not throw in null, undefined or in valid encodings in createHmac #18700", () => {
+  for (let encoding of [undefined, null, "utf8", "utf-8", "ascii", "binary", "hex", "base64", "base64url"]) {
+    const hmac = crypto.createHmac("sha256", "a secret", { encoding });
+
+    hmac.update("some data to hash");
+    expect(hmac.digest("hex")?.length).toBe(64);
+  }
+});

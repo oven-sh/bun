@@ -941,7 +941,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     uWS::HttpRequest* request,
     uWS::HttpResponse<isSSL>* response,
     void* upgrade_ctx,
-    void** nodeHttpResponsePtr)
+    void** nodeHttpResponsePtr,
+    EncodedJSValue* nodeHttpResponseValue)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -960,6 +961,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
+    *nodeHttpResponseValue = JSValue::encode(nodeHTTPResponseObject);
 
     args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));
@@ -1188,9 +1190,10 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     uWS::HttpRequest* request,
     uWS::HttpResponse<false>* response,
     void* upgrade_ctx,
-    void** nodeHttpResponsePtr)
+    void** nodeHttpResponsePtr,
+    EncodedJSValue* nodeHttpResponseValue)
 {
-    return NodeHTTPServer__onRequest<false>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<false>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr, nodeHttpResponseValue);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
@@ -1201,9 +1204,10 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     uWS::HttpRequest* request,
     uWS::HttpResponse<true>* response,
     void* upgrade_ctx,
-    void** nodeHttpResponsePtr)
+    void** nodeHttpResponsePtr,
+    EncodedJSValue* nodeHttpResponseValue)
 {
-    return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr, nodeHttpResponseValue);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))

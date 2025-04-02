@@ -252,14 +252,22 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             options.env.emplace(WTFMove(env));
         }
 
+        // needed to match the coercion behavior of `String(value)`, which returns a descriptive
+        // string for Symbols instead of throwing like JSValue::toString does.
+        // may throw an exception!
+        auto coerceToIsolatedString = [lexicalGlobalObject](JSValue v) -> String {
+            String original = v.isSymbol() ? asSymbol(v)->descriptiveString() : v.toWTFString(lexicalGlobalObject);
+            return original.isolatedCopy();
+        };
+
         JSValue argvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "argv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (argvValue && argvValue.pureToBoolean() != TriState::False) {
             Bun::V::validateArray(throwScope, globalObject, argvValue, "options.argv"_s, jsNumber(0));
             RETURN_IF_EXCEPTION(throwScope, {});
-            forEachInIterable(lexicalGlobalObject, argvValue, [&options](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+            forEachInIterable(lexicalGlobalObject, argvValue, [&options, &coerceToIsolatedString](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                String str = nextValue.toWTFString(lexicalGlobalObject).isolatedCopy();
+                String str = coerceToIsolatedString(nextValue);
                 RETURN_IF_EXCEPTION(scope, );
                 options.argv.append(str);
             });
@@ -271,9 +279,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             Vector<String> execArgv;
             Bun::V::validateArray(throwScope, globalObject, execArgvValue, "options.execArgv"_s, jsNumber(0));
             RETURN_IF_EXCEPTION(throwScope, {});
-            forEachInIterable(lexicalGlobalObject, execArgvValue, [&execArgv](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+            forEachInIterable(lexicalGlobalObject, execArgvValue, [&execArgv, &coerceToIsolatedString](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                String str = nextValue.toWTFString(lexicalGlobalObject).isolatedCopy();
+                String str = coerceToIsolatedString(nextValue);
                 RETURN_IF_EXCEPTION(scope, );
                 execArgv.append(str);
             });

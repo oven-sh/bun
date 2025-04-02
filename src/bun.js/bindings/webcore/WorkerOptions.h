@@ -16,6 +16,7 @@ struct WorkerOptions {
     Vector<String> preloadModules;
     std::optional<HashMap<String, String>> env; // TODO(@190n) allow shared
     Vector<String> argv;
+    // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
 };
 

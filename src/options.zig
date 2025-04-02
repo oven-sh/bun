@@ -80,9 +80,9 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
 }
 
 pub const ExternalModules = struct {
-    node_modules: std.BufSet = undefined,
-    abs_paths: std.BufSet = undefined,
-    patterns: []const WildcardPattern = undefined,
+    node_modules: std.BufSet,
+    abs_paths: std.BufSet,
+    patterns: []const WildcardPattern,
 
     pub const WildcardPattern = struct {
         prefix: string,
@@ -648,6 +648,14 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+
+    pub const Optional = enum(u8) {
+        none = 254,
+        _,
+        pub fn unwrap(opt: Optional) ?Loader {
+            return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+    };
 
     pub fn isCSS(this: Loader) bool {
         return this == .css;
@@ -1700,7 +1708,7 @@ pub const BundleOptions = struct {
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
     /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
-    external: ExternalModules = ExternalModules{},
+    external: ExternalModules,
     entry_points: []const string,
     entry_naming: []const u8 = "",
     asset_naming: []const u8 = "",
@@ -1708,6 +1716,9 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
+    /// This list applies to all extension resolution cases. The runtime uses
+    /// this for implementing `require.extensions`
+    extra_cjs_extensions: []const []const u8 = &.{},
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     defines_loaded: bool = false,

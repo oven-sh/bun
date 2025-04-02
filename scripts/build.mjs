@@ -277,6 +277,19 @@ async function spawn(command, args, options, label) {
         content,
       });
     }
+    if (!annotations.length) {
+      const content = formatAnnotationToHtml({
+        title: "build failed",
+        content: stdoutBuffer,
+        source: "build",
+        level: "error",
+      });
+      reportAnnotationToBuildKite({
+        priority: 10,
+        label: "build failed",
+        content,
+      });
+    }
   } catch (error) {
     console.error(`Failed to parse annotations:`, error);
   }

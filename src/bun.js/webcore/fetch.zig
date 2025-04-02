@@ -2606,7 +2606,7 @@ pub fn Bun__fetch_(
         var result = credentialsWithOptions.credentials.signRequest(.{
             .path = url.s3Path(),
             .method = method,
-        }, null) catch |sign_err| {
+        }, false, null) catch |sign_err| {
             is_error = true;
             return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
         };

@@ -449,6 +449,7 @@ pub const Run = struct {
         }
 
         JSC.napi.fixDeadCodeElimination();
+        bun.crash_handler.fixDeadCodeElimination();
         vm.globalExit();
     }
 

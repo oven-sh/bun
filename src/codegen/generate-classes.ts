@@ -974,8 +974,8 @@ extern JSC_CALLCONV void ${symbolName(typeName, name)}SetCachedValue(JSC::Encode
 
 extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedValue(JSC::EncodedJSValue thisValue)
 {
-  auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
-  return JSValue::encode(thisObject->${cacheName}.get());
+    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->${cacheName}.get());
 }
 
   `.trim();

@@ -2286,6 +2286,34 @@ it("should not emit/throw error when writing after socket.end", async () => {
   }
 });
 
+it("should correctly transform rawHeaders into headersDistinct", async () => {
+  const server = createServer((req, res) => {
+    // Send multiple headers with same name to test distinct handling
+    res.setHeader("Set-Cookie", ["cookie1=value1", "cookie2=value2"]);
+    res.setHeader("X-Custom", "value1");
+    res.setHeader("x-custom", "value2"); // Same header, different case
+    res.end();
+  });
+
+  try {
+    await once(server.listen(0), "listening");
+    const url = `http://localhost:${server.address().port}`;
+
+    const { promise, resolve } = Promise.withResolvers();
+
+    http.get(url, res => {
+      const { date: _, ...rest } = res.headersDistinct;
+
+      expect(rest).toStrictEqual({
+        "content-length": ["0"],
+        "set-cookie": ["cookie1=value1", "cookie2=value2"],
+        "x-custom": ["value2"],
+      });
+      resolve();
+    });
+
+    await promise;
+    
 it("should handle data if not immediately handled", async () => {
   // Create a local server to receive data from
   const server = http.createServer();

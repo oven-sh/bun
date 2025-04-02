@@ -466,7 +466,34 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
+        // not an exhaustive list
+        const unsupported = &.{
+            "advanceTimersByTimeAsync",
+            "waitFor",
+            "runAllTimersAsync",
+        };
+        inline for (unsupported) |name| {
+            vi.put(
+                globalObject,
+                ZigString.static(name),
+                JSC.NewFunction(
+                    globalObject,
+                    ZigString.static(name),
+                    0,
+                    unsupportedViFnImpl(name),
+                    false,
+                ),
+            );
+        }
         module.put(globalObject, ZigString.static("vi"), vi);
+    }
+
+    pub fn unsupportedViFnImpl(comptime name: []const u8) fn (*JSGlobalObject, *CallFrame) bun.JSError!JSValue {
+        return struct {
+            fn impl(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
+                return globalThis.throwPretty("Bun currently does not support the \"{s}<r>\" Vi utility. Please open an issue if you would like us to prioritize it:\n       <cyan>https://github.com/oven-sh/bun/issues<r>\n", .{name});
+            }
+        }.impl;
     }
 
     extern fn Bun__Jest__testPreloadObject(*JSGlobalObject) JSValue;

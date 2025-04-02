@@ -558,11 +558,6 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 void us_socket_pause(int ssl, struct us_socket_t *s) {
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
-    if(us_socket_is_shut_down(ssl, s)) {
-        // we already sent FIN so we pause all events because we are read-only
-        us_poll_change(&s->p, s->context->loop, 0);
-        return;
-    }
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 }

@@ -173,10 +173,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         return {};
     }
 
-    auto result = CookieMap::create(WTFMove(init));
+    auto result_exception = CookieMap::create(WTFMove(init));
+    if (result_exception.hasException()) {
+        WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
+    }
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto result = result_exception.releaseReturnValue();
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), result.releaseReturnValue())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTFMove(result))));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieMapDOMConstructorConstruct, JSCookieMapDOMConstructor::construct);
@@ -400,7 +404,13 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         }
     }
 
-    auto cookie = Cookie::create(cookieInit);
+    auto cookie_exception = Cookie::create(cookieInit);
+    if (cookie_exception.hasException()) {
+        WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+    }
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto cookie = cookie_exception.releaseReturnValue();
+
     impl.set(WTFMove(cookie));
 
     return JSValue::encode(jsUndefined());
@@ -480,7 +490,8 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
     }
 
-    impl.remove(deleteOptions);
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.remove(deleteOptions));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(jsUndefined());
 }

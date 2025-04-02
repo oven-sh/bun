@@ -38,7 +38,7 @@ public:
 
     void set(Ref<Cookie>);
 
-    void remove(const CookieStoreDeleteOptions& options);
+    ExceptionOr<void> remove(const CookieStoreDeleteOptions& options);
 
     JSC::JSValue toJSON(JSC::JSGlobalObject*) const;
     size_t size() const;

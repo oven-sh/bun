@@ -102,17 +102,22 @@ describe("@types/bun integration test", () => {
     `;
 
     const importantLines = [
+      `error TS2353: Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.`,
       `error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.`,
       "error TS2769: No overload matches this call.",
-      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
+      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number", // This line ends early because we've seen TypeScript emit differing messages in different environments
+      "ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
       `Type '"direct"' is not assignable to type '"bytes"'`,
       "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",
+      "error TS2339: Property 'ref' does not exist on type 'Worker'.",
+      "error TS2339: Property 'unref' does not exist on type 'Worker'.",
+      "error TS2339: Property 'threadId' does not exist on type 'Worker'.",
     ];
 
     const fullOutput = p.stdout.toString() + p.stderr.toString();
 
-    const expectedErrorCount = importantLines.filter(e => e.includes("error")).length;
+    const expectedErrorCount = importantLines.join("\n").match(/error/g)?.length ?? 0;
     const actualErrorCount = fullOutput.match(/error/g)?.length ?? 0;
     expect(actualErrorCount).toBe(expectedErrorCount);
 

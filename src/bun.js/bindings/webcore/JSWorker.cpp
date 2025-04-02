@@ -225,6 +225,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
+        // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
+        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
+        }
         JSObject* envObject = nullptr;
 
         if (envValue && envValue.isCell()) {

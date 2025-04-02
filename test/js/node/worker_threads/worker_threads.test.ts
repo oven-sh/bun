@@ -275,4 +275,5 @@ describe("execArgv option", async () => {
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
+  // TODO(@190n) get our handling of non-string array elements in line with Node's
 });

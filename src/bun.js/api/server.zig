@@ -3262,7 +3262,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // we use this memory address to disable signals being sent
             signal.clear();
             assert(signal.isDead());
-
+            // we need to render metadata before assignToStream because the stream can call res.end
+            // and this would auto write an 200 status
+            if (!this.flags.has_written_status) {
+                this.renderMetadata();
+            }
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,
@@ -6531,12 +6535,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
-                    node_response.setOnAbortedHandler();
-                }
-                // If we ended the response without attaching an ondata handler, we discard the body read stream
-                else if (http_result != .pending) {
-                    node_response.maybeStopReadingBody(vm);
+                if (!node_response.flags.upgraded) {
+                    if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                        node_response.setOnAbortedHandler();
+                    }
+                    // If we ended the response without attaching an ondata handler, we discard the body read stream
+                    else if (http_result != .pending) {
+                        node_response.maybeStopReadingBody(vm, node_response.getThisValue());
+                    }
                 }
             }
         }

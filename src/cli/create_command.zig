@@ -1429,23 +1429,35 @@ pub const CreateCommand = struct {
                     package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
                 }
 
-                const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+                const file = package_json_file.?;
 
-                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source, .{ .mangled_props = null }) catch |err| {
+                var buffer_writer = try JSPrinter.BufferWriter.init(bun.default_allocator);
+                buffer_writer.append_newline = true;
+                var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+                _ = JSPrinter.printJSON(
+                    @TypeOf(&package_json_writer),
+                    &package_json_writer,
+                    package_json_expr,
+                    &source,
+                    .{ .mangled_props = null },
+                ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;
                 };
-
-                std.posix.ftruncate(package_json_file.?.handle, written + 1) catch {};
-
-                // if (!create_options.skip_install) {
-                //     if (needs.bun_bun_for_nextjs) {
-                //         try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
-                //     } else if (bun_bun_for_react_scripts) {
-                //         try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
-                //     }
-                // }
+                const fd = bun.toFD(file);
+                const written = package_json_writer.ctx.getWritten();
+                bun.sys.File.writeAll(.{ .handle = fd }, written).unwrap() catch |err| {
+                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    package_json_file = null;
+                    break :process_package_json;
+                };
+                bun.sys.ftruncate(fd, @intCast(written.len)).unwrap() catch |err| {
+                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    package_json_file = null;
+                    break :process_package_json;
+                };
             }
         }
 

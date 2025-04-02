@@ -37,6 +37,8 @@
 #include "JSCommonJSModule.h"
 #include "../modules/_NativeModule.h"
 
+#include "JSCommonJSExtensions.h"
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -567,11 +569,39 @@ JSValue resolveAndFetchBuiltinModule(
     return {};
 }
 
+void evaluateCommonJSCustomExtension(
+    Zig::GlobalObject* globalObject,
+    JSCommonJSModule* target,
+    String filename,
+    JSValue filenameValue,
+    uint32_t extensionIndex)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    JSValue extension = extensions->m_registeredFunctions[extensionIndex].get();
+
+    if (!extension) {
+        throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
+        return;
+    }
+    JSC::CallData callData = JSC::getCallData(extension.asCell());
+    if (callData.type == JSC::CallData::Type::None) {
+        throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
+        return;
+    }
+    MarkedArgumentBuffer arguments;
+    arguments.append(target);
+    arguments.append(filenameValue);
+    JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, target, arguments);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
     JSValue specifierValue,
-    BunString* specifier,
+    String specifierWtfString,
     BunString* referrer,
     BunString* typeAttribute)
 {
@@ -584,13 +614,15 @@ JSValue fetchCommonJSModule(
     ErrorableResolvedSource* res = &resValue;
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
+    BunString specifier = Bun::toString(specifierWtfString);
+
     bool wasModuleMock = false;
 
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
+        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock)) {
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
 
             // If we assigned module.exports to the virtual module, we're done here.
@@ -606,7 +638,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifier->toWTFString(BunString::ZeroCopy), "\" is unsupported. use \"await import()\" instead."_s));
+                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Fulfilled: {
@@ -625,7 +657,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    if (auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, specifier, res)) {
+    if (auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res)) {
         if (!res->success) {
             RELEASE_AND_RETURN(scope, builtin);
         }
@@ -636,8 +668,8 @@ JSValue fetchCommonJSModule(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
+        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock)) {
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
 
             // If we assigned module.exports to the virtual module, we're done here.
@@ -653,7 +685,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifier->toWTFString(BunString::ZeroCopy), "\" is unsupported. use \"await import()\" instead."_s));
+                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Fulfilled: {
@@ -688,10 +720,31 @@ JSValue fetchCommonJSModule(
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice()) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
+    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
+}
 
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
+template<bool isExtension>
+JSValue fetchCommonJSModuleNonBuiltin(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope)
+{
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
-        target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
+        if constexpr (isExtension) {
+            target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
+        } else {
+            target->evaluate(globalObject, specifierWtfString, res->result.value);
+        }
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }
@@ -733,6 +786,15 @@ JSValue fetchCommonJSModule(
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
+    } else if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
+        if constexpr (isExtension) {
+            ASSERT_NOT_REACHED();
+            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
+            RELEASE_AND_RETURN(scope, {});
+        }
+        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, res->result.value.cjsCustomExtensionIndex);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, target);
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -740,6 +802,34 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
+
+// Explicit instantiations of fetchCommonJSModuleNonBuiltin
+template JSValue fetchCommonJSModuleNonBuiltin<true>(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope);
+template JSValue fetchCommonJSModuleNonBuiltin<false>(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope);
 
 extern "C" bool isBunTest;
 
@@ -860,12 +950,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true);
+        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone);
         if (pendingCtx) {
             return pendingCtx;
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone);
     }
 
     if (res->success && res->result.value.isCommonJSModule) {

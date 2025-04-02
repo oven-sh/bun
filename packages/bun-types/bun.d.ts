@@ -2591,8 +2591,6 @@ declare module "bun" {
    *
    * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
    *
-   * @category Security
-   *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
@@ -2617,6 +2615,8 @@ declare module "bun" {
    *
    * console.log(verify); // true
    * ```
+   *
+   * @category Security
    */
   const password: {
     /**

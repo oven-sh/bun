@@ -290,8 +290,17 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate() {
+  terminate(callback: unknown) {
     this.#isRunning = false;
+    if (typeof callback === "function") {
+      process.emitWarning(
+        "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
+        "DeprecationWarning",
+        "DEP0132",
+      );
+      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+    }
+
     const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);

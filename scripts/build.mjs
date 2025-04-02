@@ -3,7 +3,14 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { isCI, parseAnnotations, printEnvironment, reportAnnotationToBuildKite, startGroup } from "./utils.mjs";
+import {
+  formatAnnotationToHtml,
+  isCI,
+  parseAnnotations,
+  printEnvironment,
+  reportAnnotationToBuildKite,
+  startGroup,
+} from "./utils.mjs";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -263,10 +270,10 @@ async function spawn(command, args, options, label) {
   try {
     const { annotations } = parseAnnotations(stdoutBuffer);
     for (const annotation of annotations) {
-      const { filename, content } = annotation;
+      const content = formatAnnotationToHtml(annotation);
       reportAnnotationToBuildKite({
         priority: 10,
-        label: filename,
+        label: annotation.title || annotation.filename,
         content,
       });
     }

@@ -2367,6 +2367,81 @@ export function parseAnnotation(options, context) {
 }
 
 /**
+ * @typedef {Object} AnnotationFormatOptions
+ * @property {boolean} [concise]
+ * @property {boolean} [buildkite]
+ */
+
+/**
+ * @param {Annotation} annotation
+ * @param {AnnotationFormatOptions} [options]
+ * @returns {string}
+ */
+export function formatAnnotationToHtml(annotation, options = {}) {
+  const { title, content, source, level, filename, line } = annotation;
+  const { concise, buildkite = isBuildkite } = options;
+
+  let html;
+  if (concise) {
+    html = "<li>";
+  } else {
+    html = "<details><summary>";
+  }
+
+  if (filename) {
+    const filePath = filename.replace(/\\/g, "/");
+    const fileUrl = getFileUrl(filePath, line);
+    if (fileUrl) {
+      html += `<a href="${fileUrl}"><code>${filePath}</code></a>`;
+    } else {
+      html += `<code>${filePath}</code>`;
+    }
+    html += " - ";
+  }
+
+  if (title) {
+    html += title;
+  } else if (source) {
+    if (level) {
+      html += `${source} ${level}`;
+    } else {
+      html += source;
+    }
+  } else if (level) {
+    html += level;
+  } else {
+    html += "unknown error";
+  }
+
+  const buildLabel = getBuildLabel();
+  if (buildLabel) {
+    html += " on ";
+    const buildUrl = getBuildUrl();
+    if (buildUrl) {
+      html += `<a href="${buildUrl}">${buildLabel}</a>`;
+    } else {
+      html += buildLabel;
+    }
+  }
+
+  if (concise) {
+    html += "</li>\n";
+  } else {
+    html += "</summary>\n\n";
+    if (buildkite) {
+      const preview = escapeCodeBlock(content);
+      html += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
+    } else {
+      const preview = escapeHtml(stripAnsi(content));
+      html += `<pre><code>${preview}</code></pre>\n`;
+    }
+    html += "\n\n</details>\n\n";
+  }
+
+  return html;
+}
+
+/**
  * @typedef {Object} AnnotationResult
  * @property {Annotation[]} annotations
  * @property {string} content
@@ -2399,7 +2474,7 @@ export function parseAnnotations(content, options = {}) {
       let length = 0;
       let match;
 
-      while (i + length <= originalLines.length && length < maxLength) {
+      while (i + length < originalLines.length && length < maxLength) {
         const originalLine = originalLines[i + length++];
         const line = stripAnsi(originalLine).trim();
         const patternMatch = pattern.exec(line);
@@ -2562,15 +2637,14 @@ export function parseAnnotations(content, options = {}) {
  * @param {BuildkiteAnnotation} annotation
  */
 export function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
-  const { error, status, signal, stderr } = spawnSync(
+  const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
     ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
       encoding: "utf-8",
-      timeout: spawnTimeout,
-      cwd,
+      timeout: 5_000,
     },
   );
   if (status === 0) {
@@ -2580,14 +2654,13 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
     const cause = error ?? signal ?? `code ${status}`;
     throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
-  const buildLabel = getTestLabel();
-  const buildUrl = getBuildUrl();
-  const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
-  if (stderr) {
-    errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
-  }
-  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorMessage, attempt: attempt + 1 });
+  const errorContent = formatAnnotationToHtml({
+    title: "annotation error",
+    content: stderr || "",
+    source: "buildkite",
+    level: "error",
+  });
+  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorContent, attempt: attempt + 1 });
 }
 
 /**

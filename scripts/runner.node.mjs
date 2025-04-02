@@ -1334,7 +1334,9 @@ function formatTestToMarkdown(result, concise) {
     if (error) {
       markdown += ` - ${error}`;
     }
-    markdown += ` on ${platform}`;
+    if (platform) {
+      markdown += ` on ${platform}`;
+    }
 
     if (concise) {
       markdown += "</li>\n";

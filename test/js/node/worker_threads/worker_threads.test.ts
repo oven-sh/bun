@@ -1,3 +1,4 @@
+import { bunEnv, bunExe } from "harness";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import wt, {
@@ -245,4 +246,33 @@ test("support worker eval that throws", async () => {
   });
   expect(result.toString()).toInclude(`error: Unexpected throw`);
   await worker.terminate();
+});
+
+describe("execArgv option", async () => {
+  // this needs to be a subprocess to ensure that the parent's execArgv is not empty
+  // otherwise we could not distinguish between the worker inheriting the parent's execArgv
+  // vs. the worker getting a fresh empty execArgv
+  async function run(execArgv: string, expected: string) {
+    const proc = Bun.spawn({
+      // pass --smol so that the parent thread has some known, non-empty execArgv
+      cmd: [bunExe(), "--smol", "fixture-execargv.js", execArgv],
+      env: bunEnv,
+      cwd: __dirname,
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+    expect(await new Response(proc.stdout).text()).toBe(expected);
+  }
+
+  it("inherits the parent's execArgv when falsy or unspecified", async () => {
+    await run("null", '["--smol"]\n');
+    await run("0", '["--smol"]\n');
+  });
+  it("provides empty execArgv when passed an empty array", async () => {
+    // empty array should result in empty execArgv, not inherited from parent thread
+    await run("[]", "[]\n");
+  });
+  it("can specify an array of strings", async () => {
+    await run('["--no-warnings"]', '["--no-warnings"]\n');
+  });
 });

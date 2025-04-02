@@ -210,6 +210,7 @@ function execFile(file, args, options, callback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
+    __proto__: null,
     encoding: "utf8",
     timeout: 0,
     maxBuffer: MAX_BUFFER,
@@ -874,7 +875,7 @@ function normalizeExecArgs(command, options, callback) {
   }
 
   // Make a shallow copy so we don't clobber the user's options object.
-  options = { ...options };
+  options = { __proto__: null, ...options };
   options.shell = typeof options.shell === "string" ? options.shell : true;
 
   return {
@@ -907,6 +908,7 @@ function normalizeSpawnArguments(file, args, options) {
   if (options === undefined) options = {};
   else validateObject(options, "options");
 
+  options = { __proto__: null, ...options };
   let cwd = options.cwd;
 
   // Validate the cwd, if present.

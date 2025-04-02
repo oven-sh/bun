@@ -19,7 +19,7 @@ const JSC::ClassInfo JSDiffieHellmanGroup::s_info = { "DiffieHellmanGroup"_s, &B
 void JSDiffieHellmanGroup::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    JSC_NATIVE_GETTER_WITHOUT_TRANSITION("verifyError"_s, jsDiffieHellmanGroupGetter_verifyError, PropertyAttribute::ReadOnly | PropertyAttribute::Accessor);
+    JSC_NATIVE_GETTER("verifyError"_s, jsDiffieHellmanGroupGetter_verifyError, PropertyAttribute::ReadOnly | PropertyAttribute::Accessor);
 
     m_sizeForGC = this->m_dh.size();
     vm.heap.reportExtraMemoryAllocated(this, m_sizeForGC);

@@ -689,5 +689,9 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-  expect(dhg.verifyError).toBe(0);
+
+  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
+  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
+  // DH_generate_parameters_ex
+  expect(dhg.verifyError).toBe(8);
 });

@@ -952,6 +952,8 @@ const ServerPrototype = {
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
+          // start buffering data if any, the user will need to resume() or .on("data") to read it
+          handle.pause();
           drainMicrotasks();
 
           let capturedError;
@@ -982,12 +984,15 @@ const ServerPrototype = {
           }
 
           socket[kRequest] = http_req;
+          const is_upgrade = http_req.headers.upgrade;
 
-          if (canUseInternalAssignSocket) {
-            // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-            assignSocketInternal(http_res, socket);
-          } else {
-            http_res.assignSocket(socket);
+          if (!is_upgrade) {
+            if (canUseInternalAssignSocket) {
+              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+              assignSocketInternal(http_res, socket);
+            } else {
+              http_res.assignSocket(socket);
+            }
           }
 
           function onClose() {
@@ -1001,8 +1006,16 @@ const ServerPrototype = {
             http_res.writeHead(503);
             http_res.end();
             socket.destroy();
-          } else if (http_req.headers.upgrade) {
+          } else if (is_upgrade) {
             server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            if (!socket._httpMessage) {
+              if (canUseInternalAssignSocket) {
+                // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+                assignSocketInternal(http_res, socket);
+              } else {
+                http_res.assignSocket(socket);
+              }
+            }
           } else if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
               server.emit("checkContinue", http_req, http_res);
@@ -2037,6 +2050,12 @@ const ServerResponsePrototype = {
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);
 
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
+    }
     if (headerState !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -2196,7 +2215,6 @@ const ServerResponsePrototype = {
       socket.removeListener("close", onServerResponseClose);
       socket._httpMessage = null;
     }
-
     this.socket = null;
   },
 
@@ -2745,8 +2763,10 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      // no body and not finished
+      const isDuplex = customBody === undefined && !this.finished;
 
-      if (customBody === undefined) {
+      if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
@@ -2755,7 +2775,7 @@ function ClientRequest(input, options, cb) {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
-        } else {
+        } else if (isDuplex) {
           fetchOptions.body = async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();

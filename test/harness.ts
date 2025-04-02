@@ -1217,7 +1217,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
-  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
 
 declare module "bun:test" {

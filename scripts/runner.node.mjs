@@ -36,6 +36,7 @@ import {
   isWindows,
   isX64,
   printEnvironment,
+  reportAnnotationToBuildKite,
   startGroup,
   tmpdir,
   unzip,
@@ -1080,7 +1081,7 @@ function getRelevantTests(cwd) {
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(isNodeParallelTest);
+    tests = tests.filter(isNodeTest);
   }
 
   const isMatch = (testPath, filter) => {
@@ -1333,7 +1334,9 @@ function formatTestToMarkdown(result, concise) {
     if (error) {
       markdown += ` - ${error}`;
     }
-    markdown += ` on ${platform}`;
+    if (platform) {
+      markdown += ` on ${platform}`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
@@ -1394,48 +1397,6 @@ function listArtifactsFromBuildKite(glob, step) {
   const cause = error ?? signal ?? `code ${status}`;
   console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
   return [];
-}
-
-/**
- * @typedef {object} BuildkiteAnnotation
- * @property {string} [context]
- * @property {string} label
- * @property {string} content
- * @property {"error" | "warning" | "info"} [style]
- * @property {number} [priority]
- * @property {number} [attempt]
- */
-
-/**
- * @param {BuildkiteAnnotation} annotation
- */
-function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
-  const { error, status, signal, stderr } = spawnSync(
-    "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
-    {
-      input: content,
-      stdio: ["pipe", "ignore", "pipe"],
-      encoding: "utf-8",
-      timeout: spawnTimeout,
-      cwd,
-    },
-  );
-  if (status === 0) {
-    return;
-  }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
-  }
-  const buildLabel = getTestLabel();
-  const buildUrl = getBuildUrl();
-  const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
-  if (stderr) {
-    errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
-  }
-  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorMessage, attempt: attempt + 1 });
 }
 
 /**

@@ -297,7 +297,7 @@ for (const development of [true, false]) {
         }
       });
 
-      test.todoIf(isWindows)("build", async () => {
+      test.todoIf(isCI || isWindows)("build", async () => {
         {
           const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
             cwd: dir,

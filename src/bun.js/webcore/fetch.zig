@@ -952,7 +952,7 @@ pub const FetchTasklet = struct {
                 error.INVALID_CALL => bun.String.static("Invalid certificate verification context"),
                 error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
                 error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
-                error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
+                error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
                 else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
                     @errorName(e),
@@ -2606,7 +2606,7 @@ pub fn Bun__fetch_(
         var result = credentialsWithOptions.credentials.signRequest(.{
             .path = url.s3Path(),
             .method = method,
-        }, null) catch |sign_err| {
+        }, false, null) catch |sign_err| {
             is_error = true;
             return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
         };

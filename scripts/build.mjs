@@ -267,6 +267,7 @@ async function spawn(command, args, options, label) {
     return;
   }
 
+  let annotated;
   try {
     const { annotations } = parseAnnotations(stdoutBuffer);
     for (const annotation of annotations) {
@@ -276,23 +277,25 @@ async function spawn(command, args, options, label) {
         label: annotation.title || annotation.filename,
         content,
       });
-    }
-    if (!annotations.length) {
-      const content = formatAnnotationToHtml({
-        filename: relative(process.cwd(), import.meta.filename),
-        title: "build failed",
-        content: stdoutBuffer,
-        source: "build",
-        level: "error",
-      });
-      reportAnnotationToBuildKite({
-        priority: 10,
-        label: "build failed",
-        content,
-      });
+      annotated = true;
     }
   } catch (error) {
     console.error(`Failed to parse annotations:`, error);
+  }
+
+  if (!annotated) {
+    const content = formatAnnotationToHtml({
+      filename: relative(process.cwd(), import.meta.filename),
+      title: "build failed",
+      content: stdoutBuffer,
+      source: "build",
+      level: "error",
+    });
+    reportAnnotationToBuildKite({
+      priority: 10,
+      label: "build failed",
+      content,
+    });
   }
 
   if (signalCode) {

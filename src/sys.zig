@@ -1813,7 +1813,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: i32, per
 
 pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
-    return openatA(bun.toFD(std.fs.cwd().fd), file_path, flags, perm);
+    return openatA(bun.FD.cwd(), file_path, flags, perm);
 }
 
 pub fn open(file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {

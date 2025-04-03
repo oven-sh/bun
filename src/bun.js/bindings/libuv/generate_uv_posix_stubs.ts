@@ -274,9 +274,9 @@ ${parts.map(([stub, _]) => stub).join("\n\n")}
 
 `;
 
-await Bun.write(join(import.meta.dir, "../", "uv-posix-stubs.cpp"), final_contents);
+await Bun.write(join(import.meta.dir, "../", "uv-posix-stubs.c"), final_contents);
 if (Bun.which("clang-format")) {
-  await Bun.$`clang-format -i ${join(import.meta.dir, "../", "uv-posix-stubs.cpp")}`;
+  await Bun.$`clang-format -i ${join(import.meta.dir, "../", "uv-posix-stubs.c")}`;
 }
 
 const test_plugin_contents = ` // GENERATED CODE ... NO TOUCHY!!

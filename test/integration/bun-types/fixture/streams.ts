@@ -1,3 +1,5 @@
+import { expectType } from "./utilities";
+
 new ReadableStream({
   start(controller) {
     controller.enqueue("hello");
@@ -17,16 +19,22 @@ new ReadableStream({
   },
 });
 
-// new ReadableStream({
-//   type: "direct",
-//   pull(controller) {
-//     // eslint-disable-next-line
-//     controller.write("hello");
-//     // eslint-disable-next-line
-//     controller.write("world");
-//     controller.close();
-//   },
-//   cancel() {
-//     // called if stream.cancel() is called
-//   },
-// });
+declare const uint8stream: ReadableStream<Uint8Array<ArrayBuffer>>;
+
+for await (const chunk of uint8stream) {
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
+}
+
+declare const uint8Array: Uint8Array<ArrayBuffer>;
+expectType(uint8Array).is<Uint8Array<ArrayBuffer>>();
+
+declare const uint8Writable: WritableStream<Uint8Array<ArrayBuffer>>;
+declare const uint8Transform: TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>;
+
+const writer = uint8Writable.getWriter();
+await writer.write(uint8Array);
+await writer.close();
+
+for await (const chunk of uint8Transform.readable) {
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
+}

@@ -20,6 +20,10 @@ export default [
         fn: "staticUnlink",
         length: 2,
       },
+      list: {
+        fn: "staticListObjects",
+        length: 2,
+      },
       presign: {
         fn: "staticPresign",
         length: 2,
@@ -54,6 +58,10 @@ export default [
       delete: {
         /// just an alias for unlink
         fn: "unlink",
+        length: 2,
+      },
+      list: {
+        fn: "listObjects",
         length: 2,
       },
       presign: {

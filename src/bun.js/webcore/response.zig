@@ -586,7 +586,7 @@ pub const Response = struct {
                     const result = credentials.signRequest(.{
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
-                    }, .{ .expires = 15 * 60 }) catch |sign_err| {
+                    }, false, .{ .expires = 15 * 60 }) catch |sign_err| {
                         return s3.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();

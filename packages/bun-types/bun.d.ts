@@ -2870,7 +2870,7 @@ declare module "bun" {
    *    outdir: './dist',
    *    env: 'inline'
    *  });
- 
+
    *  // Only include specific env vars
    *  await Bun.build({
    *    entrypoints: ['./src/index.tsx'],
@@ -2896,12 +2896,12 @@ declare module "bun" {
    *  const result = await Bun.build({
    *    entrypoints: ['./src/index.tsx']
    *  });
- 
+
    *  for (const artifact of result.outputs) {
    *    const text = await artifact.text();
    *    const buffer = await artifact.arrayBuffer();
    *    const bytes = await artifact.bytes();
- 
+
    *    new Response(artifact);
    *    await Bun.write(artifact.path, artifact);
    *  }
@@ -5889,10 +5889,18 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
+    readonly remoteFamily: "IPv4" | "IPv6";
+
     /**
      * Remote IP address connected to the socket
      */
     readonly remoteAddress: string;
+
+    readonly remotePort: number;
+
+    readonly localFamily: "IPv4" | "IPv6";
+
+    readonly localAddress: string;
 
     /**
      * local port connected to the socket

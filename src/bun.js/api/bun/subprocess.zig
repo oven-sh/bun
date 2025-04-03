@@ -596,7 +596,6 @@ pub fn asyncDispose(
 
     const this_jsvalue = callframe.this();
 
-    this_jsvalue.ensureStillAlive();
     defer this_jsvalue.ensureStillAlive();
 
     // unref streams so that this disposed process will not prevent
@@ -1531,7 +1530,7 @@ pub fn memoryCost(this: *const Subprocess) usize {
         this.stderr.memoryCost();
 }
 
-pub fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
     if (JSC.Codegen.JSSubprocess.exitedPromiseGetCached(this_jsvalue)) |promise| {
         JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_jsvalue, globalThis, .zero);
         return promise;
@@ -1539,9 +1538,17 @@ pub fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObje
     return null;
 }
 
-pub fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
     if (JSC.Codegen.JSSubprocess.onExitCallbackGetCached(this_jsvalue)) |callback| {
         JSC.Codegen.JSSubprocess.onExitCallbackSetCached(this_jsvalue, globalThis, .zero);
+        return callback;
+    }
+    return null;
+}
+
+fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+    if (JSC.Codegen.JSSubprocess.onDisconnectCallbackGetCached(this_jsvalue)) |callback| {
+        JSC.Codegen.JSSubprocess.onDisconnectCallbackSetCached(this_jsvalue, globalThis, .zero);
         return callback;
     }
     return null;
@@ -2610,7 +2617,6 @@ pub fn handleIPCClose(this: *Subprocess) void {
     IPClog("Subprocess#handleIPCClose", .{});
     const this_jsvalue = this.this_jsvalue;
     defer this_jsvalue.ensureStillAlive();
-    this_jsvalue.ensureStillAlive();
     const globalThis = this.globalThis;
     this.updateHasPendingActivity();
 
@@ -2627,8 +2633,7 @@ pub fn handleIPCClose(this: *Subprocess) void {
         JSC.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
-        if (JSC.Codegen.JSSubprocess.onDisconnectCallbackGetCached(this_jsvalue)) |callback| {
-            JSC.Codegen.JSSubprocess.onDisconnectCallbackSetCached(this_jsvalue, globalThis, .zero);
+        if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
             globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(ok)});
         }
     }

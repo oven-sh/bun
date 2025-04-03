@@ -365,6 +365,29 @@ extern "C" size_t Bun__process_dlopen_count;
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 
+/**
+ * RAII wrapper for CrashHandler__setDlOpenAction
+ * Sets the dlopen action on construction and clears it on destruction
+ */
+class DlOpenActionGuard {
+public:
+    explicit DlOpenActionGuard(const char* action)
+    {
+        CrashHandler__setDlOpenAction(action);
+    }
+
+    ~DlOpenActionGuard()
+    {
+        CrashHandler__setDlOpenAction(nullptr);
+    }
+
+    // Prevent copying and moving
+    DlOpenActionGuard(const DlOpenActionGuard&) = delete;
+    DlOpenActionGuard& operator=(const DlOpenActionGuard&) = delete;
+    DlOpenActionGuard(DlOpenActionGuard&&) = delete;
+    DlOpenActionGuard& operator=(DlOpenActionGuard&&) = delete;
+};
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
@@ -440,9 +463,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
     CString utf8 = filename.utf8();
-    CrashHandler__setDlOpenAction(utf8.data());
+    DlOpenActionGuard guard(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
-    CrashHandler__setDlOpenAction(nullptr);
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;

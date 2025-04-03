@@ -83,4 +83,3 @@ Tests are run in the following order:
 
 1. Test files are executed sequentially (not in parallel)
 2. Within each file, tests run sequentially based on their definition order
-3. Tests defined with `test.only()` or within a `describe.only()` block will cause other tests to be skipped when using `--only`

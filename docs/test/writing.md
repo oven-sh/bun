@@ -127,7 +127,7 @@ fix the test.
 
 ## `test.only`
 
-To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`. Running `bun test` without the `--only` option with `test.only()` declared will result in all tests in the given suite being executed _up to_ the test with `.only()`. `describe.only()` functions the same in both execution scenarios.
+To run a particular test or suite of tests use `test.only()` or `describe.only()`.
 
 ```ts
 import { test, describe } from "bun:test";
@@ -232,7 +232,7 @@ describe.if(isMacOS)("macOS-specific features", () => {
   test("feature A", () => {
     // only runs on macOS
   });
-  
+
   test("feature B", () => {
     // only runs on macOS
   });
@@ -278,7 +278,7 @@ describe.each([
   test(`returns ${expected}`, () => {
     expect(a + b).toBe(expected);
   });
-  
+
   test(`sum is greater than each value`, () => {
     expect(a + b).toBeGreaterThan(a);
     expect(a + b).toBeGreaterThan(b);
@@ -297,16 +297,16 @@ How arguments are passed to your test function depends on the structure of your 
 // Array items passed as individual arguments
 test.each([
   [1, 2, 3],
-  [4, 5, 9]
+  [4, 5, 9],
 ])("add(%i, %i) = %i", (a, b, expected) => {
   expect(a + b).toBe(expected);
 });
 
 // Object items passed as a single argument
 test.each([
-  {a: 1, b: 2, expected: 3},
-  {a: 4, b: 5, expected: 9}
-])("add($a, $b) = $expected", (data) => {
+  { a: 1, b: 2, expected: 3 },
+  { a: 4, b: 5, expected: 9 },
+])("add($a, $b) = $expected", data => {
   expect(data.a + data.b).toBe(data.expected);
 });
 ```
@@ -370,7 +370,7 @@ There are a number of options available for formatting the test title:
 // Basic specifiers
 test.each([
   ["hello", 123],
-  ["world", 456]
+  ["world", 456],
 ])("string: %s, number: %i", (str, num) => {
   // "string: hello, number: 123"
   // "string: world, number: 456"
@@ -378,18 +378,15 @@ test.each([
 
 // %p for pretty-format output
 test.each([
-  [{name: "Alice"}, {a: 1, b: 2}],
-  [{name: "Bob"}, {x: 5, y: 10}]
+  [{ name: "Alice" }, { a: 1, b: 2 }],
+  [{ name: "Bob" }, { x: 5, y: 10 }],
 ])("user %p with data %p", (user, data) => {
   // "user { name: 'Alice' } with data { a: 1, b: 2 }"
   // "user { name: 'Bob' } with data { x: 5, y: 10 }"
 });
 
 // %# for index
-test.each([
-  "apple",
-  "banana"
-])("fruit #%# is %s", (fruit) => {
+test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
   // "fruit #0 is apple"
   // "fruit #1 is banana"
 });
@@ -406,7 +403,7 @@ Use `expect.hasAssertions()` to verify that at least one assertion is called dur
 ```ts
 test("async work calls assertions", async () => {
   expect.hasAssertions(); // Will fail if no assertions are called
-  
+
   const data = await fetchData();
   expect(data).toBeDefined();
 });
@@ -421,7 +418,7 @@ Use `expect.assertions(count)` to verify that a specific number of assertions ar
 ```ts
 test("exactly two assertions", () => {
   expect.assertions(2); // Will fail if not exactly 2 assertions are called
-  
+
   expect(1 + 1).toBe(2);
   expect("hello").toContain("ell");
 });

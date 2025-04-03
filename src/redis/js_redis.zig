@@ -10,7 +10,7 @@ const uws = bun.uws;
 const JSValue = JSC.JSValue;
 const Socket = uws.AnySocket;
 const RedisError = protocol.RedisError;
-
+const Command = @import("RedisCommand.zig");
 /// Redis client wrapper for JavaScript
 pub const JSRedisClient = struct {
     client: redis.RedisClient,
@@ -43,30 +43,30 @@ pub const JSRedisClient = struct {
     pub fn jsConnect(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
-        
+
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
             var promise = JSC.JSPromise.create(globalObject);
             promise.resolve(globalObject, .undefined);
             return promise.promise.get().asValue(globalObject);
         }
-        
+
         // Create a promise to track connect result
         var promise = Command.Promise.create(globalObject, .Generic);
-        
+
         // Store promise in a special connection promise
         this.connection_promise = promise;
-        
+
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
-        
+
         // If disconnected, force a reconnection
         if (this.client.status == .disconnected) {
             this.client.flags.is_reconnecting = true;
             this.client.retry_attempts = 0;
             this.reconnect();
         }
-        
+
         // If failed, reset status and try again
         if (this.client.status == .failed) {
             this.client.status = .disconnected;
@@ -74,10 +74,10 @@ pub const JSRedisClient = struct {
             this.client.retry_attempts = 0;
             this.reconnect();
         }
-        
+
         return promise.promise.get().asValue(globalObject);
     }
-    
+
     pub fn jsDisconnect(this: *JSRedisClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (this.client.status == .disconnected) {
             return .undefined;
@@ -204,7 +204,7 @@ pub const JSRedisClient = struct {
 
         // Mark timer as fired
         this.timer.state = .FIRED;
-        
+
         // Increment ref to ensure 'this' stays alive throughout the function
         this.ref();
         defer this.deref();
@@ -259,7 +259,7 @@ pub const JSRedisClient = struct {
         // Ref to keep this alive during the reconnection
         this.ref();
         defer this.deref();
-        
+
         this.client.status = .connecting;
 
         const vm = this.globalObject.bunVM();
@@ -272,7 +272,7 @@ pub const JSRedisClient = struct {
 
         // Ref the poll to keep event loop alive during connection
         this.poll_ref.ref(vm);
-        
+
         this.client.socket = .{
             .SocketTCP = uws.SocketTCP.connectAnon(
                 this.client.hostname,
@@ -304,7 +304,7 @@ pub const JSRedisClient = struct {
         } else {
             self.poll_ref.unref(self.globalObject.bunVM());
         }
-        
+
         // Resolve connection promise if it exists
         if (self.connection_promise) |promise| {
             promise.resolve(self.globalObject, .undefined);
@@ -335,13 +335,13 @@ pub const JSRedisClient = struct {
     pub fn onRedisClose(self: *JSRedisClient) void {
         // Create an error value
         const error_value = protocol.redisErrorToJS(self.globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
-        
+
         // Reject connection promise if it exists
         if (self.connection_promise) |promise| {
             promise.reject(self.globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
             self.connection_promise = null;
         }
-        
+
         // Call onClose callback if it exists
         const on_close = self.consumeOnCloseCallback(self.globalObject) orelse return;
 
@@ -362,7 +362,7 @@ pub const JSRedisClient = struct {
             promise.reject(self.globalObject, "Connection timeout", protocol.RedisError.ConnectionClosed);
             self.connection_promise = null;
         }
-        
+
         self.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
     }
 
@@ -1026,7 +1026,7 @@ pub const JSRedisClient = struct {
                     },
                 },
             };
-            
+
             // Start in disconnected state - user must call connect()
             this.client.status = .disconnected;
         }
@@ -1041,13 +1041,13 @@ pub const JSRedisClient = struct {
 
     pub fn deinit(this: *JSRedisClient) void {
         bun.debugAssert(this.client.socket.isClosed());
-        
+
         // Clean up connection promise if it exists
         if (this.connection_promise) |promise| {
             promise.reject(this.globalObject, "Client destroyed", protocol.RedisError.ConnectionClosed);
             this.connection_promise = null;
         }
-        
+
         this.client.deinit();
         this.poll_ref.disable();
         this.stopTimers();

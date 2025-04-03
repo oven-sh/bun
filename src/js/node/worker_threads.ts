@@ -15,6 +15,12 @@ const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
+// Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
+// after their Worker exits
+const urlRevokeRegistry = new FinalizationRegistry<string>(url => {
+  URL.revokeObjectURL(url);
+});
+
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
     return event.data;
@@ -242,10 +248,7 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
 
     if (this.#urlToRevoke) {
-      const url = this.#urlToRevoke;
-      new FinalizationRegistry(url => {
-        URL.revokeObjectURL(url);
-      }).register(this.#worker, url);
+      urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
   }
 

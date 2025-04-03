@@ -264,8 +264,10 @@ enum create_bun_socket_error_t {
   CREATE_BUN_SOCKET_ERROR_INVALID_CA,
 };
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop,
+struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop,
     int ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err);
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop,
+    int ext_size, int is_ipc);
 
 /* Delete resources allocated at creation time (will call unref now and only free when ref count == 0). */
 void us_socket_context_free(int ssl, us_socket_context_r context) nonnull_fn_decl;

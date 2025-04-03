@@ -1535,10 +1535,10 @@ us_internal_bun_create_ssl_socket_context(
   /* Otherwise ee continue by creating a non-SSL context, but with larger ext to
    * hold our SSL stuff */
   struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_create_bun_socket_context(
-          0, loop,
+      (struct us_internal_ssl_socket_context_t *)us_create_bun_nossl_socket_context(
+          loop,
           sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          options, err);
+          0);
 
   /* I guess this is the only optional callback */
   context->on_server_name = NULL;
@@ -2080,8 +2080,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   us_socket_context_ref(0,old_context);
 
   enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-  struct us_socket_context_t *context = us_create_bun_socket_context(
-      1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
+  struct us_socket_context_t *context = us_create_bun_ssl_socket_context(
+      old_context->loop, sizeof(struct us_wrapped_socket_context_t),
       options, &err);
   
   // Handle SSL context creation failure

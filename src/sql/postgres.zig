@@ -1893,7 +1893,7 @@ pub const PostgresSQLConnection = struct {
             // We create it right here so we can throw errors early.
             const context_options = tls_config.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
-            tls_ctx = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
+            tls_ctx = uws.us_create_bun_ssl_socket_context(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
                 if (err != .none) {
                     return globalObject.throw("failed to create TLS context", .{});
                 } else {
@@ -2001,8 +2001,7 @@ pub const PostgresSQLConnection = struct {
             defer hostname.deinit();
 
             const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-                var err: uws.create_bun_socket_error_t = .none;
-                const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}, &err).?;
+                const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), 0).?;
                 uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
                 vm.rareData().postgresql_context.tcp = ctx_;
                 break :brk ctx_;

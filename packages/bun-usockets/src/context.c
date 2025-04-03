@@ -279,14 +279,15 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     return context;
 }
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
+struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
 #ifndef LIBUS_NO_SSL
-    if (ssl) {
-        /* This function will call us, again, with SSL = false and a bigger ext_size */
-        return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
-    }
+    /* This function will call us, again, with SSL = false and a bigger ext_size */
+    return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
 #endif
+    return us_create_bun_nossl_socket_context(loop, context_ext_size, 0);
+}
 
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop, int context_ext_size, int is_ipc) {
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
@@ -294,6 +295,7 @@ struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop
     context->loop = loop;
     context->is_low_prio = default_is_low_prio_handler;
     context->ref_count = 1;
+    context->is_ipc = is_ipc;
 
     us_internal_loop_link(loop, context);
 

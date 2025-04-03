@@ -339,63 +339,50 @@ function execFile(file, args, options, callback) {
     }, options.timeout).unref();
   }
 
-  let stdoutLen = 0,
-    stderrLen = 0;
-  if (child.stdout) {
-    if (encoding) child.stdout.setEncoding(encoding);
+  function addOnDataListener(child_buffer, _buffer, kind) {
+    if (encoding) child_buffer.setEncoding(encoding);
 
-    child.stdout.on("data", function onDataStdout(chunk) {
-      // Do not need to count the length
-      if (options.maxBuffer === Infinity) {
-        $arrayPush(_stdout, chunk);
-        return;
-      }
-      const encoding = child.stdout.readableEncoding;
-      const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
-      const slice = encoding
-        ? (buf, ...args) => String.prototype.slice.$call(buf, ...args)
-        : (buf, ...args) => buf.slice(...args);
-      stdoutLen += length;
+    let totalLen = 0;
+    if (maxBuffer === Infinity) {
+      child_buffer.on("data", function onDataNoMaxBuf(chunk) {
+        $arrayPush(_buffer, chunk);
+      });
+      return;
+    }
+    child_buffer.on("data", function onData(chunk) {
+      const encoding = child_buffer.readableEncoding;
+      if (encoding) {
+        const length = Buffer.byteLength(chunk, encoding);
+        totalLen += length;
 
-      if (stdoutLen > options.maxBuffer) {
-        const truncatedLen = options.maxBuffer - (stdoutLen - length);
-        $arrayPush(_stdout, slice(chunk, 0, truncatedLen));
+        if (totalLen > maxBuffer) {
+          const truncatedLen = maxBuffer - (totalLen - length);
+          $arrayPush(_buffer, String.prototype.slice.$call(chunk, 0, truncatedLen));
 
-        ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-        kill();
+          ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+          kill();
+        } else {
+          $arrayPush(_buffer, chunk);
+        }
       } else {
-        $arrayPush(_stdout, chunk);
+        const length = chunk.length;
+        totalLen += length;
+
+        if (totalLen > maxBuffer) {
+          const truncatedLen = maxBuffer - (totalLen - length);
+          $arrayPush(_buffer, chunk.slice(0, truncatedLen));
+
+          ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+          kill();
+        } else {
+          $arrayPush(_buffer, chunk);
+        }
       }
     });
   }
 
-  if (child.stderr) {
-    if (encoding) child.stderr.setEncoding(encoding);
-
-    child.stderr.on("data", function onDataStderr(chunk) {
-      // Do not need to count the length
-      if (options.maxBuffer === Infinity) {
-        $arrayPush(_stderr, chunk);
-        return;
-      }
-      const encoding = child.stderr.readableEncoding;
-      const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
-      const slice = encoding
-        ? (buf, ...args) => String.prototype.slice.$call(buf, ...args)
-        : (buf, ...args) => buf.slice(...args);
-      stderrLen += length;
-
-      if (stderrLen > options.maxBuffer) {
-        const truncatedLen = options.maxBuffer - (stderrLen - length);
-        $arrayPush(_stderr, slice(chunk, 0, truncatedLen));
-
-        ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-        kill();
-      } else {
-        $arrayPush(_stderr, chunk);
-      }
-    });
-  }
+  if (child.stdout) addOnDataListener(child.stdout, _stdout, "stdout");
+  if (child.stderr) addOnDataListener(child.stderr, _stderr, "stderr");
 
   child.addListener("close", exitHandler);
   child.addListener("error", errorHandler);
@@ -1301,20 +1288,20 @@ class ChildProcess extends EventEmitter {
         cwd: options.cwd || undefined,
         env: env,
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
-        onExit: (handle, exitCode, signalCode, err, reason) => {
+        onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
-          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid, reason);
+          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
           if (hasSocketsToEagerlyLoad) {
             process.nextTick(() => {
               this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid, reason);
+              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
             });
           }
 
           process.nextTick(
-            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err, reason),
+            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
             exitCode,
             signalCode,
             err,

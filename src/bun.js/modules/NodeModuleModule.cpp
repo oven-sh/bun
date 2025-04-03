@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSInternalPromise.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
@@ -562,6 +563,12 @@ static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
         ->lazyRequireCacheObject();
 }
 
+static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
+{
+    return jsCast<Zig::GlobalObject*>(moduleObject->globalObject())
+        ->lazyRequireExtensionsObject();
+}
+
 static JSValue getModuleDebugObject(VM& vm, JSObject* moduleObject)
 {
     return JSC::constructEmptyObject(moduleObject->globalObject());
@@ -572,13 +579,6 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     return JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
-}
-
-static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
-{
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return globalObject->requireFunctionUnbound()->getIfPropertyExists(
-        globalObject, Identifier::fromString(vm, "extensions"_s));
 }
 
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
@@ -950,6 +950,42 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic, jsFunctionResolveFileName);
             init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSFunction* resolveFilenameFunction = JSFunction::create(
+                init.vm, init.owner, 2, "_compile"_s,
+                functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, functionJSCommonJSModule_compile);
+            init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
+            init.set(requireESM);
+        });
+
+    globalObject->m_lazyRequireCacheObject.initLater(
+        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
+
+            NakedPtr<JSC::Exception> returnedException = nullptr;
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            ASSERT(!returnedException);
+            init.set(result.toObject(globalObject));
+        });
+
+    globalObject->m_lazyRequireExtensionsObject.initLater(
+        [](const Zig::GlobalObject::Initializer<Bun::JSCommonJSExtensions>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            init.set(JSCommonJSExtensions::create(vm, globalObject, JSCommonJSExtensions::createStructure(vm, globalObject, globalObject->nullPrototype())));
         });
 }
 

@@ -635,6 +635,8 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
   ${BUN_USOCKETS_SOURCE}/src/internal/*.c
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
+  ${CWD}/src/bun.js/bindings/uv-posix-polyfills.c
+  ${CWD}/src/bun.js/bindings/uv-posix-stubs.c
 )
 
 if(WIN32)

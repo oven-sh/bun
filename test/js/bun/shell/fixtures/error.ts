@@ -6,6 +6,8 @@ export type Kind =
   | "continuation-byte-at-end"
   | "no-over-rollback-3byte"
   | "no-over-rollback-4byte"
+  | "trim-newlines"
+  | "utf-8-in-the-middle"
   | "random";
 
 const kind: Kind = process.argv[2];
@@ -64,6 +66,22 @@ if (kind === "ascii-at-end") {
       array[i] = 0x61;
     }
   }
+} else if (kind === "trim-newlines") {
+  array = new Uint8Array(512);
+  array.fill(97);
+  array[252] = 10;
+  array[253] = 10;
+  array[254] = 10;
+  array[255] = 0xc0;
+} else if (kind === "utf-8-in-the-middle") {
+  array = new Uint8Array(512);
+  for (let i = 0; i < array.length; i += 2) {
+    // £
+    array[i] = 0xc2;
+    array[i + 1] = 0xa3;
+  }
+  array[254] = 0xf0;
+  array[255] = 0x80;
 } else {
   throw new Error("Invalid kind");
 }

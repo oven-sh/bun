@@ -11,12 +11,12 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
   const BufferToBunStringMaxCharsBestEffort = $zig("encoding.zig", "BufferToBunStringMaxCharsBestEffort");
   function lazyBufferToHumanReadableString(this: Buffer) {
     if (this.byteLength > MAX_INFO_BYTES)
-      return `<truncated ${this.byteLength} bytes> ${BufferToBunStringMaxCharsBestEffort(this, MAX_INFO_BYTES)}`;
+      return `<truncated from ${this.byteLength} bytes> ${BufferToBunStringMaxCharsBestEffort(this, MAX_INFO_BYTES)}`;
     return this.toString();
   }
   function bufferInspect(this: Buffer) {
     if (this.byteLength > MAX_INFO_BYTES)
-      return `<truncated ${this.byteLength} bytes> ${Bun.inspect(BufferToBunStringMaxCharsBestEffort(this, MAX_INFO_BYTES))}`;
+      return `<truncated from ${this.byteLength} bytes> ${Bun.inspect(BufferToBunStringMaxCharsBestEffort(this, MAX_INFO_BYTES))}`;
     return Bun.inspect(this.toString());
   }
 
@@ -37,7 +37,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
 
       let msg: string =
         output.stderr.byteLength > MAX_MESSAGE_BYTES
-          ? `<truncated ${output.stderr.byteLength} bytes> ${BufferToBunStringMaxCharsBestEffort(output.stderr, MAX_MESSAGE_BYTES)}`
+          ? `<truncated from ${output.stderr.byteLength} bytes> ${BufferToBunStringMaxCharsBestEffort(output.stderr, MAX_MESSAGE_BYTES)}`
           : output.stderr.toString().trimEnd();
 
       this.message = msg;

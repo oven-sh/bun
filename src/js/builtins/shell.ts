@@ -5,11 +5,19 @@ type ParsedShellScript = any;
 type Resolve = (value: ShellOutput) => void;
 
 export function createBunShellTemplateFunction(createShellInterpreter, createParsedShellScript) {
+  // Small amount for the part that goes `ShellError: ...`
+  const MAX_MESSAGE_BYTES = 256;
+  const MAX_INFO_BYTES = 4096;
+  const BufferToBunStringMaxCharsBestEffort = $zig("encoding.zig", "BufferToBunStringMaxCharsBestEffort");
   function lazyBufferToHumanReadableString(this: Buffer) {
+    if (this.byteLength > MAX_INFO_BYTES)
+      return `<truncated ${this.byteLength} bytes> ${BufferToBunStringMaxCharsBestEffort(this, MAX_INFO_BYTES)}`;
     return this.toString();
   }
   function bufferInspect(this: Buffer) {
-    return require("node:util").inspect(this.toString());
+    if (this.byteLength > MAX_INFO_BYTES)
+      return `<truncated ${this.byteLength} bytes> ${Bun.inspect(BufferToBunStringMaxCharsBestEffort(this, MAX_INFO_BYTES))}`;
+    return Bun.inspect(this.toString());
   }
 
   class ShellError extends Error {
@@ -24,8 +32,15 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     }
 
     initialize(output: ShellOutput, code: number) {
-      const stderrString = output.stderr.toString();
-      this.message = stderrString;
+      // dummy private symbol so we can check if the error is a shell error
+      this.$napiDlopenHandle = true;
+
+      let msg: string =
+        output.stderr.byteLength > MAX_MESSAGE_BYTES
+          ? `<truncated ${output.stderr.byteLength} bytes> ${BufferToBunStringMaxCharsBestEffort(output.stderr, MAX_MESSAGE_BYTES)}`
+          : output.stderr.toString().trimEnd();
+
+      this.message = msg;
       this.#output = output;
       this.name = "ShellError";
 
@@ -34,7 +49,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       Object.defineProperty(this, "info", {
         value: {
           exitCode: code,
-          stderr: stderrString,
+          stderr: output.stderr,
           stdout: output.stdout,
         },
         writable: true,
@@ -43,11 +58,12 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       });
 
       this.info.stdout.toJSON = lazyBufferToHumanReadableString;
-      // this.info.stderr.toJSON = lazyBufferToHumanReadableString;
+      this.info.stderr.toJSON = lazyBufferToHumanReadableString;
 
       this.stdout = output.stdout;
       this.stderr = output.stderr;
       this.exitCode = code;
+
       this.stdout[Bun.inspect.custom] = bufferInspect;
       this.stderr[Bun.inspect.custom] = bufferInspect;
     }

@@ -1865,6 +1865,29 @@ bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalO
     return true;
 }
 
+extern "C" const unsigned char* jsBufferGetBytes(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, uint32_t* lenOut, bool* failed)
+{
+
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto jsvalue = JSValue::decode(value);
+    if (jsvalue.isUndefinedOrNull()) {
+        throwTypeError(globalObject, throwScope, "Cannot convert undefined or null to object"_s);
+        *failed = true;
+        return nullptr;
+    }
+    auto thisObject = JSC::jsDynamicCast<JSC::JSUint8Array*>(jsvalue);
+    if (UNLIKELY(!thisObject)) {
+        throwTypeError(globalObject, throwScope, "Not a JSBuffer"_s);
+        *failed = true;
+        return nullptr;
+    }
+
+    *lenOut = thisObject->byteLength();
+
+    return thisObject->span().data();
+}
+
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L834
 // using byteLength and byte offsets here is intentional
 static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)

@@ -217,6 +217,103 @@ pub const Encoder = struct {
         return bun_string.transferToJS(global);
     }
 
+    /// Used internally for the shell, assumes utf-8 strings
+    ///
+    /// If the stdout/stderr Buffer is really long, we don't want to show the
+    /// entire string to the user so we'll display max 256 chars
+    ///
+    /// But we don't want to call `stderr.toString().substring(0, 256)` because
+    /// that will decode the entire buffer (and it could be huge)
+    ///
+    /// So this function takes as `input` a truncated byte array (e.g. bufferBytes[0 .. 256])
+    ///
+    /// By truncating the byte array, we may accidentally cut off some bytes in a multi-byte char
+    /// encoding. So we'll skip those so we don't print out invalid UTF-8
+    ///
+    /// In the case that it's not valid utf-8 we just fallback
+    pub fn toBunStringMaxCharsBestEffortForShell(input: []const u8) bun.String {
+        if (input.len == 0) return bun.String.empty;
+        bun.assert(input.len > 0); // don't call this function with an empty string
+        var last_index: i64 = @intCast(input.len - 1);
+        var allow_rollback = true;
+        outer_loop: while (last_index >= 0) {
+            switch (input[@bitCast(last_index)]) {
+                // ending is ascii and so it's good
+                0x0...0x7F => return toBunStringMaxCharsBestEffortForShellImpl(input[0..@bitCast(last_index + 1)]),
+                // we hit a continuation byte, there are two cases:
+                // 1. Valid string   -> we hit the last continuation byte in a multi-byte sequence
+                // 2. Invalid string -> we accidentally cut off some continuation bytes
+                0x80...0xBF => {
+                    var continuation_bytes_count: u32 = 1;
+                    var j = last_index - 1;
+                    while (j >= 0) {
+                        if (continuation_bytes_count > 3) return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input);
+                        switch (input[@bitCast(j)]) {
+                            0x80...0xBF => {
+                                continuation_bytes_count += 1;
+                                j -= 1;
+                            },
+                            0xC0...0xDF => {
+                                if (continuation_bytes_count == 1) return toBunStringMaxCharsBestEffortForShellImpl(input[0..@bitCast(last_index + 1)]);
+                                if (allow_rollback) last_index = j - 1 else return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(j)]);
+                                allow_rollback = false;
+                                continue :outer_loop;
+                            },
+                            0xE0...0xEF => {
+                                if (continuation_bytes_count == 2) return toBunStringMaxCharsBestEffortForShellImpl(input[0..@bitCast(last_index + 1)]);
+                                if (allow_rollback) last_index = j - 1 else return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(j)]);
+                                allow_rollback = false;
+                                continue :outer_loop;
+                            },
+                            0xF0...0xF7 => {
+                                if (continuation_bytes_count == 3) return toBunStringMaxCharsBestEffortForShellImpl(input[0..@bitCast(last_index + 1)]);
+                                if (allow_rollback) last_index = j - 1 else return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(j)]);
+                                allow_rollback = false;
+                                continue :outer_loop;
+                            },
+                            // invalid utf-8
+                            else => {
+                                return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input);
+                            },
+                        }
+                    }
+                    // didn't find the starting byte and looked through the whole string,
+                    // means invalid
+                    return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input);
+                },
+                // first byte of a 2 byte encoding
+                0xC0...0xDF => {
+                    if (allow_rollback) last_index -= 1 else return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(last_index)]);
+                    allow_rollback = false;
+                },
+                // first byte of a 3 byte encoding
+                0xE0...0xEF => {
+                    if (allow_rollback) last_index -= 1 else return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(last_index)]);
+                    allow_rollback = false;
+                },
+                // first byte of a 4 byte encoding
+                0xF0...0xF7 => {
+                    if (allow_rollback) last_index -= 1 else return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(last_index)]);
+                    allow_rollback = false;
+                },
+                // invalid utf-8
+                else => {
+                    return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input[0..@bitCast(last_index)]);
+                },
+            }
+        }
+
+        return toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input);
+    }
+
+    fn toBunStringMaxCharsBestEffortForShellImpl(input: []const u8) bun.String {
+        return toBunStringComptime(std.mem.trimRight(u8, input, "\n\r"), .utf8);
+    }
+
+    fn toBunStringMaxCharsBestEffortForShellHandleInvalidUTF8(input: []const u8) bun.String {
+        return toBunStringComptime(input, .utf8);
+    }
+
     pub fn toBunString(input: []const u8, encoding: JSC.Node.Encoding) bun.String {
         return switch (encoding) {
             inline else => |enc| toBunStringComptime(input, enc),
@@ -530,6 +627,43 @@ pub const Encoder = struct {
         }
     }
 };
+
+extern fn jsBufferGetBytes(*JSC.JSGlobalObject, JSValue, len_out: *u32, failed: *bool) [*]const u8;
+
+pub fn BufferToBunStringMaxCharsBestEffort(g: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    return JSC.JSFunction.create(
+        g,
+        "BufferToBunStringMaxCharsBestEffort",
+        struct {
+            fn impl(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+                const nargs = callframe.argumentsCount();
+                if (nargs < 1) {
+                    return global.throwNotEnoughArguments("BufferToBunStringMaxCharsBestEffort", 2, callframe.argumentsCount());
+                }
+
+                const buffer = callframe.argument(0);
+                const max_chars = 256;
+
+                if (!buffer.isBuffer(global)) {
+                    return global.throwTypeError("first argument must be a buffer", .{});
+                }
+
+                var len: u32 = 0;
+                var failed = false;
+                const maybe_ptr: ?[*]const u8 = jsBufferGetBytes(global, buffer, &len, &failed);
+                if (failed) {
+                    return bun.JSError.JSError;
+                }
+                const ptr = maybe_ptr orelse
+                    return bun.String.empty.toJS(global);
+                const input = ptr[0..@min(len, max_chars)];
+                return Encoder.toBunStringMaxCharsBestEffortForShell(input).toJS(global);
+            }
+        }.impl,
+        1,
+        .{},
+    );
+}
 
 comptime {
     _ = &TextEncoder.TextEncoder__encode8;

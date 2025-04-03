@@ -337,37 +337,10 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
     return fetchFn;
 }
 
+/// WARNING: you must check that the JSObject* comes from an error instance
 extern "C" bool ShellError__isShellError(JSGlobalObject* globalObject, JSC::JSObject* jsObject)
 {
-    static JSC::JSObject* cachedShellErrorConstructor(nullptr);
-
-    // Get the ShellError constructor from cache or look it up
-    JSC::JSObject* shellErrorConstructor = cachedShellErrorConstructor;
-    if (!shellErrorConstructor) {
-        // Get the Bun object from the global object
-        JSC::JSValue bunObject = globalObject->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "Bun"_s));
-        if (!bunObject.isObject())
-            return false;
-
-        // Get the shell module from the Bun object
-        JSC::JSValue shellModule = bunObject.getObject()->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "$"_s));
-        if (!shellModule.isObject())
-            return false;
-
-        // Get the ShellError constructor from the shell module
-        JSC::JSValue shellErrorValue = shellModule.getObject()->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "ShellError"_s));
-        if (!shellErrorValue.isObject())
-            return false;
-
-        shellErrorConstructor = shellErrorValue.getObject();
-        cachedShellErrorConstructor = shellErrorConstructor;
-    }
-
-    // Get the constructor property from the object
-    JSC::JSValue constructor = jsObject->get(globalObject, globalObject->vm().propertyNames->constructor);
-
-    // Compare with the ShellError constructor
-    return constructor.isObject() && constructor.getObject() == shellErrorConstructor;
+    return jsObject->hasProperty(globalObject, WebCore::builtinNames(globalObject->vm()).napiDlopenHandlePrivateName());
 }
 
 static JSValue

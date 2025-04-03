@@ -17,9 +17,7 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
-const urlRevokeRegistry = new FinalizationRegistry<string>(url => {
-  URL.revokeObjectURL(url);
-});
+let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -225,6 +223,8 @@ class Worker extends EventEmitter {
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
       if (options[builtinsGeneratorHatesEval]) {
+        // TODO: consider doing this step in native code and letting the Blob be cleaned up by the
+        // C++ Worker object's destructor
         const blob = new Blob([filename], { type: "" });
         this.#urlToRevoke = filename = URL.createObjectURL(blob);
       } else {
@@ -248,6 +248,11 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
 
     if (this.#urlToRevoke) {
+      if (!urlRevokeRegistry) {
+        urlRevokeRegistry = new FinalizationRegistry<string>(url => {
+          URL.revokeObjectURL(url);
+        });
+      }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
   }

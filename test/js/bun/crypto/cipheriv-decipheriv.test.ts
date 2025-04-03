@@ -202,3 +202,11 @@ it("should encrypt & decrypt well-known values", () => {
     }
   });
 });
+
+it("should work with authTagLength missing from options", () => {
+  const cipher = createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {});
+  cipher.update("hi");
+  cipher.final();
+  const authTag = cipher.getAuthTag();
+  expect(authTag.length).toBe(16);
+});

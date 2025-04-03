@@ -149,14 +149,14 @@ pub const MachoFile = struct {
 
         const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
             if (code_sign_cmd_idx) |idx|
-            @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
-        else
-            null;
+                @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+            else
+                null;
         const linkedit_seg: *align(1) macho.segment_command_64 =
             if (linkedit_seg_idx) |idx|
-            @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
-        else
-            return error.MissingLinkeditSegment;
+                @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+            else
+                return error.MissingLinkeditSegment;
 
         // Handle code signature specially
         var sig_data: ?[]u8 = null;

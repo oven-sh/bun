@@ -1184,7 +1184,7 @@ pub const FileSystem = struct {
         ) !PathContentsPair {
             FileSystem.setMaxFd(file.handle);
 
-            var file_contents: []u8 = shared_buffer.list.items[0..];
+            var file_contents: []u8 = "";
             // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
             // This imposes a performance hit because not reading from disk is faster than reading from disk
             // Part of that hit is allocating a temporary buffer to store the file contents in
@@ -1398,12 +1398,12 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                var buf2: bun.PathBuffer = undefined;
-                var buf3: bun.PathBuffer = undefined;
+                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
+                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
 
-                var current_buf: *bun.PathBuffer = &buf2;
+                var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
-                var joining_buf: *bun.PathBuffer = &buf3;
+                var joining_buf: *bun.PathBuffer = buf3;
 
                 while (file.is_reparse_point) : (depth += 1) {
                     var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();

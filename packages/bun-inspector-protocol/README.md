@@ -139,7 +139,7 @@ inspector.on("Runtime.consoleAPICalled", params => {
 
 ## Protocol Domains
 
-The Bun Inspector Protocol is organized into domains that group related functionality. Based on the JavaScriptCore protocol implementation, the following domains are available:
+The WebKit Inspector Protocol is organized into domains that group related functionality. Based on the JavaScriptCore protocol implementation, the following domains are available:
 
 ### Console Domain
 
@@ -326,9 +326,8 @@ inspector.on("ScriptProfiler.trackingComplete", data => {
 await inspector.send("ScriptProfiler.stopTracking");
 ```
 
-## Protocol Differences from WebKit
+## Protocol Differences from Upstream WebKit
 
-The Bun Inspector Protocol is based on the WebKit Inspector Protocol with some modifications:
 Notable Bun-specific additions include:
 
 - `LifecycleReporter` domain for process lifecycle management

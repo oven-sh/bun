@@ -137,15 +137,16 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
         if (!authTagLengthValue.isUndefinedOrNull()) {
-            double authTagLengthNumber = authTagLengthValue.toNumber(globalObject);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-            authTagLength = JSC::toInt32(authTagLengthNumber);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-            if (authTagLengthNumber != authTagLength) {
+            if (!authTagLengthValue.isUInt32()) {
                 return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.authTagLength"_s, authTagLengthValue);
             }
+
+            std::optional<int32_t> maybeAuthTagLength = authTagLengthValue.tryGetAsInt32();
+            if (!maybeAuthTagLength || *maybeAuthTagLength < 0) {
+                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.authTagLength"_s, authTagLengthValue);
+            }
+
+            authTagLength = *maybeAuthTagLength;
         }
     }
 

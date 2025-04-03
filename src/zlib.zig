@@ -261,8 +261,14 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                     this.zlib.next_out = &this.buf;
                 }
 
+                // For empty gzip streams, avail_in can be 0 at the start of decompression
+                // This is a valid scenario for empty responses with Content-Encoding: gzip
+                // According to zlib documentation, this should not be treated as a fatal error
                 if (this.zlib.avail_in == 0) {
-                    return error.ShortRead;
+                    // For empty responses, just end gracefully
+                    this.state = State.End;
+                    this.end();
+                    return;
                 }
 
                 const rc = inflate(&this.zlib, FlushValue.PartialFlush);
@@ -480,8 +486,15 @@ pub const ZlibReaderArrayList = struct {
                 this.zlib.avail_out = @truncate(this.list.items.len -| initial);
             }
 
+            // For empty gzip streams, avail_in can be 0 at the start of decompression
+            // This is a valid scenario for empty responses with Content-Encoding: gzip
+            // According to zlib documentation, this should not be treated as a fatal error
             if (this.zlib.avail_in == 0) {
-                return error.ShortRead;
+                // For empty responses, end gracefully and ensure the output is empty
+                this.list.shrinkRetainingCapacity(this.zlib.total_out);
+                this.list_ptr.* = this.list;
+                this.end();
+                return;
             }
 
             const rc = inflate(&this.zlib, FlushValue.PartialFlush);

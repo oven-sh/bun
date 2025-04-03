@@ -1590,8 +1590,6 @@ pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.S
     handleErrorReturnTraceExtra(err, maybe_trace, false);
 }
 
-const stdDumpStackTrace = debug.dumpStackTrace;
-
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
@@ -1611,7 +1609,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         .windows => attempt_dump: {
             // Windows has issues with opening the PDB file sometimes.
             const debug_info = debug.getSelfDebugInfo() catch |err| {
-                stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
+                stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
             writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr()), limits) catch |err| {
@@ -1679,6 +1677,9 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         .argv = argv.items,
     }) catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        if (bun.Environment.isWindows) {
+            stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{});
+        }
         return;
     };
     if (proc.term != .Exited or proc.term.Exited != 0) {

@@ -3003,15 +3003,14 @@ pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
 
 pub const heap_breakdown = @import("./heap_breakdown.zig");
 
-/// Globally-allocate a value on the heap.
-///
+/// Globally-allocate a value on the heap. Must free with `bun.destroy`.
 /// Prefer this over `default_allocator.create`
 ///
-/// When used, you must call `bun.destroy` to free the memory.
-/// `default_allocator.destroy` should not be used.
+/// By using this over the default allocator, you gain access to:
+/// - Automatic named heaps on macOS.
+/// - Additional assertions when freeing memory.
 ///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
+/// On macOS, you can use `Bun.unsafe.mimallocDump()` to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const pointer = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
@@ -3030,14 +3029,27 @@ pub inline fn new(comptime T: type, init: T) *T {
     return pointer;
 }
 
-/// Free a globally-allocated a value from `bun.new()`. Using this with
-/// pointers allocated from other means will cause crashes.
+/// Free a globally-allocated a value from `bun.new()`.
+/// For single-item heap pointers, prefer bun.new/destroy over default_allocator
+///
+/// Destruction performs additional safety checks:
+/// - Generic assertions can be added to T.assertMayDeinit()
+/// - Automatic integration with `RefCount`
 pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
         const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
+
+        // If this type implements a RefCount, make sure it is zero.
+        @import("./ptr/ref_count.zig").maybeAssertNoRefs(T, pointer);
+
+        switch (@typeInfo(T)) {
+            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertMayDeinit"))
+                pointer.assertMayDeinit(),
+            else => {},
+        }
     }
 
     if (comptime heap_breakdown.enabled) {

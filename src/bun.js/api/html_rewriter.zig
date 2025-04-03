@@ -889,6 +889,7 @@ fn HandlerCallback(
             JSC.markBinding(@src());
 
             var wrapper = ZigType.init(value);
+            wrapper.ref();
 
             // When using RefCount, we don't check the count value directly
             // as it's an opaque type now

@@ -4677,12 +4677,12 @@ bool GlobalObject::hasNapiFinalizers() const
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
-    if (JSC::getVM(globalObject).entryScope) {
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.entryScope) {
         // Exiting while running JavaScript code (e.g. `process.exit()`), so we can't destroy it
         // just now. Perhaps later in this case we can defer destruction to run later.
         return;
     }
-    auto& vm = JSC::getVM(globalObject);
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);

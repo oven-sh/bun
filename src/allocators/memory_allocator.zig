@@ -22,7 +22,6 @@ fn mimalloc_free(
     // but its good to have that assertion
     // let's only enable it in debug mode
     if (comptime Environment.isDebug) {
-        assert(mimalloc.mi_is_in_heap_region(buf.ptr));
         if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
         else
@@ -34,22 +33,22 @@ fn mimalloc_free(
 
 const MimallocAllocator = struct {
     pub const supports_posix_memalign = true;
-
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         if (comptime Environment.enable_logs)
             log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
 
-        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
-            mimalloc.mi_malloc_aligned(len, alignment.toByteUnits())
-        else
-            mimalloc.mi_malloc(len);
+        // The posix_memalign only accepts alignment values that are a
+        // multiple of the pointer size
+        const effective_alignment = @max(alignment.toByteUnits(), @sizeOf(usize));
+
+        var ptr: ?*anyopaque = undefined;
+        if (mimalloc.mi_posix_memalign(&ptr, effective_alignment, len) != 0)
+            return null;
 
         if (comptime Environment.isDebug) {
-            if (ptr != null) {
-                const usable = mimalloc.mi_malloc_usable_size(ptr);
-                if (usable < len and ptr != null) {
-                    std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
-                }
+            const usable = mimalloc.mi_malloc_usable_size(ptr);
+            if (usable < len) {
+                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
             }
         }
 

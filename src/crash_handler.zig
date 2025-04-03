@@ -1863,10 +1863,33 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
     inside_native_plugin = name;
 }
 
+/// /Users/zackradisic/Code/dd-trace-bun/node_modules/@datadog/native-metrics/prebuilds/darwin-arm64/node-napi.node
+/// ->
+/// @datadog/native-metrics/prebuilds/darwin-arm64/node-napi.node
+fn extractPath(path_: []const u8) ?[]const u8 {
+    var path = path_;
+    const node_modules = "node_modules";
+    const index = std.mem.lastIndexOf(u8, path, node_modules) orelse return null;
+    if (index + node_modules.len >= path.len) return null;
+    path = path[index + node_modules.len ..];
+    // posix path
+    if (path[0] == '/' and path.len > 1) {
+        return path[1..];
+    }
+    return null;
+}
+
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
-    std.debug.panic("unsupported uv function: {s}", .{name.?});
+    if (current_action != null and current_action.? == .dlopen) {
+        std.debug.panic("unsupported uv function: {s} (while opening: {s})", .{
+            name.?,
+            current_action.?.dlopen,
+        });
+    } else {
+        std.debug.panic("unsupported uv function: {s}", .{name.?});
+    }
 }
 
 export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
@@ -1876,7 +1899,9 @@ export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
 export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
     if (action) |str| {
         bun.debugAssert(current_action == null);
-        current_action = .{ .dlopen = bun.sliceTo(str, 0) };
+        var path: []const u8 = bun.sliceTo(str, 0);
+        path = extractPath(path) orelse path;
+        current_action = .{ .dlopen = path };
     } else {
         bun.debugAssert(current_action != null and current_action.? == .dlopen);
         current_action = null;

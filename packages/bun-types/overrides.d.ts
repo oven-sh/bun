@@ -2,7 +2,7 @@ export {};
 
 declare global {
   namespace NodeJS {
-    interface ProcessEnv extends Bun.Env {}
+    interface ProcessEnv extends Bun.Env, ImportMetaEnv {}
 
     interface Process {
       readonly version: string;

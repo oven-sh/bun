@@ -648,15 +648,11 @@ pub fn BufferToBunStringMaxCharsBestEffort(g: *JSC.JSGlobalObject) bun.JSError!J
                     return global.throwTypeError("first argument must be a buffer", .{});
                 }
 
-                var len: u32 = 0;
-                var failed = false;
-                const maybe_ptr: ?[*]const u8 = jsBufferGetBytes(global, buffer, &len, &failed);
-                if (failed) {
-                    return bun.JSError.JSError;
-                }
-                const ptr = maybe_ptr orelse
-                    return bun.String.empty.toJS(global);
-                const input = ptr[0..@min(len, max_chars)];
+                const array_buffer = buffer.asArrayBuffer(global) orelse {
+                    return global.throwTypeError("first argument must be a buffer", .{});
+                };
+                var input = array_buffer.byteSlice();
+                input = input[0..@min(input.len, max_chars)];
                 return Encoder.toBunStringMaxCharsBestEffortForShell(input).toJS(global);
             }
         }.impl,

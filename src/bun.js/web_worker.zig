@@ -55,7 +55,7 @@ pub const WebWorker = struct {
     }
 
     pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-        return this.requested_terminate.load(.monotonic);
+        return this.requested_terminate.load(.acquire);
     }
 
     pub fn setRequestedTerminate(this: *WebWorker) bool {

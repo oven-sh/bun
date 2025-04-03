@@ -76,23 +76,23 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         pub fn pop(self: *Self) ?*T {
             const first = @atomicLoad(?*T, &@field(self.front, next), .acquire) orelse return null;
             if (@atomicLoad(?*T, &@field(first, next), .acquire)) |next_item| {
-                @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
-                assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
+                @atomicStore(?*T, &@field(self.front, next), next_item, .release);
+                assert(@atomicRmw(usize, &self.count, .Sub, 1, .release) >= 1);
                 return first;
             }
             const last = @atomicLoad(?*T, &self.back, .acquire) orelse &self.front;
             if (first != last) return null;
-            @atomicStore(?*T, &@field(self.front, next), null, .monotonic);
+            @atomicStore(?*T, &@field(self.front, next), null, .release);
             if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .acq_rel, .acquire) == null) {
-                assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
+                assert(@atomicRmw(usize, &self.count, .Sub, 1, .release) >= 1);
                 return first;
             }
             var next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
             while (next_item == null) : (atomic.spinLoopHint()) {
                 next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
             }
-            @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
-            assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
+            @atomicStore(?*T, &@field(self.front, next), next_item, .release);
+            assert(@atomicRmw(usize, &self.count, .Sub, 1, .release) >= 1);
             return first;
         }
 
@@ -112,16 +112,17 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
 
             const last = @atomicLoad(?*T, &self.back, .acquire) orelse &self.front;
             if (front != last) {
-                @atomicStore(?*T, &@field(self.front, next), front, .release);
-                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
+                const next_after_batch = @atomicLoad(?*T, &@field(front, next), .acquire);
+                @atomicStore(?*T, &@field(self.front, next), next_after_batch, .release);
+                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .release) >= batch.count);
                 return batch;
             }
 
-            @atomicStore(?*T, &@field(self.front, next), null, .monotonic);
+            @atomicStore(?*T, &@field(self.front, next), null, .release);
             if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .acq_rel, .acquire) == null) {
                 batch.count += 1;
                 batch.last = front;
-                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
+                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .release) >= batch.count);
                 return batch;
             }
 
@@ -131,9 +132,9 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
             }
 
             batch.count += 1;
-            @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
+            @atomicStore(?*T, &@field(self.front, next), next_item, .release);
             batch.last = front;
-            assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
+            assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .release) >= batch.count);
             return batch;
         }
 

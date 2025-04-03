@@ -865,11 +865,11 @@ const WaiterThreadPosix = struct {
     }
 
     pub fn setShouldUseWaiterThread() void {
-        @atomicStore(bool, &should_use_waiter_thread, true, .monotonic);
+        @atomicStore(bool, &should_use_waiter_thread, true, .release);
     }
 
     pub fn shouldUseWaiterThread() bool {
-        return @atomicLoad(bool, &should_use_waiter_thread, .monotonic);
+        return @atomicLoad(bool, &should_use_waiter_thread, .acquire);
     }
 
     pub fn append(process: anytype) void {

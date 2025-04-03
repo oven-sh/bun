@@ -212,6 +212,8 @@ test.each(cases)("%p + %p should be %p", (a, b, expected) => {
 });
 ```
 
+### Formatting Options
+
 There are a number of options available for formatting the case label depending on its type.
 
 {% table %}
@@ -262,6 +264,55 @@ There are a number of options available for formatting the case label depending 
 - Single percent sign (`%`)
 
 {% /table %}
+
+### Object Property Interpolation
+
+You can also access object properties with `$` prefix when using objects as test cases:
+
+```ts
+test.each([
+  { a: 1, b: 1, expected: 2 },
+  { a: 1, b: 2, expected: 3 },
+  { a: 2, b: 1, expected: 3 },
+])('add($a, $b) = $expected', ({ a, b, expected }) => {
+  expect(a + b).toBe(expected);
+});
+
+// This will display as:
+// ✓ add(1, 1) = 2
+// ✓ add(1, 2) = 3
+// ✓ add(2, 1) = 3
+```
+
+You can also access nested object properties with the dot notation:
+
+```ts
+test.each([
+  { user: { name: "John", age: 30 }, role: "admin" },
+  { user: { name: "Jane", age: 25 }, role: "user" },
+])('User $user.name ($user.age) has role $role', ({ user, role }) => {
+  expect(user.name.length).toBeGreaterThan(0);
+});
+
+// This will display as:
+// ✓ User John (30) has role admin
+// ✓ User Jane (25) has role user
+```
+
+You can use `$#` to inject the index of the test case:
+
+```ts
+test.each([
+  { name: "first" },
+  { name: "second" },
+])('test #$# - $name', ({ name }) => {
+  expect(typeof name).toBe("string");
+});
+
+// This will display as:
+// ✓ test #0 - first
+// ✓ test #1 - second
+```
 
 ## Matchers
 

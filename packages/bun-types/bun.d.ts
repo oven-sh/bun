@@ -510,7 +510,7 @@ declare module "bun" {
     threadId: number;
   }
 
-  interface Env extends NodeJS.ProcessEnv {
+  interface Env {
     NODE_ENV?: string;
     /**
      * Can be used to change the default timezone at runtime
@@ -525,7 +525,7 @@ declare module "bun" {
    *
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    */
-  const env: Env;
+  const env: Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
@@ -2591,8 +2591,6 @@ declare module "bun" {
    *
    * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
    *
-   * @category Security
-   *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
@@ -2617,6 +2615,8 @@ declare module "bun" {
    *
    * console.log(verify); // true
    * ```
+   *
+   * @category Security
    */
   const password: {
     /**
@@ -3061,8 +3061,6 @@ declare module "bun" {
   /**
    * A fast WebSocket designed for servers.
    *
-   * @category HTTP & Networking
-   *
    * Features:
    * - **Message compression** - Messages can be compressed
    * - **Backpressure** - If the client is not ready to receive data, the server will tell you.
@@ -3074,9 +3072,7 @@ declare module "bun" {
    * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
    *
    * @example
-   * import { serve } from "bun";
-   *
-   * serve({
+   * Bun.serve({
    *   websocket: {
    *     open(ws) {
    *       console.log("Connected", ws.remoteAddress);
@@ -3090,6 +3086,8 @@ declare module "bun" {
    *     },
    *   }
    * });
+   *
+   * @category HTTP & Networking
    */
   interface ServerWebSocket<T = undefined> {
     /**
@@ -3698,8 +3696,7 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve } from "bun";
-     * serve({
+     * Bun.serve({
      *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
@@ -4040,13 +4037,13 @@ declare module "bun" {
    *
    * To start the server, see {@link serve}
    *
-   * @category HTTP & Networking
-   *
    * For performance, Bun pre-allocates most of the data for 2048 concurrent requests.
    * That means starting a new server allocates about 500 KB of memory. Try to
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
-   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
+   *
+   * @category HTTP & Networking
    */
   interface Server extends Disposable {
     /**
@@ -4261,15 +4258,30 @@ declare module "bun" {
 
     readonly url: URL;
 
-    readonly port: number;
     /**
-     * The hostname the server is listening on. Does not include the port
+     * The port the server is listening on.
+     *
+     * This will be undefined when the server is listening on a unix socket.
+     *
+     * @example
+     * ```js
+     * 3000
+     * ```
+     */
+    readonly port: number | undefined;
+
+    /**
+     * The hostname the server is listening on. Does not include the port.
+     *
+     * This will be `undefined` when the server is listening on a unix socket.
+     *
      * @example
      * ```js
      * "localhost"
      * ```
      */
-    readonly hostname: string;
+    readonly hostname: string | undefined;
+
     /**
      * Is the server running in development mode?
      *

@@ -231,11 +231,11 @@ pub const EasingFunction = union(enum) {
     pub fn isEase(this: *const EasingFunction) bool {
         return this.* == .ease or
             (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
-            .x1 = 0.25,
-            .y1 = 0.1,
-            .x2 = 0.25,
-            .y2 = 1.0,
-        }));
+                .x1 = 0.25,
+                .y1 = 0.1,
+                .x2 = 0.25,
+                .y2 = 1.0,
+            }));
     }
 };
 

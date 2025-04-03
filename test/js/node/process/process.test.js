@@ -1099,3 +1099,23 @@ it("process.memoryUsage.arrayBuffers", () => {
   array.buffer;
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });
+
+describe("process.mainModule", () => {
+  it("is undefined when run via REPL", async () => {
+    await Bun.$`${bunExe()} -e 'assert(process.mainModule === undefined)'`.nothrow();
+  });
+
+  it("can be written to", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "mainModule");
+    expect(descriptor.configurable).toBe(true);
+
+    const prev = process.mainModule;
+    expect(() => {
+      // @ts-expect-error
+      process.mainModule = "foo";
+    }).not.toThrow();
+    // @ts-expect-error
+    expect(process.mainModule).toBe("foo");
+    process.mainModule = prev;
+  });
+});

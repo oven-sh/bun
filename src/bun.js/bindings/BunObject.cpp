@@ -79,6 +79,12 @@ namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
+JSValue getMain(JSC::VM& vm, JSC::JSObject* object)
+{
+    // See: BunObject.zig
+    return BunObject_getter_wrap_main(vm, object);
+}
+
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
     return jsCast<Zig::GlobalObject*>(bunObject->globalObject())->ArrayBufferSink();

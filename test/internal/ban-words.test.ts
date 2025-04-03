@@ -27,8 +27,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "alloc.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 249, regex: true },
-  "usingnamespace": { reason: "This brings Bun away from incremental / faster compile times.", limit: 496 }, 
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 244, regex: true },
+  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 492 },
 };
 const words_keys = [...Object.keys(words)];
 
@@ -74,6 +74,20 @@ describe("banned words", () => {
         throw new Error(
           `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit in scripts/ban-words.ts:${i + 5}\n`,
         );
+      }
+    });
+  }
+});
+
+describe("files that must have comments at the top", () => {
+  const files = ["src/bun.js/api/BunObject.zig"];
+
+  for (const file of files) {
+    test(file, async () => {
+      const joined = path.join(import.meta.dir, "..", "..", file);
+      const content = await Bun.file(joined).text();
+      if (!content.startsWith("//")) {
+        throw new Error(`Please don't add imports to the top of ${file}. Put them at the bottom.`);
       }
     });
   }

@@ -61,6 +61,7 @@ using namespace JSC;
     macro(cancel) \
     macro(cancelAlgorithm) \
     macro(chdir) \
+    macro(checks) \
     macro(checkBufferRead) \
     macro(cloneArrayBuffer) \
     macro(close) \
@@ -153,7 +154,7 @@ using namespace JSC;
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
     macro(lineText) \
-    macro(loadCJS2ESM) \
+    macro(loadEsmIntoCjs) \
     macro(localStreams) \
     macro(main) \
     macro(makeAbortError) \

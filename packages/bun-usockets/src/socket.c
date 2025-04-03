@@ -501,6 +501,24 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     return length;
 }
 
+unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+{
+    struct bsd_addr_t addr;
+    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+        return 0;
+    }
+
+    int length = bsd_addr_get_ip_length(&addr);
+    if (!length) {
+        return 0;
+    }
+
+    memcpy(buf, bsd_addr_get_ip(&addr), length);
+    *port = bsd_addr_get_port(&addr);
+
+    return length;
+}
+
 void us_socket_ref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_ref((uv_handle_t*)s->p.uv_p);
@@ -540,11 +558,6 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 void us_socket_pause(int ssl, struct us_socket_t *s) {
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
-    if(us_socket_is_shut_down(ssl, s)) {
-        // we already sent FIN so we pause all events because we are read-only
-        us_poll_change(&s->p, s->context->loop, 0);
-        return;
-    }
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 }

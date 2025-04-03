@@ -267,7 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
         encodingValue = options.get(globalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!encodingValue.isNull()) {
+        if (!encodingValue.isUndefinedOrNull()) {
             Bun::V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }

@@ -640,6 +640,8 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
   ${BUN_USOCKETS_SOURCE}/src/internal/*.c
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
+  ${CWD}/src/bun.js/bindings/uv-posix-polyfills.c
+  ${CWD}/src/bun.js/bindings/uv-posix-stubs.c
 )
 
 if(WIN32)
@@ -789,6 +791,10 @@ target_include_directories(${bun} PRIVATE
   ${VENDOR_PATH}/picohttpparser
   ${NODEJS_HEADERS_PATH}/include
 )
+
+if(NOT WIN32) 
+  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
+endif()
 
 if(LINUX)
   include(CheckIncludeFiles)

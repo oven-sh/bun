@@ -541,8 +541,6 @@ enum class DOMConstructorID : uint16_t {
     TextMetrics,
     TimeRanges,
     URLSearchParams,
-    Cookie,
-    CookieMap,
     ValidityState,
     WebKitMediaKeyError,
     ANGLEInstancedArrays,
@@ -857,12 +855,14 @@ enum class DOMConstructorID : uint16_t {
     XSLTProcessor,
 
     // --bun--
+    Cookie,
+    CookieMap,
     EventEmitter,
 };
 
-static constexpr unsigned numberOfDOMConstructorsBase = 848;
+static constexpr unsigned numberOfDOMConstructorsBase = 846;
 
-static constexpr unsigned bunExtraConstructors = 1;
+static constexpr unsigned bunExtraConstructors = 3;
 
 static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase + bunExtraConstructors;
 

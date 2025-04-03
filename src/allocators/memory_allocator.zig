@@ -32,7 +32,7 @@ fn mimalloc_free(
     }
 }
 
-const CAllocator = struct {
+const MimallocAllocator = struct {
     pub const supports_posix_memalign = true;
 
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
@@ -60,36 +60,31 @@ const CAllocator = struct {
         return mimalloc.mi_malloc_size(ptr);
     }
 
-    fn alloc(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
+    fn alloc_with_default_allocator(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(len, alignment);
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
-        if (new_len <= buf.len) {
-            return true;
-        }
-
-        const full_len = alignedAllocSize(buf.ptr);
-        if (new_len <= full_len) {
-            return true;
-        }
-
-        return false;
+    fn resize_with_default_allocator(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
+        return mimalloc.mi_expand(buf.ptr, new_len) != null;
     }
 
-    const free = mimalloc_free;
+    fn remap_with_default_allocator(_: *anyopaque, buf: []u8, alignment: mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
+        return @ptrCast(mimalloc.mi_realloc_aligned(buf.ptr, new_len, alignment.toByteUnits()));
+    }
+
+    const free_with_default_allocator = mimalloc_free;
 };
 
 pub const c_allocator = Allocator{
     // This ptr can be anything. But since it's not nullable, we should set it to something.
-    .ptr = @constCast(c_allocator_vtable),
+    .ptr = memory_allocator_tags.default_allocator_tag_ptr,
     .vtable = c_allocator_vtable,
 };
 const c_allocator_vtable = &Allocator.VTable{
-    .alloc = &CAllocator.alloc,
-    .resize = &CAllocator.resize,
-    .remap = &std.mem.Allocator.noRemap,
-    .free = &CAllocator.free,
+    .alloc = &MimallocAllocator.alloc_with_default_allocator,
+    .resize = &MimallocAllocator.resize_with_default_allocator,
+    .remap = &MimallocAllocator.remap_with_default_allocator,
+    .free = &MimallocAllocator.free_with_default_allocator,
 };
 
 const ZAllocator = struct {
@@ -119,11 +114,11 @@ const ZAllocator = struct {
         return mimalloc.mi_malloc_size(ptr);
     }
 
-    fn alloc(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
+    fn alloc_with_z_allocator(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(len, alignment);
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
+    fn resize_with_z_allocator(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -136,141 +131,24 @@ const ZAllocator = struct {
         return false;
     }
 
-    const free = mimalloc_free;
+    const free_with_z_allocator = mimalloc_free;
+};
+
+const memory_allocator_tags = struct {
+    const default_allocator_tag: usize = 0xBEEFA110C; // "BEEFA110C"  beef a110c i guess
+    pub const default_allocator_tag_ptr: *anyopaque = @ptrFromInt(default_allocator_tag);
+
+    const z_allocator_tag: usize = 0x2a11043470123; // "z4110c4701" (Z ALLOCATOR in 1337 speak)
+    pub const z_allocator_tag_ptr: *anyopaque = @ptrFromInt(z_allocator_tag);
 };
 
 pub const z_allocator = Allocator{
-    .ptr = undefined,
+    .ptr = memory_allocator_tags.z_allocator_tag_ptr,
     .vtable = &z_allocator_vtable,
 };
 const z_allocator_vtable = Allocator.VTable{
-    .alloc = &ZAllocator.alloc,
-    .resize = &ZAllocator.resize,
+    .alloc = &ZAllocator.alloc_with_z_allocator,
+    .resize = &ZAllocator.resize_with_z_allocator,
     .remap = &std.mem.Allocator.noRemap,
-    .free = &ZAllocator.free,
-};
-const HugeAllocator = struct {
-    fn alloc(
-        _: *anyopaque,
-        len: usize,
-        alignment: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        _ = return_address;
-        assert(len > 0);
-        assert(std.math.isPowerOfTwo(alignment));
-
-        const slice = std.posix.mmap(
-            null,
-            len,
-            std.posix.PROT.READ | std.posix.PROT.WRITE,
-            std.posix.MAP.ANONYMOUS | std.posix.MAP.PRIVATE,
-            -1,
-            0,
-        ) catch
-            return error.OutOfMemory;
-
-        _ = len_align;
-        return slice;
-    }
-
-    fn resize(
-        _: *anyopaque,
-        _: []u8,
-        _: u29,
-        _: usize,
-        _: u29,
-        _: usize,
-    ) ?usize {
-        return null;
-    }
-
-    fn free(
-        _: *anyopaque,
-        buf: []u8,
-        _: u29,
-        _: usize,
-    ) void {
-        std.posix.munmap(@alignCast(buf));
-    }
-};
-
-pub const huge_allocator = Allocator{
-    .ptr = undefined,
-    .vtable = &huge_allocator_vtable,
-};
-const huge_allocator_vtable = Allocator.VTable{
-    .alloc = HugeAllocator.alloc,
-    .resize = HugeAllocator.resize,
-    .free = HugeAllocator.free,
-};
-
-pub const huge_threshold = 1024 * 256;
-
-const AutoSizeAllocator = struct {
-    fn alloc(
-        _: *anyopaque,
-        len: usize,
-        alignment: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        _ = len_align;
-        if (len >= huge_threshold) {
-            return huge_allocator.rawAlloc(
-                len,
-                alignment,
-                return_address,
-            ) orelse return error.OutOfMemory;
-        }
-
-        return c_allocator.rawAlloc(
-            len,
-            alignment,
-            return_address,
-        ) orelse return error.OutOfMemory;
-    }
-
-    fn resize(
-        _: *anyopaque,
-        _: []u8,
-        _: u29,
-        _: usize,
-        _: u29,
-        _: usize,
-    ) ?usize {
-        return null;
-    }
-
-    fn free(
-        _: *anyopaque,
-        buf: []u8,
-        a: u29,
-        b: usize,
-    ) void {
-        if (buf.len >= huge_threshold) {
-            return huge_allocator.rawFree(
-                buf,
-                a,
-                b,
-            );
-        }
-
-        return c_allocator.rawFree(
-            buf,
-            a,
-            b,
-        );
-    }
-};
-
-pub const auto_allocator = Allocator{
-    .ptr = undefined,
-    .vtable = &auto_allocator_vtable,
-};
-const auto_allocator_vtable = Allocator.VTable{
-    .alloc = AutoSizeAllocator.alloc,
-    .resize = AutoSizeAllocator.resize,
-    .free = AutoSizeAllocator.free,
+    .free = &ZAllocator.free_with_z_allocator,
 };

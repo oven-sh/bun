@@ -492,7 +492,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     if (extra_options) |options| {
         if (options.isObject()) {
             if (try options.getTruthyComptime(globalThis, "method")) |method_| {
-                method = Method.fromJS(globalThis, method_) orelse {
+                method = try Method.fromJS(globalThis, method_) orelse {
                     return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
                 };
             }
@@ -510,7 +510,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
-    }, .{ .expires = expires }) catch |sign_err| {
+    }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();

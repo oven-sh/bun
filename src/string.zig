@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const OOM = bun.OOM;
+const JSError = bun.JSError;
 
 pub const HashedString = @import("string/HashedString.zig");
 pub const MutableString = @import("string/MutableString.zig");
@@ -314,7 +315,7 @@ pub const String = extern struct {
         return String.init(this.toZigString().trunc(len));
     }
 
-    pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) ![:0]u8 {
+    pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) OOM![:0]u8 {
         return this.toZigString().toOwnedSliceZ(allocator);
     }
 
@@ -457,42 +458,19 @@ pub const String = extern struct {
         try self.toZigString().format(fmt, opts, writer);
     }
 
-    /// Deprecated: use `fromJS2` to handle errors explicitly
-    pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
-        JSC.markBinding(@src());
-
-        var out: String = String.dead;
-        if (BunString__fromJS(globalObject, value, &out)) {
-            return out;
-        } else {
-            return String.dead;
-        }
-    }
-
-    pub fn fromJS2(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+    pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         var out: String = String.dead;
         if (BunString__fromJS(globalObject, value, &out)) {
             if (comptime bun.Environment.isDebug) {
                 bun.assert(out.tag != .Dead);
             }
             return out;
-        } else {
-            if (comptime bun.Environment.isDebug) {
-                bun.assert(globalObject.hasException());
-            }
-            return error.JSError;
         }
-    }
 
-    pub fn tryFromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) ?String {
-        JSC.markBinding(@src());
-
-        var out: String = String.dead;
-        if (BunString__fromJS(globalObject, value, &out)) {
-            return out;
-        } else {
-            return null; //TODO: return error.JSError
+        if (comptime bun.Environment.isDebug) {
+            bun.assert(globalObject.hasException());
         }
+        return error.JSError;
     }
 
     pub fn toJS(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {

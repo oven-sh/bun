@@ -27,6 +27,7 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
@@ -79,9 +80,9 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
 }
 
 pub const ExternalModules = struct {
-    node_modules: std.BufSet = undefined,
-    abs_paths: std.BufSet = undefined,
-    patterns: []const WildcardPattern = undefined,
+    node_modules: std.BufSet,
+    abs_paths: std.BufSet,
+    patterns: []const WildcardPattern,
 
     pub const WildcardPattern = struct {
         prefix: string,
@@ -618,7 +619,7 @@ pub const Format = enum {
             return global.throwInvalidArguments("format must be a string", .{});
         }
 
-        return Map.fromJS(global, format) orelse {
+        return try Map.fromJS(global, format) orelse {
             return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }
@@ -648,8 +649,23 @@ pub const Loader = enum(u8) {
     sqlite_embedded,
     html,
 
+    pub const Optional = enum(u8) {
+        none = 254,
+        _,
+        pub fn unwrap(opt: Optional) ?Loader {
+            return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+    };
+
     pub fn isCSS(this: Loader) bool {
         return this == .css;
+    }
+
+    pub fn isJSLike(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
     }
 
     pub fn disableHTML(this: Loader) Loader {
@@ -971,7 +987,11 @@ const LoaderResult = struct {
     path: Fs.Path,
     is_main: bool,
     specifier: string,
+    /// NOTE: This is always `null` for non-js-like loaders since it's not
+    /// needed for them.
+    package_json: ?*const PackageJSON,
 };
+
 pub fn getLoaderAndVirtualSource(
     specifier_str: string,
     jsc_vm: *JSC.VirtualMachine,
@@ -1036,12 +1056,25 @@ pub fn getLoaderAndVirtualSource(
 
     const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
 
+    const dir = path.name.dir;
+    // NOTE: we cannot trust `path.isFile()` since it's not always correct
+    // NOTE: assume we may need a package.json when no loader is specified
+    const is_js_like = if (loader) |l| l.isJSLike() else true;
+    const package_json: ?*const PackageJSON = if (is_js_like and std.fs.path.isAbsolute(dir))
+        if (jsc_vm.transpiler.resolver.readDirInfo(dir) catch null) |dir_info|
+            dir_info.package_json orelse dir_info.enclosing_package_json
+        else
+            null
+    else
+        null;
+
     return .{
         .loader = loader,
         .virtual_source = virtual_source,
         .path = path,
         .is_main = is_main,
         .specifier = specifier,
+        .package_json = package_json,
     };
 }
 
@@ -1675,7 +1708,7 @@ pub const BundleOptions = struct {
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
     /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
-    external: ExternalModules = ExternalModules{},
+    external: ExternalModules,
     entry_points: []const string,
     entry_naming: []const u8 = "",
     asset_naming: []const u8 = "",
@@ -1683,6 +1716,9 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
+    /// This list applies to all extension resolution cases. The runtime uses
+    /// this for implementing `require.extensions`
+    extra_cjs_extensions: []const []const u8 = &.{},
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     defines_loaded: bool = false,

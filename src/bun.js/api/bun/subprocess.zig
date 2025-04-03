@@ -159,7 +159,7 @@ pub const ResourceUsage = struct {
     }
 };
 
-pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
+pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: *JSC.JSObject, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
     var object_iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
 
@@ -1976,11 +1976,8 @@ pub fn spawnMaybeSync(
                         maybe_ipc_mode = ipc_mode: {
                             if (try args.getTruthy(globalThis, "serialization")) |mode_val| {
                                 if (mode_val.isString()) {
-                                    break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
-                                        if (!globalThis.hasException()) {
-                                            return globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
-                                        }
-                                        return error.JSError;
+                                    break :ipc_mode try IPC.Mode.fromJS(globalThis, mode_val) orelse {
+                                        return globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
                                     };
                                 } else {
                                     if (!globalThis.hasException()) {
@@ -2027,10 +2024,11 @@ pub fn spawnMaybeSync(
                     onExit_.withAsyncContextIfNeeded(globalThis);
             }
 
-            if (try args.getTruthy(globalThis, "env")) |object| {
-                if (!object.isObject()) {
+            if (try args.getTruthy(globalThis, "env")) |env_arg| {
+                env_arg.ensureStillAlive();
+                const object = env_arg.getObject() orelse {
                     return globalThis.throwInvalidArguments("env must be an object", .{});
-                }
+                };
 
                 override_env = true;
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]

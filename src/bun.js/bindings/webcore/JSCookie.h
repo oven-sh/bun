@@ -3,7 +3,7 @@
 #include "JSDOMWrapper.h"
 #include "Cookie.h"
 #include <wtf/NeverDestroyed.h>
-
+#include <JavaScriptCore/DateInstance.h>
 namespace WebCore {
 
 class JSCookie : public JSDOMWrapper<Cookie> {
@@ -22,6 +22,9 @@ public:
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    mutable WriteBarrier<JSC::DateInstance> m_expires;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

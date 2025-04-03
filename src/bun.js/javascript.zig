@@ -74,6 +74,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -829,6 +830,7 @@ pub const VirtualMachine = struct {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     is_in_preload: bool = false,
+    has_patched_run_main: bool = false,
 
     transpiler_store: JSC.RuntimeTranspilerStore,
 
@@ -865,7 +867,7 @@ pub const VirtualMachine = struct {
 
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
-    pending_internal_promise: *JSInternalPromise = undefined,
+    pending_internal_promise: ?*JSInternalPromise = null,
     entry_point_result: struct {
         value: JSC.Strong = .empty,
         cjs_set_value: bool = false,
@@ -899,7 +901,7 @@ pub const VirtualMachine = struct {
 
     is_inside_deferred_task_queue: bool = false,
 
-    // defaults off. .on("message") will set it to true unles overridden
+    // defaults off. .on("message") will set it to true unless overridden
     // process.channel.unref() will set it to false and mark it overridden
     // on disconnect it will be disabled
     channel_ref: bun.Async.KeepAlive = .{},
@@ -907,6 +909,18 @@ pub const VirtualMachine = struct {
     channel_ref_overridden: bool = false,
     // if one disconnect event listener should be ignored
     channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
+
+    /// A set of extensions that exist in the require.extensions map. Keys
+    /// contain the leading '.'. Value is either a loader for built in
+    /// functions, or an index into JSCommonJSExtensions.
+    ///
+    /// `.keys() == transpiler.resolver.opts.extra_cjs_extensions`, so
+    /// mutations in this map must update the resolver.
+    commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.CustomLoader.Packed) = .empty,
+    /// Incremented when the `require.extensions` for a built-in extension is mutated.
+    /// An example is mutating `require.extensions['.js']` to intercept all '.js' files.
+    /// The value is decremented when defaults are restored.
+    has_mutated_built_in_extensions: u32 = 0,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -1270,7 +1284,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
-        var promise = this.pending_internal_promise;
+        var promise = this.pending_internal_promise.?;
         if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
             _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
             promise.setHandled(this.global.vm());
@@ -2366,7 +2380,6 @@ pub const VirtualMachine = struct {
                 .source_code = bun.String.init(""),
                 .specifier = specifier,
                 .source_url = specifier.createIfDifferent(source_url),
-                .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
             };
@@ -2381,7 +2394,6 @@ pub const VirtualMachine = struct {
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
             .source_url = specifier.createIfDifferent(source_url),
-            .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,
         };
@@ -2444,10 +2456,11 @@ pub const VirtualMachine = struct {
 
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        defer if (blob_to_deinit) |*blob| blob.deinit();
         const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
             return error.ModuleNotFound;
         };
-        defer if (blob_to_deinit) |*blob| blob.deinit();
+        const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -2462,6 +2475,7 @@ pub const VirtualMachine = struct {
             _specifier,
             lr.path,
             lr.loader orelse if (lr.is_main) .js else .file,
+            module_type,
             log,
             lr.virtual_source,
             null,
@@ -2998,12 +3012,12 @@ pub const VirtualMachine = struct {
             // pending_internal_promise can change if hot module reloading is enabled
             if (this.isWatcherEnabled()) {
                 this.eventLoop().performGC();
-                switch (this.pending_internal_promise.status(this.global.vm())) {
+                switch (this.pending_internal_promise.?.status(this.global.vm())) {
                     .pending => {
-                        while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                        while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                             this.eventLoop().tick();
 
-                            if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                            if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                                 this.eventLoop().autoTick();
                             }
                         }
@@ -3056,11 +3070,26 @@ pub const VirtualMachine = struct {
         }
 
         if (!this.transpiler.options.disable_transpilation) {
-            if (try this.loadPreloads()) |promise| {
-                JSValue.fromCell(promise).ensureStillAlive();
-                JSValue.fromCell(promise).protect();
-                this.pending_internal_promise = promise;
-                return promise;
+            if (this.preload.len > 0) {
+                if (try this.loadPreloads()) |promise| {
+                    JSValue.fromCell(promise).ensureStillAlive();
+                    JSValue.fromCell(promise).protect();
+                    this.pending_internal_promise = promise;
+                    return promise;
+                }
+
+                // Check if Module.runMain was patched
+                const prev = this.pending_internal_promise;
+                if (this.has_patched_run_main) {
+                    @branchHint(.cold);
+                    this.pending_internal_promise = null;
+                    const ret = NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                    if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
+                        this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
+                        return this.pending_internal_promise.?;
+                    }
+                    return (this.pending_internal_promise orelse prev).?;
+                }
             }
 
             const promise = if (!this.main_is_html_entrypoint)
@@ -3077,6 +3106,18 @@ pub const VirtualMachine = struct {
             JSValue.fromCell(promise).ensureStillAlive();
 
             return promise;
+        }
+    }
+
+    extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) JSValue;
+    export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_patched: bool) void {
+        if (vm.is_in_preload) {
+            vm.has_patched_run_main = is_patched;
+        }
+    }
+    export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachine, promise: *JSInternalPromise) void {
+        if (vm.pending_internal_promise == null) {
+            vm.pending_internal_promise = promise;
         }
     }
 
@@ -3118,7 +3159,7 @@ pub const VirtualMachine = struct {
                 return error.WorkerTerminated;
             }
         }
-        return this.pending_internal_promise;
+        return this.pending_internal_promise.?;
     }
 
     pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -3127,12 +3168,12 @@ pub const VirtualMachine = struct {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status(this.global.vm())) {
                 .pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -3150,7 +3191,7 @@ pub const VirtualMachine = struct {
 
         this.eventLoop().autoTick();
 
-        return this.pending_internal_promise;
+        return this.pending_internal_promise.?;
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -3159,12 +3200,12 @@ pub const VirtualMachine = struct {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status(this.global.vm())) {
                 .pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -3180,7 +3221,7 @@ pub const VirtualMachine = struct {
             this.waitForPromise(.{ .internal = promise });
         }
 
-        return this.pending_internal_promise;
+        return this.pending_internal_promise.?;
     }
 
     pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
@@ -4005,7 +4046,9 @@ pub const VirtualMachine = struct {
                 .observable = false,
                 .only_non_index_properties = true,
             });
-            var iterator = try Iterator.init(this.global, error_instance);
+            // SAFETY: error instances are always objects
+            const error_obj = error_instance.getObject().?;
+            var iterator = try Iterator.init(this.global, error_obj);
             defer iterator.deinit();
             const longest_name = @min(iterator.getLongestPropertyName(), 10);
             var is_first_property = true;

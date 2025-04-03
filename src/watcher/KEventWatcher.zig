@@ -4,14 +4,12 @@ pub const EventListIndex = u32;
 
 const KEvent = std.c.Kevent;
 
-// Internal
-changelist: [128]KEvent = undefined,
-
 // Everything being watched
-eventlist: [max_eviction_count]KEvent = undefined,
 eventlist_index: EventListIndex = 0,
 
 fd: bun.FileDescriptor = bun.invalid_fd,
+
+const changelist_count = 128;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
@@ -42,7 +40,8 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
     bun.assert(this.platform.fd.isValid());
 
     // not initialized each time
-    var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
+    var changelist_array: [changelist_count]KEvent = undefined;
+    @memset(&changelist_array, std.mem.zeroes(KEvent));
     var changelist = &changelist_array;
 
     defer Output.flush();
@@ -52,7 +51,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
         changelist,
         0,
         changelist,
-        128,
+        changelist_count,
         null, // timeout
     );
 

@@ -11,10 +11,6 @@ stderr: Readable,
 stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 pid_rusage: ?Rusage = null,
 
-exit_promise: JSC.Strong = .empty,
-on_exit_callback: JSC.Strong = .empty,
-on_disconnect_callback: JSC.Strong = .empty,
-
 globalThis: *JSC.JSGlobalObject,
 observable_getters: std.enums.EnumSet(enum {
     stdin,
@@ -28,7 +24,6 @@ this_jsvalue: JSC.JSValue = .zero,
 
 /// `null` indicates all of the IPC data is uninitialized.
 ipc_data: ?IPC.IPCData,
-ipc_callback: JSC.Strong = .empty,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
@@ -592,12 +587,16 @@ pub fn getStdout(
 pub fn asyncDispose(
     this: *Subprocess,
     global: *JSGlobalObject,
-    _: *JSC.CallFrame,
+    callframe: *JSC.CallFrame,
 ) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
         return .undefined;
     }
+
+    const this_jsvalue = callframe.this();
+
+    defer this_jsvalue.ensureStillAlive();
 
     // unref streams so that this disposed process will not prevent
     // the process from exiting causing a hang
@@ -613,7 +612,7 @@ pub fn asyncDispose(
         },
     }
 
-    return this.getExited(global);
+    return this.getExited(this_jsvalue, global);
 }
 
 fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
@@ -1531,6 +1530,30 @@ pub fn memoryCost(this: *const Subprocess) usize {
         this.stderr.memoryCost();
 }
 
+fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+    if (JSC.Codegen.JSSubprocess.exitedPromiseGetCached(this_jsvalue)) |promise| {
+        JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_jsvalue, globalThis, .zero);
+        return promise;
+    }
+    return null;
+}
+
+fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+    if (JSC.Codegen.JSSubprocess.onExitCallbackGetCached(this_jsvalue)) |callback| {
+        JSC.Codegen.JSSubprocess.onExitCallbackSetCached(this_jsvalue, globalThis, .zero);
+        return callback;
+    }
+    return null;
+}
+
+fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+    if (JSC.Codegen.JSSubprocess.onDisconnectCallbackGetCached(this_jsvalue)) |callback| {
+        JSC.Codegen.JSSubprocess.onDisconnectCallbackSetCached(this_jsvalue, globalThis, .zero);
+        return callback;
+    }
+    return null;
+}
+
 pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
     log("onProcessExit()", .{});
     const this_jsvalue = this.this_jsvalue;
@@ -1592,55 +1615,57 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     const loop = jsc_vm.eventLoop();
 
     if (!is_sync) {
-        if (this.exit_promise.trySwap()) |promise| {
-            loop.enter();
-            defer loop.exit();
+        if (this_jsvalue != .zero) {
+            if (consumeExitedPromise(this_jsvalue, globalThis)) |promise| {
+                loop.enter();
+                defer loop.exit();
 
-            if (!did_update_has_pending_activity) {
-                this.updateHasPendingActivity();
-                did_update_has_pending_activity = true;
+                if (!did_update_has_pending_activity) {
+                    this.updateHasPendingActivity();
+                    did_update_has_pending_activity = true;
+                }
+
+                switch (status) {
+                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
+                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    else => {
+                        // crash in debug mode
+                        if (comptime Environment.allow_assert)
+                            unreachable;
+                    },
+                }
             }
 
-            switch (status) {
-                .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
-                .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
-                else => {
-                    // crash in debug mode
-                    if (comptime Environment.allow_assert)
-                        unreachable;
-                },
+            if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
+                const waitpid_value: JSValue =
+                    if (status == .err)
+                        status.err.toJSC(globalThis)
+                    else
+                        .undefined;
+
+                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
+                this_value.ensureStillAlive();
+
+                const args = [_]JSValue{
+                    this_value,
+                    this.getExitCode(globalThis),
+                    this.getSignalCode(globalThis),
+                    waitpid_value,
+                };
+
+                if (!did_update_has_pending_activity) {
+                    this.updateHasPendingActivity();
+                    did_update_has_pending_activity = true;
+                }
+
+                loop.runCallback(
+                    callback,
+                    globalThis,
+                    this_value,
+                    &args,
+                );
             }
-        }
-
-        if (this.on_exit_callback.trySwap()) |callback| {
-            const waitpid_value: JSValue =
-                if (status == .err)
-                    status.err.toJSC(globalThis)
-                else
-                    .undefined;
-
-            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
-            this_value.ensureStillAlive();
-
-            const args = [_]JSValue{
-                this_value,
-                this.getExitCode(globalThis),
-                this.getSignalCode(globalThis),
-                waitpid_value,
-            };
-
-            if (!did_update_has_pending_activity) {
-                this.updateHasPendingActivity();
-                did_update_has_pending_activity = true;
-            }
-
-            loop.runCallback(
-                callback,
-                globalThis,
-                this_value,
-                &args,
-            );
         }
     }
 }
@@ -1693,10 +1718,6 @@ pub fn finalizeStreams(this: *Subprocess) void {
         }
         this.stdio_pipes.clearAndFree(bun.default_allocator);
     }
-
-    this.exit_promise.deinit();
-    this.on_exit_callback.deinit();
-    this.on_disconnect_callback.deinit();
 }
 
 pub fn deinit(this: *Subprocess) void {
@@ -1739,8 +1760,13 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
 
 pub fn getExited(
     this: *Subprocess,
+    this_value: JSValue,
     globalThis: *JSGlobalObject,
 ) JSValue {
+    if (JSC.Codegen.JSSubprocess.exitedPromiseGetCached(this_value)) |promise| {
+        return promise;
+    }
+
     switch (this.process.status) {
         .exited => |exit| {
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
@@ -1752,11 +1778,9 @@ pub fn getExited(
             return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
         },
         else => {
-            if (!this.exit_promise.has()) {
-                this.exit_promise.set(globalThis, JSC.JSPromise.create(globalThis).asValue(globalThis));
-            }
-
-            return this.exit_promise.get().?;
+            const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+            JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_value, globalThis, promise);
+            return promise;
         },
     }
 }
@@ -2274,10 +2298,7 @@ pub fn spawnMaybeSync(
         .stdout = .{ .ignore = {} },
         .stderr = .{ .ignore = {} },
         .stdio_pipes = .{},
-        .on_exit_callback = .empty,
-        .on_disconnect_callback = .empty,
         .ipc_data = null,
-        .ipc_callback = .empty,
         .flags = .{
             .is_sync = is_sync,
         },
@@ -2325,15 +2346,13 @@ pub fn spawnMaybeSync(
         // 2. Process.
         .ref_count = 2,
         .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
-        .on_exit_callback = JSC.Strong.create(on_exit_callback, globalThis),
-        .on_disconnect_callback = JSC.Strong.create(on_disconnect_callback, globalThis),
         .ipc_data = if (!is_sync and comptime Environment.isWindows)
             if (maybe_ipc_mode) |ipc_mode| .{
                 .mode = ipc_mode,
             } else null
         else
             null,
-        .ipc_callback = JSC.Strong.create(ipc_callback, globalThis),
+
         .flags = .{
             .is_sync = is_sync,
         },
@@ -2394,6 +2413,18 @@ pub fn spawnMaybeSync(
     var send_exit_notification = false;
 
     if (comptime !is_sync) {
+        bun.debugAssert(out != .zero);
+
+        if (on_exit_callback.isCell()) {
+            JSC.Codegen.JSSubprocess.onExitCallbackSetCached(out, globalThis, on_exit_callback);
+        }
+        if (on_disconnect_callback.isCell()) {
+            JSC.Codegen.JSSubprocess.onDisconnectCallbackSetCached(out, globalThis, on_disconnect_callback);
+        }
+        if (ipc_callback.isCell()) {
+            JSC.Codegen.JSSubprocess.ipcCallbackSetCached(out, globalThis, ipc_callback);
+        }
+
         switch (subprocess.process.watch()) {
             .result => {},
             .err => {
@@ -2561,13 +2592,18 @@ pub fn handleIPCMessage(
         },
         .data => |data| {
             IPC.log("Received IPC message from child", .{});
-            if (this.ipc_callback.get()) |cb| {
-                this.globalThis.bunVM().eventLoop().runCallback(
-                    cb,
-                    this.globalThis,
-                    this.this_jsvalue,
-                    &[_]JSValue{ data, this.this_jsvalue },
-                );
+            const this_jsvalue = this.this_jsvalue;
+            defer this_jsvalue.ensureStillAlive();
+            if (this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.ipcCallbackGetCached(this_jsvalue)) |cb| {
+                    const globalThis = this.globalThis;
+                    globalThis.bunVM().eventLoop().runCallback(
+                        cb,
+                        globalThis,
+                        this_jsvalue,
+                        &[_]JSValue{ data, this_jsvalue },
+                    );
+                }
             }
         },
         .internal => |data| {
@@ -2579,7 +2615,11 @@ pub fn handleIPCMessage(
 
 pub fn handleIPCClose(this: *Subprocess) void {
     IPClog("Subprocess#handleIPCClose", .{});
+    const this_jsvalue = this.this_jsvalue;
+    defer this_jsvalue.ensureStillAlive();
+    const globalThis = this.globalThis;
     this.updateHasPendingActivity();
+
     defer this.deref();
     var ok = false;
     if (this.ipc()) |ipc_data| {
@@ -2588,10 +2628,14 @@ pub fn handleIPCClose(this: *Subprocess) void {
     }
     this.ipc_data = null;
 
-    const this_jsvalue = this.this_jsvalue;
-    this_jsvalue.ensureStillAlive();
-    if (this.on_disconnect_callback.trySwap()) |callback| {
-        this.globalThis.bunVM().eventLoop().runCallback(callback, this.globalThis, this_jsvalue, &.{JSValue.jsBoolean(ok)});
+    if (this_jsvalue != .zero) {
+        // Avoid keeping the callback alive longer than necessary
+        JSC.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
+
+        // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
+        if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
+            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(ok)});
+        }
     }
 }
 

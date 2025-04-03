@@ -277,3 +277,17 @@ describe("execArgv option", async () => {
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
+
+test("eval does not leak source code", async () => {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "eval-source-leak-fixture.js"],
+    env: bunEnv,
+    cwd: __dirname,
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  await proc.exited;
+  const errors = await new Response(proc.stderr).text();
+  if (errors.length > 0) throw new Error(errors);
+  expect(proc.exitCode).toBe(0);
+});

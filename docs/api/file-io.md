@@ -72,7 +72,7 @@ await Bun.file("logs.json").delete()
 
 ## Writing files (`Bun.write()`)
 
-`Bun.write(destination, data, options): Promise<number>`
+`Bun.write(destination, data, options?): Promise<number>`
 
 The `Bun.write` function is a multi-tool for writing payloads of all kinds to disk.
 

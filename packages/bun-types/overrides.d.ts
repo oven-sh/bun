@@ -23,7 +23,6 @@ declare global {
       _exiting: boolean;
       noDeprecation: boolean;
 
-      binding(m: string): object;
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
         fs: typeof import("node:fs").constants;
@@ -145,6 +144,7 @@ declare global {
         UV_ENODATA: number;
         UV_EUNATCH: number;
       };
+      binding(m: string): object;
     }
 
     interface ProcessVersions extends Dict<string> {

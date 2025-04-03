@@ -128,6 +128,7 @@ export default [
       pause: {
         fn: "doPause",
         length: 0,
+        passThis: true,
       },
       drainRequestBody: {
         fn: "drainRequestBody",
@@ -136,6 +137,7 @@ export default [
       dumpRequestBody: {
         fn: "dumpRequestBody",
         length: 0,
+        passThis: true,
       },
       resume: {
         fn: "doResume",
@@ -162,10 +164,12 @@ export default [
       ondata: {
         getter: "getOnData",
         setter: "setOnData",
+        this: true,
       },
       onabort: {
         getter: "getOnAbort",
         setter: "setOnAbort",
+        this: true,
       },
       hasCustomOnData: {
         getter: "getHasCustomOnData",
@@ -181,6 +185,7 @@ export default [
       onwritable: {
         getter: "getOnWritable",
         setter: "setOnWritable",
+        this: true,
       },
     },
     klass: {},

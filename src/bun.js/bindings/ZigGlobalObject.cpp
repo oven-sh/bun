@@ -180,7 +180,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
-#include "NodeFSBinding.h"
+#include "NodeFSStatBinding.h"
+#include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
 
 #if !OS(WINDOWS)
@@ -3004,6 +3005,16 @@ void GlobalObject::finishCreation(VM& vm)
             Bun::initJSBigIntStatsClassStructure(init);
         });
 
+    m_JSStatFSClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSStatFSClassStructure(init);
+        });
+
+    m_JSStatFSBigIntClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSBigIntStatFSClassStructure(init);
+        });
+
     m_memoryFootprintStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -4003,6 +4014,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_currentNapiHandleScopeImpl);
 
     thisObject->m_moduleResolveFilenameFunction.visit(visitor);
+    thisObject->m_modulePrototypeUnderscoreCompileFunction.visit(visitor);
+    thisObject->m_commonJSRequireESMFromHijackedExtensionFunction.visit(visitor);
     thisObject->m_moduleRunMainFunction.visit(visitor);
     thisObject->m_nodeModuleConstructor.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
@@ -4051,6 +4064,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSStatsClassStructure.visit(visitor);
     thisObject->m_JSStatsBigIntClassStructure.visit(visitor);
+    thisObject->m_JSStatFSClassStructure.visit(visitor);
+    thisObject->m_JSStatFSBigIntClassStructure.visit(visitor);
     thisObject->m_JSDirentClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);

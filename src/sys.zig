@@ -2316,11 +2316,20 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
 
 pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
-            return Maybe(void).errnoSysFd(0, .ftruncate, fd) orelse Maybe(void).success;
-        }
+        var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+        var eof_info = std.os.windows.FILE_END_OF_FILE_INFORMATION{
+            .EndOfFile = @bitCast(size),
+        };
 
-        return Maybe(void).success;
+        const rc = windows.ntdll.NtSetInformationFile(
+            fd.cast(),
+            &io_status_block,
+            &eof_info,
+            @sizeOf(std.os.windows.FILE_END_OF_FILE_INFORMATION),
+            .FileEndOfFileInformation,
+        );
+
+        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
     }
 
     return while (true) {

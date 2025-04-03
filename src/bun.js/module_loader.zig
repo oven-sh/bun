@@ -2256,6 +2256,7 @@ pub const ModuleLoader = struct {
         ret: *JSC.ErrorableResolvedSource,
         allow_promise: bool,
         is_commonjs_require: bool,
+        force_loader_type: bun.options.Loader.Optional,
     ) ?*anyopaque {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.transpiler.allocator);
@@ -2279,13 +2280,16 @@ pub const ModuleLoader = struct {
         };
         defer if (blob_to_deinit) |*blob| blob.deinit();
 
-        if (is_commonjs_require and jsc_vm.has_mutated_built_in_extensions > 0) brk: {
+        if (force_loader_type.unwrap()) |loader_type| {
+            @branchHint(.unlikely);
+            bun.assert(!is_commonjs_require);
+            lr.loader = loader_type;
+        } else if (is_commonjs_require and jsc_vm.has_mutated_built_in_extensions > 0) {
             @branchHint(.unlikely);
             if (node_module_module.findLongestRegisteredExtension(jsc_vm, _specifier.slice())) |entry| {
                 switch (entry) {
                     .loader => |loader| {
                         lr.loader = loader;
-                        break :brk;
                     },
                     .custom => |index| {
                         ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{

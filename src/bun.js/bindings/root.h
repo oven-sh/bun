@@ -71,6 +71,9 @@
 #define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
+#include <wtf/Platform.h>
+
+#ifdef __cplusplus
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
@@ -78,6 +81,7 @@
 #include <JavaScriptCore/HandleSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#endif
 
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1

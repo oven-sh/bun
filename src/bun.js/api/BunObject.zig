@@ -38,6 +38,7 @@ pub const BunObject = struct {
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
+    pub const valkey = toJSCallback(JSC.API.Redis.call);
     // --- Callbacks ---
 
     // --- Getters ---
@@ -162,6 +163,7 @@ pub const BunObject = struct {
         @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
+        @export(&BunObject.valkey, .{ .name = callbackName("valkey") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
         // -- Callbacks --

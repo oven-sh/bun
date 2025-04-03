@@ -1387,7 +1387,7 @@ pub fn openFileAtWindowsNtPath(
             0,
         );
 
-        if (comptime Environment.allow_assert) {
+        if (Environment.allow_assert and Environment.enable_logs) {
             if (rc == .INVALID_PARAMETER) {
                 // Double check what flags you are passing to this
                 //
@@ -1399,7 +1399,11 @@ pub fn openFileAtWindowsNtPath(
                 // See above comment. For absolute paths you must have \??\ at the start.
                 bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
-                log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                if (rc == .SUCCESS) {
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.toFD(result) });
+                } else {
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                }
             }
         }
 
@@ -1809,7 +1813,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: i32, per
 
 pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
-    return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
+    return openatA(bun.toFD(std.fs.cwd().fd), file_path, flags, perm);
 }
 
 pub fn open(file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {

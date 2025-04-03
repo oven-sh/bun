@@ -142,10 +142,16 @@ function sliceTemplateLiteralSourceCode(contents: string, replace: boolean) {
       contents = contents.slice(1);
       break;
     } else if (contents.startsWith("$")) {
-      const { result: result2, rest } = sliceSourceCode(contents.slice(1), replace);
-      result += "$" + result2;
-      contents = rest;
-      continue;
+      try {
+        const { result: result2, rest } = sliceSourceCode(contents.slice(1), replace);
+        result += "$" + result2;
+        contents = rest;
+        continue;
+      } catch (e) {
+        console.warn("in template literal", contents.slice(0, 100));
+        console.error(e);
+        throw e;
+      }
     } else {
       throw new Error("TODO");
     }

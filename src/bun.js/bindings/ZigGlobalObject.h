@@ -364,6 +364,8 @@ public:
         Bun__S3UploadStream__onResolveRequestStream,
         Bun__FileStreamWrapper__onRejectRequestStream,
         Bun__FileStreamWrapper__onResolveRequestStream,
+        DevServer__onInitSetupResolve,
+        DevServer__onInitSetupReject,
     };
     static constexpr size_t promiseFunctionsSize = 34;
 

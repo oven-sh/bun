@@ -7,7 +7,8 @@ type FileIndex = number;
 
 interface Config {
   // Server + Client
-  main: Id;
+  // Contains all preloads, then the main entry point.
+  entry: Id[];
 
   // Server
   separateSSRGraph?: true;

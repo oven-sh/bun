@@ -1177,12 +1177,13 @@ pub const FileSystem = struct {
             allocator: std.mem.Allocator,
             path: string,
             size_hint: ?usize,
-            file: std.fs.File,
+            std_file: std.fs.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !PathContentsPair {
-            FileSystem.setMaxFd(file.handle);
+            FileSystem.setMaxFd(std_file.handle);
+            const file = bun.sys.File.from(std_file);
 
             var file_contents: []u8 = "";
             // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
@@ -1267,7 +1268,7 @@ pub const FileSystem = struct {
                 // that we need to dynamically allocate memory to read it.
                 const initial_read = if (size_hint == null) brk: {
                     const buf: []u8 = &initial_buf;
-                    const read_count = file.readAll(buf) catch |err| {
+                    const read_count = file.readAll(buf).unwrap() catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
@@ -1287,7 +1288,7 @@ pub const FileSystem = struct {
                 } else initial_buf[0..0];
 
                 // Skip the extra file.stat() call when possible
-                const size = size_hint orelse (file.getEndPos() catch |err| {
+                const size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 });
@@ -1303,7 +1304,7 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const read_count = file.readAll(buf[initial_read.len..]) catch |err| {
+                const read_count = file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
@@ -1399,7 +1400,9 @@ pub const FileSystem = struct {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
                 const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf2);
                 const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf3);
 
                 var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;

@@ -2203,6 +2203,22 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     };
 }
 
+pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    var rest = buf;
+    var total_read: usize = 0;
+    while (rest.len > 0) {
+        switch (read(fd, rest)) {
+            .result => |len| {
+                if (len == 0) break;
+                rest = rest[len..];
+                total_read += len;
+            },
+            .err => |err| return .{ .err = err },
+        }
+    }
+    return .{ .result = total_read };
+}
+
 const socket_flags_nonblock = bun.c.MSG_DONTWAIT | bun.c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
@@ -3872,6 +3888,10 @@ pub const File = struct {
 
     pub fn read(self: File, buf: []u8) Maybe(usize) {
         return This.read(self.handle, buf);
+    }
+
+    pub fn readAll(self: File, buf: []u8) Maybe(usize) {
+        return This.readAll(self.handle, buf);
     }
 
     pub fn writeAll(self: File, buf: []const u8) Maybe(void) {

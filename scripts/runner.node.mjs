@@ -143,9 +143,8 @@ const { values: options, positionals: filters } = parseArgs({
 const cliOptions = options;
 
 if (cliOptions.junit) {
-  cliOptions["junit-temp-dir"] = join(tmpdir(), cliOptions["junit-temp-dir"]);
   try {
-    mkdirSync(cliOptions["junit-temp-dir"], { recursive: true });
+    cliOptions["junit-temp-dir"] = mkdtempSync(join(tmpdir(), cliOptions["junit-temp-dir"]));
   } catch (err) {
     cliOptions.junit = false;
     console.error(`Error creating JUnit temp directory: ${err.message}`);
@@ -1885,10 +1884,10 @@ async function addToJunitUploadQueue(junitFilePath) {
 async function drainJunitUploadQueue() {
   isUploadingToBuildKite = true;
   while (junitUploadQueue.length > 0) {
-    const junitFilePath = junitUploadQueue.shift();
-    await uploadJUnitToBuildKite(junitFilePath)
+    const testPath = junitUploadQueue.shift();
+    await uploadJUnitToBuildKite(testPath)
       .then(uploadSuccess => {
-        unlink(junitFilePath, () => {
+        unlink(testPath, () => {
           if (!uploadSuccess) {
             console.error(`Failed to upload JUnit report for ${testPath}`);
           }

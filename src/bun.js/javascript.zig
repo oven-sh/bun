@@ -426,65 +426,9 @@ comptime {
 }
 pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
-
-    if (handle.isFunction()) {
-        callback = handle;
-        handle = .undefined;
-        options_ = .undefined;
-    } else if (options_.isFunction()) {
-        callback = options_;
-        options_ = .undefined;
-    } else if (!options_.isUndefined()) {
-        try globalObject.validateObject("options", options_, .{});
-    }
-
-    const S = struct {
-        fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-            const arguments_ = callframe.arguments_old(1).slice();
-            const ex = arguments_[0];
-            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-            return .undefined;
-        }
-    };
 
     const vm = globalObject.bunVM();
-    const ipc_instance = vm.getIPCInstance() orelse {
-        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
-        if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(globalObject, callback, ex);
-        } else {
-            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
-            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
-        }
-        return .false;
-    };
-
-    if (message.isUndefined()) {
-        return globalObject.throwMissingArgumentsValue(&.{"message"});
-    }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
-        return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
-    }
-
-    const good = ipc_instance.data.serializeAndSend(globalObject, message);
-
-    if (good) {
-        if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(globalObject, callback, .null);
-        }
-    } else {
-        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
-        if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(globalObject, callback, ex);
-        } else {
-            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
-            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
-        }
-    }
-
-    return .true;
+    return IPC.doSend(if (vm.getIPCInstance()) |i| &i.data else null, globalObject, callFrame, .process);
 }
 
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {

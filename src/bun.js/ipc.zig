@@ -673,6 +673,71 @@ const NamedPipeIPCData = struct {
     }
 };
 
+fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    std.log.info("S#impl", .{});
+    const ex = callframe.argumentsAsArray(1)[0];
+    JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+    return .undefined;
+}
+const FromEnum = enum { subprocess_exited, subprocess, process };
+pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, from: FromEnum) bun.JSError!JSValue {
+    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
+
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        try globalObject.validateObject("options", options_, .{});
+    }
+
+    const ipc_data = ipc orelse {
+        switch (from) {
+            .process => {
+                const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).toJS();
+                const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
+                JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
+            },
+            // child_process wrapper will catch the error and emit it as an 'error' event or send it to the callback
+            .subprocess => return globalObject.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() can only be used if an IPC channel is open.", .{}).throw(),
+            .subprocess_exited => return globalObject.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw(),
+        }
+        return .false;
+    };
+
+    if (message.isUndefined()) {
+        return globalObject.throwMissingArgumentsValue(&.{"message"});
+    }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
+        return globalObject.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
+    }
+
+    const good = ipc_data.serializeAndSend(globalObject, message);
+
+    if (good) {
+        if (callback.isFunction()) {
+            JSC.Bun__Process__queueNextTick1(globalObject, callback, .null);
+        }
+    } else {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        switch (from) {
+            .process => {
+                const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
+                JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
+            },
+            // child_process wrapper will catch the error and emit it as an 'error' event or send it to the callback
+            else => return globalObject.throwValue(ex),
+        }
+        return .false;
+    }
+
+    return .true;
+}
+
 pub const IPCData = if (Environment.isWindows) NamedPipeIPCData else SocketIPCData;
 
 /// Used on POSIX

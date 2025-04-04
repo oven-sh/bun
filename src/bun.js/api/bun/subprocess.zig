@@ -746,62 +746,8 @@ pub fn onStdinDestroyed(this: *Subprocess) void {
 
 pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     IPClog("Subprocess#doSend", .{});
-    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
-    if (handle.isFunction()) {
-        callback = handle;
-        handle = .undefined;
-        options_ = .undefined;
-    } else if (options_.isFunction()) {
-        callback = options_;
-        options_ = .undefined;
-    } else if (!options_.isUndefined()) {
-        try global.validateObject("options", options_, .{});
-    }
-
-    const S = struct {
-        fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-            const arguments_ = callframe.arguments_old(1).slice();
-            const ex = arguments_[0];
-            JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-            return .undefined;
-        }
-    };
-
-    const ipc_data = &(this.ipc_data orelse {
-        if (this.hasExited()) {
-            return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
-        } else {
-            return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
-        }
-    });
-
-    if (message.isUndefined()) {
-        return global.throwMissingArgumentsValue(&.{"message"});
-    }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
-        return global.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
-    }
-
-    const good = ipc_data.serializeAndSend(global, message);
-
-    if (good) {
-        if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, callback, .null);
-            // we need to wait until the send is actually completed to trigger the callback
-        }
-    } else {
-        const ex = global.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
-        if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, callback, ex);
-        } else {
-            const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            JSC.Bun__Process__queueNextTick1(global, fnvalue, ex);
-        }
-    }
-
-    return .false;
+    return IPC.doSend(if (this.ipc_data) |*data| data else null, global, callFrame, if (this.hasExited()) .subprocess_exited else .subprocess);
 }
 pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
     const ipc_data = this.ipc() orelse return;

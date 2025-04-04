@@ -29,7 +29,7 @@ pub fn createForSubprocess(owner: *Subprocess, ptr: *?*MaxBuf, initial: ?i64) vo
     ptr.* = maxbuf;
 }
 fn disowned(this: *MaxBuf) bool {
-    return this.owned_by_subprocess != null and this.owned_by_reader == false;
+    return this.owned_by_subprocess == null and this.owned_by_reader == false;
 }
 fn destroy(this: *MaxBuf) void {
     bun.assert(this.disowned());

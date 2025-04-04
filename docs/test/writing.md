@@ -78,9 +78,11 @@ test("wat", async () => {
 
 In `bun:test`, test timeouts throw an uncatchable exception to force the test to stop running and fail. We also kill any child processes that were spawned in the test to avoid leaving behind zombie processes lurking in the background.
 
+The default timeout for each test is 5000ms (5 seconds) if not overridden by this timeout option or `jest.setDefaultTimeout()`.
+
 ### 🧟 Zombie process killer
 
-When a test times out and processes spawned in the test via `Bun.spawn`, `Bun.spawnSync`, or `node:child_process` are not killed, they will be automatically killed and a message will be logged to the console.
+When a test times out and processes spawned in the test via `Bun.spawn`, `Bun.spawnSync`, or `node:child_process` are not killed, they will be automatically killed and a message will be logged to the console. This prevents zombie processes from lingering in the background after timed-out tests.
 
 ## `test.skip`
 
@@ -125,7 +127,7 @@ fix the test.
 
 ## `test.only`
 
-To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`. Running `bun test` without the `--only` option with `test.only()` declared will result in all tests in the given suite being executed _up to_ the test with `.only()`. `describe.only()` functions the same in both execution scenarios.
+To run a particular test or suite of tests use `test.only()` or `describe.only()`.
 
 ```ts
 import { test, describe } from "bun:test";
@@ -197,22 +199,121 @@ test.todoIf(macOS)("runs on posix", () => {
 });
 ```
 
-## `test.each`
+## `test.failing`
 
-To return a function for multiple cases in a table of tests, use `test.each`.
+Use `test.failing()` when you know a test is currently failing but you want to track it and be notified when it starts passing. This inverts the test result:
+
+- A failing test marked with `.failing()` will pass
+- A passing test marked with `.failing()` will fail (with a message indicating it's now passing and should be fixed)
+
+```ts
+// This will pass because the test is failing as expected
+test.failing("math is broken", () => {
+  expect(0.1 + 0.2).toBe(0.3); // fails due to floating point precision
+});
+
+// This will fail with a message that the test is now passing
+test.failing("fixed bug", () => {
+  expect(1 + 1).toBe(2); // passes, but we expected it to fail
+});
+```
+
+This is useful for tracking known bugs that you plan to fix later, or for implementing test-driven development.
+
+## Conditional Tests for Describe Blocks
+
+The conditional modifiers `.if()`, `.skipIf()`, and `.todoIf()` can also be applied to `describe` blocks, affecting all tests within the suite:
+
+```ts
+const isMacOS = process.platform === "darwin";
+
+// Only runs the entire suite on macOS
+describe.if(isMacOS)("macOS-specific features", () => {
+  test("feature A", () => {
+    // only runs on macOS
+  });
+
+  test("feature B", () => {
+    // only runs on macOS
+  });
+});
+
+// Skips the entire suite on Windows
+describe.skipIf(process.platform === "win32")("Unix features", () => {
+  test("feature C", () => {
+    // skipped on Windows
+  });
+});
+
+// Marks the entire suite as TODO on Linux
+describe.todoIf(process.platform === "linux")("Upcoming Linux support", () => {
+  test("feature D", () => {
+    // marked as TODO on Linux
+  });
+});
+```
+
+## `test.each` and `describe.each`
+
+To run the same test with multiple sets of data, use `test.each`. This creates a parametrized test that runs once for each test case provided.
 
 ```ts
 const cases = [
   [1, 2, 3],
-  [3, 4, 5],
+  [3, 4, 7],
 ];
 
 test.each(cases)("%p + %p should be %p", (a, b, expected) => {
-  // runs once for each test case provided
+  expect(a + b).toBe(expected);
 });
 ```
 
-There are a number of options available for formatting the case label depending on its type.
+You can also use `describe.each` to create a parametrized suite that runs once for each test case:
+
+```ts
+describe.each([
+  [1, 2, 3],
+  [3, 4, 7],
+])("add(%i, %i)", (a, b, expected) => {
+  test(`returns ${expected}`, () => {
+    expect(a + b).toBe(expected);
+  });
+
+  test(`sum is greater than each value`, () => {
+    expect(a + b).toBeGreaterThan(a);
+    expect(a + b).toBeGreaterThan(b);
+  });
+});
+```
+
+### Argument Passing
+
+How arguments are passed to your test function depends on the structure of your test cases:
+
+- If a table row is an array (like `[1, 2, 3]`), each element is passed as an individual argument
+- If a row is not an array (like an object), it's passed as a single argument
+
+```ts
+// Array items passed as individual arguments
+test.each([
+  [1, 2, 3],
+  [4, 5, 9],
+])("add(%i, %i) = %i", (a, b, expected) => {
+  expect(a + b).toBe(expected);
+});
+
+// Object items passed as a single argument
+test.each([
+  { a: 1, b: 2, expected: 3 },
+  { a: 4, b: 5, expected: 9 },
+])("add($a, $b) = $expected", data => {
+  expect(data.a + data.b).toBe(data.expected);
+});
+```
+
+### Format Specifiers
+
+There are a number of options available for formatting the test title:
 
 {% table %}
 
@@ -262,6 +363,68 @@ There are a number of options available for formatting the case label depending 
 - Single percent sign (`%`)
 
 {% /table %}
+
+#### Examples
+
+```ts
+// Basic specifiers
+test.each([
+  ["hello", 123],
+  ["world", 456],
+])("string: %s, number: %i", (str, num) => {
+  // "string: hello, number: 123"
+  // "string: world, number: 456"
+});
+
+// %p for pretty-format output
+test.each([
+  [{ name: "Alice" }, { a: 1, b: 2 }],
+  [{ name: "Bob" }, { x: 5, y: 10 }],
+])("user %p with data %p", (user, data) => {
+  // "user { name: 'Alice' } with data { a: 1, b: 2 }"
+  // "user { name: 'Bob' } with data { x: 5, y: 10 }"
+});
+
+// %# for index
+test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
+  // "fruit #0 is apple"
+  // "fruit #1 is banana"
+});
+```
+
+## Assertion Counting
+
+Bun supports verifying that a specific number of assertions were called during a test:
+
+### expect.hasAssertions()
+
+Use `expect.hasAssertions()` to verify that at least one assertion is called during a test:
+
+```ts
+test("async work calls assertions", async () => {
+  expect.hasAssertions(); // Will fail if no assertions are called
+
+  const data = await fetchData();
+  expect(data).toBeDefined();
+});
+```
+
+This is especially useful for async tests to ensure your assertions actually run.
+
+### expect.assertions(count)
+
+Use `expect.assertions(count)` to verify that a specific number of assertions are called during a test:
+
+```ts
+test("exactly two assertions", () => {
+  expect.assertions(2); // Will fail if not exactly 2 assertions are called
+
+  expect(1 + 1).toBe(2);
+  expect("hello").toContain("ell");
+});
+```
+
+This helps ensure all your assertions run, especially in complex async code with multiple code paths.
 
 ## Matchers
 

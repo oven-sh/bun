@@ -351,11 +351,12 @@ pub const FontFamily = union(enum) {
 
                 if (val.len > 0 and
                     !css.parse_utility.parseString(
-                    dest.allocator,
-                    GenericFontFamily,
-                    val,
-                    GenericFontFamily.parse,
-                ).isOk()) {
+                        dest.allocator,
+                        GenericFontFamily,
+                        val,
+                        GenericFontFamily.parse,
+                    ).isOk())
+                {
                     var id = ArrayList(u8){};
                     defer id.deinit(dest.allocator);
                     var first = true;

@@ -150,6 +150,14 @@ function generate(ssl) {
         length: 0,
       },
 
+      localFamily: {
+        getter: "getLocalFamily",
+        cache: true,
+      },
+      localAddress: {
+        getter: "getLocalAddress",
+        cache: true,
+      },
       localPort: {
         getter: "getLocalPort",
       },
@@ -170,9 +178,16 @@ function generate(ssl) {
       //   getter: "getTopics",
       // },
 
+      remoteFamily: {
+        getter: "getRemoteFamily",
+        cache: true,
+      },
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,
+      },
+      remotePort: {
+        getter: "getRemotePort",
       },
 
       reload: {
@@ -265,6 +280,11 @@ export default [
       data: {
         getter: "getData",
         setter: "setData",
+      },
+
+      getsockname: {
+        fn: "getsockname",
+        length: 1,
       },
     },
     finalize: true,

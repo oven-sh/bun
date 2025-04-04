@@ -6,7 +6,7 @@
  * ```ts
  * import { Database } from 'bun:sqlite';
  *
- * var db = new Database('app.db');
+ * const db = new Database('app.db');
  * db.query('SELECT * FROM users WHERE name = ?').all('John');
  * // => [{ id: 1, name: 'John' }]
  * ```
@@ -24,42 +24,44 @@
  * | `null` | `NULL` |
  */
 declare module "bun:sqlite" {
+  /**
+   * A SQLite3 database
+   *
+   * @example
+   * ```ts
+   * const db = new Database("mydb.sqlite");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open an in-memory database
+   *
+   * ```ts
+   * const db = new Database(":memory:");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open read-only
+   *
+   * ```ts
+   * const db = new Database("mydb.sqlite", {readonly: true});
+   * ```
+   *
+   * @category Database
+   */
   export class Database implements Disposable {
     /**
      * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
-     *
-     * @example
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open an in-memory database
-     *
-     * ```ts
-     * const db = new Database(":memory:");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open read-only
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite", {readonly: true});
-     * ```
-     *
-     * @category Database
      */
     constructor(
       filename?: string,

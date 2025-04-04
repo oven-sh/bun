@@ -56,9 +56,9 @@ The following properties and methods are implemented on mock functions.
 - [x] [mockFn.mock.instances](https://jestjs.io/docs/mock-function-api#mockfnmockinstances)
 - [x] [mockFn.mock.contexts](https://jestjs.io/docs/mock-function-api#mockfnmockcontexts)
 - [x] [mockFn.mock.lastCall](https://jestjs.io/docs/mock-function-api#mockfnmocklastcall)
-- [x] [mockFn.mockClear()](https://jestjs.io/docs/mock-function-api#mockfnmockclear)
-- [x] [mockFn.mockReset()](https://jestjs.io/docs/mock-function-api#mockfnmockreset)
-- [x] [mockFn.mockRestore()](https://jestjs.io/docs/mock-function-api#mockfnmockrestore)
+- [x] [mockFn.mockClear()](https://jestjs.io/docs/mock-function-api#mockfnmockclear) - Clears call history
+- [x] [mockFn.mockReset()](https://jestjs.io/docs/mock-function-api#mockfnmockreset) - Clears call history and removes implementation
+- [x] [mockFn.mockRestore()](https://jestjs.io/docs/mock-function-api#mockfnmockrestore) - Restores original implementation
 - [x] [mockFn.mockImplementation(fn)](https://jestjs.io/docs/mock-function-api#mockfnmockimplementationfn)
 - [x] [mockFn.mockImplementationOnce(fn)](https://jestjs.io/docs/mock-function-api#mockfnmockimplementationoncefn)
 - [x] [mockFn.mockName(name)](https://jestjs.io/docs/mock-function-api#mockfnmocknamename)
@@ -197,7 +197,59 @@ After resolution, the mocked module is stored in the ES Module registry **and** 
 
 The callback function is called lazily, only if the module is imported or required. This means that you can use `mock.module()` to mock modules that don't exist yet, and it means that you can use `mock.module()` to mock modules that are imported by other modules.
 
-## Restore all function mocks to their original values with `mock.restore()`
+### Module Mock Implementation Details
+
+Understanding how `mock.module()` works helps you use it more effectively:
+
+1. **Cache Interaction**: Module mocks interacts with both ESM and CommonJS module caches.
+
+2. **Lazy Evaluation**: The mock factory callback is only evaluated when the module is actually imported or required.
+
+3. **Path Resolution**: Bun automatically resolves the module specifier as though you were doing an import, supporting:
+   - Relative paths (`'./module'`)
+   - Absolute paths (`'/path/to/module'`)
+   - Package names (`'lodash'`)
+
+4. **Import Timing Effects**: 
+   - When mocking before first import: No side effects from the original module occur
+   - When mocking after import: The original module's side effects have already happened
+   - For this reason, using `--preload` is recommended for mocks that need to prevent side effects
+
+5. **Live Bindings**: Mocked ESM modules maintain live bindings, so changing the mock will update all existing imports
+
+## Global Mock Functions
+
+### Clear all mocks with `mock.clearAllMocks()`
+
+Reset all mock function state (calls, results, etc.) without restoring their original implementation:
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+const random1 = mock(() => Math.random());
+const random2 = mock(() => Math.random());
+
+test("clearing all mocks", () => {
+  random1();
+  random2();
+  
+  expect(random1).toHaveBeenCalledTimes(1);
+  expect(random2).toHaveBeenCalledTimes(1);
+  
+  mock.clearAllMocks();
+  
+  expect(random1).toHaveBeenCalledTimes(0);
+  expect(random2).toHaveBeenCalledTimes(0);
+  
+  // Note: implementations are preserved
+  expect(typeof random1()).toBe("number");
+  expect(typeof random2()).toBe("number");
+});
+```
+
+This resets the `.mock.calls`, `.mock.instances`, `.mock.contexts`, and `.mock.results` properties of all mocks, but unlike `mock.restore()`, it does not restore the original implementation.
+
+### Restore all function mocks with `mock.restore()`
 
 Instead of manually restoring each mock individually with `mockFn.mockRestore()`, restore all mocks with one command by calling `mock.restore()`. Doing so does not reset the value of modules overridden with `mock.module()`.
 
@@ -234,3 +286,28 @@ test('foo, bar, baz', () => {
   expect(bazSpy).toBe('baz');
 });
 ```
+
+## Vitest Compatibility
+
+For added compatibility with tests written for [Vitest](https://vitest.dev/), Bun provides the `vi` global object as an alias for parts of the Jest mocking API:
+
+```ts
+import { test, expect } from "bun:test";
+
+// Using the 'vi' alias similar to Vitest
+test("vitest compatibility", () => {
+  const mockFn = vi.fn(() => 42);
+  
+  mockFn();
+  expect(mockFn).toHaveBeenCalled();
+  
+  // The following functions are available on the vi object:
+  // vi.fn
+  // vi.spyOn
+  // vi.mock
+  // vi.restoreAllMocks
+  // vi.clearAllMocks
+});
+```
+
+This makes it easier to port tests from Vitest to Bun without having to rewrite all your mocks.

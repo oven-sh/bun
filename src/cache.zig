@@ -123,19 +123,19 @@ pub const Fs = struct {
         this: *Fs,
         _fs: *fs.FileSystem,
         path: [:0]const u8,
-        _: StoredFileDescriptorType,
-        _file_handle: ?StoredFileDescriptorType,
+        cached_file_descriptor: ?StoredFileDescriptorType,
         shared: *MutableString,
     ) !Entry {
         var rfs = _fs.fs;
 
-        const file_handle: std.fs.File = if (_file_handle) |__file|
-            std.fs.File{ .handle = __file }
-        else
-            try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+        const file_handle: std.fs.File = if (cached_file_descriptor) |fd| handle: {
+            const handle = std.fs.File{ .handle = fd };
+            try handle.seekTo(0);
+            break :handle handle;
+        } else try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
 
         defer {
-            if (rfs.needToCloseFiles() and _file_handle == null) {
+            if (rfs.needToCloseFiles() and cached_file_descriptor == null) {
                 file_handle.close();
             }
         }
@@ -203,6 +203,8 @@ pub const Fs = struct {
             } else {
                 file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
+        } else {
+            try file_handle.seekTo(0);
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.

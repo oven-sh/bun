@@ -342,13 +342,14 @@ pub const TSConfigJSON = struct {
                                                     allocator,
                                                 ) and
                                                     (has_base_url or
-                                                    TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(
-                                                    str,
-                                                    log,
-                                                    &source,
-                                                    allocator,
-                                                    expr.loc,
-                                                ))) {
+                                                        TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(
+                                                            str,
+                                                            log,
+                                                            &source,
+                                                            allocator,
+                                                            expr.loc,
+                                                        )))
+                                                {
                                                     values[count] = str;
                                                     count += 1;
                                                 }

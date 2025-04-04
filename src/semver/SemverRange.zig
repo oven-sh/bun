@@ -226,14 +226,14 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
     // not, check the same with right if right exists and has prerelease.
     pre_matched.* = pre_matched.* or
         (range.left.version.tag.hasPre() and
-        version.patch == range.left.version.patch and
-        version.minor == range.left.version.minor and
-        version.major == range.left.version.major) or
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
         (has_right and
-        range.right.version.tag.hasPre() and
-        version.patch == range.right.version.patch and
-        version.minor == range.right.version.minor and
-        version.major == range.right.version.major);
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
 
     if (!range.left.satisfies(version, range_buf, version_buf)) {
         return false;

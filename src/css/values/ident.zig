@@ -308,9 +308,9 @@ pub const CustomIdent = struct {
     ) PrintErr!void {
         const css_module_custom_idents_enabled = enabled_css_modules and
             if (dest.css_module) |*css_module|
-            css_module.config.custom_idents
-        else
-            false;
+                css_module.config.custom_idents
+            else
+                false;
         return dest.writeIdent(this.v, css_module_custom_idents_enabled);
     }
 

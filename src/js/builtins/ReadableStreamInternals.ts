@@ -1717,7 +1717,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
             return;
           }
 
-          if ($isPromise(promise) && $isPromiseResolved(promise)) {
+          if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
             clearImmediate(immediateTask);
             ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
             $assert(!$isPromise(value), "Expected a value, not a promise");

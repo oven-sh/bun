@@ -52,8 +52,21 @@ It is possible to specify a coverage threshold in `bunfig.toml`. If your test su
 coverageThreshold = 0.9
 
 # to set different thresholds for lines and functions
-coverageThreshold = { lines = 0.9, functions = 0.9 }
+coverageThreshold = { lines = 0.9, functions = 0.9, statements = 0.9 }
 ```
+
+Setting any of these thresholds enables `fail_on_low_coverage`, causing the test run to fail if coverage is below the threshold.
+
+### Exclude test files from coverage
+
+By default, test files themselves are included in coverage reports. You can exclude them with:
+
+```toml
+[test]
+coverageSkipTestFiles = true   # default false
+```
+
+This will exclude files matching test patterns (e.g., _.test.ts, _\_spec.js) from the coverage report.
 
 ### Sourcemaps
 
@@ -63,6 +76,14 @@ Internally, Bun transpiles all files by default, so Bun automatically generates 
 [test]
 coverageIgnoreSourcemaps = true   # default false
 ```
+
+### Coverage defaults
+
+By default, coverage reports:
+
+1. Exclude `node_modules` directories
+2. Exclude files loaded via non-JS/TS loaders (e.g., .css, .txt) unless a custom JS loader is specified
+3. Include test files themselves (can be disabled with `coverageSkipTestFiles = true` as shown above)
 
 ### Coverage reporters
 

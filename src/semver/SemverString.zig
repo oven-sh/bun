@@ -12,7 +12,7 @@ pub const String = extern struct {
         comptime {
             if (inlinable_buffer.len > max_inline_len or
                 inlinable_buffer.len == max_inline_len and
-                inlinable_buffer[max_inline_len - 1] >= 0x80)
+                    inlinable_buffer[max_inline_len - 1] >= 0x80)
             {
                 @compileError("string constant too long to be inlined");
             }

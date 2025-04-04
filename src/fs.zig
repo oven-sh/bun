@@ -1176,16 +1176,16 @@ pub const FileSystem = struct {
             fs: *RealFS,
             allocator: std.mem.Allocator,
             path: string,
-            _size: ?usize,
-            file: std.fs.File,
+            size_hint: ?usize,
+            std_file: std.fs.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !PathContentsPair {
-            FileSystem.setMaxFd(file.handle);
+            FileSystem.setMaxFd(std_file.handle);
+            const file = bun.sys.File.from(std_file);
 
-            var file_contents: []u8 = undefined;
-
+            var file_contents: []u8 = "";
             // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
             // This imposes a performance hit because not reading from disk is faster than reading from disk
             // Part of that hit is allocating a temporary buffer to store the file contents in
@@ -1194,7 +1194,7 @@ pub const FileSystem = struct {
                 shared_buffer.reset();
 
                 // Skip the extra file.stat() call when possible
-                var size = _size orelse (file.getEndPos() catch |err| {
+                var size = size_hint orelse (file.getEndPos() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 });
@@ -1212,7 +1212,7 @@ pub const FileSystem = struct {
                     }
                 }
 
-                var offset: u64 = 0;
+                var bytes_read: u64 = 0;
                 try shared_buffer.growBy(size + 1);
                 shared_buffer.list.expandToCapacity();
 
@@ -1221,17 +1221,14 @@ pub const FileSystem = struct {
                 // stream because we assume that this only realistically happens
                 // during HMR
                 while (true) {
-
                     // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                    const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
+                    const read_count = file.readAll(shared_buffer.list.items[bytes_read..]) catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
-                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
+                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + bytes_read];
                     file_contents = shared_buffer.list.items;
-                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                    debug("read({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                     if (comptime stream) {
                         // check again that stat() didn't change the file size
@@ -1241,12 +1238,12 @@ pub const FileSystem = struct {
                             return err;
                         };
 
-                        offset += read_count;
+                        bytes_read += read_count;
 
                         // don't infinite loop is we're still not reading more
                         if (read_count == 0) break;
 
-                        if (offset < new_size) {
+                        if (bytes_read < new_size) {
                             try shared_buffer.growBy(new_size - size);
                             shared_buffer.list.expandToCapacity();
                             size = new_size;
@@ -1266,28 +1263,23 @@ pub const FileSystem = struct {
                 }
             } else {
                 var initial_buf: [16384]u8 = undefined;
-                var prev_file_pos: ?u64 = null;
 
                 // Optimization: don't call stat() unless the file is big enough
                 // that we need to dynamically allocate memory to read it.
-                const initial_read = if (_size == null) brk: {
-                    var buf: []u8 = &initial_buf;
-                    prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(buf, 0) catch |err| {
+                const initial_read = if (size_hint == null) brk: {
+                    const buf: []u8 = &initial_buf;
+                    const read_count = file.readAll(buf).unwrap() catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
                     if (read_count + 1 < buf.len) {
-                        var allocation = try allocator.alloc(u8, read_count + 1);
-                        @memcpy(allocation[0..read_count], buf[0..read_count]);
-                        allocation[read_count] = 0;
+                        const allocation = try allocator.dupeZ(u8, buf[0..read_count]);
                         file_contents = allocation[0..read_count];
 
                         if (strings.BOM.detect(file_contents)) |bom| {
                             debug("Convert {s} BOM", .{@tagName(bom)});
                             file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
                         }
-                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
 
                         return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
                     }
@@ -1295,18 +1287,12 @@ pub const FileSystem = struct {
                     break :brk buf[0..read_count];
                 } else initial_buf[0..0];
 
-                if (comptime Environment.isWindows) {
-                    if (prev_file_pos == null) {
-                        prev_file_pos = try file.getPos();
-                    }
-                }
-
                 // Skip the extra file.stat() call when possible
-                const size = _size orelse (file.getEndPos() catch |err| {
+                const size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 });
-                debug("stat({d}) = {d}", .{ file.handle, size });
+                debug("stat({}) = {d}", .{ file.handle, size });
 
                 var buf = try allocator.alloc(u8, size + 1);
                 @memcpy(buf[0..initial_read.len], initial_read);
@@ -1318,13 +1304,12 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const read_count = file.preadAll(buf[initial_read.len..], initial_read.len) catch |err| {
+                const read_count = file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
-                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
                 file_contents = buf[0 .. read_count + initial_read.len];
-                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                debug("read({}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});
@@ -1414,12 +1399,23 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                var buf2: bun.PathBuffer = undefined;
-                var current_buf: *bun.PathBuffer = &buf2;
+                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf2);
+                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf3);
+
+                var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
+                var joining_buf: *bun.PathBuffer = buf3;
+
                 while (file.is_reparse_point) : (depth += 1) {
-                    const read = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
-                    std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
+                    var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
+                    if (std.fs.path.isAbsolute(read)) {
+                        std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
+                    } else {
+                        read = bun.path.joinAbsStringBufZ(std.fs.path.dirname(absolute_path_c) orelse absolute_path_c, joining_buf, &.{read}, .windows);
+                        std.mem.swap(*bun.PathBuffer, &joining_buf, &other_buf);
+                    }
                     file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
                     absolute_path_c = read;
 

@@ -74,9 +74,29 @@ test("it was 2020, for a moment.", () => {
 });
 ```
 
+## Get mocked time with `jest.now()`
+
+When you're using mocked time (with `setSystemTime` or `useFakeTimers`), you can use `jest.now()` to get the current mocked timestamp:
+
+```ts
+import { test, expect, jest } from "bun:test";
+
+test("get the current mocked time", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+  
+  expect(Date.now()).toBe(1577836800000); // Jan 1, 2020 timestamp
+  expect(jest.now()).toBe(1577836800000); // Same value
+  
+  jest.useRealTimers();
+});
+```
+
+This is useful when you need to access the mocked time directly without creating a new Date object.
+
 ## Set the time zone
 
-To change the time zone, either pass the `$TZ` environment variable to `bun test`.
+By default, the time zone for all `bun test` runs is set to UTC (`Etc/UTC`) unless overridden. To change the time zone, either pass the `$TZ` environment variable to `bun test`.
 
 ```sh
 TZ=America/Los_Angeles bun test

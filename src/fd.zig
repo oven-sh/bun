@@ -109,7 +109,14 @@ pub const FDImpl = packed struct {
         if (environment.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
-            bun.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
+            if (@intFromPtr(system_fd) > std.math.maxInt(SystemAsInt)) {
+                bun.Output.panic(
+                    \\FDImpl.fromSystem() called with a fd that is too large: 0x{x}
+                ,
+                    .{@intFromPtr(system_fd)},
+                );
+                return invalid;
+            }
         }
 
         return fromSystemWithoutAssertion(system_fd);

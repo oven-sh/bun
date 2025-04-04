@@ -117,10 +117,12 @@ export default [
       },
       exited: {
         getter: "getExited",
+        this: true,
       },
       stdio: {
         getter: "getStdio",
       },
     },
+    values: ["exitedPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],
   }),
 ];

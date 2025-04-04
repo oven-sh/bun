@@ -1190,6 +1190,11 @@ pub const VirtualMachine = struct {
             }
         }
 
+        // Node.js checks if this are set to "1" and no other value
+        if (map.get("NODE_PRESERVE_SYMLINKS")) |value| {
+            this.transpiler.resolver.opts.preserve_symlinks = bun.strings.eqlComptime(value, "1");
+        }
+
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
@@ -2090,6 +2095,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
         vm.transpiler.resolver.prefer_module_field = false;
+        vm.transpiler.resolver.opts.preserve_symlinks = opts.args.preserve_symlinks orelse false;
 
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,

@@ -5,7 +5,6 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
-#define _GNU_SOURCE
 #include <dlfcn.h>
 
 // libuv does the annoying thing of #undef'ing these

@@ -981,7 +981,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(
-        [](const Zig::GlobalObject::Initializer<Bun::JSCommonJSExtensions>& init) {
+        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 

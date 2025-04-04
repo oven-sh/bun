@@ -197,7 +197,7 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
 
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)
 {
-    JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    auto* extensions = jsCast<JSCommonJSExtensions*>(globalObject->lazyRequireExtensionsObject());
     extensions->m_registeredFunctions.append(JSC::WriteBarrier<Unknown>());
     extensions->m_registeredFunctions.last().set(globalObject->vm(), extensions, value);
     return extensions->m_registeredFunctions.size() - 1;
@@ -205,13 +205,13 @@ extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* glob
 
 extern "C" void JSCommonJSExtensions__setFunction(Zig::GlobalObject* globalObject, uint32_t index, JSC::JSValue value)
 {
-    JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    auto* extensions = jsCast<JSCommonJSExtensions*>(globalObject->lazyRequireExtensionsObject());
     extensions->m_registeredFunctions[index].set(globalObject->vm(), globalObject, value);
 }
 
 extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalObject, uint32_t index)
 {
-    JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    auto* extensions = jsCast<JSCommonJSExtensions*>(globalObject->lazyRequireExtensionsObject());
     ASSERT(extensions->m_registeredFunctions.size() > 0);
     if (extensions->m_registeredFunctions.size() == 1) {
         extensions->m_registeredFunctions.clear();

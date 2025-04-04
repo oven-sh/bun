@@ -553,6 +553,9 @@ export function ospath(path: string) {
  */
 export async function toMatchNodeModulesAt(lockfile: any, root: string) {
   function shouldSkip(pkg: any, dep: any): boolean {
+    // Band-aid as toMatchNodeModulesAt will sometimes ask this function
+    // if a package depends on itself
+    if (pkg?.name === dep?.name) return true;
     return (
       !pkg ||
       !pkg.resolution ||

@@ -2521,7 +2521,7 @@ pub const ModuleLoader = struct {
                     if (!is_allowed_to_use_internal_testing_apis)
                         return null;
                 }
-                return jsSyntheticModule(.InternalForTesting, specifier);
+                return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
             },
             .@"bun:wrap" => .{
                 .allocator = null,
@@ -2843,6 +2843,7 @@ pub const HardcodedModule = enum {
         path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
         node_builtin: bool = false,
+        node_only_prefix: bool = false,
 
         fn nodeEntry(path: [:0]const u8) struct { string, Alias } {
             return .{
@@ -2850,6 +2851,16 @@ pub const HardcodedModule = enum {
                 .{
                     .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
                     .node_builtin = true,
+                },
+            };
+        }
+        fn nodeEntryOnlyPrefix(path: [:0]const u8) struct { string, Alias } {
+            return .{
+                path,
+                .{
+                    .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
+                    .node_builtin = true,
+                    .node_only_prefix = true,
                 },
             };
         }
@@ -2912,7 +2923,7 @@ pub const HardcodedModule = enum {
             nodeEntry("node:worker_threads"),
             nodeEntry("node:zlib"),
             // New Node.js builtins only resolve from the prefixed one.
-            nodeEntry("node:test"),
+            nodeEntryOnlyPrefix("node:test"),
 
             nodeEntry("assert"),
             nodeEntry("assert/strict"),

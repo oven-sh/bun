@@ -1902,9 +1902,9 @@ fn NewLexer_(
             // Omit the trailing "*/" from the checks below
             const end_comment_text =
                 if (is_multiline_comment)
-                text.len - 2
-            else
-                text.len;
+                    text.len - 2
+                else
+                    text.len;
 
             if (has_legal_annotation or lexer.preserve_all_comments_before) {
                 if (is_multiline_comment) {

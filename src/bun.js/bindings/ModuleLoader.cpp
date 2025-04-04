@@ -578,7 +578,7 @@ void evaluateCommonJSCustomExtension(
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* extensions = jsCast<Bun::JSCommonJSExtensions*>(globalObject->lazyRequireExtensionsObject());
+    Bun::JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
     JSValue extension = extensions->m_registeredFunctions[extensionIndex].get();
 
     if (!extension) {

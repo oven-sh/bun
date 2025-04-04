@@ -80,6 +80,7 @@
 #include "JSBufferList.h"
 #include "JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
+#include "JSCommonJSExtensions.h"
 #include "JSCountQueuingStrategy.h"
 #include "JSCustomEvent.h"
 #include "JSDOMConvertBase.h"

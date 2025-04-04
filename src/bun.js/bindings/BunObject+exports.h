@@ -3,37 +3,37 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(argv) \
+    macro(assetPrefix) \
     macro(CryptoHasher) \
+    macro(CSRF) \
+    macro(cwd) \
+    macro(embeddedFiles) \
+    macro(enableANSIColors) \
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(hash) \
+    macro(inspect) \
+    macro(main) \
     macro(MD4) \
     macro(MD5) \
+    macro(origin) \
+    macro(s3) \
+    macro(S3Client) \
+    macro(semver) \
     macro(SHA1) \
     macro(SHA224) \
     macro(SHA256) \
     macro(SHA384) \
-    macro(SHA512) \
     macro(SHA512_256) \
-    macro(TOML) \
-    macro(Transpiler) \
-    macro(argv) \
-    macro(assetPrefix) \
-    macro(cwd) \
-    macro(enableANSIColors) \
-    macro(hash) \
-    macro(inspect) \
-    macro(main) \
-    macro(origin) \
+    macro(SHA512) \
     macro(stderr) \
     macro(stdin) \
     macro(stdout) \
+    macro(TOML) \
+    macro(Transpiler) \
     macro(unsafe) \
-    macro(semver) \
-    macro(embeddedFiles) \
-    macro(S3Client) \
-    macro(s3) \
-    macro(CSRF) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
@@ -72,6 +72,7 @@
     macro(shellEscape) \
     macro(createShellInterpreter) \
     macro(createParsedShellScript) \
+    macro(valkey) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

@@ -1178,6 +1178,8 @@ pub const EventLoopTimer = struct {
         WTFTimer,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        RedisConnectionTimeout,
+        RedisConnectionReconnect,
         SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
@@ -1194,6 +1196,8 @@ pub const EventLoopTimer = struct {
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
                 .SubprocessTimeout => JSC.Subprocess,
+                .RedisConnectionReconnect => JSC.API.Redis,
+                .RedisConnectionTimeout => JSC.API.Redis,
             };
         }
     } else enum {
@@ -1207,6 +1211,8 @@ pub const EventLoopTimer = struct {
         DNSResolver,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        RedisConnectionTimeout,
+        RedisConnectionReconnect,
         SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
@@ -1221,6 +1227,8 @@ pub const EventLoopTimer = struct {
                 .DNSResolver => DNSResolver,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
+                .RedisConnectionTimeout => JSC.API.Redis,
+                .RedisConnectionReconnect => JSC.API.Redis,
                 .SubprocessTimeout => JSC.Subprocess,
             };
         }
@@ -1279,6 +1287,8 @@ pub const EventLoopTimer = struct {
         switch (this.tag) {
             .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
             .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
+            .RedisConnectionTimeout => return @as(*JSC.API.Redis, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .RedisConnectionReconnect => return @as(*JSC.API.Redis, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
             inline else => |t| {
                 if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
                     @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");

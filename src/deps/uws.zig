@@ -1653,6 +1653,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
+        pub fn remotePort(this: ThisSocket) i32 {
+            return switch (this.socket) {
+                .connected => |socket| socket.remotePort(is_ssl),
+                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+            };
+        }
+
         /// `buf` cannot be longer than 2^31 bytes long.
         pub fn remoteAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {

@@ -301,5 +301,4 @@ void JSCommonJSExtensions::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSCommonJSExtensions);
 
-
 } // namespace Bun

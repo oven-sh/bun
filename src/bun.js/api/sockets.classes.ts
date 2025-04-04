@@ -152,6 +152,7 @@ function generate(ssl) {
         fn: "jsUnref",
         length: 0,
       },
+
       localFamily: {
         getter: "getLocalFamily",
         cache: true,
@@ -192,7 +193,6 @@ function generate(ssl) {
       },
       remotePort: {
         getter: "getRemotePort",
-        cache: true,
       },
 
       reload: {

@@ -489,7 +489,7 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: ?JSCommonJSModule,
+  parent: JSCommonJSModule | undefined,
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
@@ -649,6 +649,7 @@ declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
 declare function $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(value, expected): TypeError;
 declare function $ERR_CRYPTO_INCOMPATIBLE_KEY(name, value): Error;
 declare function $ERR_CHILD_PROCESS_IPC_REQUIRED(where): Error;
+declare function $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(message): Error;
 declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
 declare function $ERR_ASYNC_TYPE(name): TypeError;
 declare function $ERR_ASYNC_CALLBACK(name): TypeError;

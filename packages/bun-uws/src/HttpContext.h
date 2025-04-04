@@ -125,7 +125,7 @@ private:
             }
 
             /* Signal broken HTTP request only if we have a pending request */
-            if (httpResponseData->onAborted) {
+            if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 
@@ -235,7 +235,7 @@ private:
                 }
 
                 /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
-                if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted) {
+                if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted && !httpResponseData->socketData) {
                     /* Throw exception here? */
                     std::cerr << "Error: Returning from a request handler without responding or attaching an abort handler is forbidden!" << std::endl;
                     std::terminate();
@@ -365,11 +365,32 @@ private:
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
+            /* Attempt to drain the socket buffer before triggering onWritable callback */
+            size_t bufferedAmount = asyncSocket->getBufferedAmount();
+            if (bufferedAmount > 0) {
+                /* Try to flush pending data from the socket's buffer to the network */
+                bufferedAmount -= asyncSocket->flush();
+                
+                /* Check if there's still data waiting to be sent after flush attempt */
+                if (bufferedAmount > 0) {
+                    /* Socket buffer is not completely empty yet
+                    * - Reset the timeout to prevent premature connection closure
+                    * - This allows time for another writable event or new request
+                    * - Return the socket to indicate we're still processing
+                    */
+                    reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+                    return s;
+                }
+                /* If bufferedAmount is now 0, we've successfully flushed everything
+                * and will fall through to the next section of code
+                */
+            }
+            
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
                 us_socket_timeout(SSL, s, 0);
-
+                
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
                 bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
@@ -384,7 +405,7 @@ private:
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
-            /*auto [written, failed] = */asyncSocket->write(nullptr, 0, true, 0);
+            asyncSocket->flush();
 
             /* Should we close this connection after a response - and is this response really done? */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {

@@ -1018,7 +1018,7 @@ extern "C"
                         (uWS::OpCode)(unsigned char)opcode, compress);
   }
 
-  unsigned int uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)
+  size_t uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)
   {
     if (ssl)
     {
@@ -1593,33 +1593,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
                    { cb(ctx); });
   }
 
-  void uws_res_write_headers(int ssl, uws_res_r res, const StringPointer *names,
-                             const StringPointer *values, size_t count,
-                             const char *buf) nonnull_fn_decl;
-  void uws_res_write_headers(int ssl, uws_res_r res, const StringPointer *names,
-                             const StringPointer *values, size_t count,
-                             const char *buf)
-  {
-    if (ssl)
-    {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      for (size_t i = 0; i < count; i++)
-      {
-        uwsRes->writeHeader(stringViewFromC(&buf[names[i].off], names[i].len),
-                            stringViewFromC(&buf[values[i].off], values[i].len));
-      }
-    }
-    else
-    {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      for (size_t i = 0; i < count; i++)
-      {
-        uwsRes->writeHeader(stringViewFromC(&buf[names[i].off], names[i].len),
-                            stringViewFromC(&buf[values[i].off], values[i].len));
-      }
-    }
-  }
-
   void uws_res_uncork(int ssl, uws_res_r res)
   {
     if (ssl)
@@ -1776,6 +1749,25 @@ __attribute__((callback (corker, ctx)))
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
+
+    if (length == 0) return 0;
+    if (length == 4) {
+      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
+      *dest = &b[4];
+      *is_ipv6 = false;
+      return strlen(*dest);
+    } else {
+      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
+      *dest = &b[16];
+      *is_ipv6 = true;
+      return strlen(*dest);
+    }
+  }
+
+  uint64_t uws_res_get_local_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)
+  {
+    static thread_local char b[64];
+    auto length = us_get_local_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
     if (length == 0) return 0;
     if (length == 4) {

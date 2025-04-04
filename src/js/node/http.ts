@@ -27,6 +27,14 @@ const enum NodeHTTPBodyReadState {
   hasBufferedDataDuringPause = 1 << 3,
 }
 
+// Must be kept in sync with NodeHTTPResponse.Flags
+const enum NodeHTTPResponseFlags {
+  socket_closed = 1 << 0,
+  request_has_completed = 1 << 1,
+
+  closed_or_completed = socket_closed | request_has_completed,
+}
+
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
 const kEmitState = Symbol("emitState");
@@ -61,6 +69,7 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+const kCloseCallback = Symbol("closeCallback");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -71,8 +80,15 @@ const { Duplex, Readable, Stream } = require("node:stream");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject } = require("internal/validators");
-const { isIPv6 } = require("node:net");
+const {
+  validateFunction,
+  checkIsHttpToken,
+  validateLinkHeaderValue,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
+const { isIP, isIPv6 } = require("node:net");
+const dns = require("node:dns");
 const ObjectKeys = Object.keys;
 
 const {
@@ -341,7 +357,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const req = message?.req;
     if (req && !req.complete) {
       // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy(new ConnResetException("aborted"));
+      req.destroy();
     }
   }
   #onClose() {
@@ -400,15 +416,15 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   get localAddress() {
-    return this.address() ? "127.0.0.1" : undefined;
+    return this[kHandle]?.localAddress?.address;
   }
 
   get localFamily() {
-    return "IPv4";
+    return this[kHandle]?.localAddress?.family;
   }
 
   get localPort() {
-    return 80;
+    return this[kHandle]?.localAddress?.port;
   }
 
   get pending() {
@@ -607,13 +623,16 @@ const Server = function Server(options, callback) {
   this._unref = false;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
+  this[tlsSymbol] = null;
 
   if (typeof options === "function") {
     callback = options;
     options = {};
-  } else if (options == null || typeof options === "object") {
+  } else if (options == null) {
+    options = {};
+  } else {
+    validateObject(options, "options");
     options = { ...options };
-    this[tlsSymbol] = null;
     let key = options.key;
     if (key) {
       if (!isValidTLSArray(key)) {
@@ -669,8 +688,6 @@ const Server = function Server(options, callback) {
     } else {
       this[tlsSymbol] = null;
     }
-  } else {
-    throw new Error("bun-http-polyfill: invalid arguments");
   }
 
   this[optionsSymbol] = options;
@@ -699,6 +716,7 @@ function onRequestEvent(event) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const server: Server = this?.server;
+
   const socket: NodeHTTPServerSocket = this;
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
@@ -749,7 +767,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
-    if (typeof optionalCallback === "function") this.once("close", optionalCallback);
+    if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     server.stop();
   },
 
@@ -871,6 +889,8 @@ const ServerPrototype = {
     {
       const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
       const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+      const canUseInternalAssignSocket =
+        ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
       let isHTTPS = false;
       let server = this;
 
@@ -931,6 +951,9 @@ const ServerPrototype = {
             [kHandle]: handle,
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+          handle.onabort = onServerRequestEvent.bind(socket);
+          // start buffering data if any, the user will need to resume() or .on("data") to read it
+          handle.pause();
           drainMicrotasks();
 
           let capturedError;
@@ -946,7 +969,6 @@ const ServerPrototype = {
           let resolveFunction;
           let didFinish = false;
 
-          handle.onabort = onServerRequestEvent.bind(socket);
           const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
           let reachedRequestsLimit = false;
           if (isRequestsLimitSet) {
@@ -962,21 +984,38 @@ const ServerPrototype = {
           }
 
           socket[kRequest] = http_req;
+          const is_upgrade = http_req.headers.upgrade;
 
-          http_res.assignSocket(socket);
+          if (!is_upgrade) {
+            if (canUseInternalAssignSocket) {
+              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+              assignSocketInternal(http_res, socket);
+            } else {
+              http_res.assignSocket(socket);
+            }
+          }
+
           function onClose() {
             didFinish = true;
             resolveFunction && resolveFunction();
           }
 
-          http_res.once("close", onClose);
+          setCloseCallback(http_res, onClose);
           if (reachedRequestsLimit) {
             server.emit("dropRequest", http_req, socket);
             http_res.writeHead(503);
             http_res.end();
             socket.destroy();
-          } else if (http_req.headers.upgrade) {
+          } else if (is_upgrade) {
             server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            if (!socket._httpMessage) {
+              if (canUseInternalAssignSocket) {
+                // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+                assignSocketInternal(http_res, socket);
+              } else {
+                http_res.assignSocket(socket);
+              }
+            }
           } else if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
               server.emit("checkContinue", http_req, http_res);
@@ -992,14 +1031,14 @@ const ServerPrototype = {
 
           if (capturedError) {
             handle = undefined;
-            http_res.removeListener("close", onClose);
+            http_res[kCloseCallback] = undefined;
             http_res.detachSocket(socket);
             throw capturedError;
           }
 
           if (handle.finished || didFinish) {
             handle = undefined;
-            http_res.removeListener("close", onClose);
+            http_res[kCloseCallback] = undefined;
             http_res.detachSocket(socket);
             return;
           }
@@ -1821,6 +1860,7 @@ function emitCloseNT(self) {
   if (!self._closed) {
     self.destroyed = true;
     self._closed = true;
+    callCloseCallback(self);
     self.emit("close");
   }
 }
@@ -1828,6 +1868,7 @@ function emitCloseNT(self) {
 function emitCloseNTAndComplete(self) {
   if (!self._closed) {
     self._closed = true;
+    callCloseCallback(self);
     self.emit("close");
   }
 
@@ -1835,6 +1876,7 @@ function emitCloseNTAndComplete(self) {
 }
 
 function emitRequestCloseNT(self) {
+  callCloseCallback(self);
   self.emit("close");
 }
 
@@ -1907,6 +1949,10 @@ function callWriteHeadIfObservable(self, headerState) {
   }
 }
 
+function allowWritesToContinue() {
+  this._callPendingCallbacks();
+  this.emit("drain");
+}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -2004,6 +2050,12 @@ const ServerResponsePrototype = {
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);
 
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
+    }
     if (headerState !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -2097,6 +2149,13 @@ const ServerResponsePrototype = {
       }
     }
 
+    const flags = handle.flags;
+    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      // node.js will return true if the handle is closed but the internal state is not
+      // and will not throw or emit an error
+      return true;
+    }
+
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -2104,11 +2163,10 @@ const ServerResponsePrototype = {
         // If handle.writeHead throws, we don't want headersSent to be set to true.
         // So we set it here.
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-        result = handle.write(chunk, encoding);
+        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
       });
     } else {
-      result = handle.write(chunk, encoding);
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
     }
 
     if (result < 0) {
@@ -2153,10 +2211,10 @@ const ServerResponsePrototype = {
 
   detachSocket(socket) {
     if (socket._httpMessage === this) {
+      socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
       socket.removeListener("close", onServerResponseClose);
       socket._httpMessage = null;
     }
-
     this.socket = null;
   },
 
@@ -2254,6 +2312,13 @@ const ServerResponsePrototype = {
       handle.abort();
     }
     return this;
+  },
+
+  emit(event) {
+    if (event === "close") {
+      callCloseCallback(this);
+    }
+    return Stream.prototype.emit.$apply(this, arguments);
   },
 
   flushHeaders() {
@@ -2618,6 +2683,7 @@ function ClientRequest(input, options, cb) {
       }
       if (!this._closed) {
         this._closed = true;
+        callCloseCallback(this);
         this.emit("close");
       }
       if (!res.aborted && res.readable) {
@@ -2625,6 +2691,7 @@ function ClientRequest(input, options, cb) {
       }
     } else if (!this._closed) {
       this._closed = true;
+      callCloseCallback(this);
       this.emit("close");
     }
   };
@@ -2638,10 +2705,14 @@ function ClientRequest(input, options, cb) {
     }
   };
 
+  let fetching = false;
+
   const startFetch = (customBody?) => {
-    if (this[kFetchRequest] !== undefined) {
+    if (fetching) {
       return false;
     }
+
+    fetching = true;
 
     const method = this[kMethod];
 
@@ -2676,9 +2747,7 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    let [url, proxy] = getURL(host);
-
-    const go = url => {
+    const go = (url, proxy, softFail = false) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -2694,8 +2763,10 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      // no body and not finished
+      const isDuplex = customBody === undefined && !this.finished;
 
-      if (customBody === undefined) {
+      if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
@@ -2704,7 +2775,7 @@ function ClientRequest(input, options, cb) {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
-        } else {
+        } else if (isDuplex) {
           fetchOptions.body = async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();
@@ -2755,86 +2826,130 @@ function ClientRequest(input, options, cb) {
       }
 
       //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions)
-        .then(response => {
-          if (this.aborted) {
+      this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
+        if (this.aborted) {
+          maybeEmitClose();
+          return;
+        }
+
+        handleResponse = () => {
+          this[kFetchRequest] = null;
+          this[kClearTimeout]();
+          handleResponse = undefined;
+          const prevIsHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = response.url.startsWith("https:");
+          var res = (this.res = new IncomingMessage(response, {
+            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+            [reqSymbol]: this,
+          }));
+          isNextIncomingMessageHTTPS = prevIsHTTPS;
+          res.req = this;
+          process.nextTick(
+            (self, res) => {
+              // If the user did not listen for the 'response' event, then they
+              // can't possibly read the data, so we ._dump() it into the void
+              // so that the socket doesn't hang there in a paused state.
+              if (self.aborted || !self.emit("response", res)) {
+                res._dump();
+              }
+            },
+            this,
+            res,
+          );
+          maybeEmitClose();
+          if (res.statusCode === 304) {
+            res.complete = true;
             maybeEmitClose();
             return;
           }
+        };
 
-          handleResponse = () => {
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-            handleResponse = undefined;
-            const prevIsHTTPS = isNextIncomingMessageHTTPS;
-            isNextIncomingMessageHTTPS = response.url.startsWith("https:");
-            var res = (this.res = new IncomingMessage(response, {
-              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-              [reqSymbol]: this,
-            }));
-            isNextIncomingMessageHTTPS = prevIsHTTPS;
-            res.req = this;
-            process.nextTick(
-              (self, res) => {
-                // If the user did not listen for the 'response' event, then they
-                // can't possibly read the data, so we ._dump() it into the void
-                // so that the socket doesn't hang there in a paused state.
-                if (self.aborted || !self.emit("response", res)) {
-                  res._dump();
-                }
-              },
-              this,
-              res,
-            );
-            maybeEmitClose();
-            if (res.statusCode === 304) {
-              res.complete = true;
-              maybeEmitClose();
+        if (!keepOpen) {
+          handleResponse();
+        }
+
+        onEnd();
+      });
+
+      if (!softFail) {
+        // Don't emit an error if we're iterating over multiple possible addresses and we haven't reached the end yet.
+        // This is for the happy eyeballs implementation.
+        this[kFetchRequest]
+          .catch(err => {
+            // Node treats AbortError separately.
+            // The "abort" listener on the abort controller should have called this
+            if (isAbortError(err)) {
               return;
             }
-          };
 
-          if (!keepOpen) {
-            handleResponse();
-          }
+            if (!!$debug) globalReportError(err);
 
-          onEnd();
-        })
-        .catch(err => {
-          // Node treats AbortError separately.
-          // The "abort" listener on the abort controller should have called this
-          if (isAbortError(err)) {
-            return;
-          }
+            this.emit("error", err);
+          })
+          .finally(() => {
+            if (!keepOpen) {
+              fetching = false;
+              this[kFetchRequest] = null;
+              this[kClearTimeout]();
+            }
+          });
+      }
 
-          if (!!$debug) globalReportError(err);
-
-          this.emit("error", err);
-        })
-        .finally(() => {
-          if (!keepOpen) {
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-          }
-        });
+      return this[kFetchRequest];
     };
 
-    if (options.lookup) {
-      options.lookup(options.hostname, (err, address, family) => {
-        if (err) {
-          if (!!$debug) globalReportError(err);
-          this.emit("error", err);
-        } else {
-          [url, proxy] = getURL(address);
-          if (!this.hasHeader("Host")) {
-            this.setHeader("Host", options.hostname);
-          }
-          go(url);
-        }
-      });
-    } else {
-      go(url);
+    if (isIP(host) || !options.lookup) {
+      // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      const [url, proxy] = getURL(host);
+      go(url, proxy, false);
+      return true;
     }
+
+    options.lookup(host, { all: true }, (err, results) => {
+      if (err) {
+        if (!!$debug) globalReportError(err);
+        this.emit("error", err);
+        return;
+      }
+
+      let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
+
+      const fail = (message, name, code, syscall) => {
+        const error = new Error(message);
+        error.name = name;
+        error.code = code;
+        error.syscall = syscall;
+        if (!!$debug) globalReportError(error);
+        this.emit("error", error);
+      };
+
+      if (candidates.length === 0) {
+        fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+        return;
+      }
+
+      if (!this.hasHeader("Host")) {
+        this.setHeader("Host", `${host}:${port}`);
+      }
+
+      // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.
+      // All addresses except for the last are allowed to "soft fail" -- instead of reporting
+      // an error to the user, we'll just skip to the next address.
+      // The last address is required to work, and if it fails we'll throw an error.
+
+      const iterate = () => {
+        if (candidates.length === 0) {
+          // If we get to this point, it means that none of the addresses could be connected to.
+          fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+          return;
+        }
+
+        const [url, proxy] = getURL(candidates.shift().address);
+        go(url, proxy, candidates.length > 0).catch(iterate);
+      };
+
+      iterate();
+    });
 
     return true;
   };
@@ -3455,14 +3570,23 @@ function _writeHead(statusCode, reason, obj, response) {
   {
     // Slow-case: when progressive API and header fields are passed.
     let k;
-    if (Array.isArray(obj)) {
-      if (obj.length % 2 !== 0) {
-        throw new Error("raw headers must have an even number of elements");
-      }
 
-      for (let n = 0; n < obj.length; n += 2) {
-        k = obj[n + 0];
-        if (k) response.setHeader(k, obj[n + 1]);
+    if ($isArray(obj)) {
+      // Append all the headers provided in the array:
+      if (obj.length && $isArray(obj[0])) {
+        for (let i = 0; i < obj.length; i++) {
+          const k = obj[i];
+          if (k) response.appendHeader(k[0], k[1]);
+        }
+      } else {
+        if (obj.length % 2 !== 0) {
+          throw new Error("raw headers must have an even number of elements");
+        }
+
+        for (let n = 0; n < obj.length; n += 2) {
+          k = obj[n + 0];
+          if (k) response.setHeader(k, obj[n + 1]);
+        }
       }
     } else if (obj) {
       const keys = Object.keys(obj);
@@ -3523,6 +3647,7 @@ function request(url, options, cb) {
 }
 
 function emitCloseServer(self: Server) {
+  callCloseCallback(self);
   self.emit("close");
 }
 function emitCloseNTServer(this: Server) {
@@ -3577,6 +3702,33 @@ function emitAbortNextTick(self) {
   self.emit("abort");
 }
 
+function callCloseCallback(self) {
+  if (self[kCloseCallback]) {
+    self[kCloseCallback]();
+    self[kCloseCallback] = undefined;
+  }
+}
+
+function setCloseCallback(self, callback) {
+  if (callback === self[kCloseCallback]) {
+    return;
+  }
+  if (self[kCloseCallback]) {
+    throw new Error("Close callback already set");
+  }
+  self[kCloseCallback] = callback;
+}
+
+function assignSocketInternal(self, socket) {
+  if (socket._httpMessage) {
+    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+  }
+  socket._httpMessage = self;
+  setCloseCallback(socket, onServerResponseClose);
+  self.socket = socket;
+  self.emit("socket", socket);
+}
+
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 
@@ -3600,6 +3752,7 @@ const http_exports = {
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
+    validateInteger(max, "max", 1);
     $debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   globalAgent,

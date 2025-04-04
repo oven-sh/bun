@@ -2231,6 +2231,7 @@ pub const Flags = packed struct {
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
+    defer_fail_until_connecting_is_complete: bool = false,
 };
 
 // TODO: reduce the size of this struct
@@ -2337,6 +2338,10 @@ pub fn hashHeaderConst(comptime name: string) u64 {
 
     return hasher.final();
 }
+// for each request we need this hashs, putting on top of the file to avoid exceeding comptime quota limit
+const authorization_header_hash = hashHeaderConst("Authorization");
+const proxy_authorization_header_hash = hashHeaderConst("Proxy-Authorization");
+const cookie_header_hash = hashHeaderConst("Cookie");
 
 pub const Encoding = enum {
     identity,
@@ -3081,6 +3086,10 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    // mark that we are connecting
+    this.flags.defer_fail_until_connecting_is_complete = true;
+    // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
+    defer this.completeConnectingProcess();
     if (comptime Environment.allow_assert) {
         // Comparing `ptr` is safe here because it is only done if the vtable pointers are equal,
         // which means they are both mimalloc arenas and therefore have non-undefined context
@@ -3774,6 +3783,20 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     this.closeAndFail(error.Aborted, comptime is_ssl, socket);
 }
 
+fn completeConnectingProcess(this: *HTTPClient) void {
+    if (this.flags.defer_fail_until_connecting_is_complete) {
+        this.flags.defer_fail_until_connecting_is_complete = false;
+        if (this.state.stage == .fail) {
+            const callback = this.result_callback;
+            const result = this.toResult();
+            this.state.reset(this.allocator);
+            this.flags.proxy_tunneling = false;
+
+            callback.run(@fieldParentPtr("client", this), result);
+        }
+    }
+}
+
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
 
@@ -3788,12 +3811,14 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         this.state.fail = err;
         this.state.stage = .fail;
 
-        const callback = this.result_callback;
-        const result = this.toResult();
-        this.state.reset(this.allocator);
-        this.flags.proxy_tunneling = false;
+        if (!this.flags.defer_fail_until_connecting_is_complete) {
+            const callback = this.result_callback;
+            const result = this.toResult();
+            this.state.reset(this.allocator);
+            this.flags.proxy_tunneling = false;
 
-        callback.run(@fieldParentPtr("client", this), result);
+            callback.run(@fieldParentPtr("client", this), result);
+        }
     }
 }
 
@@ -4578,20 +4603,36 @@ pub fn handleResponseMetadata(
                     // locationURL’s origin, then for each headerName of CORS
                     // non-wildcard request-header name, delete headerName from
                     // request’s header list.
+                    // var authorization_removed = false;
+                    // var proxy_authorization_removed = false;
+                    // var cookie_removed = false;
+                    // References:
+                    // https://github.com/nodejs/undici/commit/6805746680d27a5369d7fb67bc05f95a28247d75#diff-ea7696549c3a0b60a4a7e07cc79b6d4e950c7cb1068d47e368a510967d77e7e5R206
+                    // https://github.com/denoland/deno/commit/7456255cd10286d71363fc024e51b2662790448a#diff-6e35f325f0a4e1ae3214fde20c9108e9b3531df5d284ba3c93becb99bbfc48d5R70
                     if (!is_same_origin and this.header_entries.len > 0) {
-                        const authorization_header_hash = comptime hashHeaderConst("Authorization");
-                        for (this.header_entries.items(.name), 0..) |name_ptr, i| {
-                            const name = this.headerStr(name_ptr);
-                            if (name.len == "Authorization".len) {
-                                const hash = hashHeaderName(name);
-                                if (hash == authorization_header_hash) {
-                                    this.header_entries.orderedRemove(i);
-                                    break;
+                        const headers_to_remove: []const struct {
+                            name: []const u8,
+                            hash: u64,
+                        } = &.{
+                            .{ .name = "Authorization", .hash = authorization_header_hash },
+                            .{ .name = "Proxy-Authorization", .hash = proxy_authorization_header_hash },
+                            .{ .name = "Cookie", .hash = cookie_header_hash },
+                        };
+                        inline for (headers_to_remove) |header| {
+                            const names = this.header_entries.items(.name);
+
+                            for (names, 0..) |name_ptr, i| {
+                                const name = this.headerStr(name_ptr);
+                                if (name.len == header.name.len) {
+                                    const hash = hashHeaderName(name);
+                                    if (hash == header.hash) {
+                                        this.header_entries.orderedRemove(i);
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
-
                     this.state.flags.is_redirect_pending = true;
                     if (this.method.hasRequestBody()) {
                         this.state.flags.resend_request_body_on_redirect = true;

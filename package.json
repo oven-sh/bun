@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.6",
+  "version": "1.2.9",
   "workspaces": [
     "./packages/bun-types"
   ],
@@ -31,6 +31,7 @@
   },
   "scripts": {
     "build": "bun run build:debug",
+    "bd": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
     "build:debug": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",
     "build:valgrind": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_BASELINE=ON -ENABLE_VALGRIND=ON -B build/debug-valgrind",
     "build:release": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -B build/release",
@@ -44,6 +45,7 @@
     "build:release:with_logs": "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
     "css-properties": "bun run src/css/properties/generate_properties.ts",
+    "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
     "bump": "bun ./scripts/bump.ts",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "bun run prettier",

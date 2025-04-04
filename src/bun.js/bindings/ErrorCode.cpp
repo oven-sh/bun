@@ -647,6 +647,24 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
+JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_type, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::StringBuilder builder;
+    builder.append("The \""_s);
+    builder.append(arg_name);
+    builder.append("\" argument must be of type "_s);
+    builder.append(expected_type);
+    builder.append(" or an instance of "_s);
+    builder.append(expected_instance_types);
+    builder.append(". Received "_s);
+    determineSpecificType(vm, globalObject, builder, val_actual_value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    return {};
+}
+
 // When you want INVALID_ARG_TYPE to say "The argument must be an instance of X. Received Y." instead of "The argument must be of type X. Received Y."
 JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
@@ -1992,6 +2010,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Unsupported fd type: "_s, str0);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_FD_TYPE, message));
+    }
+
+    case Bun::ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " maxBuffer length exceeded"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, message));
     }
 
     case ErrorCode::ERR_IPC_DISCONNECTED:

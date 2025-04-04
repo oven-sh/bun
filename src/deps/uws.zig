@@ -1,11 +1,6 @@
 const bun = @import("root").bun;
-const Api = bun.ApiSchema;
 const std = @import("std");
 const Environment = bun.Environment;
-pub const u_int8_t = u8;
-pub const u_int16_t = c_ushort;
-pub const u_int32_t = c_uint;
-pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
@@ -21,7 +16,7 @@ const uws = @This();
 const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
 const JSC = bun.JSC;
-const EventLoopTimer = @import("../bun.js//api//Timer.zig").EventLoopTimer;
+const EventLoopTimer = @import("../bun.js/api/Timer.zig").EventLoopTimer;
 const WriteResult = union(enum) {
     want_more: usize,
     backpressure: usize,
@@ -1659,6 +1654,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
+        pub fn remotePort(this: ThisSocket) i32 {
+            return switch (this.socket) {
+                .connected => |socket| socket.remotePort(is_ssl),
+                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+            };
+        }
+
         /// `buf` cannot be longer than 2^31 bytes long.
         pub fn remoteAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
@@ -1666,13 +1668,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     bun.Output.panic("Failed to get socket's remote address: {s}", .{@errorName(e)});
                 },
                 .pipe, .upgradedDuplex, .connecting, .detached => null,
-            };
-        }
-
-        pub fn remotePort(this: ThisSocket) i32 {
-            return switch (this.socket) {
-                .connected => |socket| socket.remotePort(is_ssl),
-                .pipe, .upgradedDuplex, .connecting, .detached => 0,
             };
         }
 
@@ -2815,7 +2810,7 @@ pub const AnyWebSocket = union(enum) {
             compress,
         );
     }
-    pub fn getBufferedAmount(this: AnyWebSocket) u32 {
+    pub fn getBufferedAmount(this: AnyWebSocket) usize {
         return switch (this) {
             .ssl => uws_ws_get_buffered_amount(1, this.ssl.raw()),
             .tcp => uws_ws_get_buffered_amount(0, this.tcp.raw()),
@@ -3805,66 +3800,6 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_cork(ssl_flag, res.downcast(), optional_data, Wrapper.handle);
             }
 
-            // pub fn onSocketWritable(
-            //     res: *Response,
-            //     comptime UserDataType: type,
-            //     comptime handler: fn (UserDataType, fd: i32) void,
-            //     optional_data: UserDataType,
-            // ) void {
-            //     const Wrapper = struct {
-            //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
-            //             if (comptime UserDataType == void) {
-            //                 @call(bun.callmod_inline, handler, .{
-            //                     {},
-            //                     fd,
-            //                 });
-            //             } else {
-            //                 @call(bun.callmod_inline, handler, .{
-            //                     @ptrCast(
-            //                         UserDataType,
-            //                         @alignCast( user_data.?),
-            //                     ),
-            //                     fd,
-            //                 });
-            //             }
-            //         }
-            //     };
-
-            //     const OnWritable = struct {
-            //         pub fn handle(socket: *Socket) callconv(.C) ?*Socket {
-            //             if (comptime UserDataType == void) {
-            //                 @call(bun.callmod_inline, handler, .{
-            //                     {},
-            //                     fd,
-            //                 });
-            //             } else {
-            //                 @call(bun.callmod_inline, handler, .{
-            //                     @ptrCast(
-            //                         UserDataType,
-            //                         @alignCast( user_data.?),
-            //                     ),
-            //                     fd,
-            //                 });
-            //             }
-
-            //             return socket;
-            //         }
-            //     };
-
-            //     var socket_ctx = us_socket_context(ssl_flag, uws_res_get_native_handle(ssl_flag, res)).?;
-            //     var child = us_create_child_socket_context(ssl_flag, socket_ctx, 8);
-
-            // }
-
-            pub fn writeHeaders(
-                res: *Response,
-                names: []const Api.StringPointer,
-                values: []const Api.StringPointer,
-                buf: []const u8,
-            ) void {
-                uws_res_write_headers(ssl_flag, res.downcast(), names.ptr, values.ptr, values.len, buf.ptr);
-            }
-
             pub fn upgrade(
                 res: *Response,
                 comptime Data: type,
@@ -4022,7 +3957,7 @@ extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8
 extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
 extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize) bool;
 extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
-extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) c_uint;
+extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) usize;
 extern fn uws_ws_get_remote_address(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 extern fn uws_res_get_remote_address_info(res: *uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
@@ -4077,7 +4012,6 @@ extern fn uws_res_upgrade(
     ws: ?*uws_socket_context_t,
 ) *Socket;
 extern fn uws_res_cork(i32, res: *uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
-extern fn uws_res_write_headers(i32, res: *uws_res, names: [*]const Api.StringPointer, values: [*]const Api.StringPointer, count: usize, buf: [*]const u8) void;
 pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);

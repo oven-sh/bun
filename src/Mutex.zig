@@ -59,11 +59,11 @@ else
 
 pub const ReleaseImpl =
     if (builtin.os.tag == .windows)
-    WindowsImpl
-else if (builtin.os.tag.isDarwin())
-    DarwinImpl
-else
-    FutexImpl;
+        WindowsImpl
+    else if (builtin.os.tag.isDarwin())
+        DarwinImpl
+    else
+        FutexImpl;
 
 pub const ExternImpl = ReleaseImpl.Type;
 

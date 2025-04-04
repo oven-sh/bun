@@ -1098,6 +1098,10 @@ interface Console {
 
 declare var console: Console;
 
+interface ImportMetaEnv {
+  [key: string]: string | undefined;
+}
+
 interface ImportMeta {
   /**
    * `file://` url string for the current module.
@@ -1130,7 +1134,7 @@ interface ImportMeta {
    * import.meta.env === process.env
    * ```
    */
-  readonly env: Bun.Env;
+  readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
    * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead

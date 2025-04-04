@@ -2997,7 +2997,14 @@ pub const BundleV2 = struct {
 
             if (ast.target.isBun()) {
                 if (JSC.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
-                    import_record.path.text = replacement.path;
+                    // When bundling node builtins, remove the "node:" prefix.
+                    // This supports special use cases where the bundle is put
+                    // into a non-node module resolver that doesn't support
+                    // node's prefix. https://github.com/oven-sh/bun/issues/18545
+                    import_record.path.text = if (replacement.node_builtin and !replacement.node_only_prefix)
+                        replacement.path[5..]
+                    else
+                        replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;

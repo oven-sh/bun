@@ -5,6 +5,9 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
+#if defined(__GNUC__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include <dlfcn.h>
 
 // libuv does the annoying thing of #undef'ing these

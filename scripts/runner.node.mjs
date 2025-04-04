@@ -23,7 +23,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { userInfo } from "node:os";
+import { hostname, userInfo } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -33,6 +33,7 @@ import {
   getCommit,
   getEnv,
   getFileUrl,
+  getHostname,
   getLoggedInUserCountOrDetails,
   getSecret,
   getShell,
@@ -1732,7 +1733,6 @@ function generateJUnitReport(outfile, results) {
   const totalTests = results.length;
   const totalFailures = results.filter(r => r.status === "fail").length;
   const timestamp = new Date().toISOString();
-  const hostname = require("os").hostname();
 
   // Calculate total time
   const totalTime = results.reduce((sum, result) => {
@@ -1760,7 +1760,7 @@ function generateJUnitReport(outfile, results) {
         skipped: 0,
         time: 0,
         timestamp: timestamp,
-        hostname: hostname,
+        hostname: getHostname(),
         stdout: stdout || stdoutPreview || "",
       });
     }

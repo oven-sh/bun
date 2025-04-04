@@ -19,6 +19,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  unlink,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -138,6 +139,16 @@ const { values: options, positionals: filters } = parseArgs({
 });
 
 const cliOptions = options;
+
+if (cliOptions.junit) {
+  cliOptions["junit-temp-dir"] = join(tmpdir(), cliOptions["junit-temp-dir"]);
+  try {
+    mkdirSync(cliOptions["junit-temp-dir"], { recursive: true });
+  } catch (err) {
+    cliOptions.junit = false;
+    console.error(`Error creating JUnit temp directory: ${err.message}`);
+  }
+}
 
 if (options["quiet"]) {
   isQuiet = true;
@@ -801,23 +812,17 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
     // Give the file system a moment to finish writing the file
     if (existsSync(junitFilePath)) {
-      try {
-        const uploadSuccess = await uploadJUnitToBuildKite(junitFilePath);
-        if (uploadSuccess) {
-          // Delete the file after successful upload to prevent redundant uploads
-          try {
-            unlinkSync(junitFilePath);
-            !isQuiet && console.log(`Uploaded and deleted JUnit report for ${testPath}`);
-          } catch (unlinkError) {
-            !isQuiet &&
-              console.log(`Uploaded but failed to delete JUnit report for ${testPath}: ${unlinkError.message}`);
-          }
-        }
-      } catch (err) {
-        console.error(`Error uploading JUnit report for ${testPath}:`, err);
-      }
-    } else {
-      !isQuiet && console.log(`Warning: JUnit file not found at ${junitFilePath} after test completion`);
+      uploadJUnitToBuildKite(junitFilePath)
+        .then(uploadSuccess => {
+          unlink(junitFilePath, () => {
+            if (!uploadSuccess) {
+              console.error(`Failed to upload JUnit report for ${testPath}`);
+            }
+          });
+        })
+        .catch(err => {
+          console.error(`Error uploading JUnit report for ${testPath}:`, err);
+        });
     }
   }
 

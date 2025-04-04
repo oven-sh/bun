@@ -44,6 +44,7 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+  BUN_DEBUG_linkerctx: "0",
 };
 
 const ciEnv = { ...bunEnv };

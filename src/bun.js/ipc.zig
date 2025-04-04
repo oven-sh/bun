@@ -796,6 +796,17 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             }
         }
 
+        pub fn onFd(
+            this: *Context,
+            socket: Socket,
+            fd: c_int,
+        ) void {
+            _ = this;
+            _ = socket;
+            _ = fd;
+            log("onFd", .{});
+        }
+
         pub fn onWritable(
             context: *Context,
             socket: Socket,

@@ -838,6 +838,14 @@ void us_socket_context_on_data(int ssl, struct us_socket_context_t *context, str
     context->on_data = on_data;
 }
 
+void us_socket_context_on_fd(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_fd)(struct us_socket_t *s, int fd)) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) return;
+#endif
+
+    context->on_fd = on_fd;
+}
+
 void us_socket_context_on_writable(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_writable)(struct us_socket_t *s)) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {

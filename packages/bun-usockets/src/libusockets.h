@@ -282,6 +282,8 @@ void us_socket_context_on_close(int ssl, us_socket_context_r context,
     struct us_socket_t *(*on_close)(us_socket_r s, int code, void *reason));
 void us_socket_context_on_data(int ssl, us_socket_context_r context,
     struct us_socket_t *(*on_data)(us_socket_r s, char *data, int length));
+void us_socket_context_on_fd(int ssl, us_socket_context_r context,
+    struct us_socket_t *(*on_fd)(us_socket_r s, int fd));
 void us_socket_context_on_writable(int ssl, us_socket_context_r context,
     struct us_socket_t *(*on_writable)(us_socket_r s));
 void us_socket_context_on_timeout(int ssl, us_socket_context_r context,

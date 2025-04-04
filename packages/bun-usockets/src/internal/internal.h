@@ -278,6 +278,7 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip,
                                  int ip_length);
   struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
+  struct us_socket_t *(*on_fd)(struct us_socket_t *, int fd);
   struct us_socket_t *(*on_writable)(struct us_socket_t *);
   struct us_socket_t *(*on_close)(struct us_socket_t *, int code, void *reason);
   // void (*on_timeout)(struct us_socket_context *);

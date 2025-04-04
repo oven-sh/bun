@@ -1966,6 +1966,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
             if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
+            if (comptime @hasDecl(Type, "onFd") and @typeInfo(@TypeOf(Type.onFd)) != .null)
+                us_socket_context_on_fd(ssl_int, ctx, SocketHandler.on_fd);
             if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
             if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
@@ -2035,6 +2037,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                         buf.?[0..@as(usize, @intCast(len))],
+                    );
+                    return socket;
+                }
+                pub fn on_fd(socket: *Socket, file_descriptor: c_int) callconv(.C) ?*Socket {
+                    Fields.onFd(
+                        getValue(socket),
+                        ThisSocket.from(socket),
+                        file_descriptor,
                     );
                     return socket;
                 }
@@ -2111,6 +2121,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
             if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
+            if (comptime @hasDecl(Type, "onFd") and @typeInfo(@TypeOf(Type.onFd)) != .null)
+                us_socket_context_on_fd(ssl_int, ctx, SocketHandler.on_fd);
             if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
             if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
@@ -2234,6 +2246,9 @@ pub const SocketContext = opaque {
             fn data(socket: *Socket, _: [*c]u8, _: i32) callconv(.C) ?*Socket {
                 return socket;
             }
+            fn fd(socket: *Socket, _: c_int) callconv(.C) ?*Socket {
+                return socket;
+            }
             fn writable(socket: *Socket) callconv(.C) ?*Socket {
                 return socket;
             }
@@ -2257,6 +2272,7 @@ pub const SocketContext = opaque {
         us_socket_context_on_open(ssl_int, ctx, DummyCallbacks.open);
         us_socket_context_on_close(ssl_int, ctx, DummyCallbacks.close);
         us_socket_context_on_data(ssl_int, ctx, DummyCallbacks.data);
+        us_socket_context_on_fd(ssl_int, ctx, DummyCallbacks.fd);
         us_socket_context_on_writable(ssl_int, ctx, DummyCallbacks.writable);
         us_socket_context_on_timeout(ssl_int, ctx, DummyCallbacks.timeout);
         us_socket_context_on_connect_error(ssl_int, ctx, DummyCallbacks.connect_error);
@@ -2574,6 +2590,7 @@ pub extern fn us_socket_context_unref(ssl: i32, context: ?*SocketContext) void;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_fd(ssl: i32, context: ?*SocketContext, on_fd: *const fn (*Socket, c_int) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_writable: *const fn (*Socket) callconv(.C) ?*Socket) void;
 
 extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_handshake: *const fn (*Socket, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void, ?*anyopaque) void;

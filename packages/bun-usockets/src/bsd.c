@@ -725,6 +725,18 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     }
 }
 
+ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
+    while (1) {
+        ssize_t ret = recvmsg(fd, msg, flags);
+
+        if (UNLIKELY(IS_EINTR(ret))) {
+            continue;
+        }
+
+        return ret;
+    }
+}
+
 #if !defined(_WIN32)
 #include <sys/uio.h>
 

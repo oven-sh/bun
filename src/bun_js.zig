@@ -309,6 +309,8 @@ pub const Run = struct {
             this.entry_path = vm.transpiler.fs.top_level_dir;
         }
 
+        var printed_sourcemap_warning_and_version = false;
+
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
@@ -322,6 +324,7 @@ pub const Run = struct {
                     vm.onExit();
 
                     if (run.any_unhandled) {
+                        printed_sourcemap_warning_and_version = true;
                         bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                         Output.prettyErrorln(
@@ -352,6 +355,7 @@ pub const Run = struct {
             vm.exit_handler.exit_code = 1;
             vm.onExit();
             if (run.any_unhandled) {
+                printed_sourcemap_warning_and_version = true;
                 bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                 Output.prettyErrorln(
@@ -439,7 +443,7 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         vm.onExit();
 
-        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+        if (this.any_unhandled and !printed_sourcemap_warning_and_version) {
             this.vm.exit_handler.exit_code = 1;
 
             bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();

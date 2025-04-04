@@ -2382,6 +2382,7 @@ pub const VirtualMachine = struct {
                 .source_url = specifier.createIfDifferent(source_url),
                 .allocator = null,
                 .source_code_needs_deref = false,
+                .module_info = null,
             };
         }
         var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -2396,6 +2397,7 @@ pub const VirtualMachine = struct {
             .source_url = specifier.createIfDifferent(source_url),
             .allocator = source,
             .source_code_needs_deref = false,
+            .module_info = null,
         };
     }
 

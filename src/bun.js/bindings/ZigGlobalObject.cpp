@@ -4645,9 +4645,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
 
 napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
 {
-    auto& envs = m_scriptExecutionContext->napiEnvs();
-    envs.append(std::make_unique<napi_env__>(this, mod));
-    return envs.last().get();
+    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
+    return m_napiEnvs.last().get();
 }
 
 napi_env GlobalObject::makeNapiEnvForFFI()
@@ -4666,7 +4665,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 
 bool GlobalObject::hasNapiFinalizers() const
 {
-    for (const auto& env : m_scriptExecutionContext->napiEnvs()) {
+    for (const auto& env : m_napiEnvs) {
         if (env->hasFinalizers()) {
             return true;
         }

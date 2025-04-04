@@ -9,7 +9,6 @@
 #include "EventLoopTask.h"
 #include "BunBroadcastChannelRegistry.h"
 #include <wtf/LazyRef.h>
-#include "napi.h"
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {

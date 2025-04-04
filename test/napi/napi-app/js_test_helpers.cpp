@@ -320,23 +320,6 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   return array;
 }
 
-static napi_value add_finalizer_to_object(const Napi::CallbackInfo &info) {
-  napi_env env = info.Env();
-  napi_value js_object = info[0];
-  int *native_object = new int{123};
-  NODE_API_CALL(env,
-                napi_add_finalizer(
-                    env, js_object, static_cast<void *>(native_object),
-                    [](napi_env, void *data, void *) {
-                      auto casted = static_cast<int *>(data);
-                      printf("add_finalizer_to_object finalizer data = %d\n",
-                             *casted);
-                      delete casted;
-                    },
-                    nullptr, nullptr));
-  return ok(env);
-}
-
 void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
@@ -350,7 +333,6 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, try_add_tag);
   REGISTER_FUNCTION(env, exports, check_tag);
   REGISTER_FUNCTION(env, exports, create_weird_bigints);
-  REGISTER_FUNCTION(env, exports, add_finalizer_to_object);
 }
 
 } // namespace napitests

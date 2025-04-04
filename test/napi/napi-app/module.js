@@ -2,7 +2,6 @@ const assert = require("node:assert");
 const nativeTests = require("./build/Debug/napitests.node");
 const secondAddon = require("./build/Debug/second_addon.node");
 const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
-const { Worker } = require("node:worker_threads");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -617,14 +616,6 @@ nativeTests.test_get_value_string = () => {
       fn(string);
     }
   }
-};
-
-// Should be run with
-// BUN_DESTRUCT_VM_ON_EXIT=1 -- makes us tear down the JSC::VM while exiting, so that finalizers run
-// BUN_JSC_useGC=0 -- ensures the object's finalizer will be called at exit not during normal GC
-nativeTests.test_finalizer_called_during_destruction = () => {
-  let object = {};
-  nativeTests.add_finalizer_to_object(object);
 };
 
 module.exports = nativeTests;

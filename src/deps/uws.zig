@@ -3014,6 +3014,10 @@ pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@intFromBool(ssl), this);
     }
+    pub fn getLocalAddress(this: *ListenSocket, ssl: bool, buf: []u8) ![]const u8 {
+        const self: *uws.Socket = @ptrCast(this);
+        return self.localAddress(ssl, buf);
+    }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
         const self: *uws.Socket = @ptrCast(this);
         return self.localPort(ssl);

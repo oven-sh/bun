@@ -898,6 +898,51 @@ it("inlineCapacity #987", async () => {
   expect(Object.keys(db.query(query).all()[0]).length).toBe(99);
 });
 
+it("db.defineFunction()", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("catNameLength", name => name.length);
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+  const insert = db.prepare("INSERT INTO cats (name, age) VALUES (@name, @age)");
+  const cats = [
+    { "@name": "Joey", "@age": 2 },
+    { "@name": "Sally", "@age": 4 },
+    { "@name": "Junior", "@age": 1 },
+    { "@name": "Sally", "@age": 4 },
+  ];
+  for (const cat of cats) {
+    insert.run(cat);
+  }
+
+  const res = db.query("SELECT catNameLength(name) AS l FROM cats").all();
+  expect(res).toStrictEqual([{ "l": 4 }, { "l": 5 }, { "l": 6 }, { "l": 5 }]);
+});
+
+it("db.defineFunction() with varargs", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("joinStrings", { varargs: true }, (...args) => args.join(","));
+  const res = db.query("SELECT joinStrings('a','b','c') AS joined").get().joined;
+  expect(res).toBe("a,b,c");
+});
+
+it("db.defineFunction() with unsupported returned value", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("notSupported", () => ({ not: "supported" }));
+  try {
+    const res = db.query("SELECT notSupported()").get();
+  } catch (e) {
+    expect(e.message === "User-defined function returned an unsupported or invalid value").toBe(true);
+    expect(e.name).toBe("TypeError");
+  }
+});
+
+it("db.defineFunction() with blobs", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("getBuffer", () => new Uint8Array([42, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+  const res = db.query("SELECT getBuffer() AS b").get().b;
+  expect(res).toStrictEqual(new Uint8Array([42, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+});
+
 // https://github.com/oven-sh/bun/issues/1553
 it("latin1 supplement chars", () => {
   const db = new Database();

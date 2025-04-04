@@ -2,7 +2,6 @@
 #include "napi.h"
 
 #include "BunProcess.h"
-#include "BunObject.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
@@ -3528,13 +3527,15 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSC::JSGlobalObject * lexicalGlobal
     }
 
     auto* global = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* requireMap = global->requireMap();
-    ASSERT(requireMap);
 
-    auto mainValue = Bun::getMain(vm, global);
-    if (UNLIKELY(!mainValue.isCell())) return JSValue::encode(mainValue);
-    ASSERT(mainValue.isString());
-    auto mainModule = requireMap->get(global, mainValue);
+    auto* requireCache = global->lazyRequireCacheObject();
+    auto* mm = global->mainModule();
+    if (UNLIKELY(mm->length() == 0)) {
+        thisObject->putDirect(vm, mainIdent, jsUndefined(), 0);
+        return JSValue::encode(jsUndefined());
+    }
+    auto prop = PropertyName(JSC::Identifier::fromString(vm, WTFMove(mm->getString(global))));
+    auto mainModule = requireCache->getIfPropertyExists(global, prop);
     thisObject->putDirect(vm, mainIdent, mainModule, 0);
     return JSValue::encode(mainModule);
 }

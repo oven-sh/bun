@@ -79,10 +79,9 @@ namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
-JSValue getMain(JSC::VM& vm, JSC::JSObject* object)
+static JSValue BunObject__mainModule(JSC::VM& vm, JSC::JSObject* bunObject)
 {
-    // See: BunObject.zig
-    return BunObject_getter_wrap_main(vm, object);
+    return jsCast<Zig::GlobalObject*>(bunObject->globalObject())->mainModule();
 }
 
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
@@ -705,8 +704,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
-    Cookie                                         constructCookieObject                                              DontDelete|ReadOnly|PropertyCallback
-    CookieMap                                      constructCookieMapObject                                           DontDelete|ReadOnly|PropertyCallback
+    Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
+    CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_getter_wrap_FileSystemRouter                              DontDelete|PropertyCallback
@@ -734,14 +733,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
-    deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
+    deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
-    fetch                                         constructBunFetchObject                                              ReadOnly|DontDelete|PropertyCallback
-    file                                           BunObject_callback_file                                               DontDelete|Function 1
-    fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
+    fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
+    file                                           BunObject_callback_file                                             DontDelete|Function 1
+    fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
@@ -753,8 +752,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
-    udpSocket                                        BunObject_callback_udpSocket                                      DontDelete|Function 1
-    main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
+    udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
+    main                                           BunObject__mainModule                                               DontDelete|PropertyCallback
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1

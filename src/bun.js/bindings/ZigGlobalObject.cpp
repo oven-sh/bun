@@ -218,7 +218,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
-// #include <iostream>
+// defined in JSGlobalObject.zig
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__determineMainModule(JSC::JSGlobalObject* globalObject);
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
@@ -3336,6 +3337,13 @@ void GlobalObject::finishCreation(VM& vm)
                 InternalModuleRegistry::create(
                     init.vm,
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
+        });
+
+    m_mainModule.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSString>::Initializer& init) {
+            JSC::JSValue mainModule = JSValue::decode(Zig__GlobalObject__determineMainModule(init.owner));
+            ASSERT(mainModule.isString());
+            init.set(jsCast<JSC::JSString*>(mainModule));
         });
 
     m_processBindingBuffer.initLater(

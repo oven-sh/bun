@@ -263,6 +263,8 @@ public:
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
     Bun::InternalModuleRegistry* internalModuleRegistry() const { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
+    /// Name of entrypoint module. Usually a path.
+    JSString* mainModule() const { return m_mainModule.getInitializedOnMainThread(this); }
 
     JSObject* processBindingBuffer() const { return m_processBindingBuffer.getInitializedOnMainThread(this); }
     JSObject* processBindingConstants() const { return m_processBindingConstants.getInitializedOnMainThread(this); }
@@ -612,6 +614,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
+    LazyProperty<JSGlobalObject, JSString> m_mainModule; // string | undefined. may be null.
     LazyProperty<JSGlobalObject, JSObject> m_processBindingBuffer;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingFs;

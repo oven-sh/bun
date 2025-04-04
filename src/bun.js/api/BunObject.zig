@@ -62,7 +62,6 @@ pub const BunObject = struct {
     pub const enableANSIColors = toJSGetter(Bun.enableANSIColors);
     pub const hash = toJSGetter(Bun.getHashObject);
     pub const inspect = toJSGetter(Bun.getInspect);
-    pub const main = toJSGetter(Bun.getMain);
     pub const origin = toJSGetter(Bun.getOrigin);
     pub const semver = toJSGetter(Bun.getSemver);
     pub const stderr = toJSGetter(Bun.getStderr);
@@ -120,7 +119,6 @@ pub const BunObject = struct {
         @export(&BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
         @export(&BunObject.hash, .{ .name = getterName("hash") });
         @export(&BunObject.inspect, .{ .name = getterName("inspect") });
-        @export(&BunObject.main, .{ .name = getterName("main") });
         @export(&BunObject.origin, .{ .name = getterName("origin") });
         @export(&BunObject.stderr, .{ .name = getterName("stderr") });
         @export(&BunObject.stdin, .{ .name = getterName("stdin") });
@@ -564,55 +562,55 @@ pub fn enableANSIColors(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.J
     return JSValue.jsBoolean(Output.enable_ansi_colors);
 }
 
-pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    const vm = globalThis.bunVM();
+// pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+//     const vm = globalThis.bunVM();
 
-    // Attempt to use the resolved filesystem path
-    // This makes `eval('require.main === module')` work when the main module is a symlink.
-    // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
-    use_resolved_path: {
-        if (vm.main_resolved_path.isEmpty()) {
-            // If it's from eval, don't try to resolve it.
-            if (strings.hasSuffixComptime(vm.main, "[eval]")) {
-                break :use_resolved_path;
-            }
-            if (strings.hasSuffixComptime(vm.main, "[stdin]")) {
-                break :use_resolved_path;
-            }
+//     // Attempt to use the resolved filesystem path
+//     // This makes `eval('require.main === module')` work when the main module is a symlink.
+//     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
+//     use_resolved_path: {
+//         if (vm.main_resolved_path.isEmpty()) {
+//             // If it's from eval, don't try to resolve it.
+//             if (strings.hasSuffixComptime(vm.main, "[eval]")) {
+//                 break :use_resolved_path;
+//             }
+//             if (strings.hasSuffixComptime(vm.main, "[stdin]")) {
+//                 break :use_resolved_path;
+//             }
 
-            const fd = bun.sys.openatA(
-                if (comptime Environment.isWindows) bun.invalid_fd else bun.FD.cwd(),
-                vm.main,
+//             const fd = bun.sys.openatA(
+//                 if (comptime Environment.isWindows) bun.invalid_fd else bun.FD.cwd(),
+//                 vm.main,
 
-                // Open with the minimum permissions necessary for resolving the file path.
-                if (comptime Environment.isLinux) bun.O.PATH else bun.O.RDONLY,
+//                 // Open with the minimum permissions necessary for resolving the file path.
+//                 if (comptime Environment.isLinux) bun.O.PATH else bun.O.RDONLY,
 
-                0,
-            ).unwrap() catch break :use_resolved_path;
+//                 0,
+//             ).unwrap() catch break :use_resolved_path;
 
-            defer _ = bun.sys.close(fd);
-            if (comptime Environment.isWindows) {
-                var wpath: bun.WPathBuffer = undefined;
-                const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
-                vm.main_resolved_path = bun.String.createUTF16(fdpath);
-            } else {
-                var path: bun.PathBuffer = undefined;
-                const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
+//             defer _ = bun.sys.close(fd);
+//             if (comptime Environment.isWindows) {
+//                 var wpath: bun.WPathBuffer = undefined;
+//                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
+//                 vm.main_resolved_path = bun.String.createUTF16(fdpath);
+//             } else {
+//                 var path: bun.PathBuffer = undefined;
+//                 const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
 
-                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
-                if (bun.String.tryCreateAtom(fdpath)) |atom| {
-                    vm.main_resolved_path = atom;
-                } else {
-                    vm.main_resolved_path = bun.String.createUTF8(fdpath);
-                }
-            }
-        }
+//                 // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+//                 if (bun.String.tryCreateAtom(fdpath)) |atom| {
+//                     vm.main_resolved_path = atom;
+//                 } else {
+//                     vm.main_resolved_path = bun.String.createUTF8(fdpath);
+//                 }
+//             }
+//         }
 
-        return vm.main_resolved_path.toJS(globalThis);
-    }
+//         return vm.main_resolved_path.toJS(globalThis);
+//     }
 
-    return ZigString.init(vm.main).toJS(globalThis);
-}
+//     return ZigString.init(vm.main).toJS(globalThis);
+// }
 
 pub fn getArgv(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.Node.Process.getArgv(globalThis);

@@ -14,8 +14,6 @@ JSC_DECLARE_HOST_FUNCTION(functionFileURLToPath);
 
 JSC::JSValue constructBunFetchObject(VM& vm, JSObject* bunObject);
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject);
-/// Get the name/path of the main module, if there is one. Returns a string or undefined.
-JSC::JSValue getMain(JSC::VM& vm, JSC::JSObject* object);
 
 JSC::JSObject* BunShell(JSGlobalObject* globalObject);
 JSC::JSValue ShellError(JSGlobalObject* globalObject);

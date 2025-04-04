@@ -824,6 +824,7 @@ if(WIN32)
 endif()
 
 target_compile_definitions(${bun} PRIVATE
+  _GNU_SOURCE
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
   LIBUS_USE_BORINGSSL=1

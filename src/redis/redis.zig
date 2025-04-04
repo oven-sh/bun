@@ -207,19 +207,21 @@ pub const RedisClient = struct {
     pub fn fail(this: *RedisClient, message: []const u8, err: protocol.RedisError) void {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
         if (this.status == .failed) return;
+        
+        const was_connected = (this.status == .connected);
         this.status = .failed;
+        
         this.ref();
         defer this.deref();
 
-        if (this.status != .connected) {
-            var command_queue = this.command_queue;
-            defer command_queue.deinit();
-            this.command_queue = .init(this.allocator);
-            const globalThis = this.globalObject();
-            for (command_queue.readableSlice(0)) |pair| {
-                var command_pair = pair;
-                command_pair.rejectCommand(globalThis, message, err);
-            }
+        // Always reject pending commands
+        var command_queue = this.command_queue;
+        defer command_queue.deinit();
+        this.command_queue = .init(this.allocator);
+        const globalThis = this.globalObject();
+        for (command_queue.readableSlice(0)) |pair| {
+            var command_pair = pair;
+            command_pair.rejectCommand(globalThis, message, err);
         }
 
         this.onRedisClose();
@@ -462,6 +464,9 @@ pub const RedisClient = struct {
                 return;
             };
         }
+        
+        // Flush data immediately to start the authentication process
+        this.flushData();
     }
 
     /// Handle socket open event
@@ -494,7 +499,7 @@ pub const RedisClient = struct {
             offline_queue.deinit();
         }
 
-        while (this.offline_queue.readItem()) |item| {
+        while (offline_queue.readItem()) |item| {
             var offline_cmd = item;
 
             // Write the pre-serialized data directly to the output buffer
@@ -538,11 +543,21 @@ pub const RedisClient = struct {
             .disconnected => {
                 // Only queue if offline queue is enabled
                 if (this.flags.enable_offline_queue) {
-                    debug("Queue command in offline queue: {s}", .{command});
+                    debug("Queue command in offline queue: {s}", .{command.command});
 
                     // Create offline command and add to queue
-                    const offline_cmd = try Command.Offline.create(this.allocator, command, promise);
-                    try this.offline_queue.writeItem(offline_cmd);
+                    const offline_cmd = Command.Offline.create(this.allocator, command, promise) catch |err| {
+                        // If we can't create the offline command, reject the promise and propagate the error
+                        promise.reject(this.globalObject(), "Failed to create offline command", err);
+                        return promise.promise.get();
+                    };
+                    
+                    this.offline_queue.writeItem(offline_cmd) catch |err| {
+                        // If we can't add to the queue, clean up and reject the promise
+                        offline_cmd.deinit(this.allocator);
+                        promise.reject(this.globalObject(), "Failed to queue command", err);
+                        return promise.promise.get();
+                    };
 
                     // If auto reconnect is enabled and we're not already reconnecting, try to reconnect
                     if (this.enable_auto_reconnect and !this.flags.is_reconnecting and !this.flags.is_manually_closed) {
@@ -553,11 +568,13 @@ pub const RedisClient = struct {
 
                     return promise.promise.get();
                 } else {
-                    return protocol.RedisError.ConnectionClosed;
+                    promise.reject(this.globalObject(), "Connection is closed and offline queue is disabled", protocol.RedisError.ConnectionClosed);
+                    return promise.promise.get();
                 }
             },
             .failed => {
-                return protocol.RedisError.ConnectionClosed;
+                promise.reject(this.globalObject(), "Connection has failed", protocol.RedisError.ConnectionClosed);
+                return promise.promise.get();
             },
         }
 
@@ -570,15 +587,24 @@ pub const RedisClient = struct {
                 };
 
                 switch (this.status) {
-                    .connecting => try cmd.format(this.writerBeforeConnection()),
-                    .connected => try cmd.format(this.writer()),
+                    .connecting => cmd.format(this.writerBeforeConnection()) catch |err| {
+                        promise.reject(this.globalObject(), "Failed to format command", err);
+                        return promise.promise.get();
+                    },
+                    .connected => cmd.format(this.writer()) catch |err| {
+                        promise.reject(this.globalObject(), "Failed to format command", err);
+                        return promise.promise.get();
+                    },
                     else => unreachable,
                 }
             },
         }
 
         // Add to queue with command type
-        try this.command_queue.writeItem(cmd_pair);
+        this.command_queue.writeItem(cmd_pair) catch |err| {
+            promise.reject(this.globalObject(), "Failed to queue command", err);
+            return promise.promise.get();
+        };
 
         if (this.status == .connected) this.flushData();
 

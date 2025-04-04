@@ -296,11 +296,22 @@ pub const JSRedisClient = struct {
 
     // Callback for when Redis client connects
     pub fn onRedisConnect(self: *JSRedisClient) void {
+        // Safety check to ensure a valid connection state
+        if (self.client.status != .connected) {
+            debug("onRedisConnect called but client status is not 'connected': {s}", .{@tagName(self.client.status)});
+            return;
+        }
+        
+        // Process offline queue (commands queued while disconnected)
         self.client.processOfflineQueue();
 
         // Process any pending write buffer
         if (self.client.write_buffer.len() > 0) {
-            self.client.flushData();
+            if (!self.client.socket.isClosed()) {
+                self.client.flushData();
+            } else {
+                debug("Socket is closed, cannot flush data", .{});
+            }
         } else {
             self.poll_ref.unref(self.globalObject.bunVM());
         }
@@ -311,7 +322,7 @@ pub const JSRedisClient = struct {
             self.connection_promise = null;
         }
 
-        // Call onConnect callback
+        // Call onConnect callback if defined by the user
         const on_connect = self.consumeOnConnectCallback(self.globalObject) orelse return;
         const js_value = self.this_value.get() orelse return;
         js_value.ensureStillAlive();

@@ -94,8 +94,8 @@ pub const Promise = struct {
     }
 
     pub fn resolve(self: *Promise, globalObject: *JSC.JSGlobalObject, value: *protocol.RESPValue) void {
-        const js_value = value.toJS(globalObject) catch {
-            self.reject(globalObject, "Failed to convert RESP value to JS", protocol.RedisError.InvalidResponse);
+        const js_value = value.toJS(globalObject) catch |err| {
+            self.reject(globalObject, "Failed to convert RESP value to JS", err);
             return;
         };
         self.promise.resolve(globalObject, js_value);

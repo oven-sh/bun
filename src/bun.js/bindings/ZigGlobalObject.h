@@ -269,7 +269,7 @@ public:
     JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
-    Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
+    JSObject* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
     JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
@@ -600,7 +600,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSResizableOrGrowableSharedBufferSubclassStructure;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
-    LazyProperty<JSGlobalObject, Bun::JSCommonJSExtensions> m_lazyRequireExtensionsObject;
+    LazyProperty<JSGlobalObject, JSObject> m_lazyRequireExtensionsObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;

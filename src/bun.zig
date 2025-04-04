@@ -2118,7 +2118,7 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 /// Converts a native file descriptor into a `bun.FileDescriptor`
 ///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-pub inline fn toFD(fd: anytype) FileDescriptor {
+pub fn toFD(fd: anytype) callconv(callconv_inline) FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
@@ -3870,7 +3870,7 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
     };
 }
 
-pub const DebugThreadLock = if (Environment.allow_assert)
+pub const DebugThreadLock = if (Environment.isDebug)
     struct {
         owning_thread: ?std.Thread.Id,
         locked_at: crash_handler.StoredTrace,
@@ -4127,6 +4127,7 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
     hasher.update(std.mem.asBytes(&thing));
 }
 
+pub const perf = @import("./perf.zig");
 pub inline fn isComptimeKnown(x: anytype) bool {
     return comptime @typeInfo(@TypeOf(.{x})).@"struct".fields[0].is_comptime;
 }

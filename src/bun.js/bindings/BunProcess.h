@@ -11,10 +11,9 @@ class GlobalObject;
 }
 
 namespace Bun {
+using namespace JSC;
 
 extern "C" int getRSS(size_t* rss);
-
-using namespace JSC;
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
@@ -110,5 +109,6 @@ public:
 };
 
 bool isSignalName(WTF::String input);
+JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
 } // namespace Bun

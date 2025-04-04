@@ -169,6 +169,7 @@ export default [
       onabort: {
         getter: "getOnAbort",
         setter: "setOnAbort",
+        this: true,
       },
       hasCustomOnData: {
         getter: "getHasCustomOnData",

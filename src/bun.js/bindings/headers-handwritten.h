@@ -106,7 +106,7 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
-    uint32_t hash;
+    uint32_t cjsCustomExtensionIndex;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
@@ -347,7 +347,10 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     BunString* specifier,
     BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result, bool allowPromise);
+    ErrorableResolvedSource* result,
+    bool allowPromise,
+    bool isCommonJSRequire,
+    BunLoaderType forceLoaderType);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,

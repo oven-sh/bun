@@ -23,7 +23,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { hostname, userInfo } from "node:os";
+import { readFile } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -813,17 +814,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
     // Give the file system a moment to finish writing the file
     if (existsSync(junitFilePath)) {
-      uploadJUnitToBuildKite(junitFilePath)
-        .then(uploadSuccess => {
-          unlink(junitFilePath, () => {
-            if (!uploadSuccess) {
-              console.error(`Failed to upload JUnit report for ${testPath}`);
-            }
-          });
-        })
-        .catch(err => {
-          console.error(`Error uploading JUnit report for ${testPath}:`, err);
-        });
+      addToJunitUploadQueue(junitFilePath);
     }
   }
 
@@ -1881,6 +1872,35 @@ function generateJUnitReport(outfile, results) {
   !isQuiet && console.log(`JUnit XML report written to ${outfile}`);
 }
 
+let isUploadingToBuildKite = false;
+const junitUploadQueue = [];
+async function addToJunitUploadQueue(junitFilePath) {
+  junitUploadQueue.push(junitFilePath);
+
+  if (!isUploadingToBuildKite) {
+    drainJunitUploadQueue();
+  }
+}
+
+async function drainJunitUploadQueue() {
+  isUploadingToBuildKite = true;
+  while (junitUploadQueue.length > 0) {
+    const junitFilePath = junitUploadQueue.shift();
+    await uploadJUnitToBuildKite(junitFilePath)
+      .then(uploadSuccess => {
+        unlink(junitFilePath, () => {
+          if (!uploadSuccess) {
+            console.error(`Failed to upload JUnit report for ${testPath}`);
+          }
+        });
+      })
+      .catch(err => {
+        console.error(`Error uploading JUnit report for ${testPath}:`, err);
+      });
+  }
+  isUploadingToBuildKite = false;
+}
+
 /**
  * Upload JUnit XML report to BuildKite Test Analytics
  * @param {string} junitFile - Path to the JUnit XML file to upload
@@ -1907,7 +1927,7 @@ async function uploadJUnitToBuildKite(junitFile) {
     const formData = new FormData();
 
     // Add the JUnit file data
-    formData.append("data", new Blob([readFileSync(junitFile)]), fileName);
+    formData.append("data", new Blob([await readFile(junitFile)]), fileName);
     formData.append("format", "junit");
     formData.append("run_env[CI]", "buildkite");
 
@@ -1939,6 +1959,14 @@ async function uploadJUnitToBuildKite(junitFile) {
 
     if (response.ok) {
       !isQuiet && console.log(`JUnit file "${fileName}" successfully uploaded to BuildKite Test Analytics`);
+
+      try {
+        // Consume the body to ensure Node releases the memory.
+        await response.arrayBuffer();
+      } catch (error) {
+        // Don't care if this fails.
+      }
+
       return true;
     } else {
       const errorText = await response.text();

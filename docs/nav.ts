@@ -265,11 +265,24 @@ export default {
     page("test/time", "Dates and times", {
       description: "Control the date & time in your tests for more reliable and deterministic tests",
     }),
-    page("test/dom", "DOM testing", {
-      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
-    }),
+
     page("test/coverage", "Code coverage", {
       description: "Generate code coverage reports with `bun test --coverage`",
+    }),
+    page("test/reporters", "Test reporters", {
+      description: "Add a junit reporter to your test runs",
+    }),
+    page("test/configuration", "Test configuration", {
+      description: "Configure the test runner with bunfig.toml",
+    }),
+    page("test/runtime-behavior", "Runtime behavior", {
+      description: "Learn how the test runner affects Bun's runtime behavior",
+    }),
+    page("test/discovery", "Finding tests", {
+      description: "Learn how the test runner discovers tests",
+    }),
+    page("test/dom", "DOM testing", {
+      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
     }),
 
     divider("Package runner"),

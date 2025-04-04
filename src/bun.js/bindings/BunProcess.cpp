@@ -363,7 +363,7 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" void CrashHandler__setNapiAction(const char* action);
 
 /**
  * RAII wrapper for CrashHandler__setDlOpenAction
@@ -373,12 +373,12 @@ class DlOpenActionGuard {
 public:
     explicit DlOpenActionGuard(const char* action)
     {
-        CrashHandler__setDlOpenAction(action);
+        CrashHandler__setNapiAction(action);
     }
 
     ~DlOpenActionGuard()
     {
-        CrashHandler__setDlOpenAction(nullptr);
+        CrashHandler__setNapiAction(nullptr);
     }
 
     // Prevent copying and moving

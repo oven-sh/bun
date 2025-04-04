@@ -133,7 +133,7 @@ pub const Action = union(enum) {
         kind: bun.ImportKind,
     } else void,
 
-    dlopen: []const u8,
+    napi: []const u8,
 
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .napi => |path| try writer.print("inside NAPI module: {s}", .{path}),
         }
     }
 };
@@ -1882,10 +1882,10 @@ fn extractPath(path_: []const u8) ?[]const u8 {
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
-    if (current_action != null and current_action.? == .dlopen) {
-        std.debug.panic("unsupported uv function: {s} (while opening: {s})", .{
+    if (current_action != null and current_action.? == .napi) {
+        std.debug.panic("unsupported uv function: {s} (inside NAPI module: {s})", .{
             name.?,
-            current_action.?.dlopen,
+            current_action.?.napi,
         });
     } else {
         std.debug.panic("unsupported uv function: {s}", .{name.?});
@@ -1896,21 +1896,41 @@ export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
     crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
 }
 
-export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
+export fn CrashHandler__setNapiAction(action: ?[*:0]const u8) void {
     if (action) |str| {
         bun.debugAssert(current_action == null);
         var path: []const u8 = bun.sliceTo(str, 0);
         path = extractPath(path) orelse path;
-        current_action = .{ .dlopen = path };
+        current_action = .{ .napi = path };
     } else {
-        bun.debugAssert(current_action != null and current_action.? == .dlopen);
+        bun.debugAssert(current_action != null and current_action.? == .napi);
         current_action = null;
     }
+    return;
 }
+
+export fn CrashHandler__setCurrentNapiFunction(function: ?*anyopaque) void {
+    current_napi_function = function;
+}
+
+export fn CrashHandler__getCurrentNapiFunction() ?*anyopaque {
+    return current_napi_function;
+}
+
+/// We set this everytime a NAPI native function is called (ones that are created using `napi_create_function`)
+///
+/// The value is the function pointer of the native function
+///
+/// If an unsupported UV function is called somewhere down the callstack during the execution of the native function,
+/// we use `dladdr(current_napi_function, &info)` to get the path of the NAPI module the native function belongs to.
+threadlocal var current_napi_function: ?*anyopaque = null;
 
 pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
+    std.mem.doNotOptimizeAway(&CrashHandler__getCurrentNapiFunction);
+    std.mem.doNotOptimizeAway(&CrashHandler__setCurrentNapiFunction);
 }
+
 comptime {
     _ = &Bun__crashHandler;
     if (!bun.Environment.isWindows) {

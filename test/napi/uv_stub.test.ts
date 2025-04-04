@@ -92,8 +92,7 @@ describe.if(run_test)("uv stubs", () => {
   test("should crash with path if possible", async () => {
     const { stderr } = await Bun.$`${bunExe()} run fail_on_init.ts`.cwd(tempdir).throws(false).quiet();
     const stderrStr = stderr.toString();
-    expect(stderrStr).toContain("while opening");
-    expect(stderrStr).toContain("fail_on_init.node");
+    expect(stderrStr).toMatch(/inside NAPI module: .+fail_on_init\.node/);
   });
 
   for (const symbol of symbols_to_test) {
@@ -103,7 +102,8 @@ describe.if(run_test)("uv stubs", () => {
       const stderrStr = stderr.toString();
       expect(stderrStr).toContain("Bun encountered a crash when running a NAPI module that tried to call");
       expect(stderrStr).toContain(symbol);
-    });
+      expect(stderrStr).toMatch(/inside NAPI module: .+xXx123_foo_counter_321xXx\.node/);
+    }, 10000);
   }
 
   test("should not crash when calling supported uv functions", async () => {

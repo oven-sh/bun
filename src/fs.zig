@@ -1292,7 +1292,7 @@ pub const FileSystem = struct {
                     fs.readFileError(path, err);
                     return err;
                 });
-                debug("stat({d}) = {d}", .{ file.handle, size });
+                debug("stat({}) = {d}", .{ file.handle, size });
 
                 var buf = try allocator.alloc(u8, size + 1);
                 @memcpy(buf[0..initial_read.len], initial_read);
@@ -1309,7 +1309,7 @@ pub const FileSystem = struct {
                     return err;
                 };
                 file_contents = buf[0 .. read_count + initial_read.len];
-                debug("read({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                debug("read({}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});

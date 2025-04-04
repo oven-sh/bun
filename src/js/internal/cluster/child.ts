@@ -38,6 +38,7 @@ cluster._setupWorker = function () {
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
   $newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
+    process.channel = null;
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {

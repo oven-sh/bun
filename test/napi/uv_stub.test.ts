@@ -8,6 +8,7 @@ import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
+// skip on debug because it's hella slow
 const skip_on_debug = true;
 
 // We use libuv on Windows

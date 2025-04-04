@@ -381,11 +381,8 @@ public:
         CrashHandler__setNapiAction(nullptr);
     }
 
-    // Prevent copying and moving
-    DlOpenActionGuard(const DlOpenActionGuard&) = delete;
-    DlOpenActionGuard& operator=(const DlOpenActionGuard&) = delete;
-    DlOpenActionGuard(DlOpenActionGuard&&) = delete;
-    DlOpenActionGuard& operator=(DlOpenActionGuard&&) = delete;
+    WTF_MAKE_NONCOPYABLE(DlOpenActionGuard);
+    WTF_MAKE_NONMOVABLE(DlOpenActionGuard);
 };
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))

@@ -133,7 +133,7 @@ pub const Action = union(enum) {
         kind: bun.ImportKind,
     } else void,
 
-    napi: []const u8,
+    napi: [*:0]const u8,
 
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
@@ -1885,7 +1885,7 @@ export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C)
     if (current_action != null and current_action.? == .napi) {
         std.debug.panic("unsupported uv function: {s} (inside NAPI module: {s})", .{
             name.?,
-            current_action.?.napi,
+            bun.sliceTo(current_action.?.napi, 0),
         });
     } else {
         std.debug.panic("unsupported uv function: {s}", .{name.?});
@@ -1899,9 +1899,7 @@ export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
 export fn CrashHandler__setNapiAction(action: ?[*:0]const u8) void {
     if (action) |str| {
         bun.debugAssert(current_action == null);
-        var path: []const u8 = bun.sliceTo(str, 0);
-        path = extractPath(path) orelse path;
-        current_action = .{ .napi = path };
+        current_action = .{ .napi = str };
     } else {
         bun.debugAssert(current_action != null and current_action.? == .napi);
         current_action = null;

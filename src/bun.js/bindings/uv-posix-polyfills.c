@@ -20,11 +20,7 @@ void __bun_throw_not_implemented(const char* symbol_name)
     if (CrashHandler__getCurrentNapiFunction()) {
         Dl_info info;
         if (dladdr(CrashHandler__getCurrentNapiFunction(), &info) != 0) {
-            const char* some_name = NULL;
-            if (info.dli_fname) {
-                some_name = info.dli_fname;
-            }
-            CrashHandler__setNapiAction(some_name);
+            CrashHandler__setNapiAction(info.dli_fname);
         }
     }
     CrashHandler__unsupportedUVFunction(symbol_name);

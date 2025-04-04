@@ -1724,11 +1724,8 @@ public:
         CrashHandler__setCurrentNapiFunction(prev);
     }
 
-    // Prevent copying and moving
-    CurrentNapiFunctionGuard(const CurrentNapiFunctionGuard&) = delete;
-    CurrentNapiFunctionGuard& operator=(const CurrentNapiFunctionGuard&) = delete;
-    CurrentNapiFunctionGuard(CurrentNapiFunctionGuard&&) = delete;
-    CurrentNapiFunctionGuard& operator=(CurrentNapiFunctionGuard&&) = delete;
+    WTF_MAKE_NONCOPYABLE(CurrentNapiFunctionGuard);
+    WTF_MAKE_NONMOVABLE(CurrentNapiFunctionGuard);
 };
 
 template<bool ConstructCall>

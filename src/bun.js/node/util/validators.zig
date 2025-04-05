@@ -5,6 +5,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
 pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
     var js_type = value.jsType();
@@ -19,7 +20,7 @@ pub fn throwErrInvalidArgValue(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
 }
 
@@ -28,7 +29,7 @@ pub fn throwErrInvalidArgTypeWithMessage(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
 }
 
@@ -39,7 +40,7 @@ pub fn throwErrInvalidArgType(
     comptime expected_type: []const u8,
     value: JSValue,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     const actual_type = getTypeName(globalThis, value);
     return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be of type {s}, got {s}", name_args ++ .{ expected_type, actual_type });
 }
@@ -49,7 +50,7 @@ pub fn throwRangeError(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
 }
 
@@ -61,16 +62,16 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
         return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
     }
 
-    const num = value.asNumber();
-
-    if (!value.isAnyInt()) {
-        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
+    if (!value.isInteger()) {
+        return globalThis.throwRangeError(value.asNumber(), .{ .field_name = name, .msg = "an integer" });
     }
 
-    const int = value.asInt52();
+    const int: i64 = @intFromFloat(value.asNumber());
+
     if (int < min or int > max) {
         return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
     }
+
     return int;
 }
 
@@ -112,12 +113,14 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     }
     if (!value.isAnyInt()) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num = value.asNumber();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if (num < @as(f64, @floatFromInt(min)) or num > @as(f64, @floatFromInt(max))) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @intFromFloat(num);
@@ -129,6 +132,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
     if (!value.isAnyInt()) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num: i64 = value.asInt52();
@@ -136,6 +140,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     const max: i64 = @intCast(std.math.maxInt(u32));
     if (num < min or num > max) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @truncate(@as(u63, @intCast(num)));
@@ -146,28 +151,29 @@ pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) bun.JSError!f64 {
-    if (!value.isNumber())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, name: string, maybe_min: ?f64, maybe_max: ?f64) bun.JSError!f64 {
+    if (!value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
+    }
 
     const num: f64 = value.asNumber();
     var valid = true;
-    if (min) |min_val| {
-        if (num < min_val) valid = false;
+    if (maybe_min) |min| {
+        if (num < min) valid = false;
     }
-    if (max) |max_val| {
-        if (num > max_val) valid = false;
+    if (maybe_max) |max| {
+        if (num > max) valid = false;
     }
-    if ((min != null or max != null) and std.math.isNan(num)) {
+    if ((maybe_min != null or maybe_max != null) and std.math.isNan(num)) {
         valid = false;
     }
     if (!valid) {
-        if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
-        } else if (min != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
-        } else {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be <= {d}. Received {s}", name_args ++ .{ max, value });
+        if (maybe_min != null and maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d} && <= {d}. Received {d}", .{ name, maybe_min.?, maybe_max.?, num });
+        } else if (maybe_min != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d}. Received {d}", .{ name, maybe_min.?, num });
+        } else if (maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be <= {d}. Received {d}", .{ name, maybe_max.?, num });
         }
     }
     return num;
@@ -247,9 +253,10 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
     return i;
 }
 
-pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!JSValue {
-    if (!value.jsType().isFunction())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "function", value);
+pub fn validateFunction(global: *JSGlobalObject, name: string, value: JSValue) bun.JSError!JSValue {
+    if (!value.isFunction()) {
+        return global.throwInvalidArgumentTypeValue(name, "function", value);
+    }
     return value;
 }
 
@@ -259,16 +266,16 @@ pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime n
 }
 
 pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!T {
-    const str = try value.toBunString2(globalThis);
+    const str = try value.toBunString(globalThis);
     defer str.deref();
-    inline for (@typeInfo(T).Enum.fields) |enum_field| {
+    inline for (@typeInfo(T).@"enum".fields) |enum_field| {
         if (str.eqlComptime(enum_field.name))
             return @field(T, enum_field.name);
     }
 
     const values_info = comptime blk: {
         var out: []const u8 = "";
-        for (@typeInfo(T).Enum.fields, 0..) |enum_field, i| {
+        for (@typeInfo(T).@"enum".fields, 0..) |enum_field, i| {
             out = out ++ (if (i > 0) "|" else "") ++ enum_field.name;
         }
         break :blk out;

@@ -81,7 +81,9 @@ pub const TransformList = struct {
                 scratchbuf,
                 base_writer,
                 css.PrinterOptions.defaultWithMinify(true),
-                dest.import_records,
+                dest.import_info,
+                dest.local_names,
+                dest.symbols,
             );
             defer p.deinit();
 

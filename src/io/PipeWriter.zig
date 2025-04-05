@@ -396,7 +396,7 @@ pub fn PosixStreamingWriter(
         }
 
         // TODO: configurable?
-        const chunk_size: usize = std.mem.page_size;
+        const chunk_size: usize = std.heap.page_size_min;
 
         pub fn memoryCost(this: *const @This()) usize {
             return @sizeOf(@This()) + this.outgoing.memoryCost();
@@ -824,9 +824,11 @@ fn BaseWindowsPipeWriter(
                     .sync_file, .file => |file| {
                         // always cancel the current one
                         file.fs.cancel();
-                        // always use close_fs here because we can have a operation in progress
-                        file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                        if (this.owns_fd) {
+                            // always use close_fs here because we can have a operation in progress
+                            file.close_fs.data = file;
+                            _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                        }
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -1044,7 +1046,6 @@ pub fn WindowsBufferedWriter(
             this.is_done = true;
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
-                if (!this.owns_fd) return;
                 this.close();
             }
         }
@@ -1063,10 +1064,10 @@ pub const StreamBuffer = struct {
     }
 
     pub fn maybeShrink(this: *StreamBuffer) void {
-        if (this.list.capacity > std.mem.page_size) {
+        if (this.list.capacity > std.heap.pageSize()) {
             // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
             this.list.expandToCapacity();
-            this.list.shrinkAndFree(std.mem.page_size);
+            this.list.shrinkAndFree(std.heap.pageSize());
         }
     }
 

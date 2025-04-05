@@ -51,7 +51,6 @@ pub const PathWatcherManager = struct {
     };
 
     fn refPendingTask(this: *PathWatcherManager) bool {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.deinit_on_last_task) return false;
@@ -61,12 +60,10 @@ pub const PathWatcherManager = struct {
     }
 
     fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
-        @fence(.acquire);
         return this.has_pending_tasks.load(.acquire);
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
@@ -420,7 +417,7 @@ pub const PathWatcherManager = struct {
             this.manager.mutex.lock();
             defer this.manager.mutex.unlock();
 
-            const watcher = this.watcher_list.popOrNull();
+            const watcher = this.watcher_list.pop();
             if (watcher == null) {
                 // no more work todo, release the fd and path
                 _ = this.manager.current_fd_task.remove(this.path.fd);
@@ -662,7 +659,7 @@ pub const PathWatcherManager = struct {
                     {
                         watcher.mutex.lock();
                         defer watcher.mutex.unlock();
-                        while (watcher.file_paths.popOrNull()) |file_path| {
+                        while (watcher.file_paths.pop()) |file_path| {
                             this._decrementPathRefNoLock(file_path);
                         }
                     }
@@ -698,7 +695,7 @@ pub const PathWatcherManager = struct {
         this.main_watcher.deinit(false);
 
         if (this.watcher_count > 0) {
-            while (this.watchers.popOrNull()) |watcher| {
+            while (this.watchers.pop()) |watcher| {
                 if (watcher) |w| {
                     // unlink watcher
                     w.manager = null;
@@ -830,7 +827,6 @@ pub const PathWatcher = struct {
     }
 
     pub fn refPendingDirectory(this: *PathWatcher) bool {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.isClosed()) return false;
@@ -840,24 +836,20 @@ pub const PathWatcher = struct {
     }
 
     pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
-        @fence(.acquire);
         return this.has_pending_directories.load(.acquire);
     }
 
     pub fn isClosed(this: *PathWatcher) bool {
-        @fence(.acquire);
         return this.closed.load(.acquire);
     }
 
     pub fn setClosed(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        @fence(.release);
         this.closed.store(true, .release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
@@ -878,7 +870,7 @@ pub const PathWatcher = struct {
                 const time_diff = time_stamp - this.last_change_event.time_stamp;
                 if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
                     this.last_change_event.event_type != event_type and
-                    this.last_change_event.hash != hash))
+                        this.last_change_event.hash != hash))
                 {
                     // skip consecutive duplicates
                     return;

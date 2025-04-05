@@ -7,7 +7,7 @@ const Command = @import("../cli.zig").Command;
 const Install = @import("../install/install.zig");
 const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
 const PackageID = Install.PackageID;
-const String = @import("../install/semver.zig").String;
+const String = bun.Semver.String;
 const PackageManager = Install.PackageManager;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
 const Lockfile = Install.Lockfile;
@@ -339,15 +339,12 @@ pub const TrustCommand = struct {
 
                     const output_in_foreground = false;
                     const optional = false;
-                    switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(
-                            ctx,
-                            info.scripts_list,
-                            optional,
-                            log_level,
-                            output_in_foreground,
-                        ),
-                    }
+                    try pm.spawnPackageLifecycleScripts(
+                        ctx,
+                        info.scripts_list,
+                        optional,
+                        output_in_foreground,
+                    );
 
                     if (pm.options.log_level.showProgress()) {
                         scripts_node.activate();
@@ -424,7 +421,7 @@ pub const TrustCommand = struct {
         buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
         var package_json_writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
-        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source, .{}) catch |err| {
+        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source, .{ .mangled_props = null }) catch |err| {
             Output.errGeneric("failed to print package.json: {s}", .{@errorName(err)});
             Global.crash();
         };

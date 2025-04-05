@@ -1,4 +1,4 @@
-const uws = @import("../deps/uws.zig");
+const uws = bun.uws;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Global = bun.Global;
@@ -210,6 +210,8 @@ const json = struct {
                 },
             }
 
+            if (json_data.len == 0) return IPCDecodeError.NotEnoughBytes;
+
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
 
@@ -220,6 +222,7 @@ const json = struct {
                 bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
             else
                 bun.String.fromUTF8(json_data);
+
             defer {
                 str.deref();
                 if (is_ascii and !was_ascii_string_freed) {
@@ -227,8 +230,13 @@ const json = struct {
                 }
             }
 
-            const deserialized = str.toJSByParseJSON(globalThis);
-            if (deserialized == .zero) return error.InvalidFormat;
+            const deserialized = str.toJSByParseJSON(globalThis) catch |e| switch (e) {
+                error.JSError => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
+                error.OutOfMemory => return bun.outOfMemory(),
+            };
 
             return switch (kind) {
                 1 => .{
@@ -332,7 +340,10 @@ const SocketIPCData = struct {
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
     is_server: bool = false,
-    pub fn writeVersionPacket(this: *SocketIPCData) void {
+    keep_alive: bun.Async.KeepAlive = .{},
+    close_next_tick: ?JSC.Task = null,
+
+    pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
         }
@@ -341,6 +352,8 @@ const SocketIPCData = struct {
             const n = this.socket.write(bytes, false);
             if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
                 this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
+                // more remaining; need to ref event loop
+                this.keep_alive.ref(global.bunVM());
             }
         }
         if (Environment.allow_assert) {
@@ -367,6 +380,8 @@ const SocketIPCData = struct {
                 ipc_data.outgoing.reset();
             } else if (n > 0) {
                 ipc_data.outgoing.cursor = @intCast(n);
+                // more remaining; need to ref event loop
+                ipc_data.keep_alive.ref(global.bunVM());
             }
         }
 
@@ -392,6 +407,8 @@ const SocketIPCData = struct {
                 ipc_data.outgoing.reset();
             } else if (n > 0) {
                 ipc_data.outgoing.cursor = @intCast(n);
+                // more remaining; need to ref event loop
+                ipc_data.keep_alive.ref(global.bunVM());
             }
         }
 
@@ -403,7 +420,9 @@ const SocketIPCData = struct {
         if (this.disconnected) return;
         this.disconnected = true;
         if (nextTick) {
-            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(SocketIPCData, closeTask).init(this));
+            if (this.close_next_tick != null) return;
+            this.close_next_tick = JSC.ManagedTask.New(SocketIPCData, closeTask).init(this);
+            JSC.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
         } else {
             this.closeTask();
         }
@@ -411,9 +430,9 @@ const SocketIPCData = struct {
 
     pub fn closeTask(this: *SocketIPCData) void {
         log("SocketIPCData#closeTask", .{});
-        if (this.disconnected) {
-            this.socket.close(.normal);
-        }
+        this.close_next_tick = null;
+        bun.assert(this.disconnected);
+        this.socket.close(.normal);
     }
 };
 
@@ -493,7 +512,7 @@ const NamedPipeIPCData = struct {
         }
     }
 
-    pub fn writeVersionPacket(this: *NamedPipeIPCData) void {
+    pub fn writeVersionPacket(this: *NamedPipeIPCData, _: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
         }
@@ -663,6 +682,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: *anyopaque,
             _: Socket,
         ) void {
+            log("onOpen", .{});
             // it is NOT safe to use the first argument here because it has not been initialized yet.
             // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
             // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
@@ -678,8 +698,21 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: c_int,
             _: ?*anyopaque,
         ) void {
+            log("onClose", .{});
+            const ipc = this.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("NewSocketIPCHandler#onClose\n", .{});
+
+            if (ipc.close_next_tick) |close_next_tick_task| {
+                const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
+                managed.cancel();
+                ipc.close_next_tick = null;
+            }
+            // after onClose(), socketIPCData.close should never be called again because socketIPCData may be freed. just in case, set disconnected to true.
+            ipc.disconnected = true;
+
             this.handleIPCClose();
         }
 
@@ -695,8 +728,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
@@ -718,8 +751,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             return;
                         },
                         error.InvalidFormat => {
-                            Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                            this.handleIPCClose();
                             socket.close(.failure);
                             return;
                         },
@@ -748,8 +779,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                        this.handleIPCClose();
                         socket.close(.failure);
                         return;
                     },
@@ -771,42 +800,61 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             context: *Context,
             socket: Socket,
         ) void {
+            log("onWritable", .{});
             const ipc = context.ipc() orelse return;
             const to_write = ipc.outgoing.slice();
             if (to_write.len == 0) {
                 ipc.outgoing.reset();
+                // done sending message; unref event loop
+                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
                 return;
             }
             const n = socket.write(to_write, false);
             if (n == to_write.len) {
                 ipc.outgoing.reset();
+                // almost done sending message; unref event loop
+                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
             } else if (n > 0) {
                 ipc.outgoing.cursor += @intCast(n);
             }
         }
 
         pub fn onTimeout(
-            _: *Context,
+            context: *Context,
             _: Socket,
-        ) void {}
+        ) void {
+            log("onTimeout", .{});
+            const ipc = context.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+        }
 
         pub fn onLongTimeout(
-            _: *Context,
+            context: *Context,
             _: Socket,
-        ) void {}
+        ) void {
+            log("onLongTimeout", .{});
+            const ipc = context.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+        }
 
         pub fn onConnectError(
             _: *anyopaque,
             _: Socket,
             _: c_int,
         ) void {
+            log("onConnectError", .{});
             // context has not been initialized
         }
 
         pub fn onEnd(
             _: *Context,
-            _: Socket,
-        ) void {}
+            s: Socket,
+        ) void {
+            log("onEnd", .{});
+            s.close(.failure);
+        }
     };
 }
 
@@ -842,8 +890,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
@@ -862,7 +910,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                         ipc.close(false);
                         return;
                     },

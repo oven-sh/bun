@@ -205,6 +205,7 @@ export interface BundlerTestInput {
   sourceMap?: "inline" | "external" | "linked" | "none" | "linked";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
+  production?: boolean;
 
   // pass subprocess.env
   env?: Record<string, any>;
@@ -343,7 +344,7 @@ export interface BundlerTestRunOptions {
   stderr?: string;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
-  /** match exact error message, example "ReferenceError: Can't find variable: bar" */
+  /** match exact error message, example "ReferenceError: bar is not defined" */
   error?: string;
   /**
    * for extra confidence the error is correctly tested for, a regex for the line it was
@@ -470,6 +471,7 @@ function expectBundled(
     ignoreDCEAnnotations,
     bytecode = false,
     emitDCEAnnotations,
+    production,
     // @ts-expect-error
     _referenceFn,
     expectExactFilesize,
@@ -638,7 +640,7 @@ function expectBundled(
         typeof contents === "string"
           ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
           : contents;
-      writeFileSync(filename, formattedContents);
+      writeFileSync(filename, formattedContents as any);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -719,6 +721,7 @@ function expectBundled(
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",
+              production && "--production",
             ]
           : [
               ESBUILD_PATH,

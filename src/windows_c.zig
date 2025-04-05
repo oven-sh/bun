@@ -9,6 +9,7 @@ const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
 // Windows doesn't have memmem, so we need to implement it
+// this is used in src/string_immutable.zig
 pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]const u8, needlelen: usize) ?[*]const u8 {
     // Handle null pointers
     if (haystack == null or needle == null) return null;
@@ -24,10 +25,6 @@ pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]con
 
     const i = std.mem.indexOf(u8, hay, nee) orelse return null;
     return hay.ptr + i;
-}
-
-comptime {
-    @export(memmem, .{ .name = "zig_memmem" });
 }
 
 pub const lstat = blk: {
@@ -57,7 +54,7 @@ pub fn getSystemLoadavg() [3]f32 {
     return .{ 0, 0, 0 };
 }
 
-pub const Mode = i32;
+pub const Mode = u16;
 const Win32Error = bun.windows.Win32Error;
 
 // The way we do errors in Bun needs to get cleaned up.

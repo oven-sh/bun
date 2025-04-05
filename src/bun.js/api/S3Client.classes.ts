@@ -20,8 +20,8 @@ export default [
         fn: "staticUnlink",
         length: 2,
       },
-      deleteObjects: {
-        fn: "staticDeleteObjects",
+      list: {
+        fn: "staticListObjects",
         length: 2,
       },
       presign: {
@@ -60,8 +60,8 @@ export default [
         fn: "unlink",
         length: 2,
       },
-      deleteObjects: {
-        fn: "deleteObjects",
+      list: {
+        fn: "listObjects",
         length: 2,
       },
       presign: {

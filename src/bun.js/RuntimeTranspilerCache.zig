@@ -160,7 +160,7 @@ pub const RuntimeTranspilerCache = struct {
             output_code: OutputCode,
             exports_kind: bun.JSAst.ExportsKind,
         ) !void {
-            var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.save");
+            var tracer = bun.perf.trace("RuntimeTranspilerCache.save");
             defer tracer.end();
 
             // atomically write to a tmpfile and then move it to the final destination
@@ -366,7 +366,7 @@ pub const RuntimeTranspilerCache = struct {
     ) !usize {
         const fmt_name = if (comptime bun.Environment.allow_assert) "{any}.debug.pile" else "{any}.pile";
 
-        const printed = try std.fmt.bufPrint(buf, fmt_name, .{bun.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
+        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
         return printed.len;
     }
 
@@ -457,7 +457,7 @@ pub const RuntimeTranspilerCache = struct {
         sourcemap_allocator: std.mem.Allocator,
         output_code_allocator: std.mem.Allocator,
     ) !Entry {
-        var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.fromFile");
+        var tracer = bun.perf.trace("RuntimeTranspilerCache.fromFile");
         defer tracer.end();
 
         var cache_file_path_buf: bun.PathBuffer = undefined;
@@ -531,7 +531,7 @@ pub const RuntimeTranspilerCache = struct {
         source_code: bun.String,
         exports_kind: bun.JSAst.ExportsKind,
     ) !void {
-        var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.toFile");
+        var tracer = bun.perf.trace("RuntimeTranspilerCache.toFile");
         defer tracer.end();
 
         var cache_file_path_buf: bun.PathBuffer = undefined;

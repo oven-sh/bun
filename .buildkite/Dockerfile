@@ -1,12 +1,12 @@
-ARG LLVM_VERSION="18"
-ARG REPORTED_LLVM_VERSION="18.1.8"
+ARG LLVM_VERSION="19"
+ARG REPORTED_LLVM_VERSION="19.1.7"
 ARG OLD_BUN_VERSION="1.1.38"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables"
 ARG DEFAULT_CXXFLAGS="-flto=full -fwhole-program-vtables -fforce-emit-vtables"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
-FROM --platform=$BUILDPLATFORM ubuntu:18.04 as base-amd64
+FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-amd64
 FROM base-$TARGETARCH as base
 
 ARG LLVM_VERSION

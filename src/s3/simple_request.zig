@@ -9,7 +9,7 @@ const S3Credentials = @import("./credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
 const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
-const s3Response = @import("./response_parser.zig");
+const ListObjects = @import("./list_objects.zig");
 
 pub const S3StatResult = union(enum) {
     success: struct {
@@ -49,8 +49,8 @@ pub const S3DeleteResult = union(enum) {
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
-pub const S3DeleteObjectsResult = union(enum) {
-    success: s3Response.S3DeleteObjectsSuccessResult,
+pub const S3ListObjectsResult = union(enum) {
+    success: ListObjects.S3ListObjectsV2Result,
     not_found: S3Error,
 
     /// failure error is not owned and need to be copied if used after this callback
@@ -95,7 +95,7 @@ pub const S3HttpSimpleTask = struct {
         download: *const fn (S3DownloadResult, *anyopaque) void,
         upload: *const fn (S3UploadResult, *anyopaque) void,
         delete: *const fn (S3DeleteResult, *anyopaque) void,
-        deleteObjects: *const fn (S3DeleteObjectsResult, *anyopaque) void,
+        listObjects: *const fn (S3ListObjectsResult, *anyopaque) void,
         commit: *const fn (S3CommitResult, *anyopaque) void,
         part: *const fn (S3PartResult, *anyopaque) void,
 
@@ -105,7 +105,7 @@ pub const S3HttpSimpleTask = struct {
                 .download,
                 .stat,
                 .delete,
-                .deleteObjects,
+                .listObjects,
                 .commit,
                 .part,
                 => |callback| callback(.{
@@ -121,7 +121,7 @@ pub const S3HttpSimpleTask = struct {
                 inline .download,
                 .stat,
                 .delete,
-                .deleteObjects,
+                .listObjects,
                 => |callback| callback(.{
                     .not_found = .{
                         .code = code,
@@ -267,11 +267,11 @@ pub const S3HttpSimpleTask = struct {
                     },
                 }
             },
-            .deleteObjects => |callback| {
+            .listObjects => |callback| {
                 switch (response.status_code) {
-                    200, 204 => {
+                    200 => {
                         if (this.result.body) |body| {
-                            const success = s3Response.parseS3DeleteObjectsSuccessResult(body.slice()) catch {
+                            const success = ListObjects.parseS3ListObjectsResult(body.slice()) catch {
                                 this.errorWithBody(.failure);
                                 return;
                             };
@@ -385,7 +385,7 @@ pub fn executeSimpleS3Request(
         .content_disposition = options.content_disposition,
         .acl = options.acl,
         .storage_class = options.storage_class,
-    }, null) catch |sign_err| {
+    }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
         callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);

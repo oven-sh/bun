@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION e6cb36cabed465c28c7bcbb28d86e8466ea36e8d)
+  set(WEBKIT_VERSION 12d2dfab74b34a50c8544c59f8a9454ce2e06e06)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -77,6 +77,10 @@ elseif(ENABLE_LTO AND NOT WIN32)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-lto")
 else()
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
+endif()
+
+if(ENABLE_ASAN)
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 
 set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})

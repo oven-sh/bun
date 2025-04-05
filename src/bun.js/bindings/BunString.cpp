@@ -65,14 +65,6 @@ extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::Encode
     return bunString->tag != BunStringTag::Dead;
 }
 
-extern "C" bool BunString__fromJSRef(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
-{
-
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    *bunString = Bun::toStringRef(globalObject, value);
-    return bunString->tag != BunStringTag::Dead;
-}
-
 extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
 {
     ASSERT(simdutf::validate_ascii(bytes, length));
@@ -159,25 +151,25 @@ extern "C" int64_t BunString__toInt32(BunString* bunString)
 }
 
 namespace Bun {
-JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
+
+JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     if (bunString.tag == BunStringTag::Empty || bunString.tag == BunStringTag::Dead) {
-        return JSValue(JSC::jsEmptyString(globalObject->vm()));
+        return JSC::jsEmptyString(globalObject->vm());
     }
     if (bunString.tag == BunStringTag::WTFStringImpl) {
 #if ASSERT_ENABLED
-        unsigned refCount = bunString.impl.wtf->refCount();
-        ASSERT(refCount > 0 && !bunString.impl.wtf->isEmpty());
+        ASSERT(bunString.impl.wtf->hasAtLeastOneRef() && !bunString.impl.wtf->isEmpty());
 #endif
 
-        return JSValue(jsString(globalObject->vm(), String(bunString.impl.wtf)));
+        return JSC::jsString(globalObject->vm(), String(bunString.impl.wtf));
     }
 
     if (bunString.tag == BunStringTag::StaticZigString) {
-        return JSValue(jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig)));
+        return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig));
     }
 
-    return JSValue(Zig::toJSStringGC(bunString.impl.zig, globalObject));
+    return Zig::toJSStringGC(bunString.impl.zig, globalObject);
 }
 
 BunString toString(const char* bytes, size_t length)
@@ -667,6 +659,17 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     }
 
     return WTF::String();
+}
+
+WTF::String BunString::toWTFString(NonNullTag) const
+{
+    WTF::String res = toWTFString(ZeroCopy);
+    if (res.isNull()) {
+        // TODO(dylan-conway): also use emptyString in toWTFString(ZeroCopy) and toWTFString. This will
+        // require reviewing each call site for isNull() checks and most likely changing them to isEmpty()
+        return WTF::emptyString();
+    }
+    return res;
 }
 
 WTF::String BunString::transferToWTFString()

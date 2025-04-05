@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "JavaScriptCore/ArrayBuffer.h"
 #include "root.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -65,5 +64,9 @@ JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);
 JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);
+JSC::EncodedJSValue jsBufferToStringFromBytes(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);
+JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding);
+JSC::EncodedJSValue constructFromEncoding(JSC::JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> span, WebCore::BufferEncodingType encoding);
+JSC::EncodedJSValue constructFromEncoding(JSC::JSGlobalObject* lexicalGlobalObject, WTF::StringView string, WebCore::BufferEncodingType encoding);
 
-}
+} // namespace WebCore

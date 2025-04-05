@@ -29,13 +29,13 @@
 #include "AbortSignal.h"
 #include "DOMException.h"
 #include "JSDOMException.h"
-#include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include "WebCoreOpaqueRoot.h"
 #include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(AbortController);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortController);
 
 Ref<AbortController> AbortController::create(ScriptExecutionContext& context)
 {

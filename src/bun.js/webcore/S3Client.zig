@@ -17,7 +17,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         formatter.indent += 1;
         defer formatter.indent -|= 1;
 
-        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else "https://s3.<region>.amazonaws.com";
+        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else (if (credentials.virtual_hosted_style) "https://<bucket>.s3.<region>.amazonaws.com" else "https://s3.<region>.amazonaws.com");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
@@ -112,11 +112,13 @@ pub const S3Client = struct {
 
     pub fn writeFormat(this: *@This(), comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Client<r>", enable_ansi_colors));
-        if (this.credentials.bucket.len > 0) {
+        // detect virtual host style bucket name
+        const bucket_name = if (this.credentials.virtual_hosted_style and this.credentials.endpoint.len > 0) S3Credentials.guessBucket(this.credentials.endpoint) orelse this.credentials.bucket else this.credentials.bucket;
+        if (bucket_name.len > 0) {
             try writer.print(
                 comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
                 .{
-                    this.credentials.bucket,
+                    bucket_name,
                 },
             );
         } else {
@@ -236,15 +238,16 @@ pub const S3Client = struct {
         });
     }
 
-    pub fn deleteObjects(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn listObjects(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const args = callframe.argumentsAsArray(2);
+
         const object_keys = args[0];
         const options = args[1];
 
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, .{ .string = bun.PathString.empty }, options, ptr.credentials, ptr.options, null, null);
 
         defer blob.detach();
-        return blob.store.?.data.s3.deleteObjects(blob.store.?, globalThis, object_keys, options);
+        return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
     }
 
     pub fn unlink(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -309,7 +312,7 @@ pub const S3Client = struct {
         return S3File.stat(globalThis, callframe);
     }
 
-    pub fn staticDeleteObjects(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn staticListObjects(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const args = callframe.argumentsAsArray(2);
         const object_keys = args[0];
         const options = args[1];
@@ -320,6 +323,6 @@ pub const S3Client = struct {
         var blob = try S3File.constructS3FileWithS3Credentials(globalThis, .{ .string = bun.PathString.empty }, options, existing_credentials);
 
         defer blob.detach();
-        return blob.store.?.data.s3.deleteObjects(blob.store.?, globalThis, object_keys, options);
+        return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
     }
 };

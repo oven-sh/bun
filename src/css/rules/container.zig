@@ -62,7 +62,7 @@ pub const ContainerSizeFeatureId = enum {
     /// The [orientation](https://w3c.github.io/csswg-drafts/css-contain-3/#orientation) size container feature.
     orientation,
 
-    pub usingnamespace css.DeriveValueType(@This());
+    pub usingnamespace css.DeriveValueType(@This(), ValueTypeMap);
 
     pub const ValueTypeMap = .{
         .width = css.MediaFeatureType.length,
@@ -141,7 +141,7 @@ pub const StyleQuery = union(enum) {
         if (input.expectColon().asErr()) |e| return .{ .err = e };
         input.skipWhitespace();
         const opts = css.ParserOptions.default(input.allocator(), null);
-        const feature = .{
+        const feature: StyleQuery = .{
             .feature = switch (css.Property.parse(
                 property_id,
                 input,

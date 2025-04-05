@@ -351,11 +351,12 @@ pub const FontFamily = union(enum) {
 
                 if (val.len > 0 and
                     !css.parse_utility.parseString(
-                    dest.allocator,
-                    GenericFontFamily,
-                    val,
-                    GenericFontFamily.parse,
-                ).isOk()) {
+                        dest.allocator,
+                        GenericFontFamily,
+                        val,
+                        GenericFontFamily.parse,
+                    ).isOk())
+                {
                     var id = ArrayList(u8){};
                     defer id.deinit(dest.allocator);
                     var first = true;
@@ -608,7 +609,7 @@ pub const Font = struct {
     /// How the text should be capitalized. Only CSS 2.1 values are supported.
     variant_caps: FontVariantCaps,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.font);
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .family = css.PropertyIdTag.@"font-family",

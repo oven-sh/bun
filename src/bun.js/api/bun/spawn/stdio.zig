@@ -87,7 +87,7 @@ pub const Stdio = union(enum) {
         }
     }
 
-    pub fn canUseMemfd(this: *const @This(), is_sync: bool) bool {
+    pub fn canUseMemfd(this: *const @This(), is_sync: bool, has_max_buffer: bool) bool {
         if (comptime !Environment.isLinux) {
             return false;
         }
@@ -95,7 +95,7 @@ pub const Stdio = union(enum) {
         return switch (this.*) {
             .blob => !this.blob.needsToReadFile(),
             .memfd, .array_buffer => true,
-            .pipe => is_sync,
+            .pipe => is_sync and !has_max_buffer,
             else => false,
         };
     }
@@ -302,7 +302,7 @@ pub const Stdio = union(enum) {
         }
 
         if (value.isString()) {
-            const str = value.getZigString(globalThis);
+            const str = try value.getZigString(globalThis);
             if (str.eqlComptime("inherit")) {
                 out_stdio.* = Stdio{ .inherit = {} };
             } else if (str.eqlComptime("ignore")) {
@@ -324,6 +324,7 @@ pub const Stdio = union(enum) {
 
             if (file_fd >= std.math.maxInt(i32)) {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                defer formatter.deinit();
                 return globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{value.toFmt(&formatter)});
             }
 

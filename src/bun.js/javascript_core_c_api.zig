@@ -8,12 +8,8 @@ const bun = @import("root").bun;
 const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
-    pub fn value(this: *const @This()) cpp.JSValue {
+    pub fn value(this: *const generic) cpp.JSValue {
         return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));
-    }
-
-    pub inline fn bunVM(this: *@This()) *bun.JSC.VirtualMachine {
-        return this.ptr().bunVM();
     }
 };
 pub const Private = anyopaque;
@@ -46,6 +42,7 @@ pub const kJSTypeNumber = @intFromEnum(JSType.kJSTypeNumber);
 pub const kJSTypeString = @intFromEnum(JSType.kJSTypeString);
 pub const kJSTypeObject = @intFromEnum(JSType.kJSTypeObject);
 pub const kJSTypeSymbol = @intFromEnum(JSType.kJSTypeSymbol);
+/// From JSValueRef.h:81
 pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeInt8Array,
     kJSTypedArrayTypeInt16Array,
@@ -58,6 +55,8 @@ pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeFloat64Array,
     kJSTypedArrayTypeArrayBuffer,
     kJSTypedArrayTypeNone,
+    kJSTypedArrayTypeBigInt64Array,
+    kJSTypedArrayTypeBigUint64Array,
     _,
 };
 pub const kJSTypedArrayTypeInt8Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeInt8Array);

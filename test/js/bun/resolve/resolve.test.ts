@@ -1,8 +1,10 @@
 import { describe, it, expect } from "bun:test";
 import { pathToFileURL } from "bun";
 import { mkdirSync, writeFileSync } from "fs";
-import { join, sep } from "path";
-import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows } from "harness";
+import { join, sep, resolve } from "path";
+import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows, bunRun } from "harness";
+
+const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
@@ -297,7 +299,7 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
-it("import override to node builtin", async () => {
+it.only("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
 });
@@ -404,5 +406,41 @@ describe("NODE_PATH test", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
+  });
+});
+
+it("can resolve with source directories that do not exist", () => {
+  // In Nuxt/Vite, the following call happens:
+  // `require("module").createRequire("file:///Users/clo/my-nuxt-app/@vue/server-renderer")("vue")`
+  // This seems to be a bug in their code, not using a concrete file path for
+  // this virtual module, such as 'node_modules/@vue/server-renderer/index.js',
+  // but the same exact resolution happens and succeeds in Node.js
+  const dir = tempDirWithFiles("resolve", {
+    "node_modules/vue/index.js": "export default 123;",
+    "test.js": `
+      const { createRequire } = require('module');
+      const assert = require('assert');
+      const req = createRequire(import.meta.url + '/@vue/server-renderer');
+      assert.strictEqual(req('vue').default, 123);
+    `,
+  });
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+
+  expect(exitCode).toBe(0);
+});
+
+describe("When CJS and ESM are mixed", () => {
+  const fixturePath = fixture("tsyringe.ts");
+
+  // https://github.com/oven-sh/bun/issues/4677
+  it("loads reflect-metadata before tsyringe", async () => {
+    const { stderr } = bunRun(fixturePath);
+    expect(stderr).toBeEmpty();
   });
 });

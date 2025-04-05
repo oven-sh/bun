@@ -1,17 +1,12 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
 const Watcher = @This();
-pub const max_count = 128;
+const DebugLogScope = bun.Output.Scoped(.watcher, false);
+const log = DebugLogScope.log;
 
-pub const Event = WatchEvent;
-pub const Item = WatchItem;
-pub const ItemList = WatchList;
-pub const WatchList = std.MultiArrayList(WatchItem);
-pub const HashType = u32;
-const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
-
-// Consumer-facing
-watch_events: [128]WatchEvent,
-changed_filepaths: [128]?[:0]u8,
+// This will always be [max_count]WatchEvent,
+// We avoid statically allocating because it increases the binary size.
+watch_events: []WatchEvent = &.{},
+changed_filepaths: [max_count]?[:0]u8,
 
 /// The platform-specific implementation of the watcher
 platform: Platform,
@@ -36,6 +31,19 @@ onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: 
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
 thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+
+pub const max_count = 128;
+pub const requires_file_descriptors = switch (Environment.os) {
+    .mac => true,
+    else => false,
+};
+
+pub const Event = WatchEvent;
+pub const Item = WatchItem;
+pub const ItemList = WatchList;
+pub const WatchList = std.MultiArrayList(WatchItem);
+pub const HashType = u32;
+const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
 /// Initializes a watcher. Each watcher is tied to some context type, which
 /// recieves watch callbacks on the watcher thread. This function does not
@@ -68,7 +76,7 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
 
     const watcher = try allocator.create(Watcher);
     errdefer allocator.destroy(watcher);
-    watcher.* = Watcher{
+    watcher.* = .{
         .fs = fs,
         .allocator = allocator,
         .watched_count = 0,
@@ -79,8 +87,8 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
         .onFileUpdate = &wrapped.onFileUpdateWrapped,
         .onError = &wrapped.onErrorWrapped,
         .platform = .{},
-        .watch_events = undefined,
-        .changed_filepaths = [_]?[:0]u8{null} ** 128,
+        .watch_events = try allocator.alloc(WatchEvent, max_count),
+        .changed_filepaths = [_]?[:0]u8{null} ** max_count,
     };
 
     try Platform.init(&watcher.platform, fs.top_level_dir);
@@ -118,9 +126,6 @@ pub fn getHash(filepath: string) HashType {
 
 pub const WatchItemIndex = u16;
 pub const max_eviction_count = 8096;
-
-const log = bun.Output.scoped(.watcher, false);
-
 const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
@@ -214,7 +219,7 @@ fn threadMain(this: *Watcher) !void {
     Output.Source.configureNamedThread("File Watcher");
 
     defer Output.flush();
-    if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
+    log("Watcher started", .{});
 
     switch (this.watchLoop()) {
         .err => |err| {
@@ -247,7 +252,7 @@ pub fn flushEvictions(this: *Watcher) void {
     // swapRemove messes up the order
     // But, it only messes up the order if any elements in the list appear after the item being removed
     // So if we just sort the list by the biggest index first, that should be fine
-    std.sort.pdq(
+    std.sort.insertion(
         WatchItemIndex,
         this.evict_list[0..this.evict_list_i],
         {},
@@ -264,8 +269,10 @@ pub fn flushEvictions(this: *Watcher) void {
 
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor
-            // TODO do we need to call inotify_rm_watch on linux?
-            _ = bun.sys.close(fds[item]);
+            // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
+            if (fds[item].isValid()) {
+                _ = bun.sys.close(fds[item]);
+            }
         }
         last_item = item;
     }
@@ -273,7 +280,7 @@ pub fn flushEvictions(this: *Watcher) void {
     last_item = no_watch_item;
     // This is split into two passes because reading the slice while modified is potentially unsafe.
     for (this.evict_list[0..this.evict_list_i]) |item| {
-        if (item == last_item) continue;
+        if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
         last_item = item;
     }
@@ -333,11 +340,11 @@ fn appendFileAssumeCapacity(
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         var event = std.mem.zeroes(KEvent);
 
-        event.flags = std.c.EV_ADD | std.c.EV_CLEAR | std.c.EV_ENABLE;
+        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
         // we want to know about the vnode
-        event.filter = std.c.EVFILT_VNODE;
+        event.filter = std.c.EVFILT.VNODE;
 
-        event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
+        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
 
         // id
         event.ident = @intCast(fd.int());
@@ -425,15 +432,15 @@ fn appendDirectoryAssumeCapacity(
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         var event = std.mem.zeroes(KEvent);
 
-        event.flags = std.c.EV_ADD | std.c.EV_CLEAR | std.c.EV_ENABLE;
+        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
         // we want to know about the vnode
-        event.filter = std.c.EVFILT_VNODE;
+        event.filter = std.c.EVFILT.VNODE;
 
         // monitor:
         // - Write
         // - Rename
         // - Delete
-        event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
+        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
 
         // id
         event.ident = @intCast(fd.int());
@@ -534,12 +541,14 @@ pub fn appendFileMaybeLock(
         .result => {},
     }
 
-    if (comptime FeatureFlags.verbose_watcher) {
-        if (strings.indexOf(file_path, this.cwd)) |i| {
-            Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
-        } else {
-            Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
-        }
+    if (DebugLogScope.isVisible()) {
+        const cwd_len_with_slash = if (this.cwd[this.cwd.len - 1] == '/') this.cwd.len else this.cwd.len + 1;
+        log("<d>Added <b>{s}<r><d> to watch list.<r>", .{
+            if (file_path.len > cwd_len_with_slash and bun.strings.startsWith(file_path, this.cwd))
+                file_path[cwd_len_with_slash..]
+            else
+                file_path,
+        });
     }
 
     return .{ .result = {} };

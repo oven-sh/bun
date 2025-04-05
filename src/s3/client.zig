@@ -23,7 +23,10 @@ pub const S3UploadResult = S3SimpleRequest.S3UploadResult;
 pub const S3StatResult = S3SimpleRequest.S3StatResult;
 pub const S3DownloadResult = S3SimpleRequest.S3DownloadResult;
 pub const S3DeleteResult = S3SimpleRequest.S3DeleteResult;
-pub const S3DeleteObjectsResult = S3SimpleRequest.S3DeleteObjectsResult;
+const S3ListObjects = @import("./list_objects.zig");
+pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
+pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
+pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
 
 pub fn stat(
     this: *S3Credentials,
@@ -100,33 +103,86 @@ pub fn delete(
     }, .{ .delete = callback }, callback_context);
 }
 
-pub fn deleteObjects(
+pub fn listObjects(
     this: *S3Credentials,
-    body: []const u8,
-    callback: *const fn (S3DeleteObjectsResult, *anyopaque) void,
+    listOptions: S3ListObjectsOptions,
+    callback: *const fn (S3ListObjectsResult, *anyopaque) void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
 ) void {
-    var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
-    bun.sha.SHA256.hash(body, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+    var search_params: bun.ByteList = .{};
 
-    const hash_as_hex = bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower);
+    search_params.append(bun.default_allocator, "?") catch bun.outOfMemory();
 
-    var md5_digest = std.mem.zeroes(bun.sha.MD5.Digest);
-    bun.sha.MD5.hash(body, &md5_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+    if (listOptions.continuation_token) |continuation_token| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(continuation_token, &buff, true) catch bun.outOfMemory();
+        search_params.appendFmt(bun.default_allocator, "continuation-token={s}", .{encoded}) catch bun.outOfMemory();
+    }
+
+    if (listOptions.delimiter) |delimiter| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(delimiter, &buff, true) catch bun.outOfMemory();
+
+        if (listOptions.continuation_token != null) {
+            search_params.appendFmt(bun.default_allocator, "&delimiter={s}", .{encoded}) catch bun.outOfMemory();
+        } else {
+            search_params.appendFmt(bun.default_allocator, "delimiter={s}", .{encoded}) catch bun.outOfMemory();
+        }
+    }
+
+    if (listOptions.encoding_type != null) {
+        if (listOptions.continuation_token != null or listOptions.delimiter != null) {
+            search_params.append(bun.default_allocator, "&encoding-type=url") catch bun.outOfMemory();
+        } else {
+            search_params.append(bun.default_allocator, "encoding-type=url") catch bun.outOfMemory();
+        }
+    }
+
+    if (listOptions.fetch_owner) |fetch_owner| {
+        if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null) {
+            search_params.appendFmt(bun.default_allocator, "&fetch-owner={}", .{fetch_owner}) catch bun.outOfMemory();
+        } else {
+            search_params.appendFmt(bun.default_allocator, "fetch-owner={}", .{fetch_owner}) catch bun.outOfMemory();
+        }
+    }
+
+    if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null or listOptions.fetch_owner != null) {
+        search_params.append(bun.default_allocator, "&list-type=2") catch bun.outOfMemory();
+    } else {
+        search_params.append(bun.default_allocator, "list-type=2") catch bun.outOfMemory();
+    }
+
+    if (listOptions.max_keys) |max_keys| {
+        search_params.appendFmt(bun.default_allocator, "&max-keys={}", .{max_keys}) catch bun.outOfMemory();
+    }
+
+    if (listOptions.prefix) |prefix| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(prefix, &buff, true) catch bun.outOfMemory();
+        search_params.appendFmt(bun.default_allocator, "&prefix={s}", .{encoded}) catch bun.outOfMemory();
+    }
+
+    if (listOptions.start_after) |start_after| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(start_after, &buff, true) catch bun.outOfMemory();
+        search_params.appendFmt(bun.default_allocator, "&start-after={s}", .{encoded}) catch bun.outOfMemory();
+    }
 
     const result = this.signRequest(.{
         .path = "",
-        .method = .POST,
-        .search_params = "?delete=",
-        .content_hash = &hash_as_hex,
-        .content_md5 = &md5_digest,
-    }, null) catch |sign_err| {
+        .method = .GET,
+        .search_params = search_params.slice(),
+    }, true, null) catch |sign_err| {
+        search_params.deinitWithAllocator(bun.default_allocator);
+
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
         callback(.{ .failure = .{ .code = error_code_and_message.code, .message = error_code_and_message.message } }, callback_context);
 
         return;
     };
+
+    search_params.deinitWithAllocator(bun.default_allocator);
 
     const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
 
@@ -135,7 +191,7 @@ pub fn deleteObjects(
         .range = null,
         .sign_result = result,
         .callback_context = callback_context,
-        .callback = .{ .deleteObjects = callback },
+        .callback = .{ .listObjects = callback },
         .headers = headers,
         .vm = JSC.VirtualMachine.get(),
     });
@@ -147,12 +203,12 @@ pub fn deleteObjects(
 
     task.http = bun.http.AsyncHTTP.init(
         bun.default_allocator,
-        .POST,
+        .GET,
         url,
         task.headers.entries,
         task.headers.buf.items,
         &task.response_buffer,
-        body,
+        "",
         bun.http.HTTPClientResult.Callback.New(
             *S3HttpSimpleTask,
             S3HttpSimpleTask.httpCallback,
@@ -206,23 +262,21 @@ pub fn writableStream(
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
             if (sink.endPromise.hasValue()) {
-                if (sink.endPromise.globalObject()) |globalObject| {
-                    const event_loop = globalObject.bunVM().eventLoop();
-                    event_loop.enter();
-                    defer event_loop.exit();
-                    switch (result) {
-                        .success => {
-                            sink.endPromise.resolve(globalObject, JSC.jsNumber(0));
-                        },
-                        .failure => |err| {
-                            if (!sink.done) {
-                                sink.abort();
-                                return;
-                            }
+                const event_loop = sink.globalThis.bunVM().eventLoop();
+                event_loop.enter();
+                defer event_loop.exit();
+                switch (result) {
+                    .success => {
+                        sink.endPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                    },
+                    .failure => |err| {
+                        if (!sink.done) {
+                            sink.abort();
+                            return;
+                        }
 
-                            sink.endPromise.reject(globalObject, err.toJS(globalObject, sink.path()));
-                        },
-                    }
+                        sink.endPromise.reject(sink.globalThis, err.toJS(sink.globalThis, sink.path()));
+                    },
                 }
             }
             sink.finalize();
@@ -275,22 +329,22 @@ const S3UploadStreamWrapper = struct {
     callback_context: *anyopaque,
     ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    global: *JSC.JSGlobalObject,
+
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
         if (sink.endPromise.hasValue()) {
-            if (sink.endPromise.globalObject()) |globalObject| {
-                switch (result) {
-                    .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
-                    .failure => |err| {
-                        if (!sink.done) {
-                            sink.abort();
-                            return;
-                        }
-                        sink.endPromise.reject(globalObject, err.toJS(globalObject, self.path));
-                    },
-                }
+            switch (result) {
+                .success => sink.endPromise.resolve(self.global, JSC.jsNumber(0)),
+                .failure => |err| {
+                    if (!sink.done) {
+                        sink.abort();
+                        return;
+                    }
+                    sink.endPromise.reject(self.global, err.toJS(self.global, self.path));
+                },
             }
         }
         if (self.callback) |callback| {
@@ -312,7 +366,7 @@ pub fn onUploadStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callf
     var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
     defer this.deref();
 
-    if (this.readable_stream_ref.get()) |stream| {
+    if (this.readable_stream_ref.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
     this.readable_stream_ref.deinit();
@@ -331,7 +385,7 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
         this.sink.endPromise.reject(globalThis, err);
     }
 
-    if (this.readable_stream_ref.get()) |stream| {
+    if (this.readable_stream_ref.get(globalThis)) |stream| {
         stream.cancel(globalThis);
         this.readable_stream_ref.deinit();
     }
@@ -347,17 +401,11 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
 
     return .undefined;
 }
-pub const shim = JSC.Shimmer("Bun", "S3UploadStream", @This());
-
-pub const Export = shim.exportFunctions(.{
-    .onResolveRequestStream = onUploadStreamResolveRequestStream,
-    .onRejectRequestStream = onUploadStreamRejectRequestStream,
-});
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
-    @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+    @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
     const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
-    @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
 }
 
 /// consumes the readable stream and upload to s3
@@ -437,6 +485,7 @@ pub fn uploadStream(
         .callback_context = callback_context,
         .path = task.path,
         .task = task,
+        .global = globalThis,
     });
     task.callback_context = @ptrCast(ctx);
     // keep the task alive until we are done configuring the signal
@@ -564,7 +613,7 @@ pub fn downloadStream(
     var result = this.signRequest(.{
         .path = path,
         .method = .GET,
-    }, null) catch |sign_err| {
+    }, false, null) catch |sign_err| {
         if (range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
         callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{
@@ -648,40 +697,34 @@ pub fn readableStream(
     const readable_value = reader.toReadableStream(globalThis);
 
     const S3DownloadStreamWrapper = struct {
+        pub usingnamespace bun.New(@This());
+
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         path: []const u8,
-        pub usingnamespace bun.New(@This());
+        global: *JSC.JSGlobalObject,
 
         pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) void {
             defer if (!has_more) self.deinit();
 
-            if (self.readable_stream_ref.get()) |readable| {
+            if (self.readable_stream_ref.get(self.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
                         readable.ptr.Bytes.onData(
-                            .{
-                                .err = .{
-                                    .JSValue = err.toJS(self.readable_stream_ref.globalThis().?, self.path),
-                                },
-                            },
+                            .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
                             bun.default_allocator,
                         );
                         return;
                     }
                     if (has_more) {
                         readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = bun.ByteList.initConst(chunk.list.items),
-                            },
+                            .{ .temporary = bun.ByteList.initConst(chunk.list.items) },
                             bun.default_allocator,
                         );
                         return;
                     }
 
                     readable.ptr.Bytes.onData(
-                        .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
-                        },
+                        .{ .temporary_and_done = bun.ByteList.initConst(chunk.list.items) },
                         bun.default_allocator,
                     );
                     return;
@@ -694,14 +737,28 @@ pub fn readableStream(
             bun.default_allocator.free(self.path);
             self.destroy();
         }
+
+        pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(opaque_self));
+            callback(chunk, has_more, err, self);
+        }
     };
 
-    downloadStream(this, path, offset, size, proxy_url, @ptrCast(&S3DownloadStreamWrapper.callback), S3DownloadStreamWrapper.new(.{
-        .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{
-            .ptr = .{ .Bytes = &reader.context },
-            .value = readable_value,
-        }, globalThis),
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-    }));
+    downloadStream(
+        this,
+        path,
+        offset,
+        size,
+        proxy_url,
+        S3DownloadStreamWrapper.opaqueCallback,
+        S3DownloadStreamWrapper.new(.{
+            .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{
+                .ptr = .{ .Bytes = &reader.context },
+                .value = readable_value,
+            }, globalThis),
+            .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .global = globalThis,
+        }),
+    );
     return readable_value;
 }

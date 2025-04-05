@@ -187,7 +187,7 @@ export function createTestBuilder(path: string) {
 
     static tmpdir(): string {
       const tmp = os.tmpdir();
-      return fs.mkdtempSync(join(tmp, "test_builder"));
+      return fs.realpathSync(fs.mkdtempSync(join(tmp, "test_builder")));
     }
 
     setTempdir(tempdir: string): this {

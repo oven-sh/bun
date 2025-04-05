@@ -1,23 +1,26 @@
 #include "root.h"
+#include "headers-handwritten.h"
+#include "NodeModuleModule.h"
 
 #include <JavaScriptCore/JSCInlines.h>
-
 #include <JavaScriptCore/VM.h>
-
 #include <JavaScriptCore/JSString.h>
-
-#include "headers-handwritten.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-
-#include "NodeModuleModule.h"
-
 #include "ErrorCode.h"
-#include <JavaScriptCore/LazyPropertyInlines.h>
-#include <JavaScriptCore/VMTrapsInlines.h>
+
+#include "GeneratedNodeModuleModule.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -59,18 +62,17 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "assert/strict"_s,
     "async_hooks"_s,
     "buffer"_s,
-    "bun"_s,
     "bun:ffi"_s,
     "bun:jsc"_s,
     "bun:sqlite"_s,
     "bun:test"_s,
     "bun:wrap"_s,
+    "bun"_s,
     "child_process"_s,
     "cluster"_s,
     "console"_s,
     "constants"_s,
     "crypto"_s,
-    "detect-libc"_s,
     "dgram"_s,
     "diagnostics_channel"_s,
     "dns"_s,
@@ -86,6 +88,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "inspector/promises"_s,
     "module"_s,
     "net"_s,
+    "node:test"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -237,20 +240,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
             "createRequire() requires at least one argument"_s);
     }
 
-    auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    auto argument = callFrame->uncheckedArgument(0);
+    auto val = argument.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (val.startsWith("file://"_s)) {
+    if (!isAbsolutePath(val)) {
         WTF::URL url(val);
         if (!url.isValid()) {
-            throwTypeError(globalObject, scope,
-                makeString("createRequire() was given an invalid URL '"_s,
-                    url.string(), "'"_s));
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "filename"_s, argument,
+                "must be a file URL object, file URL string, or absolute path string"_s);
             RELEASE_AND_RETURN(scope, JSValue::encode({}));
         }
         if (!url.protocolIsFile()) {
-            throwTypeError(globalObject, scope,
-                "createRequire() does not support non-file URLs"_s);
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "filename"_s, argument,
+                "must be a file URL object, file URL string, or absolute path string"_s);
             RELEASE_AND_RETURN(scope, JSValue::encode({}));
         }
         val = url.fileSystemPath();
@@ -334,7 +339,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         if (
             // fast path: it's a real CommonJS module object.
             auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
-            fromValue = cjs->id();
+            fromValue = cjs->filename();
         } else if
             // slow path: userland code did something weird. lets let them do that
             // weird thing.
@@ -349,7 +354,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         }
 
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false);
+        auto result = Bun__resolveSync(
+            globalObject,
+            JSC::JSValue::encode(moduleName), JSValue::encode(fromValue),
+            false,
+            true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {
@@ -368,7 +377,6 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
         EncodedJSValue thisValue,
         PropertyName propertyName))
 {
-
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     return JSValue::encode(
         globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(
@@ -393,7 +401,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
                 }
             }
         }
-        globalObject->hasOverridenModuleResolveFilenameFunction = !isOriginal;
+        globalObject->hasOverriddenModuleResolveFilenameFunction = !isOriginal;
         globalObject->m_moduleResolveFilenameFunction.set(
             lexicalGlobalObject->vm(), globalObject, value.asCell());
     }
@@ -555,6 +563,12 @@ static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
         ->lazyRequireCacheObject();
 }
 
+static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
+{
+    return jsCast<Zig::GlobalObject*>(moduleObject->globalObject())
+        ->lazyRequireExtensionsObject();
+}
+
 static JSValue getModuleDebugObject(VM& vm, JSObject* moduleObject)
 {
     return JSC::constructEmptyObject(moduleObject->globalObject());
@@ -565,13 +579,6 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     return JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
-}
-
-static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
-{
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return globalObject->requireFunctionUnbound()->getIfPropertyExists(
-        globalObject, Identifier::fromString(vm, "extensions"_s));
 }
 
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
@@ -628,6 +635,74 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue a = callFrame->argument(0);
+    JSValue b = callFrame->argument(1);
+    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
+    String aString = a.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String bString = b.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    global->m_moduleWrapperStart = aString;
+    global->m_moduleWrapperEnd = bString;
+    global->hasOverriddenModuleWrapper = true;
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
+    (JSGlobalObject * global,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    // This does not cache anything because it is assumed nobody reads it more than once.
+    VM& vm = global->vm();
+    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::commonJSGetWrapperArrayProxyCodeGenerator(vm), global);
+    JSC::CallData callData = JSC::getCallData(cb);
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSFunction::create(
+        vm, global, 1, "onMutate"_s,
+        jsFunctionSetCJSWrapperItem, JSC::ImplementationVisibility::Public,
+        JSC::NoIntrinsic));
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
+    ASSERT(!returnedException);
+    ASSERT(result.isCell());
+    return JSC::JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto v = JSValue::decode(encodedValue);
+    if (!v.isObject()) return false;
+    auto o = v.getObject();
+    if (!o) return false;
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+    auto a = o->getIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto b = o->getIndex(globalObject, 1);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto astring = a.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto bstring = b.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    globalObject->m_moduleWrapperStart = astring;
+    globalObject->m_moduleWrapperEnd = bstring;
+    globalObject->hasOverriddenModuleWrapper = true;
+
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -652,9 +727,74 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSInternalPromise* promise);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto arg1 = callFrame->argument(0);
+    auto name = makeAtomString(arg1.toWTFString(globalObject));
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
+        vm, globalObject, 1, String(), resolverFunctionCallback);
+
+    auto result = promise->then(globalObject, resolverFunction, nullptr);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    return JSValue::encode(
+        globalObject->m_moduleRunMainFunction.getInitializedOnMainThread(
+            globalObject));
+}
+
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
+{
+    auto overrideHandler = jsCast<JSObject*>(global->m_moduleRunMainFunction.get(global));
+    MarkedArgumentBuffer args;
+    args.append(argv1);
+    return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto value = JSValue::decode(encodedValue);
+    if (value.isCell()) {
+        bool isOriginal = false;
+        if (value.isCallable()) {
+            JSC::CallData callData = JSC::getCallData(value);
+            if (callData.type == JSC::CallData::Type::Native) {
+                if (callData.native.function.untaggedPtr() == &jsFunctionRunMain) {
+                    isOriginal = true;
+                }
+            }
+        }
+        Bun__VirtualMachine__setOverrideModuleRunMain(globalObject->bunVM(), !isOriginal);
+        globalObject->m_moduleRunMainFunction.set(
+            lexicalGlobalObject->vm(), globalObject, value.asCell());
+    }
+
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPreloadModules,
@@ -708,20 +848,22 @@ _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
 _resolveFilename        nodeModuleResolveFilename         CustomAccessor
 _resolveLookupPaths     jsFunctionResolveLookupPaths      Function 2
+_stat                   &Generated::NodeModuleModule::js_stat Function 1
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
-findSourceMap            jsFunctionFindSourceMap           Function 0
+findSourceMap           jsFunctionFindSourceMap           Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          PropertyCallback
 register                jsFunctionRegister                Function 1
-runMain                 jsFunctionRunMain                 Function 0
+runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
+wrapper                 nodeModuleWrapper                 CustomAccessor
 Module                  getModuleObject                   PropertyCallback
 @end
 */
@@ -732,7 +874,7 @@ class JSModuleConstructor : public JSC::InternalFunction {
 
 public:
     DECLARE_EXPORT_INFO;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static JSC::Structure* createStructure(JSC::VM& vm,
@@ -792,6 +934,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             init.set(moduleConstructor);
         });
 
+    globalObject->m_moduleRunMainFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            JSFunction* runMainFunction = JSFunction::create(
+                init.vm, init.owner, 2, "runMain"_s,
+                jsFunctionRunMain, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, jsFunctionRunMain);
+            init.set(runMainFunction);
+        });
+
     globalObject->m_moduleResolveFilenameFunction.initLater(
         [](const Zig::GlobalObject::Initializer<JSCell>& init) {
             JSFunction* resolveFilenameFunction = JSFunction::create(
@@ -799,6 +950,42 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic, jsFunctionResolveFileName);
             init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSFunction* resolveFilenameFunction = JSFunction::create(
+                init.vm, init.owner, 2, "_compile"_s,
+                functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, functionJSCommonJSModule_compile);
+            init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
+            init.set(requireESM);
+        });
+
+    globalObject->m_lazyRequireCacheObject.initLater(
+        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
+
+            NakedPtr<JSC::Exception> returnedException = nullptr;
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            ASSERT(!returnedException);
+            init.set(result.toObject(globalObject));
+        });
+
+    globalObject->m_lazyRequireExtensionsObject.initLater(
+        [](const Zig::GlobalObject::Initializer<Bun::JSCommonJSExtensions>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            init.set(JSCommonJSExtensions::create(vm, globalObject, JSCommonJSExtensions::createStructure(vm, globalObject, globalObject->nullPrototype())));
         });
 }
 
@@ -808,7 +995,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 {
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
-                      ->hasOverridenModuleResolveFilenameFunction));
+                ->hasOverriddenModuleResolveFilenameFunction));
 }
 
 } // namespace Bun
@@ -834,8 +1021,11 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
     exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
 
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(constructor);
+
     for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
-         ++i) {
+        ++i) {
         const auto& entry = Bun::nodeModuleObjectTableValues[i];
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->getIfPropertyExists(globalObject, property);
@@ -851,9 +1041,6 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         exportNames.append(property);
         exportValues.append(value);
     }
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(constructor);
 }
 
 } // namespace Zig

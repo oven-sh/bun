@@ -126,7 +126,7 @@ var finalizationRegistry = new FinalizationRegistry(heldValue => {
 
 function onGC(value, holder) {
   if (holder?.ongc) {
-    
+
     finalizationRegistry.register(value, { ongc: holder.ongc });
   }
 }
@@ -137,5 +137,3 @@ module.exports = {
   checkIfCollectableByCounting,
   onGC,
 };
-
-

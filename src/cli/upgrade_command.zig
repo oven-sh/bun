@@ -186,10 +186,10 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var header_entries: Headers.Entries = .{};
-        const accept = Headers.Kv{
-            .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
-            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
+        var header_entries: Headers.Entry.List = .empty;
+        const accept = Headers.Entry{
+            .name = .{ .offset = 0, .length = @intCast("Accept".len) },
+            .value = .{ .offset = @intCast("Accept".len), .length = @intCast("application/vnd.github.v3+json".len) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);
@@ -217,14 +217,14 @@ pub const UpgradeCommand = struct {
                 headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
-                    Headers.Kv{
-                        .name = Api.StringPointer{
+                    .{
+                        .name = .{
                             .offset = accept.value.offset + accept.value.length,
-                            .length = @as(u32, @intCast("Authorization".len)),
+                            .length = @intCast("Authorization".len),
                         },
-                        .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast(accept.value.offset + accept.value.length + "Authorization".len)),
-                            .length = @as(u32, @intCast("Bearer ".len + access_token.len)),
+                        .value = .{
+                            .offset = @intCast(accept.value.offset + accept.value.length + "Authorization".len),
+                            .length = @intCast("Bearer ".len + access_token.len),
                         },
                     },
                 );
@@ -400,7 +400,7 @@ pub const UpgradeCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const args = bun.argv;
         if (args.len > 2) {
@@ -656,14 +656,14 @@ pub const UpgradeCommand = struct {
                     const powershell_path =
                         bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                        const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
-                        const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
-                        if (bun.sys.exists(hardcoded_system_powershell)) {
-                            break :hardcoded_system_powershell hardcoded_system_powershell;
-                        }
-                        Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
-                        Global.exit(1);
-                    };
+                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                            if (bun.sys.exists(hardcoded_system_powershell)) {
+                                break :hardcoded_system_powershell hardcoded_system_powershell;
+                            }
+                            Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                            Global.exit(1);
+                        };
 
                     var unzip_argv = [_]string{
                         powershell_path,

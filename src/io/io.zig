@@ -19,8 +19,8 @@ pub const Loop = struct {
     epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) .zero else 0,
 
     cached_now: posix.timespec = .{
-        .tv_nsec = 0,
-        .tv_sec = 0,
+        .nsec = 0,
+        .sec = 0,
     },
     active: usize = 0,
 
@@ -291,22 +291,23 @@ pub const Loop = struct {
         updateTimespec(&this.cached_now);
     }
 
-    extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
+    extern "c" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
     pub fn updateTimespec(timespec: *posix.timespec) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
         } else if (comptime Environment.isWindows) {
-            var tv_sec: i64 = 0;
-            var tv_nsec: i64 = 0;
+            var sec: i64 = 0;
+            var nsec: i64 = 0;
 
-            const rc = clock_gettime_monotonic(&tv_sec, &tv_nsec);
+            const rc = clock_gettime_monotonic(&sec, &nsec);
             assert(rc == 0);
 
-            timespec.tv_sec = @intCast(tv_sec);
-            timespec.tv_nsec = @intCast(tv_nsec);
+            timespec.sec = @intCast(sec);
+            timespec.nsec = @intCast(nsec);
         } else {
-            std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC, timespec) catch {};
+            const updated = std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC) catch return;
+            timespec.* = updated;
         }
     }
 };
@@ -397,7 +398,7 @@ pub const Poll = struct {
 
     const GenerationNumberInt = if (Environment.isMac and Environment.allow_assert) u64 else u0;
 
-    var generation_number: GenerationNumberInt = 0;
+    var generation_number_monotonic: GenerationNumberInt = 0;
 
     pub const Tag = Pollable.Tag;
 
@@ -446,24 +447,24 @@ pub const Poll = struct {
 
         pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT.READ) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
                 if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.WRITE) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
                 if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.PROC) {
                 log("proc", .{});
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
                 log("machport", .{});
                 flags.insert(Flags.machport);
             }
@@ -492,7 +493,7 @@ pub const Poll = struct {
         }
 
         pub fn applyKQueue(
-            comptime action: @Type(.EnumLiteral),
+            comptime action: @Type(.enum_literal),
             tag: Pollable.Tag,
             poll: *Poll,
             fd: bun.FileDescriptor,
@@ -516,47 +517,47 @@ pub const Poll = struct {
                 }
 
                 if (comptime Environment.allow_assert and action != .cancel) {
-                    generation_number += 1;
-                    poll.generation_number = generation_number;
+                    generation_number_monotonic += 1;
+                    poll.generation_number = generation_number_monotonic;
                 }
             }
 
-            const one_shot_flag = std.posix.system.EV_ONESHOT;
+            const one_shot_flag = std.posix.system.EV.ONESHOT;
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.posix.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
-                    .ext = .{ generation_number, 0 },
+                    .flags = std.c.EV.ADD | one_shot_flag,
+                    .ext = .{ generation_number_monotonic, 0 },
                 },
                 .writable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.posix.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
-                    .ext = .{ generation_number, 0 },
+                    .flags = std.c.EV.ADD | one_shot_flag,
+                    .ext = .{ generation_number_monotonic, 0 },
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.posix.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.posix.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else unreachable,
 
@@ -578,7 +579,7 @@ pub const Poll = struct {
     pub fn onUpdateKQueue(
         event: std.posix.system.kevent64_s,
     ) void {
-        if (event.filter == std.c.EVFILT_MACHPORT)
+        if (event.filter == std.c.EVFILT.MACHPORT)
             return;
 
         const pollable = Pollable.from(event.udata);
@@ -590,7 +591,7 @@ pub const Poll = struct {
 
             inline else => |t| {
                 var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
-                if (event.flags == std.c.EV_ERROR) {
+                if (event.flags == std.c.EV.ERROR) {
                     log("error({d}) = {d}", .{ event.ident, event.data });
                     this.onIOError(bun.sys.Error.fromCode(@enumFromInt(event.data), .kevent));
                 } else {
@@ -693,3 +694,4 @@ pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
 pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
 pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
 pub const FileType = @import("./pipes.zig").FileType;
+pub const MaxBuf = @import("./MaxBuf.zig");

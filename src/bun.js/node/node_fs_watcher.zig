@@ -342,7 +342,6 @@ pub const FSWatcher = struct {
         verbose: bool,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
-            const vm = ctx.vm();
             const path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
@@ -397,13 +396,13 @@ pub const FSWatcher = struct {
 
                     // listener
                     if (arguments.nextEat()) |callable| {
-                        if (!callable.isCell() or !callable.isCallable(vm)) {
+                        if (!callable.isCell() or !callable.isCallable()) {
                             return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                         }
                         listener = callable;
                     }
                 } else {
-                    if (!options_or_callable.isCell() or !options_or_callable.isCallable(vm)) {
+                    if (!options_or_callable.isCell() or !options_or_callable.isCallable()) {
                         return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                     }
                     listener = options_or_callable;
@@ -572,7 +571,6 @@ pub const FSWatcher = struct {
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
-        @fence(.acquire);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
@@ -582,7 +580,6 @@ pub const FSWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) bool {
-        @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
 

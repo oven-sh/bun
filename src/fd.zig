@@ -109,7 +109,14 @@ pub const FDImpl = packed struct {
         if (environment.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
-            bun.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
+            if (@intFromPtr(system_fd) > std.math.maxInt(SystemAsInt)) {
+                bun.Output.panic(
+                    \\FDImpl.fromSystem() called with a fd that is too large: 0x{x}
+                ,
+                    .{@intFromPtr(system_fd)},
+                );
+                return invalid;
+            }
         }
 
         return fromSystemWithoutAssertion(system_fd);
@@ -131,7 +138,7 @@ pub const FDImpl = packed struct {
     pub fn isValid(this: FDImpl) bool {
         return switch (environment.os) {
             // the 'zero' value on posix is debatable. it can be standard in.
-            // TODO(@paperdave): steamroll away every use of bun.FileDescriptor.zero
+            // TODO(@paperclover): steamroll away every use of bun.FileDescriptor.zero
             else => this.value.as_system != invalid_value,
             .windows => switch (this.kind) {
                 // zero is not allowed in addition to the invalid value (zero would be a null ptr)
@@ -198,18 +205,18 @@ pub const FDImpl = packed struct {
         };
     }
 
-    /// This function will prevent stdout and stderr from being closed.
+    /// This function will prevent stdin, stdout, and stderr from being closed.
     pub fn close(this: FDImpl) ?bun.sys.Error {
         if (environment.os != .windows or this.kind == .uv) {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
             const fd = this.uv();
-            if (fd == 1 or fd == 2) {
+            if (fd == 0 or fd == 1 or fd == 2) {
                 log("close({}) SKIPPED", .{fd});
                 return null;
             }
         }
-        return this.closeAllowingStdoutAndStderr();
+        return this.closeAllowingStdinStdoutAndStderr();
     }
 
     /// Assumes given a valid file descriptor
@@ -227,7 +234,7 @@ pub const FDImpl = packed struct {
         };
     }
 
-    pub fn closeAllowingStdoutAndStderr(this: FDImpl) ?bun.sys.Error {
+    pub fn closeAllowingStdinStdoutAndStderr(this: FDImpl) ?bun.sys.Error {
         if (allow_assert) {
             bun.assert(this.value.as_system != invalid_value); // probably a UAF
         }
@@ -238,20 +245,11 @@ pub const FDImpl = packed struct {
         const this_fmt = if (environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (environment.os) {
-            .linux => result: {
+            .linux, .mac => result: {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
                 break :result switch (bun.C.getErrno(bun.sys.syscall.close(fd.cast()))) {
-                    .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
-                    else => null,
-                };
-            },
-            .mac => result: {
-                const fd = this.encode();
-                bun.assert(fd != bun.invalid_fd);
-                bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

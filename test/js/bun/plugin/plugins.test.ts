@@ -16,20 +16,22 @@ declare global {
 plugin({
   name: "url text file loader",
   setup(builder) {
-    builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
+    var chainedThis = builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
       return {
         path,
         namespace: "url",
       };
     });
+    expect(chainedThis).toBe(builder);
 
-    builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
+    chainedThis = builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
       const res = await fetch("http://" + path);
       return {
         exports: { default: await res.text() },
         loader: "object",
       };
     });
+    expect(chainedThis).toBe(builder);
   },
 });
 
@@ -483,4 +485,28 @@ describe("errors", () => {
     ]);
     expect(text).toBe(result);
   });
+});
+
+it("require(...).default without __esModule", () => {
+  {
+    const { default: mod } = require("my-virtual-module-with-default");
+    expect(mod).toBe("world");
+  }
+});
+
+it("require(...) with __esModule", () => {
+  {
+    const mod = require("my-virtual-module-with-__esModule");
+    expect(mod).toBe("world");
+  }
+});
+
+it("import(...) with __esModule", async () => {
+  const { default: mod } = await import("my-virtual-module-with-__esModule");
+  expect(mod).toBe("world");
+});
+
+it("import(...) without __esModule", async () => {
+  const { default: mod } = await import("my-virtual-module-with-default");
+  expect(mod).toBe("world");
 });

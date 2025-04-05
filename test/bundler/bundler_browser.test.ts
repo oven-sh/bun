@@ -306,7 +306,7 @@ describe("bundler", () => {
     bundleErrors: {
       "/entry.js": Object.keys(bunModules)
         .filter(x => bunModules[x] === "error")
-        .map(x => `Could not resolve: "${x}". Maybe you need to "bun install"?`),
+        .map(x => `Browser build cannot import Bun builtin: "${x}". When bundling for Bun, set target to 'bun'`),
     },
   });
 

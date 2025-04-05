@@ -1,7 +1,7 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
 const INotifyWatcher = @This();
-const log = Output.scoped(.inotify, false);
+const log = Output.scoped(.watcher, false);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
 // since communication is done via the `read` syscall). what is notable about
@@ -12,11 +12,12 @@ const log = Output.scoped(.inotify, false);
 // `bun.Watcher` has the same hardcoded `max_count`.
 const max_count = bun.Watcher.max_count;
 const eventlist_bytes_size = (Event.largest_size / 2) * max_count;
-
+const EventListBytes = [eventlist_bytes_size]u8;
 fd: bun.FileDescriptor = bun.invalid_fd,
 loaded: bool = false,
 
-eventlist_bytes: [eventlist_bytes_size]u8 align(@alignOf(Event)) = undefined,
+// Avoid statically allocating because it increases the binary size.
+eventlist_bytes: *EventListBytes align(@alignOf(Event)) = undefined,
 /// pointers into the next chunk of events
 eventlist_ptrs: [max_count]*align(1) Event = undefined,
 /// if defined, it means `read` should continue from this offset before asking
@@ -98,7 +99,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
 
     // TODO: convert to bun.sys.Error
     this.fd = bun.toFD(try std.posix.inotify_init1(IN.CLOEXEC));
-
+    this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
     log("{} init", .{this.fd});
 }
 
@@ -123,7 +124,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
 
         const rc = std.posix.system.read(
             this.fd.cast(),
-            &this.eventlist_bytes,
+            this.eventlist_bytes,
             this.eventlist_bytes.len,
         );
         const errno = std.posix.errno(rc);
@@ -142,7 +143,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
                         .events = std.posix.POLL.IN | std.posix.POLL.ERR,
                         .revents = 0,
                     }};
-                    var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
+                    var timespec = std.posix.timespec{ .sec = 0, .nsec = this.coalesce_interval };
                     if ((std.posix.ppoll(&fds, &timespec, null) catch 0) > 0) {
                         inner: while (true) {
                             const rest = this.eventlist_bytes[read_eventlist_bytes.len..];
@@ -187,7 +188,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
     var count: u32 = 0;
     while (i < read_eventlist_bytes.len) {
         // It is NOT aligned naturally. It is align 1!!!
-        const event: *align(1) Event = @alignCast(@ptrCast(read_eventlist_bytes[i..][0..@sizeOf(Event)].ptr));
+        const event: *align(1) Event = @ptrCast(read_eventlist_bytes[i..][0..@sizeOf(Event)].ptr);
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;

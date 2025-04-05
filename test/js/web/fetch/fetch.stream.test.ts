@@ -219,7 +219,7 @@ describe("fetch() with streaming", () => {
 
         expect(true).toBe(true);
       } finally {
-        server?.close();
+        server?.closeAllConnections();
       }
     });
   }
@@ -1338,7 +1338,7 @@ describe("fetch() with streaming", () => {
         expect(buffer.toString("utf8")).toBe("unreachable");
       } catch (err) {
         expect((err as Error).name).toBe("Error");
-        expect((err as Error).code).toBe("ConnectionClosed");
+        expect((err as Error).code).toBe("ECONNRESET");
       }
     });
   }

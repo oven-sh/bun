@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
+pub extern "c" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -493,28 +493,19 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
 
 pub extern fn vmsplice(fd: c_int, iovec: [*]const std.posix.iovec, iovec_count: usize, flags: u32) isize;
 
-const net_c = @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.C.translated.
-    @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
-    @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
-    @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
-    @cInclude("sys/socket.h");
-});
-
-pub const FD_CLOEXEC = net_c.FD_CLOEXEC;
-pub const freeifaddrs = net_c.freeifaddrs;
-pub const getifaddrs = net_c.getifaddrs;
-pub const ifaddrs = net_c.ifaddrs;
-pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
-pub const IFF_RUNNING = net_c.IFF_RUNNING;
-pub const IFF_UP = net_c.IFF_UP;
-pub const MSG_DONTWAIT = net_c.MSG_DONTWAIT;
-pub const MSG_NOSIGNAL = net_c.MSG_NOSIGNAL;
+pub const FD_CLOEXEC = bun.c.FD_CLOEXEC;
+pub const freeifaddrs = bun.c.freeifaddrs;
+pub const getifaddrs = bun.c.getifaddrs;
+pub const ifaddrs = bun.c.ifaddrs;
+pub const IFF_LOOPBACK = bun.c.IFF_LOOPBACK;
+pub const IFF_RUNNING = bun.c.IFF_RUNNING;
+pub const IFF_UP = bun.c.IFF_UP;
+pub const MSG_DONTWAIT = bun.c.MSG_DONTWAIT;
+pub const MSG_NOSIGNAL = bun.c.MSG_NOSIGNAL;
 
 pub const F = struct {
-    pub const DUPFD_CLOEXEC = net_c.F_DUPFD_CLOEXEC;
-    pub const DUPFD = net_c.F_DUPFD;
+    pub const DUPFD_CLOEXEC = bun.c.F_DUPFD_CLOEXEC;
+    pub const DUPFD = bun.c.F_DUPFD;
 };
 
 pub const Mode = u32;
@@ -538,7 +529,7 @@ pub fn getErrno(rc: anytype) E {
         // glibc system call wrapper returns i32/int
         // the errno is stored in a thread local variable
         //
-        // TODO: the inclusion of  'u32' and 'isize' seems suspicous
+        // TODO: the inclusion of  'u32' and 'isize' seems suspicious
         i32, c_int, u32, isize, i64 => if (rc == -1)
             @enumFromInt(std.c._errno().*)
         else
@@ -550,17 +541,13 @@ pub fn getErrno(rc: anytype) E {
 
 pub const getuid = std.os.linux.getuid;
 pub const getgid = std.os.linux.getgid;
-pub const linux_fs = if (bun.Environment.isLinux) @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.C.translated.
-    @cInclude("linux/fs.h");
-}) else struct {};
+pub const linux_fs = bun.c;
 
 /// https://man7.org/linux/man-pages/man2/ioctl_ficlone.2.html
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
-    return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
+    return std.os.linux.ioctl(dest_fd.cast(), bun.c.FICLONE, @intCast(srcfd.int()));
 }
 
 pub const RWFFlagSupport = enum(u8) {
@@ -606,7 +593,7 @@ pub const RWFFlagSupport = enum(u8) {
     }
 };
 
-pub extern "C" fn sys_preadv2(
+pub extern "c" fn sys_preadv2(
     fd: c_int,
     iov: [*]const std.posix.iovec,
     iovcnt: c_int,
@@ -614,7 +601,7 @@ pub extern "C" fn sys_preadv2(
     flags: c_uint,
 ) isize;
 
-pub extern "C" fn sys_pwritev2(
+pub extern "c" fn sys_pwritev2(
     fd: c_int,
     iov: [*]const std.posix.iovec_const,
     iovcnt: c_int,
@@ -630,8 +617,8 @@ pub const RENAME_NOREPLACE = 1 << 0;
 pub const RENAME_EXCHANGE = 1 << 1;
 pub const RENAME_WHITEOUT = 1 << 2;
 
-pub extern "C" fn quick_exit(code: c_int) noreturn;
-pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
+pub extern "c" fn quick_exit(code: c_int) noreturn;
+pub extern "c" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
 
 export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
     return @bitCast(
@@ -642,6 +629,9 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
             @bitCast(@as(isize, @intCast(maxevents))),
             @intFromPtr(timeout),
             @intFromPtr(sigmask),
+            // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,
+            // which would be 128, but they actually pass 8 which is what the kernel expects.
+            // https://github.com/ziglang/zig/issues/12715
             8,
         ),
     );
@@ -699,10 +689,10 @@ comptime {
     _ = fstat64;
     _ = fstatat;
     _ = statx;
-    @export(stat, .{ .name = "stat64" });
-    @export(lstat, .{ .name = "lstat64" });
-    @export(fstat, .{ .name = "fstat64" });
-    @export(fstatat, .{ .name = "fstatat64" });
+    @export(&stat, .{ .name = "stat64" });
+    @export(&lstat, .{ .name = "lstat64" });
+    @export(&fstat, .{ .name = "fstat64" });
+    @export(&fstatat, .{ .name = "fstatat64" });
 }
 
 // *********************************************************************************

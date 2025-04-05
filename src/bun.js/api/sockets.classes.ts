@@ -150,6 +150,14 @@ function generate(ssl) {
         length: 0,
       },
 
+      localFamily: {
+        getter: "getLocalFamily",
+        cache: true,
+      },
+      localAddress: {
+        getter: "getLocalAddress",
+        cache: true,
+      },
       localPort: {
         getter: "getLocalPort",
       },
@@ -170,9 +178,16 @@ function generate(ssl) {
       //   getter: "getTopics",
       // },
 
+      remoteFamily: {
+        getter: "getRemoteFamily",
+        cache: true,
+      },
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,
+      },
+      remotePort: {
+        getter: "getRemotePort",
       },
 
       reload: {
@@ -265,6 +280,11 @@ export default [
       data: {
         getter: "getData",
         setter: "setData",
+      },
+
+      getsockname: {
+        fn: "getsockname",
+        length: 1,
       },
     },
     finalize: true,
@@ -369,5 +389,63 @@ export default [
       },
     },
     klass: {},
+  }),
+  define({
+    name: "SocketAddress",
+    construct: true,
+    call: false,
+    finalize: true,
+    estimatedSize: true,
+    JSType: "0b11101110",
+    klass: {
+      parse: {
+        fn: "parse",
+        length: 1,
+        enumerable: false,
+        configurable: true,
+      },
+      isSocketAddress: {
+        fn: "isSocketAddress",
+        length: 1,
+        enumerable: false,
+        configurable: true,
+      },
+    },
+    proto: {
+      address: {
+        getter: "getAddress",
+        enumerable: false,
+        configurable: true,
+        cache: true,
+      },
+      port: {
+        getter: "getPort",
+        enumerable: false,
+        configurable: true,
+      },
+      family: {
+        getter: "getFamily",
+        enumerable: false,
+        configurable: true,
+        cache: true,
+      },
+      addrfamily: {
+        getter: "getAddrFamily",
+        enumerable: false,
+        configurable: false,
+      },
+      flowlabel: {
+        getter: "getFlowLabel",
+        enumerable: false,
+        configurable: true,
+      },
+      toJSON: {
+        fn: "toJSON",
+        length: 0,
+        this: true,
+        enumerable: false,
+        configurable: true,
+      },
+    },
   }),
 ];

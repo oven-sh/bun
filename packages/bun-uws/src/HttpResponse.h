@@ -112,9 +112,9 @@ public:
              * This check also serves to limit writing the header only once. */
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
                 writeHeader("Connection", "close");
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                Super::write("\r\n", 2);
             }
-
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
 
         /* if write was called and there was previously no Content-Length header set */
@@ -126,11 +126,7 @@ public:
             this->write(data, nullptr);
 
             /* Terminating 0 chunk */
-            if (httpResponseData->anyChunkWritten) {
-                Super::write("0\r\n\r\n", 5);
-            } else {
-                Super::write("\r\n0\r\n\r\n", 7);
-            }
+            Super::write("0\r\n\r\n", 5);
 
             httpResponseData->markDone();
 
@@ -550,7 +546,6 @@ public:
 
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
-            httpResponseData->anyChunkWritten = true;
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
             writeMark();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;

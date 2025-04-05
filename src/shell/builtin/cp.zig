@@ -215,11 +215,11 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
     log("task done: 0x{x} {d}", .{ @intFromPtr(task), this.state.exec.tasks_count });
     this.state.exec.tasks_count -= 1;
 
-    const err_ = task.err;
+    const err_ = &task.err;
 
     if (comptime bun.Environment.isWindows) {
         if (err_) |err| {
-            if (err == .sys and
+            if (err.* == .sys and
                 err.sys.getErrno() == .BUSY and
                 (task.tgt_absolute != null and
                     err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
@@ -248,7 +248,6 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
     // Deinitialize this task as we are starting a new one
     defer task.deinit();
 
-    const err_ = task.err;
     var output = task.takeOutput();
 
     const output_task: *ShellCpOutputTask = bun.new(ShellCpOutputTask, .{
@@ -256,9 +255,9 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
         .output = .{ .arrlist = output.moveToUnmanaged() },
         .state = .waiting_write_err,
     });
-    if (err_) |err| {
-        this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.cp, err);
+    if (task.err) |*err| {
+        this.state.exec.err = err.take();
+        const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
         output_task.start(error_string);
         return;
     }
@@ -330,7 +329,7 @@ pub const ShellCpTask = struct {
     fn deinit(this: *ShellCpTask) void {
         debug("deinit", .{});
         this.verbose_output.deinit();
-        if (this.err) |e| {
+        if (this.err) |*e| {
             e.deinit(bun.default_allocator);
         }
         if (this.src_absolute) |sc| {

@@ -52,6 +52,14 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
+    pub const empty = ShellErr{ .custom = "" };
+
+    pub fn take(this: *@This()) ShellErr {
+        const ret = this.*;
+        this.* = empty;
+        return ret;
+    }
+
     pub fn newSys(e: anytype) @This() {
         return .{
             .sys = switch (@TypeOf(e)) {
@@ -79,9 +87,7 @@ pub const ShellErr = union(enum) {
                 return globalThis.throwValue(err);
             },
             .custom => {
-                var str = JSC.ZigString.init(this.custom);
-                str.markUTF8();
-                const err_value = str.toErrorInstance(globalThis);
+                const err_value = bun.String.createUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
@@ -113,10 +119,10 @@ pub const ShellErr = union(enum) {
         bun.Global.exit(1);
     }
 
-    pub fn deinit(this: @This(), allocator: Allocator) void {
-        switch (this) {
+    pub fn deinit(this: *const @This(), allocator: Allocator) void {
+        switch (this.*) {
             .sys => {
-                // this.sys.
+                this.sys.deref();
             },
             .custom => allocator.free(this.custom),
             .invalid_arguments => {},

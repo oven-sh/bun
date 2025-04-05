@@ -26,6 +26,15 @@ else()
   setx(DEBUG OFF)
 endif()
 
+optionx(BUN_TEST BOOL "Build Bun's unit test suite instead of the normal build" DEFAULT OFF)
+
+if (BUN_TEST)
+  setx(TEST ON)
+else()
+  setx(TEST OFF)
+endif()
+
+
 if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
 endif()
@@ -62,7 +71,14 @@ if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
 
-optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
+# Disabling logs by default for tests yields faster builds
+if (DEBUG AND NOT TEST)
+  set(DEFAULT_ENABLE_LOGS ON)
+else()
+  set(DEFAULT_ENABLE_LOGS OFF)
+endif()
+
+optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEFAULT_ENABLE_LOGS})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)

@@ -1798,3 +1798,7 @@ fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
     }
     Global.exit(1);
 }
+
+pub fn @"export"() void {
+    _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
+}

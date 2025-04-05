@@ -9,6 +9,9 @@
 // These functions are called by the stubs to crash with a nice error message
 // when accessing a libuv functin which we do not support on posix
 void CrashHandler__unsupportedUVFunction(const char* function_name);
+void CrashHandler__setNapiAction(const char* action);
+void CrashHandler__setCurrentNapiFunction(void* function);
+void* CrashHandler__getCurrentNapiFunction();
 void __bun_throw_not_implemented(const char* symbol_name);
 
 // libuv headers will use UV_EXTERN

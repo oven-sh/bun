@@ -215,10 +215,8 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
     log("task done: 0x{x} {d}", .{ @intFromPtr(task), this.state.exec.tasks_count });
     this.state.exec.tasks_count -= 1;
 
-    const err_ = &task.err;
-
     if (comptime bun.Environment.isWindows) {
-        if (err_) |err| {
+        if (task.err) |*err| {
             if (err.* == .sys and
                 err.sys.getErrno() == .BUSY and
                 (task.tgt_absolute != null and

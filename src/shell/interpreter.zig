@@ -4262,7 +4262,8 @@ pub const Interpreter = struct {
         pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
             if (child.ptr.is(Assigns)) {
                 if (exit_code != 0) {
-                    const err = this.state.expanding_assigns.state.err.take();
+                    const err = this.state.expanding_assigns.state.err;
+                    this.state.expanding_assigns.state.err = .{ .custom = "" };
                     defer err.deinit(bun.default_allocator);
 
                     this.state.expanding_assigns.deinit();

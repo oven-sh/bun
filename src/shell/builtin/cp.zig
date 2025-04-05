@@ -253,8 +253,8 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
         .output = .{ .arrlist = output.moveToUnmanaged() },
         .state = .waiting_write_err,
     });
-    if (task.err) |*err| {
-        this.state.exec.err = err.take();
+    if (bun.take(&task.err)) |err| {
+        this.state.exec.err = err;
         const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
         output_task.start(error_string);
         return;

@@ -52,14 +52,6 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
-    pub const empty = ShellErr{ .custom = "" };
-
-    pub fn take(this: *@This()) ShellErr {
-        const ret = this.*;
-        this.* = empty;
-        return ret;
-    }
-
     pub fn newSys(e: anytype) @This() {
         return .{
             .sys = switch (@TypeOf(e)) {

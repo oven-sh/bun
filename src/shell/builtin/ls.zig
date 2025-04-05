@@ -112,7 +112,6 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
     defer task.deinit(true);
     this.state.exec.tasks_done += 1;
     var output = task.takeOutput();
-    const err_ = task.err;
 
     // TODO: Reuse the *ShellLsTask allocation
     const output_task: *ShellLsOutputTask = bun.new(ShellLsOutputTask, .{
@@ -121,9 +120,10 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
         .state = .waiting_write_err,
     });
 
-    if (err_) |err| {
-        this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.ls, err);
+    if (task.err) |*err| {
+        this.state.exec.err = err.*;
+        task.err = null;
+        const error_string = this.bltn().taskErrorToString(.ls, this.state.exec.err.?);
         output_task.start(error_string);
         return;
     }

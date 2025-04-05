@@ -47,7 +47,9 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
                 }
             }
 
-            if (bun.Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            if (bun.Environment.isDebug) {
+                log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            }
 
             self.ref_count = ref_count - 1;
 
@@ -71,6 +73,41 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
 
             return ptr;
         }
+
+        pub fn refPtr(self: *T) Ptr {
+            self.ref();
+            return Ptr{ .__inner = self };
+        }
+
+        pub const Ptr = struct {
+            __inner: *T,
+
+            /// Initialize a new `T` on the heap. It will have a reference count of 1.
+            pub fn new(t: T) Ptr {
+                return Ptr{ .__inner = T.new(t) };
+            }
+
+            /// Borrow a reference to the allocation. Reference count is not
+            /// changed. Do not persist this pointer outside of the function
+            /// calling this method.
+            pub inline fn get(self: Ptr) *T {
+                return self.__inner;
+            }
+
+            /// Obtain a new reference to the allocation, increasing the
+            /// reference count in the process.
+            pub fn clone(self: Ptr) Ptr {
+                self.__inner.ref();
+                return self;
+            }
+
+            /// Release this reference to the shared allocation. If the
+            /// reference count goes below 1, the allocation is freed.
+            pub fn deinit(self: *Ptr) void {
+                self.__inner.deref();
+                self.* = undefined;
+            }
+        };
     };
 }
 

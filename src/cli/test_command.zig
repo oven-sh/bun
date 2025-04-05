@@ -1728,6 +1728,13 @@ pub const TestCommand = struct {
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+                if (repeat_count > 1) {
+                    // subsequent runs will try to use now-free'd memory. Since
+                    // this feature is used so infrequently, we'll just leak it
+                    // lol
+                    @branchHint(.unlikely);
+                    module.ref();
+                }
                 module.runTests(vm.global);
                 vm.eventLoop().tick();
 

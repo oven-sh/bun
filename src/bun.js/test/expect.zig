@@ -379,7 +379,8 @@ pub const Expect = struct {
             .parent = if (Jest.runner) |runner|
                 if (runner.pending_test) |pending|
                     Expect.ParentScope{ .TestScope = Expect.TestScope{
-                        .describe = pending.describe,
+                        // FIXME: Expect obtains a DescribeScope reference without managing its count.
+                        .describe = pending.describe.get(),
                         .test_id = pending.test_id,
                     } }
                 else

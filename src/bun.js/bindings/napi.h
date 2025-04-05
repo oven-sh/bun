@@ -64,7 +64,7 @@ struct napi_async_cleanup_hook_handle__ {
 struct napi_env__ {
 public:
     napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
-        : m_globalObject(globalObject)
+        : m_globalObject(JSC::getVM(globalObject), globalObject)
         , m_napiModule(napiModule)
     {
         napi_internal_register_cleanup_zig(this);
@@ -94,7 +94,7 @@ public:
 
         m_isFinishingFinalizers = true;
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
-            Bun::NapiHandleScope handle_scope(m_globalObject);
+            Bun::NapiHandleScope handle_scope(globalObject());
             boundFinalizer.call(this);
         }
         m_finalizers.clear();
@@ -174,7 +174,7 @@ public:
 
     bool inGC() const
     {
-        JSC::VM& vm = JSC::getVM(m_globalObject);
+        JSC::VM& vm = JSC::getVM(globalObject());
         return vm.isCollectorBusyOnCurrentThread();
     }
 
@@ -189,12 +189,16 @@ public:
 
     bool isVMTerminating() const
     {
-        return JSC::getVM(m_globalObject).hasTerminationRequest();
+        return JSC::getVM(globalObject()).hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
+            return;
+        }
+        if (!globalObject()) {
+            NAPI_LOG("not running finalizer as global object is destroyed");
             return;
         }
 
@@ -205,7 +209,7 @@ public:
         }
     }
 
-    inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    inline Zig::GlobalObject* globalObject() const { return m_globalObject.get(); }
     inline const napi_module& napiModule() const { return m_napiModule; }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
@@ -291,7 +295,7 @@ public:
     };
 
 private:
-    Zig::GlobalObject* m_globalObject = nullptr;
+    JSC::Strong<Zig::GlobalObject> m_globalObject;
     napi_module m_napiModule;
     // TODO(@heimskr): Use WTF::HashSet
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;

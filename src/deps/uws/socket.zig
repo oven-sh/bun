@@ -162,6 +162,7 @@ pub const Socket = opaque {
     extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
 
     extern fn us_socket_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
+    extern fn us_socket_ipc_write_fd(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, fd: i32) i32;
     extern "c" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
     extern fn us_socket_raw_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
     extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;

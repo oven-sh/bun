@@ -352,9 +352,7 @@ pub const JunitReporter = struct {
         try this.contents.appendSlice(bun.default_allocator, "\"");
 
         const elapsed_seconds = elapsed_ms / std.time.ms_per_s;
-        var time_buf: [32]u8 = undefined;
-        const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d}\"", .{elapsed_seconds});
-        try this.contents.appendSlice(bun.default_allocator, time_str);
+        try this.contents.writer(bun.default_allocator).print(" time=\"{d}\"", .{elapsed_seconds});
 
         try this.contents.appendSlice(bun.default_allocator, " file=\"");
         try escapeXml(file, this.contents.writer(bun.default_allocator));

@@ -932,7 +932,7 @@ pub const WindowsBufferedReader = struct {
     fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
         const result = fs.result;
         const nread_int = result.int();
-        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
+        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
         if (nread_int == uv.UV_ECANCELED) {
             fs.deinit();
             return;

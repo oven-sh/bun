@@ -120,13 +120,20 @@ const LibInfo = struct {
         }
 
         bun.assert(request.backend.libinfo.machport != null);
-        var poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+        var poll = bun.Async.FilePoll.init(
+            this.vm,
+            // TODO: WHAT?????????
+            .fromNative(std.math.maxInt(i32) - 1),
+            .{},
+            GetAddrInfoRequest,
+            request,
+        );
         request.backend.libinfo.file_poll = poll;
         const rc = poll.registerWithFd(
             this.vm.event_loop_handle.?,
             .machport,
             .one_shot,
-            bun.toFD(@as(i32, @intCast(@intFromPtr(request.backend.libinfo.machport)))),
+            .fromNative(@intCast(@intFromPtr(request.backend.libinfo.machport))),
         );
         bun.assert(rc == .result);
 
@@ -1569,7 +1576,7 @@ pub const InternalDNS = struct {
         }
 
         const fake_fd: i32 = @intCast(@intFromPtr(machport));
-        var poll = bun.Async.FilePoll.init(loop, bun.toFD(fake_fd), .{}, InternalDNSRequest, req);
+        var poll = bun.Async.FilePoll.init(loop, .fromNative(fake_fd), .{}, InternalDNSRequest, req);
         const rc = poll.register(loop.loop(), .machport, true);
 
         if (rc == .err) {
@@ -2358,7 +2365,7 @@ pub const DNSResolver = struct {
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
         var channel = this.channel orelse {
-            _ = this.polls.orderedRemove(poll.fd.int());
+            _ = this.polls.orderedRemove(poll.fd.native());
             poll.deinit();
             return;
         };
@@ -2367,7 +2374,7 @@ pub const DNSResolver = struct {
         defer this.deref();
 
         channel.process(
-            poll.fd.int(),
+            poll.fd.native(),
             poll.isReadable(),
             poll.isWritable(),
         );
@@ -2428,7 +2435,7 @@ pub const DNSResolver = struct {
             const poll_entry = this.polls.getOrPut(fd) catch unreachable;
 
             if (!poll_entry.found_existing) {
-                poll_entry.value_ptr.* = Async.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
+                poll_entry.value_ptr.* = Async.FilePoll.init(vm, .fromNative(fd), .{}, DNSResolver, this);
             }
 
             var poll = poll_entry.value_ptr.*;

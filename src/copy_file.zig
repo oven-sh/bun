@@ -22,7 +22,7 @@ pub const CopyFileRangeError = error{
     FileBusy,
 } || posix.PReadError || posix.PWriteError || posix.UnexpectedError;
 
-const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
+const InputType = if (Environment.isWindows) bun.OSPathSliceZ else bun.FD;
 
 /// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
 ///
@@ -60,7 +60,7 @@ const CopyFileReturnType = bun.sys.Maybe(void);
 
 pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFileState) CopyFileReturnType {
     if (comptime Environment.isMac) {
-        const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE{ .DATA = true });
+        const rc = posix.system.fcopyfile(in.native(), out.native(), null, posix.system.COPYFILE{ .DATA = true });
 
         switch (posix.errno(rc)) {
             .SUCCESS => return CopyFileReturnType.success,
@@ -75,9 +75,9 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
         if (can_use_ioctl_ficlone() and !copy_file_state.has_seen_exdev and !copy_file_state.has_ioctl_ficlone_failed) {
             // We only check once if the ioctl is supported, and cache the result.
             // EXT4 does not support FICLONE.
-            const rc = bun.C.linux.ioctl_ficlone(bun.toFD(out), bun.toFD(in));
+            const rc = bun.C.linux.ioctl_ficlone(out, in);
             // the ordering is flipped but it is consistent with other system calls.
-            bun.sys.syslog("ioctl_ficlone({d}, {d}) = {d}", .{ in, out, rc });
+            bun.sys.syslog("ioctl_ficlone({}, {}) = {d}", .{ in, out, rc });
             switch (bun.C.getErrno(rc)) {
                 .SUCCESS => return CopyFileReturnType.success,
                 .XDEV => {
@@ -106,7 +106,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             // The kernel checks the u64 value `offset+count` for overflow, use
             // a 32 bit value so that the syscall won't return EINVAL except for
             // impossibly large files (> 2^64-1 - 2^32-1).
-            const amt = switch (copyFileRange(in, out, math.maxInt(i32) - 1, 0, copy_file_state)) {
+            const amt = switch (copyFileRange(in.native(), out.native(), math.maxInt(i32) - 1, 0, copy_file_state)) {
                 .result => |a| a,
                 .err => |err| return .{ .err = err },
             };
@@ -126,7 +126,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
     }
 
     while (true) {
-        switch (copyFileReadWriteLoop(in, out, math.maxInt(i32) - 1)) {
+        switch (copyFileReadWriteLoop(in.native(), out.native(), math.maxInt(i32) - 1)) {
             .err => |err| return .{ .err = err },
             .result => |amt| {
                 if (amt == 0) break;
@@ -279,13 +279,13 @@ pub fn copyFileReadWriteLoop(
 ) Maybe(usize) {
     var buf: [8 * 4096]u8 = undefined;
     const adjusted_count = @min(buf.len, len);
-    switch (bun.sys.read(bun.toFD(in), buf[0..adjusted_count])) {
+    switch (bun.sys.read(.fromNative(in), buf[0..adjusted_count])) {
         .result => |amt_read| {
             var amt_written: usize = 0;
             if (amt_read == 0) return .{ .result = 0 };
 
             while (amt_written < amt_read) {
-                switch (bun.sys.write(bun.toFD(out), buf[amt_written..amt_read])) {
+                switch (bun.sys.write(.fromNative(out), buf[amt_written..amt_read])) {
                     .result => |wrote| {
                         if (wrote == 0) {
                             return .{ .result = amt_written };

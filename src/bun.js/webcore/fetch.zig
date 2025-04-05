@@ -178,7 +178,7 @@ pub const FetchTasklet = struct {
                 },
                 .Sendfile => {
                     if (@max(this.Sendfile.offset, this.Sendfile.remain) > 0)
-                        _ = bun.sys.close(this.Sendfile.fd);
+                        this.Sendfile.fd.close();
                     this.Sendfile.offset = 0;
                     this.Sendfile.remain = 0;
                 },
@@ -2475,7 +2475,7 @@ pub fn Bun__fetch_(
             );
 
             if (body.store().?.data.file.pathlike == .path) {
-                _ = bun.sys.close(opened_fd);
+                opened_fd.close();
             }
 
             switch (res) {

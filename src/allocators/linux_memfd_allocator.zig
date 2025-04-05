@@ -18,7 +18,7 @@ const std = @import("std");
 /// the virtual memory. So we should only really use this for large blobs of
 /// data that we expect to be cloned multiple times. Such as Blob in FormData.
 pub const LinuxMemFdAllocator = struct {
-    fd: bun.FileDescriptor = .zero,
+    fd: bun.FileDescriptor = .invalid,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     size: usize = 0,
 
@@ -33,7 +33,7 @@ pub const LinuxMemFdAllocator = struct {
     pub fn deref(this: *LinuxMemFdAllocator) void {
         switch (this.ref_count.fetchSub(1, .monotonic)) {
             1 => {
-                _ = bun.sys.close(this.fd);
+                this.fd.close();
                 this.destroy();
             },
             0 => {
@@ -165,13 +165,13 @@ pub const LinuxMemFdAllocator = struct {
                     }
 
                     bun.Output.debugWarn("Failed to write to memfd: {}", .{err});
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     return .{ .err = err };
                 },
                 .result => |result| {
                     if (result == 0) {
                         bun.Output.debugWarn("Failed to write to memfd: EOF", .{});
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return .{ .err = bun.sys.Error.fromCode(.NOMEM, .write) };
                     }
                     written += @intCast(result);

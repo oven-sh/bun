@@ -1113,7 +1113,7 @@ pub const Listener = struct {
                     break :brk (pipe_name != null);
                 },
                 .fd => |fd| brk: {
-                    const uvfd = bun.uvfdcast(fd);
+                    const uvfd = fd.uv();
                     const fd_type = uv.uv_guess_handle(uvfd);
                     if (fd_type == uv.Handle.Type.named_pipe) {
                         break :brk true;
@@ -1123,7 +1123,7 @@ pub const Listener = struct {
                         const osfd: uv.uv_os_fd_t = @ptrFromInt(@as(usize, @intCast(uvfd)));
                         if (bun.windows.GetFileType(osfd) == bun.windows.FILE_TYPE_PIPE) {
                             // yay its a named pipe lets make it a libuv fd
-                            connection.fd = bun.FDImpl.fromUV(uv.uv_open_osfhandle(osfd)).encode();
+                            connection.fd = bun.FD.fromNative(osfd).makeLibUVOwned() catch @panic("failed to allocate file descriptor");
                             break :brk true;
                         }
                     }
@@ -4462,8 +4462,8 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
         return global.throwValue(err.toJSC(global));
     }
 
-    _ = bun.sys.setNonblocking(bun.toFD(fds_[0]));
-    _ = bun.sys.setNonblocking(bun.toFD(fds_[1]));
+    _ = bun.FD.fromNative(fds_[0]).updateNonblocking(true);
+    _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
     const array = JSC.JSValue.createEmptyArray(global, 2);
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));

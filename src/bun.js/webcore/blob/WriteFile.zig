@@ -411,7 +411,7 @@ pub const WriteFileWindows = struct {
                     }
 
                     // The file stored descriptor is not stdin, stdout, or stderr.
-                    break :brk bun.uvfdcast(file_blob.store.?.data.file.pathlike.fd);
+                    break :brk file_blob.store.?.data.file.pathlike.fd.uv();
                 };
 
                 write_file.doWriteLoop(write_file.loop());
@@ -623,7 +623,7 @@ pub const WriteFileWindows = struct {
     pub fn deinit(this: *@This()) void {
         const fd = this.fd;
         if (fd > 0 and this.owned_fd) {
-            bun.Async.Closer.close(fd, this.io_request.loop);
+            bun.Async.Closer.close(.fromUV(fd), this.io_request.loop);
         }
         this.file_blob.store.?.deref();
         this.bytes_blob.store.?.deref();

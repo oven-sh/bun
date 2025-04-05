@@ -20,6 +20,7 @@ const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = bun.allocators;
 const OOM = bun.OOM;
+const FD = bun.FD;
 
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathBuffer = bun.PathBuffer;
@@ -136,8 +137,9 @@ pub const FileSystem = struct {
     pub const DirEntry = struct {
         pub const EntryMap = bun.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
+
         dir: string,
-        fd: StoredFileDescriptorType = .zero,
+        fd: FD = .invalid,
         generation: bun.Generation = 0,
         data: EntryMap,
 
@@ -390,7 +392,7 @@ pub const FileSystem = struct {
             symlink: PathString = PathString.empty,
             /// Too much code expects this to be 0
             /// don't make it bun.invalid_fd
-            fd: StoredFileDescriptorType = .zero,
+            fd: FD = .invalid,
             kind: Kind = .file,
         };
 
@@ -616,7 +618,7 @@ pub const FileSystem = struct {
                     // we will not delete the temp directory
                     .can_rename_or_delete = false,
                     .read_only = true,
-                }).unwrap()).asDir();
+                }).unwrap()).stdDir();
             }
 
             return try bun.openDirAbsolute(tmpdir_path);
@@ -668,26 +670,24 @@ pub const FileSystem = struct {
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
             pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
-                return this.dir_fd.asDir();
+                return this.dir_fd.stdDir();
             }
 
             pub inline fn file(this: *TmpfilePosix) std.fs.File {
-                return this.fd.asFile();
+                return this.fd.stdFile();
             }
 
             pub fn close(this: *TmpfilePosix) void {
-                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+                if (this.fd.isValid()) this.fd.close();
             }
 
             pub fn create(this: *TmpfilePosix, _: *RealFS, name: [:0]const u8) !void {
                 // We originally used a temporary directory, but it caused EXDEV.
-                const dir_fd = std.fs.cwd().fd;
+                const dir_fd = bun.FD.cwd();
+                this.dir_fd = dir_fd;
 
                 const flags = bun.O.CREAT | bun.O.RDWR | bun.O.CLOEXEC;
-                this.dir_fd = bun.toFD(dir_fd);
-
-                const result = try bun.sys.openat(bun.toFD(dir_fd), name, flags, std.posix.S.IRWXU).unwrap();
-                this.fd = bun.toFD(result);
+                this.fd = try bun.sys.openat(dir_fd, name, flags, std.posix.S.IRWXU).unwrap();
             }
 
             pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
@@ -718,19 +718,19 @@ pub const FileSystem = struct {
             }
 
             pub inline fn file(this: *TmpfileWindows) std.fs.File {
-                return this.fd.asFile();
+                return this.fd.stdFile();
             }
 
             pub fn close(this: *TmpfileWindows) void {
-                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+                if (this.fd.isValid()) this.fd.close();
             }
 
             pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
-                const tmpdir_ = try rfs.openTmpDir();
+                const tmp_dir = try rfs.openTmpDir();
 
                 const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.CLOEXEC;
 
-                this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
+                this.fd = try bun.sys.openat(.fromStdDir(tmp_dir), name, flags, 0).unwrap();
                 var buf: bun.PathBuffer = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
@@ -986,7 +986,7 @@ pub const FileSystem = struct {
                     0,
                 );
             const fd = try dirfd.unwrap();
-            return fd.asDir();
+            return fd.stdDir();
         }
 
         fn readdir(
@@ -1008,7 +1008,7 @@ pub const FileSystem = struct {
 
             if (store_fd) {
                 FileSystem.setMaxFd(handle.fd);
-                dir.fd = bun.toFD(handle.fd);
+                dir.fd = .fromStdDir(handle);
             }
 
             while (try iter.next().unwrap()) |*_entry| {
@@ -1131,8 +1131,8 @@ pub const FileSystem = struct {
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
-                if (store_fd and entries.fd == .zero)
-                    entries.fd = bun.toFD(handle.fd);
+                if (store_fd and !entries.fd.isValid())
+                    entries.fd = .fromStdDir(handle);
 
                 entries_ptr.* = entries;
                 const result = EntriesOption{
@@ -1443,36 +1443,34 @@ pub const FileSystem = struct {
 
             const stat = try C.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
-            var _kind = stat.kind;
+            var file_kind = stat.kind;
 
             var symlink: []const u8 = "";
 
             if (is_symlink) {
-                var file = try if (existing_fd != .zero)
-                    std.fs.File{ .handle = existing_fd.int() }
+                var file: bun.FD = if (existing_fd.unwrapValid()) |valid|
+                    valid
                 else if (store_fd)
-                    std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
+                    .fromStdFile(try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only }))
                 else
-                    bun.openFileForPath(absolute_path_c);
-                setMaxFd(file.handle);
+                    .fromStdFile(try bun.openFileForPath(absolute_path_c));
+                setMaxFd(file.native());
 
                 defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == .zero) {
+                    if ((!store_fd or fs.needToCloseFiles()) and !existing_fd.isValid()) {
                         file.close();
                     } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = bun.toFD(file.handle);
+                        cache.fd = file;
                     }
                 }
-                const _stat = try file.stat();
-
-                symlink = try bun.getFdPath(file.handle, &outpath);
-
-                _kind = _stat.kind;
+                const file_stat = try file.stdFile().stat();
+                symlink = try file.getFdPath(&outpath);
+                file_kind = file_stat.kind;
             }
 
-            bun.assert(_kind != .sym_link);
+            bun.assert(file_kind != .sym_link);
 
-            if (_kind == .directory) {
+            if (file_kind == .directory) {
                 cache.kind = .dir;
             } else {
                 cache.kind = .file;

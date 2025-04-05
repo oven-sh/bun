@@ -89,10 +89,7 @@ const assert = bun.assert;
 ///
 /// Functions which accept a `_: OutputNeedsIOSafeGuard` parameter can
 /// safely assume the stdout/stderr they are working with require IO.
-pub const OutputNeedsIOSafeGuard = struct {
-    /// Dummy zero sized field to prevent it from being trivial to create this type (by doing `.{}`)
-    __i_know_what_i_am_doing_it_needs_io_yes: u0,
-};
+pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
 
 pub const ExitCode = u16;
 
@@ -174,7 +171,7 @@ const CowFd = struct {
 
     pub fn deinit(this: *CowFd) void {
         assert(this.refcount == 0);
-        _ = bun.sys.close(this.__fd);
+        this.__fd.close();
         bun.default_allocator.destroy(this);
     }
 };
@@ -1033,7 +1030,7 @@ pub const Interpreter = struct {
                     return Maybe(void).initErr(err);
                 },
             };
-            _ = Syscall.close2(this.cwd_fd);
+            defer this.cwd_fd.close();
 
             this.__prev_cwd.clearRetainingCapacity();
             this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
@@ -1489,13 +1486,13 @@ pub const Interpreter = struct {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDOUT_FD)) {
+            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout())) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDERR_FD)) {
+            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr())) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
@@ -3510,20 +3507,18 @@ pub const Interpreter = struct {
                     if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
                         return .{ .err = Syscall.Error.fromCode(e, .pipe) };
                     }
-                    pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
-                    pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
+                    pipe[0] = .fromUV(fds[0]);
+                    pipe[1] = .fromUV(fds[1]);
                 } else {
-                    const fds: [2]bun.FileDescriptor = switch (bun.sys.socketpair(
+                    switch (bun.sys.socketpair(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,
                         0,
                         .blocking,
                     )) {
-                        .result => |fds| .{ bun.toFD(fds[0]), bun.toFD(fds[1]) },
+                        .result => |fds| pipe.* = fds,
                         .err => |err| return .{ .err = err },
-                    };
-
-                    pipe.* = fds;
+                    }
                 }
                 set_count.* += 1;
             }
@@ -5264,9 +5259,7 @@ pub const Interpreter = struct {
 
                 pub fn needsIO(this: *Output) ?OutputNeedsIOSafeGuard {
                     return switch (this.*) {
-                        .fd => OutputNeedsIOSafeGuard{
-                            .__i_know_what_i_am_doing_it_needs_io_yes = 0,
-                        },
+                        .fd => .output_needs_io,
                         else => null,
                     };
                 }
@@ -5275,7 +5268,7 @@ pub const Interpreter = struct {
                 /// e.g.
                 ///
                 /// ```zig
-                /// if (this.stderr.neesdIO()) |safeguard| {
+                /// if (this.stderr.needsIO()) |safeguard| {
                 ///   this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args, safeguard);
                 /// }
                 /// ```
@@ -5671,7 +5664,7 @@ pub const Interpreter = struct {
             this.callImpl(void, "deinit", .{});
 
             // No need to free it because it belongs to the parent cmd
-            // _ = Syscall.close(this.cwd);
+            // this.cwd.close();
 
             this.stdout.deref();
             this.stderr.deref();
@@ -6384,7 +6377,7 @@ pub const Interpreter = struct {
                             const perm = 0o664;
                             switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
                                 .result => |fd| {
-                                    _ = bun.sys.close(fd);
+                                    fd.close();
                                     break :out;
                                 },
                                 .err => |e| {
@@ -7693,9 +7686,8 @@ pub const Interpreter = struct {
                         },
                         .result => |fd| fd,
                     };
-
                     defer {
-                        _ = Syscall.close(fd);
+                        fd.close();
                         debug("run done", .{});
                     }
 
@@ -7705,7 +7697,7 @@ pub const Interpreter = struct {
                             std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
                         }
 
-                        var iterator = DirIterator.iterate(fd.asDir(), .u8);
+                        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
                         var entry = iterator.next();
 
                         while (switch (entry) {
@@ -8210,7 +8202,7 @@ pub const Interpreter = struct {
             args: struct {
                 sources: []const [*:0]const u8 = &[_][*:0]const u8{},
                 target: [:0]const u8 = &[0:0]u8{},
-                target_fd: ?bun.FileDescriptor = null,
+                target_fd: bun.FileDescriptor.Optional = .none,
             } = .{},
             state: union(enum) {
                 idle,
@@ -8465,7 +8457,7 @@ pub const Interpreter = struct {
                                 break :brk task_count;
                             };
 
-                            this.args.target_fd = maybe_fd;
+                            this.args.target_fd = .init(maybe_fd);
                             const cwd_fd = this.bltn.parentCmd().base.shell.cwd_fd;
                             const tasks = this.bltn.arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
                             // Initialize tasks
@@ -8480,7 +8472,7 @@ pub const Interpreter = struct {
                                         .mv = this,
                                         .cwd = cwd_fd,
                                         .target = this.args.target,
-                                        .target_fd = this.args.target_fd,
+                                        .target_fd = this.args.target_fd.unwrap(),
                                         .sources = sources,
                                         // We set this later
                                         .error_signal = undefined,
@@ -8588,9 +8580,7 @@ pub const Interpreter = struct {
             }
 
             pub fn deinit(this: *Mv) void {
-                if (this.args.target_fd != null and this.args.target_fd.? != bun.invalid_fd) {
-                    _ = Syscall.close(this.args.target_fd.?);
-                }
+                this.args.target_fd.close();
             }
 
             const Opts = struct {
@@ -9584,16 +9574,14 @@ pub const Interpreter = struct {
                     defer {
                         // On posix we can close the file descriptor whenever, but on Windows
                         // we need to close it BEFORE we delete
-                        if (close_fd) {
-                            _ = Syscall.close(fd);
-                        }
+                        if (close_fd) fd.close();
                     }
 
                     if (this.error_signal.load(.seq_cst)) {
                         return Maybe(void).success;
                     }
 
-                    var iterator = DirIterator.iterate(fd.asDir(), .u8);
+                    var iterator = DirIterator.iterate(fd.stdDir(), .u8);
                     var entry = iterator.next();
 
                     var remove_child_vtable = RemoveFileVTable{
@@ -9650,7 +9638,7 @@ pub const Interpreter = struct {
 
                     if (bun.Environment.isWindows) {
                         close_fd = false;
-                        _ = Syscall.close(fd);
+                        fd.close();
                     }
 
                     debug("[removeEntryDir] remove after children {s}", .{path});
@@ -9754,7 +9742,7 @@ pub const Interpreter = struct {
 
                 fn removeEntryDirAfterChildren(this: *ShellRmTask, dir_task: *DirTask) Maybe(bool) {
                     debug("remove entry after children: {s}", .{dir_task.path});
-                    const dirfd = bun.toFD(this.cwd);
+                    const dirfd = this.cwd;
                     var state = RemoveFileParent{
                         .task = this,
                         .treat_as_dir = true,
@@ -9813,7 +9801,7 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
                     };
-                    const dirfd = bun.toFD(this.cwd);
+                    const dirfd = this.cwd;
                     switch (ShellSyscall.unlinkatWithFlags(dirfd, path, 0)) {
                         .result => return this.verboseDeleted(parent_dir_task, path),
                         .err => |e| {
@@ -10093,8 +10081,8 @@ pub const Interpreter = struct {
                     const yes: *Yes = @fieldParentPtr("task", this);
 
                     // Manually make safeguard since this task should not be created if output does not need IO
-                    yes.bltn.stdout.enqueue(yes, yes.expletive, OutputNeedsIOSafeGuard{ .__i_know_what_i_am_doing_it_needs_io_yes = 0 });
-                    yes.bltn.stdout.enqueue(yes, "\n", OutputNeedsIOSafeGuard{ .__i_know_what_i_am_doing_it_needs_io_yes = 0 });
+                    yes.bltn.stdout.enqueue(yes, yes.expletive, .output_needs_io);
+                    yes.bltn.stdout.enqueue(yes, "\n", .output_needs_io);
 
                     this.enqueue();
                 }
@@ -11307,7 +11295,7 @@ pub const Interpreter = struct {
                     }
                 } else {
                     log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
-                    _ = bun.sys.close(this.fd);
+                    this.fd.close();
                 }
             }
             this.buf.deinit(bun.default_allocator);
@@ -11842,7 +11830,7 @@ pub const Interpreter = struct {
                     this.writer.handle.closeImpl(null, {}, false);
                 }
             } else this.winbuf.deinit(bun.default_allocator);
-            if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+            if (this.fd != bun.invalid_fd) this.fd.close();
             this.writer.disableKeepingProcessAlive(this.evtloop);
             this.destroy();
         }
@@ -11961,7 +11949,7 @@ pub fn MaybeChild(comptime T: type) type {
 }
 
 fn closefd(fd: bun.FileDescriptor) void {
-    if (Syscall.close2(fd)) |err| {
+    if (fd.closeAllowingBadFileDescriptor()) |err| {
         log("ERR closefd: {}\n", .{err});
     }
 }
@@ -12249,12 +12237,12 @@ const ShellSyscall = struct {
                         .err => |e| return .{ .err = e },
                     };
                     return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
-                        .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                        .result => |fd| fd.makeLibUVOwnedForSyscall(.open, .close_on_fail),
                         .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
                 return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
-                    .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                    .result => |fd| fd.makeLibUVOwnedForSyscall(.open, .close_on_fail),
                     .err => |e| .{ .err = e.withPath(path) },
                 };
             }
@@ -12272,7 +12260,7 @@ const ShellSyscall = struct {
             .err => |e| return .{ .err = e.withPath(path) },
         };
         if (bun.Environment.isWindows) {
-            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
+            return fd.makeLibUVOwnedForSyscall(.open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -12283,7 +12271,7 @@ const ShellSyscall = struct {
             .err => |e| return .{ .err = e },
         };
         if (bun.Environment.isWindows) {
-            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
+            return fd.makeLibUVOwnedForSyscall(.open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -12291,7 +12279,7 @@ const ShellSyscall = struct {
     pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             return switch (Syscall.dup(fd)) {
-                .result => |duped_fd| bun.sys.toLibUVOwnedFD(duped_fd, .dup, .close_on_fail),
+                .result => |duped_fd| duped_fd.makeLibUVOwnedForSyscall(.dup, .close_on_fail),
                 .err => |e| .{ .err = e },
             };
         }
@@ -12487,8 +12475,10 @@ pub fn FlagParser(comptime Opts: type) type {
 }
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
-    if (bun.Environment.isWindows) return false;
-    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int());
-    // macos allows regular files to be pollable: ISREG(mode) == true
-    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int()) or posix.S.ISREG(mode);
+    return switch (bun.Environment.os) {
+        .windows, .wasm => false,
+        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
+        // macos allows regular files to be pollable: ISREG(mode) == true
+        .mac => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.S.ISREG(mode) or posix.isatty(fd.native()),
+    };
 }

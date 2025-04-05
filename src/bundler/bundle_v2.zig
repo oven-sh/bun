@@ -3431,7 +3431,7 @@ pub const BundleV2 = struct {
 
         // To minimize contention, watchers are appended by the transpiler thread.
         if (this.bun_watcher) |watcher| {
-            if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
+            if (parse_result.watcher_data.fd != bun.invalid_fd) {
                 const source = switch (parse_result.value) {
                     inline .empty, .err => |data| graph.input_files.items(.source)[data.source_index.get()],
                     .success => |val| val.source,
@@ -4587,10 +4587,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (contents.file != bun.invalid_fd and contents.file != .zero)
-                        contents.file
-                    else
-                        null,
+                    contents.file.unwrapValid(),
                 ) catch |err| {
                     const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
@@ -5048,7 +5045,8 @@ pub const ParseTask = struct {
         }
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
-            entry.fd.isValid() and !entry.fd.isStdio() and
+            entry.fd.isValid() and
+            entry.fd.stdioTag() == null and
             this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
@@ -7012,7 +7010,7 @@ pub const LinkerContext = struct {
                 };
                 defer dir.close();
 
-                break :dir try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf);
+                break :dir try bun.FD.fromStdDir(dir).getFdPath(&real_path_buf);
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
@@ -15265,7 +15263,7 @@ pub const LinkerContext = struct {
                                 },
                             },
                             .encoding = .buffer,
-                            .dirfd = bun.toFD(root_dir.fd),
+                            .dirfd = .fromStdDir(root_dir),
                             .file = .{
                                 .path = JSC.Node.PathLike{
                                     .string = JSC.PathString.init(source_map_final_rel_path),
@@ -15357,7 +15355,7 @@ pub const LinkerContext = struct {
                                     .encoding = .buffer,
                                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                                    .dirfd = bun.toFD(root_dir.fd),
+                                    .dirfd = .fromStdDir(root_dir),
                                     .file = .{
                                         .path = JSC.Node.PathLike{
                                             .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
@@ -15414,7 +15412,7 @@ pub const LinkerContext = struct {
                     .encoding = .buffer,
                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                    .dirfd = bun.toFD(root_dir.fd),
+                    .dirfd = .fromStdDir(root_dir),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(rel_path),
@@ -15531,7 +15529,7 @@ pub const LinkerContext = struct {
                             },
                         },
                         .encoding = .buffer,
-                        .dirfd = bun.toFD(root_dir.fd),
+                        .dirfd = .fromStdDir(root_dir),
                         .file = .{
                             .path = JSC.Node.PathLike{
                                 .string = JSC.PathString.init(src.dest_path),

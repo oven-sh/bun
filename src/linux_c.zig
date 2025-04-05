@@ -547,7 +547,7 @@ pub const linux_fs = bun.c;
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
-    return std.os.linux.ioctl(dest_fd.cast(), bun.c.FICLONE, @intCast(srcfd.int()));
+    return std.os.linux.ioctl(dest_fd.cast(), bun.c.FICLONE, @intCast(srcfd.native()));
 }
 
 pub const RWFFlagSupport = enum(u8) {

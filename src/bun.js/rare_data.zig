@@ -8,7 +8,6 @@ const JSC = bun.JSC;
 const std = @import("std");
 const BoringSSL = bun.BoringSSL.c;
 const bun = @import("root").bun;
-const FDImpl = bun.FDImpl;
 const Environment = bun.Environment;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
@@ -131,7 +130,7 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
     for (this.listening_sockets_for_watch_mode.items) |socket| {
         // Prevent TIME_WAIT state
         Syscall.disableLinger(socket);
-        _ = Syscall.close(socket);
+        socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
 }
@@ -320,7 +319,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+        const fd = bun.FD.stderr();
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -352,7 +351,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+        const fd = bun.FD.stdout();
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -382,7 +381,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+        const fd = bun.FD.stdin();
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -395,10 +394,8 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
                 .file = Blob.FileStore{
-                    .pathlike = .{
-                        .fd = fd,
-                    },
-                    .is_atty = if (bun.STDIN_FD.isValid()) std.posix.isatty(bun.STDIN_FD.cast()) else false,
+                    .pathlike = .{ .fd = fd },
+                    .is_atty = if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false,
                     .mode = mode,
                 },
             },

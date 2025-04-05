@@ -197,7 +197,7 @@ pub const BunxCommand = struct {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
-                    defer _ = bun.sys.close(bin_dir);
+                    defer bin_dir.close();
                     const dir = std.fs.Dir{ .fd = bin_dir.cast() };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
@@ -548,7 +548,7 @@ pub const BunxCommand = struct {
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;
                             };
-                            defer _ = bun.sys.close(fd);
+                            defer fd.close();
 
                             var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
                             var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
@@ -599,7 +599,7 @@ pub const BunxCommand = struct {
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             const root_dir_fd = root_dir_info.getFileDescriptor();
-            bun.assert(root_dir_fd != .zero);
+            bun.assert(root_dir_fd.isValid());
             if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {

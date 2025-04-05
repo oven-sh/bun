@@ -16,7 +16,8 @@ const Encoding = JSC.Node.Encoding;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
-const FDImpl = bun.FDImpl;
+const FD = bun.FD;
+
 const AbortSignal = JSC.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
@@ -216,7 +217,7 @@ pub const Async = struct {
                     },
                     .close => {
                         const args: Arguments.Close = task.args;
-                        const fd = args.fd.impl().uv();
+                        const fd = args.fd.uv();
 
                         if (fd == 1 or fd == 2) {
                             log("uv close({}) SKIPPED", .{fd});
@@ -232,7 +233,7 @@ pub const Async = struct {
                     .read => {
                         const args: Arguments.Read = task.args;
                         const B = uv.uv_buf_t.init;
-                        const fd = args.fd.impl().uv();
+                        const fd = args.fd.uv();
 
                         var buf = args.buffer.slice();
                         buf = buf[@min(buf.len, args.offset)..];
@@ -245,7 +246,7 @@ pub const Async = struct {
                     .write => {
                         const args: Arguments.Write = task.args;
                         const B = uv.uv_buf_t.init;
-                        const fd = args.fd.impl().uv();
+                        const fd = args.fd.uv();
 
                         var buf = args.buffer.slice();
                         buf = buf[@min(buf.len, args.offset)..];
@@ -257,7 +258,7 @@ pub const Async = struct {
                     },
                     .readv => {
                         const args: Arguments.Readv = task.args;
-                        const fd = args.fd.impl().uv();
+                        const fd = args.fd.uv();
                         const bufs = args.buffers.buffers.items;
                         const pos: i64 = args.position orelse -1;
 
@@ -270,7 +271,7 @@ pub const Async = struct {
                     },
                     .writev => {
                         const args_: Arguments.Writev = task.args;
-                        const fd = args_.fd.impl().uv();
+                        const fd = args_.fd.uv();
                         const bufs = args_.buffers.buffers.items;
 
                         if (bufs.len == 0) {
@@ -880,7 +881,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
                 .result => |fd_| fd_,
             };
-            defer _ = Syscall.close(fd);
+            defer fd.close();
 
             var buf: bun.OSPathBuffer = undefined;
 
@@ -906,7 +907,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
             }
 
-            const dir = fd.asDir();
+            const dir = fd.stdDir();
             var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
             var entry = iterator.next();
             while (switch (entry) {
@@ -1201,7 +1202,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         const root_fd = this.root_fd;
         if (root_fd != bun.invalid_fd) {
             this.root_fd = bun.invalid_fd;
-            _ = Syscall.close(root_fd);
+            root_fd.close();
             bun.default_allocator.free(this.root_path.slice());
             this.root_path = PathString.empty;
         }
@@ -1403,7 +1404,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Writev {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -1457,7 +1458,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Readv {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -1503,7 +1504,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!FTruncate {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -1574,7 +1575,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Fchown {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -1692,7 +1693,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!FChmod {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -1806,7 +1807,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Fstat {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -2321,7 +2322,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Close {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -2408,7 +2409,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Futimes {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -2480,7 +2481,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Write {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -2585,7 +2586,7 @@ pub const Arguments = struct {
 
             // fd = getValidatedFd(fd);
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -3023,7 +3024,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!FdataSync {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -3173,7 +3174,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Fsync {
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
-            const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
+            const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
@@ -3242,7 +3243,7 @@ const Return = struct {
     pub const Lstat = StatOrNotFound;
     pub const Mkdir = StringOrUndefined;
     pub const Mkdtemp = JSC.ZigString;
-    pub const Open = FDImpl;
+    pub const Open = FD;
     pub const WriteFile = void;
     pub const Readv = Read;
     pub const StatFS = bun.JSC.Node.StatFS;
@@ -3423,7 +3424,7 @@ pub const NodeFS = struct {
                 };
 
                 defer {
-                    _ = Syscall.close(fd);
+                    fd.close();
                 }
 
                 while (data.len > 0) {
@@ -3440,7 +3441,10 @@ pub const NodeFS = struct {
     }
 
     pub fn close(_: *NodeFS, args: Arguments.Close, _: Flavor) Maybe(Return.Close) {
-        return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
+        return if (args.fd.closeAllowingBadFileDescriptor()) |err|
+            .{ .err = err }
+        else
+            .success;
     }
 
     pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
@@ -3609,7 +3613,7 @@ pub const NodeFS = struct {
                         .err => |err| return .{ .err = err.withPath(args.src.slice()) },
                     };
                     defer {
-                        _ = Syscall.close(src_fd);
+                        src_fd.close();
                     }
 
                     var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
@@ -3625,7 +3629,7 @@ pub const NodeFS = struct {
                     defer {
                         _ = Syscall.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
                         _ = Syscall.fchmod(dest_fd, stat_.mode);
-                        _ = Syscall.close(dest_fd);
+                        dest_fd.close();
                     }
 
                     return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
@@ -3654,7 +3658,7 @@ pub const NodeFS = struct {
                 .err => |err| return .{ .err = err },
             };
             defer {
-                _ = Syscall.close(src_fd);
+                src_fd.close();
             }
 
             const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
@@ -3682,13 +3686,13 @@ pub const NodeFS = struct {
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if (args.mode.isForceClone()) {
                 if (ret.errnoSysP(bun.C.linux.ioctl_ficlone(dest_fd, src_fd), .ioctl_ficlone, dest)) |err| {
-                    _ = Syscall.close(dest_fd);
+                    dest_fd.close();
                     // This is racey, but it's the best we can do
                     _ = bun.sys.unlink(dest);
                     return err;
                 }
                 _ = Syscall.fchmod(dest_fd, stat_.mode);
-                _ = Syscall.close(dest_fd);
+                dest_fd.close();
                 return ret.success;
             }
 
@@ -3697,7 +3701,7 @@ pub const NodeFS = struct {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
                     _ = Syscall.fchmod(dest_fd, stat_.mode);
-                    _ = Syscall.close(dest_fd);
+                    dest_fd.close();
                     return ret.success;
                 }
 
@@ -3709,7 +3713,7 @@ pub const NodeFS = struct {
             defer {
                 _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
                 _ = linux.fchmod(dest_fd.cast(), stat_.mode);
-                _ = Syscall.close(dest_fd);
+                dest_fd.close();
             }
 
             var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
@@ -3845,7 +3849,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.int()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
+        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.native()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
@@ -3859,7 +3863,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fsync(args.fd);
         }
-        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd.int()), .fsync) orelse
+        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd.native()), .fsync) orelse
             Maybe(Return.Fsync).success;
     }
 
@@ -3871,7 +3875,7 @@ pub const NodeFS = struct {
         if (comptime Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.atime, args.mtime, null);
+            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, args.fd.uv(), args.atime, args.mtime, null);
             return if (rc.errno()) |e|
                 .{ .err = .{
                     .errno = e,
@@ -4206,9 +4210,7 @@ pub const NodeFS = struct {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },
-            .result => |fd| fd: {
-                break :fd .{ .result = FDImpl.decode(fd) };
-            },
+            .result => |fd| .{ .result = fd },
         };
     }
 
@@ -4222,7 +4224,7 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
+        return Maybe(Return.Open).initResult(.fromUV(@intCast(rc)));
     }
 
     pub fn uv_statfs(_: *NodeFS, args: Arguments.StatFS, req: *uv.fs_t, rc: i64) Maybe(Return.StatFS) {
@@ -4469,7 +4471,7 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        const dir = fd.asDir();
+        const dir = fd.stdDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.JSC.Node.Dirent);
 
         var dirent_path: bun.String = bun.String.dead;
@@ -4613,11 +4615,11 @@ pub const NodeFS = struct {
 
         defer {
             if (comptime !is_root) {
-                _ = Syscall.close(fd);
+                fd.close();
             }
         }
 
-        var iterator = DirIterator.iterate(fd.asDir(), .u8);
+        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
         var entry = iterator.next();
         var dirent_path_prev: bun.String = bun.String.empty;
         defer {
@@ -4726,7 +4728,7 @@ pub const NodeFS = struct {
             // all other paths are relative to the root directory
             // so we can only close it once we're 100% done
             if (root_fd != bun.invalid_fd) {
-                _ = Syscall.close(root_fd);
+                root_fd.close();
             }
         }
 
@@ -4767,11 +4769,11 @@ pub const NodeFS = struct {
 
             defer {
                 if (fd != root_fd) {
-                    _ = Syscall.close(fd);
+                    fd.close();
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.asDir(), .u8);
+            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
             var entry = iterator.next();
             var dirent_path_prev: bun.String = bun.String.dead;
             defer {
@@ -4927,7 +4929,7 @@ pub const NodeFS = struct {
             .result => |fd_| fd_,
         };
 
-        defer _ = Syscall.close(fd);
+        defer fd.close();
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
         return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
@@ -5018,9 +5020,9 @@ pub const NodeFS = struct {
             },
             .fd => |fd| fd,
         };
-        const fd = bun.toLibUVOwnedFD(fd_maybe_windows) catch {
+        const fd = fd_maybe_windows.makeLibUVOwned() catch {
             if (args.path == .path)
-                _ = Syscall.close(fd_maybe_windows);
+                fd_maybe_windows.close();
 
             return .{
                 .err = .{
@@ -5032,7 +5034,7 @@ pub const NodeFS = struct {
 
         defer {
             if (args.path == .path)
-                _ = Syscall.close(fd);
+                fd.close();
         }
 
         if (args.aborted()) return Maybe(Return.ReadFileWithOptions).aborted;
@@ -5327,7 +5329,7 @@ pub const NodeFS = struct {
 
         defer {
             if (args.file == .path)
-                _ = bun.sys.close(fd);
+                fd.close();
         }
 
         if (args.aborted()) return Maybe(Return.WriteFile).aborted;
@@ -5533,9 +5535,7 @@ pub const NodeFS = struct {
             .result => |fd_| fd_,
         };
 
-        defer {
-            _ = Syscall.close(fd);
-        }
+        defer fd.close();
 
         const buf = switch (Syscall.getFdPath(fd, &outbuf)) {
             .err => |err| return .{ .err = err.withPath(path) },
@@ -5875,7 +5875,7 @@ pub const NodeFS = struct {
                     .syscall = .truncate,
                 } };
             }
-            defer _ = Syscall.close(file.result);
+            defer file.result.close();
             const ret = Syscall.ftruncate(file.result, len);
             return switch (ret) {
                 .result => ret,
@@ -6127,7 +6127,7 @@ pub const NodeFS = struct {
         }
 
         const fd = switch (Syscall.openatOSPath(
-            bun.toFD((std.fs.cwd().fd)),
+            .cwd(),
             src,
             bun.O.DIRECTORY | bun.O.RDONLY,
             0,
@@ -6137,7 +6137,7 @@ pub const NodeFS = struct {
             },
             .result => |fd_| fd_,
         };
-        defer _ = Syscall.close(fd);
+        defer fd.close();
 
         switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| return .{ .err = err },
@@ -6145,7 +6145,7 @@ pub const NodeFS = struct {
         }
 
         var iterator = iterator: {
-            const dir = fd.asDir();
+            const dir = fd.stdDir();
             break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
         };
         var entry = iterator.next();
@@ -6300,7 +6300,7 @@ pub const NodeFS = struct {
                         },
                     };
                     defer {
-                        _ = Syscall.close(src_fd);
+                        src_fd.close();
                     }
 
                     var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
@@ -6341,7 +6341,7 @@ pub const NodeFS = struct {
                     defer {
                         _ = Syscall.ftruncate(dest_fd, @intCast(@as(u63, @truncate(wrote))));
                         _ = Syscall.fchmod(dest_fd, stat_.mode);
-                        _ = Syscall.close(dest_fd);
+                        dest_fd.close();
                     }
 
                     return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
@@ -6383,7 +6383,7 @@ pub const NodeFS = struct {
                 },
             };
             defer {
-                _ = Syscall.close(src_fd);
+                src_fd.close();
             }
 
             const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
@@ -6440,7 +6440,7 @@ pub const NodeFS = struct {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
                     _ = Syscall.fchmod(dest_fd, stat_.mode);
-                    _ = Syscall.close(dest_fd);
+                    dest_fd.close();
                     return ret.success;
                 }
 
@@ -6450,7 +6450,7 @@ pub const NodeFS = struct {
             defer {
                 _ = Syscall.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
                 _ = Syscall.fchmod(dest_fd, stat_.mode);
-                _ = Syscall.close(dest_fd);
+                dest_fd.close();
             }
 
             var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));

@@ -2890,7 +2890,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // use node syscall so that we don't segfault on BADF
             if (sendfile.auto_close)
-                _ = bun.sys.close(sendfile.fd);
+                sendfile.fd.close();
         }
         const separator: string = "\r\n";
         const separator_iovec = [1]std.posix.iovec_const{.{
@@ -3041,7 +3041,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toJSC(globalThis));
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
                     return;
                 },
@@ -3050,7 +3050,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isMac) {
                 if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
 
                     var err = bun.sys.Error{
@@ -3069,7 +3069,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isLinux) {
                 if (!(bun.isRegularFile(stat.mode) or std.posix.S.ISFIFO(stat.mode) or std.posix.S.ISSOCK(stat.mode))) {
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
 
                     var err = bun.sys.Error{

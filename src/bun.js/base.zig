@@ -326,7 +326,7 @@ pub const ArrayBuffer = extern struct {
     pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
-                _ = bun.sys.close(fd);
+                fd.close();
                 return globalObject.throwValue(err.toJSC(globalObject));
             },
             .result => |fstat| fstat,
@@ -335,7 +335,7 @@ pub const ArrayBuffer = extern struct {
         const size = stat.size;
 
         if (size == 0) {
-            _ = bun.sys.close(fd);
+            fd.close();
             return createBuffer(globalObject, "");
         }
 
@@ -345,7 +345,7 @@ pub const ArrayBuffer = extern struct {
         // So we clone it when it's small.
         if (size < mmap_threshold) {
             const result = toJSBufferFromFd(fd, @intCast(size), globalObject);
-            _ = bun.sys.close(fd);
+            fd.close();
             return result;
         }
 
@@ -357,7 +357,7 @@ pub const ArrayBuffer = extern struct {
             fd,
             0,
         );
-        _ = bun.sys.close(fd);
+        fd.close();
 
         switch (result) {
             .result => |buf| {

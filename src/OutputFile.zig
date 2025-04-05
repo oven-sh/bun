@@ -46,10 +46,10 @@ pub const FileOperation = struct {
     close_handle_on_complete: bool = false,
     autowatch: bool = true,
 
-    pub fn fromFile(fd: anytype, pathname: string) FileOperation {
+    pub fn fromFile(fd: bun.FD, pathname: string) FileOperation {
         return .{
+            .fd = fd,
             .pathname = pathname,
-            .fd = bun.toFD(fd),
         };
     }
 
@@ -166,7 +166,7 @@ pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
 
 pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
     var res = initFile(file, pathname, size);
-    res.value.copy.dir_handle = bun.toFD(dir.fd);
+    res.value.copy.dir_handle = .fromStdDir(dir);
     return res;
 }
 
@@ -220,8 +220,8 @@ pub fn init(options: Options) OutputFile {
             .buffer => |buffer| Value{ .buffer = .{ .allocator = buffer.allocator, .bytes = buffer.data } },
             .file => |file| Value{
                 .copy = brk: {
-                    var op = FileOperation.fromFile(file.file.handle, options.output_path);
-                    op.dir = bun.toFD(file.dir.fd);
+                    var op = FileOperation.fromFile(.fromStdFile(file.file), options.output_path);
+                    op.dir = .fromStdDir(file.dir);
                     break :brk op;
                 },
             },
@@ -261,17 +261,17 @@ pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u
                 } },
                 .encoding = .buffer,
                 .mode = if (f.is_executable) 0o755 else 0o644,
-                .dirfd = bun.toFD(root_dir.fd),
+                .dirfd = .fromStdDir(root_dir),
                 .file = .{ .path = .{
                     .string = JSC.PathString.init(rel_path),
                 } },
             }).unwrap();
         },
         .move => |value| {
-            try f.moveTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
+            try f.moveTo(root_dir_path, value.pathname, .fromStdDir(root_dir));
         },
         .copy => |value| {
-            try f.copyTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
+            try f.copyTo(root_dir_path, value.pathname, .fromStdDir(root_dir));
         },
         .pending => unreachable,
     }
@@ -282,15 +282,11 @@ pub fn moveTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: Fil
 }
 
 pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
-    const file_out = (try dir.asDir().createFile(rel_path, .{}));
-
-    const fd_out = file_out.handle;
+    const fd_out = bun.FD.fromStdFile(try dir.stdDir().createFile(rel_path, .{}));
     var do_close = false;
-    const fd_in = (try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only })).handle;
+    const fd_in = bun.FD.fromStdFile(try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only }));
 
     if (Environment.isWindows) {
-        Fs.FileSystem.setMaxFd(fd_out);
-        Fs.FileSystem.setMaxFd(fd_in);
         do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
 
         // use paths instead of bun.getFdPathW()
@@ -299,8 +295,8 @@ pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: Fil
 
     defer {
         if (do_close) {
-            _ = bun.sys.close(bun.toFD(fd_out));
-            _ = bun.sys.close(bun.toFD(fd_in));
+            fd_out.close();
+            fd_in.close();
         }
     }
 
@@ -317,7 +313,7 @@ pub fn toJS(
         .noop => JSC.JSValue.undefined,
         .copy => |copy| brk: {
             const file_blob = JSC.WebCore.Blob.Store.initFile(
-                if (copy.fd != .zero)
+                if (copy.fd.isValid())
                     JSC.Node.PathOrFileDescriptor{
                         .fd = copy.fd,
                     }
@@ -421,7 +417,7 @@ pub fn toBlob(
         .noop => @panic("Cannot convert noop output file to blob"),
         .copy => |copy| brk: {
             const file_blob = try JSC.WebCore.Blob.Store.initFile(
-                if (copy.fd != .zero)
+                if (copy.fd.isValid())
                     JSC.Node.PathOrFileDescriptor{
                         .fd = copy.fd,
                     }

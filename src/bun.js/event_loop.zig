@@ -2109,7 +2109,7 @@ pub const MiniEventLoop = struct {
     pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stderr_store orelse brk: {
             var mode: bun.Mode = 0;
-            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+            const fd = bun.FD.fromUV(2);
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {
@@ -2140,7 +2140,7 @@ pub const MiniEventLoop = struct {
     pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stdout_store orelse brk: {
             var mode: bun.Mode = 0;
-            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+            const fd = bun.FD.stdout();
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {

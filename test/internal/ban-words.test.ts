@@ -12,7 +12,6 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
   "undefined != ": { reason: "This is by definition Undefined Behavior." },
   "undefined == ": { reason: "This is by definition Undefined Behavior." },
-  "bun.toFD(std.fs.cwd().fd)": { reason: "Use bun.FD.cwd()" },
   "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
   "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
@@ -29,6 +28,13 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 244, regex: true },
   "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 492 },
+  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 1 },
+  "bun.invalid_fd": { reason: "Prefer bun.FD.Optional.none", limit: 1 },
+  "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 1 },
+  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 1 },
+  "std.posix": { reason: "Prefer bun.sys + bun.FD instead of std.posix. Zig hides 'errno' when Bun wants to match libuv", limit: 1 },
+  ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 1 },
+  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 1 },
 };
 const words_keys = [...Object.keys(words)];
 

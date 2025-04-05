@@ -1260,7 +1260,7 @@ pub fn renameAtW(
             .result => |fd| break :brk fd,
         }
     };
-    defer _ = bun.sys.close(src_fd);
+    defer src_fd.close();
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
@@ -1352,7 +1352,7 @@ pub fn moveOpenedFileAtLoose(
             .err => |e| return .{ .err = e },
             .result => |fd| fd,
         };
-        defer _ = bun.sys.close(fd);
+        defer fd.close();
 
         const basename = new_path[last_slash + 1 ..];
         return moveOpenedFileAt(src_fd, fd, basename, replace_if_exists);

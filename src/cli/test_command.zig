@@ -451,7 +451,7 @@ pub const JunitReporter = struct {
         @memcpy(junit_path_buf[0..path.len], path);
         junit_path_buf[path.len] = 0;
 
-        switch (bun.sys.File.openat(std.fs.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        switch (bun.sys.File.openat(.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
             .err => |err| {
                 Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
             },
@@ -840,7 +840,7 @@ pub const CommandLineReporter = struct {
             const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(
-                std.fs.cwd(),
+                .cwd(),
                 path,
                 bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
                 0o644,
@@ -943,10 +943,11 @@ pub const CommandLineReporter = struct {
         if (comptime reporters.lcov) {
             try lcov_buffered_writer.flush();
             lcov_file.close();
+            const cwd = bun.FD.cwd();
             bun.C.moveFileZ(
-                bun.toFD(std.fs.cwd()),
+                cwd,
                 lcov_name,
-                bun.toFD(std.fs.cwd()),
+                cwd,
                 bun.path.joinAbsStringZ(
                     relative_dir,
                     &.{ opts.reports_directory, "lcov.info" },
@@ -1010,22 +1011,17 @@ const Scanner = struct {
         }
 
         while (this.dirs_to_scan.readItem()) |entry| {
+            entry.relative_dir.assertValid();
             if (!Environment.isWindows) {
-                const dir = entry.relative_dir.asDir();
-                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
-
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 this.open_dir_buf[path2.len] = 0;
                 const pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-                const child_dir = bun.openDir(dir, pathZ) catch continue;
+                const child_dir = bun.openDir(entry.relative_dir.stdDir(), pathZ) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
-                const dir = entry.relative_dir.asDir();
-                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
-
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
                 const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;

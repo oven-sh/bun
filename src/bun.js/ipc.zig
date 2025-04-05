@@ -16,6 +16,8 @@ const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
 pub const log = Output.scoped(.IPC, false);
 
+const IsInternal = enum { internal, external };
+
 /// Mode of Inter-Process Communication.
 pub const Mode = enum {
     /// Uses SerializedScriptValue to send data. Only valid for bun <--> bun communication.
@@ -143,7 +145,7 @@ const advanced = struct {
         return comptime std.mem.asBytes(&VersionPacket{});
     }
 
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         const serialized = value.serialize(global) orelse
             return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
@@ -154,25 +156,10 @@ const advanced = struct {
 
         try writer.ensureUnusedCapacity(payload_length);
 
-        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, .SerializedMessage);
-        writer.writeTypeAsBytesAssumeCapacity(u32, size);
-        writer.writeAssumeCapacity(serialized.data);
-
-        return payload_length;
-    }
-
-    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
-        defer serialized.deinit();
-
-        const size: u32 = @intCast(serialized.data.len);
-
-        const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
-
-        try writer.ensureUnusedCapacity(payload_length);
-
-        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, .SerializedInternalMessage);
+        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, switch (is_internal) {
+            .internal => .SerializedInternalMessage,
+            .external => .SerializedMessage,
+        });
         writer.writeTypeAsBytesAssumeCapacity(u32, size);
         writer.writeAssumeCapacity(serialized.data);
 
@@ -253,7 +240,7 @@ const json = struct {
         return IPCDecodeError.NotEnoughBytes;
     }
 
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
         value.jsonStringify(global, 0, &out);
         defer out.deref();
@@ -266,34 +253,18 @@ const json = struct {
 
         const slice = str.slice();
 
-        try writer.ensureUnusedCapacity(slice.len + 1);
+        var result_len: usize = slice.len + 1;
+        if (is_internal == .internal) result_len += 1;
 
+        try writer.ensureUnusedCapacity(result_len);
+
+        if (is_internal == .internal) {
+            writer.writeAssumeCapacity(&.{2});
+        }
         writer.writeAssumeCapacity(slice);
         writer.writeAssumeCapacity("\n");
 
-        return slice.len + 1;
-    }
-
-    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        var out: bun.String = undefined;
-        value.jsonStringify(global, 0, &out);
-        defer out.deref();
-
-        if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
-
-        // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
-        const str = out.toUTF8(bun.default_allocator);
-        defer str.deinit();
-
-        const slice = str.slice();
-
-        try writer.ensureUnusedCapacity(1 + slice.len + 1);
-
-        writer.writeAssumeCapacity(&.{2});
-        writer.writeAssumeCapacity(slice);
-        writer.writeAssumeCapacity("\n");
-
-        return 1 + slice.len + 1;
+        return result_len;
     }
 };
 
@@ -313,17 +284,10 @@ pub fn getVersionPacket(mode: Mode) []const u8 {
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
     return switch (data.mode) {
-        inline else => |t| @field(@This(), @tagName(t)).serialize(data, writer, global, value),
-    };
-}
-
-/// Given a writer interface, serialize and write a value.
-/// Returns true if the value was written, false if it was not.
-pub fn serializeInternal(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-    return switch (data.mode) {
-        inline else => |t| @field(@This(), @tagName(t)).serializeInternal(data, writer, global, value),
+        .advanced => advanced.serialize(data, writer, global, value, is_internal),
+        .json => json.serialize(data, writer, global, value, is_internal),
     };
 }
 
@@ -361,7 +325,7 @@ const SocketIPCData = struct {
         }
     }
 
-    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
+    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal) bool {
         if (Environment.allow_assert) {
             bun.assert(ipc_data.has_written_version == 1);
         }
@@ -369,34 +333,7 @@ const SocketIPCData = struct {
         // TODO: probably we should not direct access ipc_data.outgoing.list.items here
         const start_offset = ipc_data.outgoing.list.items.len;
 
-        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch return false;
-
-        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
-
-        if (start_offset == 0) {
-            bun.assert(ipc_data.outgoing.cursor == 0);
-            const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
-            if (n == payload_length) {
-                ipc_data.outgoing.reset();
-            } else if (n > 0) {
-                ipc_data.outgoing.cursor = @intCast(n);
-                // more remaining; need to ref event loop
-                ipc_data.keep_alive.ref(global.bunVM());
-            }
-        }
-
-        return true;
-    }
-
-    pub fn serializeAndSendInternal(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
-        if (Environment.allow_assert) {
-            bun.assert(ipc_data.has_written_version == 1);
-        }
-
-        // TODO: probably we should not direct access ipc_data.outgoing.list.items here
-        const start_offset = ipc_data.outgoing.list.items.len;
-
-        const payload_length = serializeInternal(ipc_data, &ipc_data.outgoing, global, value) catch return false;
+        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value, is_internal) catch return false;
 
         bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
@@ -530,7 +467,7 @@ const NamedPipeIPCData = struct {
         }
     }
 
-    pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
+    pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal) bool {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 1);
         }
@@ -541,30 +478,7 @@ const NamedPipeIPCData = struct {
         this.writer.source.?.pipe.ref();
         const start_offset = this.writer.outgoing.list.items.len;
 
-        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch return false;
-
-        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
-
-        if (start_offset == 0) {
-            bun.assert(this.writer.outgoing.cursor == 0);
-            _ = this.writer.flush();
-        }
-
-        return true;
-    }
-
-    pub fn serializeAndSendInternal(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 1);
-        }
-        if (this.disconnected) {
-            return false;
-        }
-        // ref because we have pending data
-        this.writer.source.?.pipe.ref();
-        const start_offset = this.writer.outgoing.list.items.len;
-
-        const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch return false;
+        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value, is_internal) catch return false;
 
         bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
 
@@ -715,7 +629,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         return globalObject.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
     }
 
-    const good = ipc_data.serializeAndSend(globalObject, message);
+    const good = ipc_data.serializeAndSend(globalObject, message, .external);
 
     if (good) {
         if (callback.isFunction()) {

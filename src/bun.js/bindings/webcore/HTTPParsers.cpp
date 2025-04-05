@@ -33,7 +33,6 @@
 #include "HTTPParsers.h"
 
 #include "CommonAtomStrings.h"
-#include "HTTPHeaderField.h"
 #include "HTTPHeaderNames.h"
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DateMath.h>
@@ -43,6 +42,189 @@
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
+
+namespace RFC7230 {
+
+bool isTokenCharacter(UChar c)
+{
+    return c < 0x80 && isTokenCharacter(static_cast<LChar>(c));
+}
+bool isDelimiter(UChar c)
+{
+    return c < 0x80 && isDelimiter(static_cast<LChar>(c));
+}
+
+bool isTokenCharacter(LChar c)
+{
+    return isASCIIAlpha(c) || isASCIIDigit(c)
+        || c == '!' || c == '#' || c == '$'
+        || c == '%' || c == '&' || c == '\''
+        || c == '*' || c == '+' || c == '-'
+        || c == '.' || c == '^' || c == '_'
+        || c == '`' || c == '|' || c == '~';
+}
+
+bool isDelimiter(LChar c)
+{
+    return c == '(' || c == ')' || c == ','
+        || c == '/' || c == ':' || c == ';'
+        || c == '<' || c == '=' || c == '>'
+        || c == '?' || c == '@' || c == '['
+        || c == '\\' || c == ']' || c == '{'
+        || c == '}' || c == '"';
+}
+
+static bool isVisibleCharacter(UChar c)
+{
+    return isTokenCharacter(c) || isDelimiter(c);
+}
+
+bool isWhitespace(UChar c)
+{
+    return c == ' ' || c == '\t';
+}
+
+template<size_t min, size_t max>
+static bool isInRange(UChar c)
+{
+    return c >= min && c <= max;
+}
+
+static bool isOBSText(UChar c)
+{
+    return isInRange<0x80, 0xFF>(c);
+}
+
+static bool isQuotedTextCharacter(UChar c)
+{
+    return isWhitespace(c)
+        || c == 0x21
+        || isInRange<0x23, 0x5B>(c)
+        || isInRange<0x5D, 0x7E>(c)
+        || isOBSText(c);
+}
+
+bool isQuotedPairSecondOctet(UChar c)
+{
+    return isWhitespace(c)
+        || isVisibleCharacter(c)
+        || isOBSText(c);
+}
+
+bool isCommentText(UChar c)
+{
+    return isWhitespace(c)
+        || isInRange<0x21, 0x27>(c)
+        || isInRange<0x2A, 0x5B>(c)
+        || isInRange<0x5D, 0x7E>(c)
+        || isOBSText(c);
+}
+
+static bool isValidName(StringView name)
+{
+    if (!name.length())
+        return false;
+    for (size_t i = 0; i < name.length(); ++i) {
+        if (!isTokenCharacter(name[i]))
+            return false;
+    }
+    return true;
+}
+
+static bool isValidValue(StringView value)
+{
+    enum class State {
+        OptionalWhitespace,
+        Token,
+        QuotedString,
+        Comment,
+    };
+    State state = State::OptionalWhitespace;
+    size_t commentDepth = 0;
+    bool hadNonWhitespace = false;
+
+    for (size_t i = 0; i < value.length(); ++i) {
+        UChar c = value[i];
+        switch (state) {
+        case State::OptionalWhitespace:
+            if (isWhitespace(c))
+                continue;
+            hadNonWhitespace = true;
+            if (isTokenCharacter(c)) {
+                state = State::Token;
+                continue;
+            }
+            if (c == '"') {
+                state = State::QuotedString;
+                continue;
+            }
+            if (c == '(') {
+                ASSERT(!commentDepth);
+                ++commentDepth;
+                state = State::Comment;
+                continue;
+            }
+            return false;
+
+        case State::Token:
+            if (isTokenCharacter(c))
+                continue;
+            state = State::OptionalWhitespace;
+            continue;
+        case State::QuotedString:
+            if (c == '"') {
+                state = State::OptionalWhitespace;
+                continue;
+            }
+            if (c == '\\') {
+                ++i;
+                if (i == value.length())
+                    return false;
+                if (!isQuotedPairSecondOctet(value[i]))
+                    return false;
+                continue;
+            }
+            if (!isQuotedTextCharacter(c))
+                return false;
+            continue;
+        case State::Comment:
+            if (c == '(') {
+                ++commentDepth;
+                continue;
+            }
+            if (c == ')') {
+                --commentDepth;
+                if (!commentDepth)
+                    state = State::OptionalWhitespace;
+                continue;
+            }
+            if (c == '\\') {
+                ++i;
+                if (i == value.length())
+                    return false;
+                if (!isQuotedPairSecondOctet(value[i]))
+                    return false;
+                continue;
+            }
+            if (!isCommentText(c))
+                return false;
+            continue;
+        }
+    }
+
+    switch (state) {
+    case State::OptionalWhitespace:
+    case State::Token:
+        return hadNonWhitespace;
+    case State::QuotedString:
+    case State::Comment:
+        // Unclosed comments or quotes are invalid values.
+        break;
+    }
+    return false;
+}
+
+} // namespace RFC7230
 
 // True if characters which satisfy the predicate are present, incrementing
 // "pos" to the next character which does not satisfy the predicate.
@@ -116,36 +298,40 @@ bool isValidReasonPhrase(const String& value)
     return true;
 }
 
+static bool isValidHTTPHeaderValue(const std::span<const LChar> value)
+{
+    for (const auto c : value) {
+        if (UNLIKELY(c <= 13)) {
+            if (c == 0x00 || c == 0x0A || c == 0x0D)
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool isValidHTTPHeaderValue(const std::span<const UChar> value)
+{
+    for (const auto c : value) {
+        if (UNLIKELY(c <= 13)) {
+            if (c == 0x00 || c == 0x0A || c == 0x0D)
+                return false;
+        }
+    }
+    return true;
+}
+
 // See https://fetch.spec.whatwg.org/#concept-header
 bool isValidHTTPHeaderValue(const StringView& value)
 {
     auto length = value.length();
-    if (length == 0) return true;
-    UChar c = value[0];
-    if (isTabOrSpace(c))
-        return false;
-    c = value[length - 1];
-    if (isTabOrSpace(c))
-        return false;
+    if (length == 0)
+        return true;
+
     if (value.is8Bit()) {
-        const LChar* begin = value.span8().data();
-        const LChar* end = begin + value.length();
-        for (const LChar* p = begin; p != end; ++p) {
-            if (UNLIKELY(*p <= 13)) {
-                LChar c = *p;
-                if (c == 0x00 || c == 0x0A || c == 0x0D)
-                    return false;
-            }
-        }
-    } else {
-        for (unsigned i = 0; i < value.length(); ++i) {
-            c = value[i];
-            if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0x7F)
-                return false;
-        }
+        return isValidHTTPHeaderValue(value.span8());
     }
 
-    return true;
+    return isValidHTTPHeaderValue(value.span16());
 }
 
 // See RFC 7231, Section 5.3.2.
@@ -194,27 +380,35 @@ bool isValidLanguageHeaderValue(const StringView& value)
     return true;
 }
 
+static bool isValidHTTPHeaderName(const std::span<const LChar> value)
+{
+    for (const auto c : value) {
+        if (UNLIKELY(!RFC7230::isTokenCharacter(c)))
+            return false;
+    }
+    return true;
+}
+
+static bool isValidHTTPHeaderName(const std::span<const UChar> value)
+{
+    for (const auto c : value) {
+        if (UNLIKELY(!RFC7230::isTokenCharacter(c)))
+            return false;
+    }
+    return true;
+}
+
 // See RFC 7230, Section 3.2.6.
-bool isValidHTTPToken(const StringView& value)
+bool isValidHTTPHeaderName(const StringView& value)
 {
     if (value.isEmpty())
         return false;
 
     if (value.is8Bit()) {
-        const LChar* characters = value.span8().data();
-        const LChar* end = characters + value.length();
-        while (characters < end) {
-            if (!RFC7230::isTokenCharacter(*characters++))
-                return false;
-        }
-        return true;
+        return isValidHTTPHeaderName(value.span8());
     }
 
-    for (UChar c : value.codeUnits()) {
-        if (!RFC7230::isTokenCharacter(c))
-            return false;
-    }
-    return true;
+    return isValidHTTPHeaderName(value.span16());
 }
 
 #if USE(GLIB)
@@ -986,5 +1180,4 @@ CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(StringView header
 
     return CrossOriginResourcePolicy::Invalid;
 }
-
 }

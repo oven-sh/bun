@@ -21,7 +21,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
-
+#include "ErrorCode.h"
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
@@ -59,7 +59,7 @@ static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
     { "localAddress"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterLocalAddress, noOpSetter } },
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
 };
-
+// TODO: move this into a new file.
 class JSNodeHTTPServerSocketPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -98,6 +98,7 @@ private:
     }
 };
 
+// TODO: move this into a new file.
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -672,6 +673,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
     MarkedArgumentBuffer arrayValues;
 
     args.append(headersObject);
+    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -685,7 +687,6 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
 
         JSString* jsValue = jsString(vm, value);
 
-        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
 
@@ -1365,6 +1366,34 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+template<typename CharacterType>
+static bool validateNodeJSHeaderNameSpan(const std::span<const CharacterType> name)
+{
+
+    // This is the equivalent of checkIsHttpToken from internal/validators.js
+    // The regex is /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/
+    for (const auto& c : name) {
+        if (!(c == '^' || c == '_' || c == '`' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || (c >= '0' && c <= '9') || c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' || c == '+' || c == '.' || c == '|' || c == '~')) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool isValidNodeJSHeaderName(const String& name)
+{
+    if (name.isEmpty()) {
+        return false;
+    }
+
+    if (name.is8Bit()) {
+        return validateNodeJSHeaderNameSpan(name.span8());
+    }
+
+    return validateNodeJSHeaderNameSpan(name.span16());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1380,12 +1409,39 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             String name = nameValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
+            const auto validateHeaderName = [&]() -> bool {
+                if (!isValidNodeJSHeaderName(name)) {
+                    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_HTTP_TOKEN, makeString("Invalid header name: "_s, name)));
+                    return false;
+                }
+                return true;
+            };
+
             FetchHeaders* impl = &headers->wrapped();
 
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
+            const auto setHeaderValue = [&](const String& value) -> bool {
+                HTTPHeaderName commonName;
+                if (findHTTPHeaderName(name, commonName)) {
+                    // It's already valid, don't validate the header name twice!
+                    impl->set(commonName, value);
+                } else {
+                    if (UNLIKELY(!validateHeaderName())) {
+                        return false;
+                    }
+
+                    impl->setUncommonName(name, value);
+                }
+                return true;
+            };
+
             if (isArray(globalObject, valueValue)) {
+                if (UNLIKELY(!validateHeaderName())) {
+                    return {};
+                }
+
                 auto* array = jsCast<JSArray*>(valueValue);
                 unsigned length = array->length();
                 if (length > 0) {
@@ -1395,7 +1451,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    if (UNLIKELY(!setHeaderValue(value))) {
+                        return {};
+                    }
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -1413,9 +1471,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(jsUndefined());
+
+            if (UNLIKELY(!setHeaderValue(value))) {
+                return {};
+            }
         }
     }
 

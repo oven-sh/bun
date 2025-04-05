@@ -63,6 +63,7 @@ public:
     ExceptionOr<String> get(const StringView) const;
     ExceptionOr<bool> has(const StringView) const;
     ExceptionOr<void> set(const String& name, const String& value);
+    ExceptionOr<void> setUncommonName(const String& name, const String& value);
     ExceptionOr<void> set(const HTTPHeaderName name, const String& value);
 
     ExceptionOr<void> fill(const Init&);

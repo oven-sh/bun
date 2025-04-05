@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+GITHUB=${GITHUB-"https://github.com"}
+github_repo="$GITHUB/oven-sh/bun"
+
+install_env=BUN_INSTALL
+bin_env=\$$install_env/bin
+
+install_dir=${!install_env:-$HOME/.bun}
+bin_dir=$install_dir/bin
+exe=$bin_dir/bun
+
 platform=$(uname -ms)
 
 if [[ ${OS:-} = Windows_NT ]]; then
@@ -95,10 +105,6 @@ if [[ $target = darwin-x64 ]]; then
     fi
 fi
 
-GITHUB=${GITHUB-"https://github.com"}
-
-github_repo="$GITHUB/oven-sh/bun"
-
 # If AVX2 isn't supported, use the -baseline build
 case "$target" in
 'darwin-x64'*)
@@ -127,13 +133,6 @@ if [[ $# = 0 ]]; then
 else
     bun_uri=$github_repo/releases/download/$1/bun-$target.zip
 fi
-
-install_env=BUN_INSTALL
-bin_env=\$$install_env/bin
-
-install_dir=${!install_env:-$HOME/.bun}
-bin_dir=$install_dir/bin
-exe=$bin_dir/bun
 
 if [[ ! -d $bin_dir ]]; then
     mkdir -p "$bin_dir" ||

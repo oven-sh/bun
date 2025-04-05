@@ -6429,6 +6429,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const vm = this.vm;
 
             var node_http_response: ?*NodeHTTPResponse = null;
+            var node_response_jsvalue = JSC.JSValue.zero;
             var is_async = false;
             defer {
                 if (!is_async) {
@@ -6447,6 +6448,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 resp,
                 upgrade_ctx,
                 &node_http_response,
+                &node_response_jsvalue,
             );
 
             const HTTPResult = union(enum) {
@@ -6455,7 +6457,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 success: void,
                 pending: JSC.JSValue,
             };
-            var strong_promise: JSC.Strong = .empty;
             var needs_to_drain = true;
 
             defer {
@@ -6463,7 +6464,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     vm.drainMicrotasks();
                 }
             }
-            defer strong_promise.deinit();
             const http_result: HTTPResult = brk: {
                 if (result.toError()) |err| {
                     break :brk .{ .exception = err };
@@ -6471,7 +6471,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 if (result.asAnyPromise()) |promise| {
                     if (promise.status(globalThis.vm()) == .pending) {
-                        strong_promise.set(globalThis, result);
+                        if (node_response_jsvalue != .zero) {
+                            JSC.Codegen.JSNodeHTTPResponse.promiseSetCached(node_response_jsvalue, globalThis, result);
+                        }
                         needs_to_drain = false;
                         vm.drainMicrotasks();
                     }
@@ -6489,20 +6491,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             globalThis.handleRejectedPromises();
                             if (node_http_response) |node_response| {
                                 if (node_response.flags.request_has_completed or node_response.flags.socket_closed or node_response.flags.upgraded) {
-                                    strong_promise.deinit();
+                                    if (node_response_jsvalue != .zero)
+                                        JSC.Codegen.JSNodeHTTPResponse.promiseSetCached(node_response_jsvalue, globalThis, .zero);
                                     break :brk .{ .success = {} };
                                 }
 
-                                const strong_self = node_response.getThisValue();
-
-                                if (strong_self.isEmptyOrUndefinedOrNull()) {
-                                    strong_promise.deinit();
-                                    break :brk .{ .success = {} };
-                                }
-
-                                node_response.promise = strong_promise;
-                                strong_promise = .empty;
-                                result._then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
+                                result._then2(globalThis, node_response_jsvalue, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
                                 is_async = true;
                             }
 
@@ -7613,6 +7607,7 @@ extern fn NodeHTTPServer__onRequest_http(
     response: *uws.NewApp(false).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
+    node_response_jsvalue: *JSC.JSValue,
 ) JSC.JSValue;
 
 extern fn NodeHTTPServer__onRequest_https(
@@ -7624,6 +7619,7 @@ extern fn NodeHTTPServer__onRequest_https(
     response: *uws.NewApp(true).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
+    node_response_jsvalue: *JSC.JSValue,
 ) JSC.JSValue;
 
 extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;

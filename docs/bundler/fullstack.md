@@ -220,11 +220,13 @@ To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.stati
 
 ### Using TailwindCSS in HTML routes
 
-For example, enable TailwindCSS on your routes by installing and adding the `bun-plugin-tailwind` plugin:
+For example, enable TailwindCSS on your routes by installing and adding the TailwindCSS package and the `bun-plugin-tailwind` plugin:
 
 ```sh
-$ bun add bun-plugin-tailwind
+$ bun add -D tailwindcss bun-plugin-tailwind
 ```
+
+Add the `bun-plugin-tailwind` plugin to your plugins array in your `bunfig.toml`. Create the file, if needed.
 
 ```toml#bunfig.toml
 [serve.static]
@@ -250,6 +252,21 @@ Or in your CSS:
 
 ```css#style.css
 @import "tailwindcss";
+```
+
+If you do this stylesheet approach, make sure you link it into the HTML:
+
+```html#index.html
+<!doctype html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- the rest of your HTML... -->
+  </body>
+</html>
 ```
 
 ### Custom plugins

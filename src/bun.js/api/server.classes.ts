@@ -107,6 +107,10 @@ export default [
         fn: "write",
         length: 3,
       },
+      startBody: {
+        fn: "startBody",
+        length: 0,
+      },
       end: {
         fn: "end",
         length: 2,

@@ -3103,6 +3103,18 @@ pub const AnyResponse = union(enum) {
         };
     }
 
+    pub fn startBody(this: AnyResponse) bool {
+        return switch (this) {
+            inline else => |resp| resp.startBody(),
+        };
+    }
+
+    pub fn writeRaw(this: AnyResponse, data: []const u8) void {
+        switch (this) {
+            inline else => |resp| resp.writeRaw(data),
+        }
+    }
+
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
         return switch (this) {
             inline else => |resp| resp.end(data, close_connection),
@@ -3606,6 +3618,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getBufferedAmount(res: *Response) u64 {
                 return uws_res_get_buffered_amount(ssl_flag, res.downcast());
             }
+            pub fn startBody(res: *Response) bool {
+                return uws_res_start_body(ssl_flag, res.downcast());
+            }
             pub fn write(res: *Response, data: []const u8) WriteResult {
                 var len: usize = data.len;
                 return switch (uws_res_write(ssl_flag, res.downcast(), data.ptr, &len)) {
@@ -3979,6 +3994,7 @@ extern fn uws_res_get_buffered_amount(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: ?[*]const u8, length: *usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
+extern fn uws_res_start_body(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;

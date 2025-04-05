@@ -191,7 +191,7 @@ pub const ShellTouchTask = struct {
     }
 
     pub fn deinit(this: *ShellTouchTask) void {
-        if (this.err) |e| {
+        if (this.err) |*e| {
             e.deref();
         }
         bun.default_allocator.destroy(this);

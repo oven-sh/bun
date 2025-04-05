@@ -4263,7 +4263,9 @@ pub const Interpreter = struct {
             if (child.ptr.is(Assigns)) {
                 if (exit_code != 0) {
                     const err = this.state.expanding_assigns.state.err;
+                    this.state.expanding_assigns.state.err = .{ .custom = "" };
                     defer err.deinit(bun.default_allocator);
+
                     this.state.expanding_assigns.deinit();
                     this.writeFailingError("{}\n", .{err});
                     return;

@@ -4188,7 +4188,7 @@ pub const FileReader = struct {
                     this.file_type = .nonblocking_pipe;
                 }
 
-                this.nonblocking = is_nonblocking or (this.pollable and !(file.is_atty orelse false));
+                this.nonblocking = is_nonblocking;
 
                 if (this.nonblocking and this.file_type == .pipe) {
                     this.file_type = .nonblocking_pipe;

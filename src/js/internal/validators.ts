@@ -6,13 +6,18 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeMap = Array.prototype.map;
 const ArrayIsArray = Array.isArray;
 
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
+let tokenRegExp;
+
 /**
  * Verifies that the given val is a valid HTTP token
  * per the rules defined in RFC 7230
  * See https://tools.ietf.org/html/rfc7230#section-3.2.6
  */
 function checkIsHttpToken(val) {
+  if (!tokenRegExp) {
+    tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
+  }
+
   return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
@@ -24,8 +29,12 @@ function checkIsHttpToken(val) {
   (not necessarily a valid URI reference) followed by zero or more
   link-params separated by semicolons.
 */
-const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
+let linkValueRegExp;
 function validateLinkHeaderFormat(value, name) {
+  if (!linkValueRegExp) {
+    linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
+  }
+
   if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
     throw $ERR_INVALID_ARG_VALUE(
       name,
@@ -68,6 +77,14 @@ function validateLinkHeaderValue(hints) {
 }
 hideFromStack(validateLinkHeaderValue);
 
+const validateFunction_ = $newCppFunction("NodeValidator.cpp", "jsFunction_validateFunction", 0);
+
+function validateFunction(value, name) {
+  if (typeof value !== "function") {
+    validateFunction_.$apply(undefined, arguments);
+  }
+}
+
 export default {
   /** (value, name) */
   validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
@@ -84,7 +101,7 @@ export default {
   /** `(number, name, lower, upper, def)` */
   checkRangesOrGetDefault: $newCppFunction("NodeValidator.cpp", "jsFunction_checkRangesOrGetDefault", 0),
   /** `(value, name)` */
-  validateFunction: $newCppFunction("NodeValidator.cpp", "jsFunction_validateFunction", 0),
+  validateFunction,
   /** `(value, name)` */
   validateBoolean: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBoolean", 0),
   /** `(port, name = 'Port', allowZero = true)` */

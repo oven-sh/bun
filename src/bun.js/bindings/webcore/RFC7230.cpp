@@ -41,6 +41,16 @@ bool isTokenCharacter(UChar c)
         || c == '`' || c == '|' || c == '~';
 }
 
+bool isTokenCharacter(LChar c)
+{
+    return isASCIIAlpha(c) || isASCIIDigit(c)
+        || c == '!' || c == '#' || c == '$'
+        || c == '%' || c == '&' || c == '\''
+        || c == '*' || c == '+' || c == '-'
+        || c == '.' || c == '^' || c == '_'
+        || c == '`' || c == '|' || c == '~';
+}
+
 bool isDelimiter(UChar c)
 {
     return c == '(' || c == ')' || c == ','

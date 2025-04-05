@@ -135,7 +135,7 @@ function isAbortError(err) {
 const ObjectDefineProperty = Object.defineProperty;
 
 const GlobalPromise = globalThis.Promise;
-const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+let headerCharRegex;
 /**
  * True if val contains an invalid field-vchar
  *  field-value    = *( field-content / obs-fold )
@@ -143,6 +143,9 @@ const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
  *  field-vchar    = VCHAR / obs-text
  */
 function checkInvalidHeaderChar(val: string) {
+  if (!headerCharRegex) {
+    headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+  }
   return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
@@ -1183,6 +1186,7 @@ function assignHeaders(object, req) {
     return true;
   } else {
     assignHeadersSlow(object, req);
+
     return false;
   }
 }
@@ -1707,7 +1711,20 @@ const OutgoingMessagePrototype = {
   },
 
   setHeader(name, value) {
-    validateHeaderName(name);
+    if (this._header) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    // do the cheap validations the JIT can optimize in JS
+    if (typeof name !== "string" || !name) {
+      throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
+    }
+
+    // do the cheap validations the JIT can optimize in JS
+    if (value === undefined) {
+      throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+    }
+
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
     return this;

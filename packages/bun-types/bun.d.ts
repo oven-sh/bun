@@ -1783,7 +1783,7 @@ declare module "bun" {
      * @example
      * const result = await sql`insert into users ${sql(users)} RETURNING *`;
      */
-    (obj: any): SQLQuery;
+    <T extends { [key: string]: any }>(obj: T, ...values: T extends Array<any> ? [] : (keyof T)[]): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
      * await sql.commitDistributed("my_distributed_transaction");

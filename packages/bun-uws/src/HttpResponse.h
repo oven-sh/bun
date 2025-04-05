@@ -126,7 +126,11 @@ public:
             this->write(data, nullptr);
 
             /* Terminating 0 chunk */
-            Super::write("0\r\n\r\n", 5);
+            if (httpResponseData->anyChunkWritten) {
+                Super::write("0\r\n\r\n", 5);
+            } else {
+                Super::write("\r\n0\r\n\r\n", 7);
+            }
 
             httpResponseData->markDone();
 
@@ -546,6 +550,7 @@ public:
 
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
+            httpResponseData->anyChunkWritten = true;
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
             writeMark();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;

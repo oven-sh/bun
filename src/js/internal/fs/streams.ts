@@ -569,10 +569,8 @@ function _write(data, encoding, cb) {
           cb(null);
         })
         .catch(cb);
-      return false; // Indicate backpressure
     } else {
       cb(null);
-      return true; // No backpressure
     }
   } else {
     writeAll.$call(this, data, data.length, this.pos, er => {
@@ -609,14 +607,11 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
         cb(null);
         this.emit("drain");
       }, cb);
-      return false;
     } else {
       if (cb) process.nextTick(cb, null);
-      return true;
     }
   } catch (e) {
     if (cb) process.nextTick(cb, e);
-    return false;
   }
 }
 
@@ -644,19 +639,16 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           cb(null);
         })
         .catch(cb);
-      return false; // Indicate backpressure
     } else {
       cb(null);
-      return true; // No backpressure
     }
   } else {
-    const result: any = this._write(data, encoding, cb);
+    this._write(data, encoding, cb);
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {
       this[kWriteMonkeyPatchDefense] = true;
     }
-    return result;
   }
 }
 
@@ -681,10 +673,8 @@ writeStreamPrototype._writev = function (data, cb) {
           cb(null);
         })
         .catch(cb);
-      return false;
     } else {
       cb(null);
-      return true;
     }
   } else {
     writevAll.$call(this, chunks, size, this.pos, er => {

@@ -387,64 +387,174 @@ public:
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
-    /**
-     * WARNING: You must update visitChildrenImpl() if you add a new field.
-     *
-     * That informs the garbage collector that these fields exist. If you don't
-     * do that, the garbage collector will not know about these fields and will
-     * not trace them. This will lead to crashes and very strange behavior at runtime.
-     *
-     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
-     * those callbacks will eventually never be called anymore. But it'll work the first time!
-     */
-    // TODO: these should use LazyProperty
-    mutable WriteBarrier<JSFunction> m_assignToStream;
-    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
-    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
-    mutable WriteBarrier<JSFunction> m_readableStreamToBytes;
-    mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
-    mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
-    mutable WriteBarrier<JSFunction> m_readableStreamToText;
-    mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
+#define COMMA ,
+    template<typename T>
+    using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
-    LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
-    LazyProperty<JSGlobalObject, JSCell> m_moduleRunMainFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_modulePrototypeUnderscoreCompileFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_commonJSRequireESMFromHijackedExtensionFunction;
-    LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
+// #define DO_SOMETHING_WITH_EACH_PROPERTY(visibility, type, name) ...
+// FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DO_SOMETHING_WITH_EACH_PROPERTY)
+// #undef DO_SOMETHING_WITH_EACH_PROPERTY
+#define FOR_EACH_GLOBALOBJECT_GC_PROPERTY(V)                                                                 \
+    /* TODO: these should use LazyProperty */                                                                \
+    V(public, WriteBarrier<JSFunction>, m_assignToStream)                                                    \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBufferResolve)                                \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToBytes)                                             \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToBlob)                                              \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToJSON)                                              \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToText)                                              \
+    V(public, WriteBarrier<JSFunction>, m_readableStreamToFormData)                                          \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
+    V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
+                                                                                                             \
+    V(public, WriteBarrier<Unknown>, m_nextTickQueue)                                                        \
+                                                                                                             \
+    /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
+    V(public, std::array<WriteBarrier<JSFunction> COMMA promiseFunctionsSize + 1>, m_thenables)              \
+                                                                                                             \
+    /* Error.prepareStackTrace */                                                                            \
+    V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
+                                                                                                             \
+    /* When a napi module initializes on dlopen, we need to know what the value is */                        \
+    V(public, std::array<JSC::WriteBarrier<Unknown> COMMA 2>, m_pendingNapiModuleAndExports)                 \
+                                                                                                             \
+    /* The handle scope where all new NAPI values will be created. You must not pass any napi_values */      \
+    /* back to a NAPI function without putting them in the handle scope, as the NAPI function may */         \
+    /* move them off the stack which will cause them to get collected if not in the handle scope. */         \
+    V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
+                                                                                                             \
+    /* The original, unmodified Error.prepareStackTrace. */                                                  \
+                                                                                                             \
+    /* We set a default value for this to mimic Node.js behavior It is a */                                  \
+    /* separate from the user-facing value so that we can tell if the user */                                \
+    /* really set it or if it's just the default value. */                                                   \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSFunction>, m_errorConstructorPrepareStackTraceInternalValue) \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeErrorCache)                                        \
+                                                                                                             \
+    /* Used by napi_type_tag_object to associate a 128-bit type ID with JS objects. */                       \
+    /* Should only use JSCell* keys and NapiTypeTag values. */                                               \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSWeakMap>, m_napiTypeTags)                                    \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
+                                                                                                             \
+    V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
+    V(public, JSC::LazyClassStructure, m_JSStatsBigIntClassStructure)                                        \
+    V(public, JSC::LazyClassStructure, m_JSStatFSClassStructure)                                             \
+    V(public, JSC::LazyClassStructure, m_JSStatFSBigIntClassStructure)                                       \
+    V(public, JSC::LazyClassStructure, m_JSDirentClassStructure)                                             \
+                                                                                                             \
+    /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
+    /* However, we'd like it better if they could be protected. */                                           \
+    V(private, LazyClassStructure, m_JSArrayBufferSinkClassStructure)                                        \
+    V(private, LazyClassStructure, m_JSBufferListClassStructure)                                             \
+    V(private, LazyClassStructure, m_JSFFIFunctionStructure)                                                 \
+    V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
+    V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
+    V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
+    V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
+                                                                                                             \
+    V(public, LazyClassStructure, m_JSStringDecoderClassStructure)                                           \
+    V(public, LazyClassStructure, m_NapiClassStructure)                                                      \
+    V(public, LazyClassStructure, m_callSiteStructure)                                                       \
+    V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
+    V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
+    V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
+    V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \
+    V(public, LazyClassStructure, m_JSDiffieHellmanClassStructure)                                           \
+    V(public, LazyClassStructure, m_JSDiffieHellmanGroupClassStructure)                                      \
+    V(public, LazyClassStructure, m_JSHmacClassStructure)                                                    \
+    V(public, LazyClassStructure, m_JSHashClassStructure)                                                    \
+    V(public, LazyClassStructure, m_JSECDHClassStructure)                                                    \
+    V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                  \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                            \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                           \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                    \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                 \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_utilInspectOptionsStructure)                          \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                     \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                   \
+    V(public, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                           \
+    V(public, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                               \
+    V(public, LazyPropertyOfGlobalObject<JSMap>, m_esmRegistryMap)                                           \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                      \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                    \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSFetchTaskletChunkedRequestControllerPrototype)       \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSFileSinkControllerPrototype)                         \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_subtleCryptoObject)                                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSHTTPResponseController)                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                            \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)   \
+    V(public, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                   \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyRequireCacheObject)                                \
+    V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                  \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyPreloadTestModuleObject)                           \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedGlobalProxyStructure)                           \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                        \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                          \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_memoryFootprintStructure)                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_requireFunctionUnbound)                                \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_requireResolveFunctionUnbound)                         \
+    V(public, LazyPropertyOfGlobalObject<Bun::InternalModuleRegistry>, m_internalModuleRegistry)             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processBindingBuffer)                                  \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processBindingConstants)                               \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processBindingFs)                                      \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                            \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                          \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSCryptoKey)                                          \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_NapiExternalStructure)                                \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_NapiPrototypeStructure)                               \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_NapiHandleScopeImplStructure)                         \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                 \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                              \
+    V(public, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                    \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processObject)                                         \
+    V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_ServerRouteListStructure)                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSBunRequestParamsPrototype)                           \
+                                                                                                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
+    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
+    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
+    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
+    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)
 
-    mutable WriteBarrier<Unknown> m_nextTickQueue;
+#define DECLARE_GLOBALOBJECT_PROPERTY(visibility, type, name) \
+    visibility:                                               \
+    type name;
+    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DECLARE_GLOBALOBJECT_PROPERTY)
+#undef DECLARE_GLOBALOBJECT_PROPERTY
 
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
-
-    // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
-    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
-
-    // Error.prepareStackTrace
-    mutable WriteBarrier<JSC::Unknown> m_errorConstructorPrepareStackTraceValue;
-
-    // When a napi module initializes on dlopen, we need to know what the value is
-    mutable JSC::WriteBarrier<Unknown> m_pendingNapiModuleAndExports[2];
 
     // This is the result of dlopen()ing a napi module.
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
-    // The handle scope where all new NAPI values will be created. You must not pass any napi_values
-    // back to a NAPI function without putting them in the handle scope, as the NAPI function may
-    // move them off the stack which will cause them to get collected if not in the handle scope.
-    JSC::WriteBarrier<Bun::NapiHandleScopeImpl> m_currentNapiHandleScopeImpl;
-
-    // The original, unmodified Error.prepareStackTrace.
-    //
-    // We set a default value for this to mimic Node.js behavior It is a
-    // separate from the user-facing value so that we can tell if the user
-    // really set it or if it's just the default value.
-    //
-    LazyProperty<JSGlobalObject, JSC::JSFunction> m_errorConstructorPrepareStackTraceInternalValue;
-
-    LazyProperty<JSGlobalObject, JSObject> m_nodeErrorCache;
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
@@ -491,24 +601,9 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
-    // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
-    // Should only use JSCell* keys and NapiTypeTag values.
-    LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
-
     JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
 
     Bun::JSMockModule mockModule;
-
-    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
-
-    LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
-    LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
-
-    JSC::LazyClassStructure m_JSStatsClassStructure;
-    JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
-    JSC::LazyClassStructure m_JSStatFSClassStructure;
-    JSC::LazyClassStructure m_JSStatFSBigIntClassStructure;
-    JSC::LazyClassStructure m_JSDirentClassStructure;
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
@@ -533,117 +628,7 @@ private:
     Bun::Http2CommonStrings m_http2_commongStrings;
     RefPtr<WebCore::Performance> m_performance { nullptr };
 
-    // JSC's hashtable code-generator tries to access these properties, so we make them public.
-    // However, we'd like it better if they could be protected.
 public:
-    /**
-     * WARNING: You must update visitChildrenImpl() if you add a new field.
-     *
-     * That informs the garbage collector that these fields exist. If you don't
-     * do that, the garbage collector will not know about these fields and will
-     * not trace them. This will lead to crashes and very strange behavior at runtime.
-     *
-     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
-     * those callbacks will eventually never be called anymore. But it'll work the first time!
-     */
-    LazyClassStructure m_JSArrayBufferSinkClassStructure;
-    LazyClassStructure m_JSBufferListClassStructure;
-    LazyClassStructure m_JSFFIFunctionStructure;
-    LazyClassStructure m_JSFileSinkClassStructure;
-    LazyClassStructure m_JSHTTPResponseSinkClassStructure;
-    LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSNetworkSinkClassStructure;
-
-    LazyClassStructure m_JSStringDecoderClassStructure;
-    LazyClassStructure m_NapiClassStructure;
-    LazyClassStructure m_callSiteStructure;
-    LazyClassStructure m_JSBufferClassStructure;
-    LazyClassStructure m_NodeVMScriptClassStructure;
-    LazyClassStructure m_JSX509CertificateClassStructure;
-    LazyClassStructure m_JSSignClassStructure;
-    LazyClassStructure m_JSVerifyClassStructure;
-    LazyClassStructure m_JSDiffieHellmanClassStructure;
-    LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
-    LazyClassStructure m_JSHmacClassStructure;
-    LazyClassStructure m_JSHashClassStructure;
-    LazyClassStructure m_JSECDHClassStructure;
-    LazyClassStructure m_JSCipherClassStructure;
-
-    /**
-     * WARNING: You must update visitChildrenImpl() if you add a new field.
-     *
-     * That informs the garbage collector that these fields exist. If you don't
-     * do that, the garbage collector will not know about these fields and will
-     * not trace them. This will lead to crashes and very strange behavior at runtime.
-     *
-     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
-     * those callbacks will eventually never be called anymore. But it'll work the first time!
-     */
-    LazyProperty<JSGlobalObject, Structure> m_pendingVirtualModuleResultStructure;
-    LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
-    LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
-    LazyProperty<JSGlobalObject, Structure> m_utilInspectOptionsStructure;
-    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
-    LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
-    LazyProperty<JSGlobalObject, JSMap> m_requireMap;
-    LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
-    LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSFetchTaskletChunkedRequestControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
-    LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
-    LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;
-    LazyProperty<JSGlobalObject, Structure> m_JSResizableOrGrowableSharedBufferSubclassStructure;
-    LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
-    LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
-    LazyProperty<JSGlobalObject, Bun::JSCommonJSExtensions> m_lazyRequireExtensionsObject;
-    LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
-    LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
-    LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
-    LazyProperty<JSGlobalObject, Structure> m_cachedNodeVMGlobalObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
-    LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressDTOStructure;
-    LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
-    LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;
-    LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
-    LazyProperty<JSGlobalObject, JSObject> m_processBindingBuffer;
-    LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
-    LazyProperty<JSGlobalObject, JSObject> m_processBindingFs;
-    LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
-    LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
-
-    LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
-    LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
-    LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
-    LazyProperty<JSGlobalObject, Structure> m_NapiTypeTagStructure;
-
-    LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
-    LazyProperty<JSGlobalObject, v8::shim::GlobalInternals> m_V8GlobalInternals;
-
-    LazyProperty<JSGlobalObject, JSObject> m_bunObject;
-    LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
-    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
-    LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-    LazyProperty<JSGlobalObject, JSObject> m_processObject;
-    LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
-    LazyProperty<JSGlobalObject, Structure> m_ServerRouteListStructure;
-    LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
-
-    LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
-    LazyProperty<JSGlobalObject, JSFloat64Array> m_statValues;
-    LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatValues;
-    LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
-    LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
-
     // De-optimization once `require("module")._resolveFilename` is written to
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to

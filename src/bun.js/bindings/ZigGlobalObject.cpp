@@ -3971,6 +3971,26 @@ IMPL_GET_COMMON_STRING(IN6Any)
 
 #undef IMPL_GET_COMMON_STRING
 
+template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, const WriteBarrier<T>& barrier)
+{
+    visitor.append(barrier);
+}
+
+template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, LazyProperty<JSC::JSGlobalObject, T>& lazyProp)
+{
+    lazyProp.visit(visitor);
+}
+
+template<class Visitor> void visitGlobalObjectProperty(Visitor& visitor, LazyClassStructure& lazyStructure)
+{
+    lazyStructure.visit(visitor);
+}
+
+template<class Visitor, class T, size_t n> void visitGlobalObjectProperty(Visitor& visitor, std::array<WriteBarrier<T>, n>& barriers)
+{
+    visitor.append(barriers.begin(), barriers.end());
+}
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -3992,107 +4012,16 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& constructor : thisObject->constructors().array())
         visitor.append(constructor);
 
+#define VISIT_GC_PROPERTY(visibility, type, name) \
+    visitGlobalObjectProperty(visitor, thisObject->name);
+    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(VISIT_GC_PROPERTY)
+#undef VISIT_GC_PROPERTY
+
     thisObject->m_builtinInternalFunctions.visit(visitor);
     thisObject->m_commonStrings.visit<Visitor>(visitor);
     WebCore::clientData(thisObject->vm())->httpHeaderIdentifiers().visit<Visitor>(visitor);
     thisObject->m_http2_commongStrings.visit<Visitor>(visitor);
-    visitor.append(thisObject->m_assignToStream);
-    visitor.append(thisObject->m_readableStreamToArrayBuffer);
-    visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
-    visitor.append(thisObject->m_readableStreamToBytes);
-    visitor.append(thisObject->m_readableStreamToBlob);
-    visitor.append(thisObject->m_readableStreamToJSON);
-    visitor.append(thisObject->m_readableStreamToText);
-    visitor.append(thisObject->m_readableStreamToFormData);
 
-    visitor.append(thisObject->m_nextTickQueue);
-    visitor.append(thisObject->m_errorConstructorPrepareStackTraceValue);
-
-    visitor.append(thisObject->m_pendingNapiModuleAndExports[0]);
-    visitor.append(thisObject->m_pendingNapiModuleAndExports[1]);
-
-    visitor.append(thisObject->m_currentNapiHandleScopeImpl);
-
-    thisObject->m_moduleResolveFilenameFunction.visit(visitor);
-    thisObject->m_modulePrototypeUnderscoreCompileFunction.visit(visitor);
-    thisObject->m_commonJSRequireESMFromHijackedExtensionFunction.visit(visitor);
-    thisObject->m_moduleRunMainFunction.visit(visitor);
-    thisObject->m_nodeModuleConstructor.visit(visitor);
-    thisObject->m_asyncBoundFunctionStructure.visit(visitor);
-    thisObject->m_bunObject.visit(visitor);
-    thisObject->m_cachedNodeVMGlobalObjectStructure.visit(visitor);
-    thisObject->m_cachedGlobalProxyStructure.visit(visitor);
-    thisObject->m_callSiteStructure.visit(visitor);
-    thisObject->m_commonJSModuleObjectStructure.visit(visitor);
-    thisObject->m_JSSocketAddressDTOStructure.visit(visitor);
-    thisObject->m_cryptoObject.visit(visitor);
-    thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
-    thisObject->m_esmRegistryMap.visit(visitor);
-    thisObject->m_importMetaObjectStructure.visit(visitor);
-    thisObject->m_internalModuleRegistry.visit(visitor);
-    thisObject->m_processBindingBuffer.visit(visitor);
-    thisObject->m_processBindingConstants.visit(visitor);
-    thisObject->m_processBindingFs.visit(visitor);
-    thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
-    thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
-    thisObject->m_JSBufferClassStructure.visit(visitor);
-    thisObject->m_JSBufferListClassStructure.visit(visitor);
-    thisObject->m_JSBufferSubclassStructure.visit(visitor);
-    thisObject->m_JSNodeHTTPServerSocketStructure.visit(visitor);
-    thisObject->m_JSResizableOrGrowableSharedBufferSubclassStructure.visit(visitor);
-    thisObject->m_JSCryptoKey.visit(visitor);
-    thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
-    thisObject->m_JSDOMFileConstructor.visit(visitor);
-    thisObject->m_JSS3FileStructure.visit(visitor);
-    thisObject->m_S3ErrorStructure.visit(visitor);
-    thisObject->m_JSFFIFunctionStructure.visit(visitor);
-    thisObject->m_JSFileSinkClassStructure.visit(visitor);
-    thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
-    thisObject->m_JSHTTPResponseController.visit(visitor);
-    thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
-    thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
-    thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
-    thisObject->m_JSNetworkSinkClassStructure.visit(visitor);
-    thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
-    thisObject->m_JSSQLStatementStructure.visit(visitor);
-    thisObject->m_V8GlobalInternals.visit(visitor);
-    thisObject->m_JSStringDecoderClassStructure.visit(visitor);
-    thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
-    thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
-    thisObject->m_lazyRequireCacheObject.visit(visitor);
-    thisObject->m_lazyTestModuleObject.visit(visitor);
-    thisObject->m_memoryFootprintStructure.visit(visitor);
-    thisObject->m_JSStatsClassStructure.visit(visitor);
-    thisObject->m_JSStatsBigIntClassStructure.visit(visitor);
-    thisObject->m_JSStatFSClassStructure.visit(visitor);
-    thisObject->m_JSStatFSBigIntClassStructure.visit(visitor);
-    thisObject->m_JSDirentClassStructure.visit(visitor);
-    thisObject->m_NapiClassStructure.visit(visitor);
-    thisObject->m_NapiExternalStructure.visit(visitor);
-    thisObject->m_NapiPrototypeStructure.visit(visitor);
-    thisObject->m_NapiHandleScopeImplStructure.visit(visitor);
-    thisObject->m_NapiTypeTagStructure.visit(visitor);
-    thisObject->m_napiTypeTags.visit(visitor);
-    thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
-    thisObject->m_navigatorObject.visit(visitor);
-    thisObject->m_NodeVMScriptClassStructure.visit(visitor);
-    thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
-    thisObject->m_performanceObject.visit(visitor);
-    thisObject->m_performMicrotaskFunction.visit(visitor);
-    thisObject->m_performMicrotaskVariadicFunction.visit(visitor);
-    thisObject->m_processEnvObject.visit(visitor);
-    thisObject->m_processObject.visit(visitor);
-    thisObject->m_requireFunctionUnbound.visit(visitor);
-    thisObject->m_requireMap.visit(visitor);
-    thisObject->m_requireResolveFunctionUnbound.visit(visitor);
-    thisObject->m_subtleCryptoObject.visit(visitor);
-    thisObject->m_testMatcherUtilsObject.visit(visitor);
-    thisObject->m_utilInspectFunction.visit(visitor);
-    thisObject->m_utilInspectOptionsStructure.visit(visitor);
-    thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
-    thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
-    thisObject->m_vmModuleContextMap.visit(visitor);
-    thisObject->m_napiTypeTags.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockImplementationStructure.visit(visitor);
@@ -4101,28 +4030,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
-    thisObject->m_ServerRouteListStructure.visit(visitor);
-    thisObject->m_JSBunRequestStructure.visit(visitor);
-    thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
-    thisObject->m_JSX509CertificateClassStructure.visit(visitor);
-    thisObject->m_JSSignClassStructure.visit(visitor);
-    thisObject->m_JSVerifyClassStructure.visit(visitor);
-    thisObject->m_JSDiffieHellmanClassStructure.visit(visitor);
-    thisObject->m_JSDiffieHellmanGroupClassStructure.visit(visitor);
-    thisObject->m_JSECDHClassStructure.visit(visitor);
-    thisObject->m_JSHmacClassStructure.visit(visitor);
-    thisObject->m_JSHashClassStructure.visit(visitor);
-    thisObject->m_JSCipherClassStructure.visit(visitor);
-    thisObject->m_statValues.visit(visitor);
-    thisObject->m_bigintStatValues.visit(visitor);
-    thisObject->m_statFsValues.visit(visitor);
-    thisObject->m_bigintStatFsValues.visit(visitor);
-
-    thisObject->m_nodeErrorCache.visit(visitor);
-
-    for (auto& barrier : thisObject->m_thenables) {
-        visitor.append(barrier);
-    }
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildren<Visitor>(visitor);

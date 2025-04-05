@@ -2,8 +2,6 @@
 //!
 //! N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
 
-bltn: *Builtin,
-
 state: union(enum) {
     idle,
     one_arg,
@@ -21,35 +19,35 @@ state: union(enum) {
 } = .idle,
 
 pub fn start(this: *Which) Maybe(void) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
     if (args.len == 0) {
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state = .one_arg;
-            this.bltn.stdout.enqueue(this, "\n", safeguard);
+            this.bltn().stdout.enqueue(this, "\n", safeguard);
             return Maybe(void).success;
         }
-        _ = this.bltn.writeNoIO(.stdout, "\n");
-        this.bltn.done(1);
+        _ = this.bltn().writeNoIO(.stdout, "\n");
+        this.bltn().done(1);
         return Maybe(void).success;
     }
 
-    if (this.bltn.stdout.needsIO() == null) {
+    if (this.bltn().stdout.needsIO() == null) {
         const path_buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(path_buf);
-        const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
+        const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
         var had_not_found = false;
         for (args) |arg_raw| {
             const arg = arg_raw[0..std.mem.len(arg_raw)];
-            const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+            const resolved = which(path_buf, PATH.slice(), this.bltn().parentCmd().base.shell.cwdZ(), arg) orelse {
                 had_not_found = true;
-                const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
-                _ = this.bltn.writeNoIO(.stdout, buf);
+                const buf = this.bltn().fmtErrorArena(.which, "{s} not found\n", .{arg});
+                _ = this.bltn().writeNoIO(.stdout, buf);
                 continue;
             };
 
-            _ = this.bltn.writeNoIO(.stdout, resolved);
+            _ = this.bltn().writeNoIO(.stdout, resolved);
         }
-        this.bltn.done(@intFromBool(had_not_found));
+        this.bltn().done(@intFromBool(had_not_found));
         return Maybe(void).success;
     }
 
@@ -68,7 +66,7 @@ pub fn next(this: *Which) void {
     var multiargs = &this.state.multi_args;
     if (multiargs.arg_idx >= multiargs.args_slice.len) {
         // Done
-        this.bltn.done(@intFromBool(multiargs.had_not_found));
+        this.bltn().done(@intFromBool(multiargs.had_not_found));
         return;
     }
 
@@ -77,31 +75,31 @@ pub fn next(this: *Which) void {
 
     const path_buf = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(path_buf);
-    const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
+    const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-    const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+    const resolved = which(path_buf, PATH.slice(), this.bltn().parentCmd().base.shell.cwdZ(), arg) orelse {
         multiargs.had_not_found = true;
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             multiargs.state = .waiting_write;
-            this.bltn.stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
+            this.bltn().stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
             // yield execution
             return;
         }
 
-        const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
-        _ = this.bltn.writeNoIO(.stdout, buf);
+        const buf = this.bltn().fmtErrorArena(null, "{s} not found\n", .{arg});
+        _ = this.bltn().writeNoIO(.stdout, buf);
         this.argComplete();
         return;
     };
 
-    if (this.bltn.stdout.needsIO()) |safeguard| {
+    if (this.bltn().stdout.needsIO()) |safeguard| {
         multiargs.state = .waiting_write;
-        this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
+        this.bltn().stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
         return;
     }
 
-    const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
-    _ = this.bltn.writeNoIO(.stdout, buf);
+    const buf = this.bltn().fmtErrorArena(null, "{s}\n", .{resolved});
+    _ = this.bltn().writeNoIO(.stdout, buf);
     this.argComplete();
     return;
 }
@@ -124,13 +122,13 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
 
     if (e != null) {
         this.state = .{ .err = e.? };
-        this.bltn.done(e.?.getErrno());
+        this.bltn().done(e.?.getErrno());
         return;
     }
 
     if (this.state == .one_arg) {
         // Calling which with on arguments returns exit code 1
-        this.bltn.done(1);
+        this.bltn().done(1);
         return;
     }
 
@@ -140,6 +138,11 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
 pub fn deinit(this: *Which) void {
     log("({s}) deinit", .{@tagName(.which)});
     _ = this;
+}
+
+pub inline fn bltn(this: *Which) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("which", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

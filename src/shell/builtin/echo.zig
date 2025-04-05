@@ -1,5 +1,3 @@
-bltn: *Builtin,
-
 /// Should be allocated with the arena from Builtin
 output: std.ArrayList(u8),
 
@@ -10,7 +8,7 @@ state: union(enum) {
 } = .idle,
 
 pub fn start(this: *Echo) Maybe(void) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
 
     var has_leading_newline: bool = false;
     const args_len = args.len;
@@ -29,14 +27,14 @@ pub fn start(this: *Echo) Maybe(void) {
 
     if (!has_leading_newline) this.output.append('\n') catch bun.outOfMemory();
 
-    if (this.bltn.stdout.needsIO()) |safeguard| {
+    if (this.bltn().stdout.needsIO()) |safeguard| {
         this.state = .waiting;
-        this.bltn.stdout.enqueue(this, this.output.items[0..], safeguard);
+        this.bltn().stdout.enqueue(this, this.output.items[0..], safeguard);
         return Maybe(void).success;
     }
-    _ = this.bltn.writeNoIO(.stdout, this.output.items[0..]);
+    _ = this.bltn().writeNoIO(.stdout, this.output.items[0..]);
     this.state = .done;
-    this.bltn.done(0);
+    this.bltn().done(0);
     return Maybe(void).success;
 }
 
@@ -47,17 +45,22 @@ pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) void {
 
     if (e != null) {
         defer e.?.deref();
-        this.bltn.done(e.?.getErrno());
+        this.bltn().done(e.?.getErrno());
         return;
     }
 
     this.state = .done;
-    this.bltn.done(0);
+    this.bltn().done(0);
 }
 
 pub fn deinit(this: *Echo) void {
     log("({s}) deinit", .{@tagName(.echo)});
     this.output.deinit();
+}
+
+pub inline fn bltn(this: *Echo) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("echo", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

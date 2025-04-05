@@ -1,4 +1,3 @@
-bltn: *Builtin,
 state: union(enum) {
     idle,
     waiting_io: struct {
@@ -9,32 +8,32 @@ state: union(enum) {
 } = .idle,
 
 pub fn start(this: *Pwd) Maybe(void) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
     if (args.len > 0) {
         const msg = "pwd: too many arguments\n";
-        if (this.bltn.stderr.needsIO()) |safeguard| {
+        if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state = .{ .waiting_io = .{ .kind = .stderr } };
-            this.bltn.stderr.enqueue(this, msg, safeguard);
+            this.bltn().stderr.enqueue(this, msg, safeguard);
             return Maybe(void).success;
         }
 
-        _ = this.bltn.writeNoIO(.stderr, msg);
-        this.bltn.done(1);
+        _ = this.bltn().writeNoIO(.stderr, msg);
+        this.bltn().done(1);
         return Maybe(void).success;
     }
 
-    const cwd_str = this.bltn.parentCmd().base.shell.cwd();
-    if (this.bltn.stdout.needsIO()) |safeguard| {
+    const cwd_str = this.bltn().parentCmd().base.shell.cwd();
+    if (this.bltn().stdout.needsIO()) |safeguard| {
         this.state = .{ .waiting_io = .{ .kind = .stdout } };
-        this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{cwd_str}, safeguard);
+        this.bltn().stdout.enqueueFmtBltn(this, null, "{s}\n", .{cwd_str}, safeguard);
         return Maybe(void).success;
     }
-    const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{cwd_str});
+    const buf = this.bltn().fmtErrorArena(null, "{s}\n", .{cwd_str});
 
-    _ = this.bltn.writeNoIO(.stdout, buf);
+    _ = this.bltn().writeNoIO(.stdout, buf);
 
     this.state = .done;
-    this.bltn.done(0);
+    this.bltn().done(0);
     return Maybe(void).success;
 }
 
@@ -47,14 +46,10 @@ pub fn next(this: *Pwd) void {
         }
     }
 
-    if (this.state == .done) {
-        this.bltn.done(0);
-        return;
-    }
-
-    if (this.state == .err) {
-        this.bltn.done(1);
-        return;
+    switch (this.state) {
+        .done => this.bltn().done(0),
+        .err => this.bltn().done(1),
+        else => {},
     }
 }
 
@@ -80,6 +75,11 @@ pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?JSC.SystemError) void {
 
 pub fn deinit(this: *Pwd) void {
     _ = this;
+}
+
+pub inline fn bltn(this: *Pwd) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("pwd", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

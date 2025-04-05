@@ -1,4 +1,3 @@
-bltn: *Builtin,
 opts: Opts,
 state: union(enum) {
     idle,
@@ -111,7 +110,7 @@ pub noinline fn next(this: *Rm) Maybe(void) {
             .idle => {
                 this.state = .{
                     .parse_opts = .{
-                        .args_slice = this.bltn.argsSlice(),
+                        .args_slice = this.bltn().argsSlice(),
                     },
                 };
                 continue;
@@ -126,15 +125,15 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                         // string
                         if (parse_opts.idx >= parse_opts.args_slice.len) {
                             const error_string = Builtin.Kind.usageString(.rm);
-                            if (this.bltn.stderr.needsIO()) |safeguard| {
+                            if (this.bltn().stderr.needsIO()) |safeguard| {
                                 parse_opts.state = .wait_write_err;
-                                this.bltn.stderr.enqueue(this, error_string, safeguard);
+                                this.bltn().stderr.enqueue(this, error_string, safeguard);
                                 return Maybe(void).success;
                             }
 
-                            _ = this.bltn.writeNoIO(.stderr, error_string);
+                            _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                            this.bltn.done(1);
+                            this.bltn().done(1);
                             return Maybe(void).success;
                         }
 
@@ -143,7 +142,7 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                         const arg_raw = parse_opts.args_slice[idx];
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                        switch (parseFlag(&this.opts, this.bltn, arg)) {
+                        switch (parseFlag(&this.opts, this.bltn(), arg)) {
                             .continue_parsing => {
                                 parse_opts.idx += 1;
                                 continue;
@@ -155,15 +154,15 @@ pub noinline fn next(this: *Rm) Maybe(void) {
 
                                 if (this.opts.prompt_behaviour != .never) {
                                     const buf = "rm: \"-i\" is not supported yet";
-                                    if (this.bltn.stderr.needsIO()) |safeguard| {
+                                    if (this.bltn().stderr.needsIO()) |safeguard| {
                                         parse_opts.state = .wait_write_err;
-                                        this.bltn.stderr.enqueue(this, buf, safeguard);
+                                        this.bltn().stderr.enqueue(this, buf, safeguard);
                                         continue;
                                     }
 
-                                    _ = this.bltn.writeNoIO(.stderr, buf);
+                                    _ = this.bltn().writeNoIO(.stderr, buf);
 
-                                    this.bltn.done(1);
+                                    this.bltn().done(1);
                                     return Maybe(void).success;
                                 }
 
@@ -191,17 +190,17 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                                         };
 
                                         if (is_root) {
-                                            if (this.bltn.stderr.needsIO()) |safeguard| {
+                                            if (this.bltn().stderr.needsIO()) |safeguard| {
                                                 parse_opts.state = .wait_write_err;
-                                                this.bltn.stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path}, safeguard);
+                                                this.bltn().stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path}, safeguard);
                                                 return Maybe(void).success;
                                             }
 
-                                            const error_string = this.bltn.fmtErrorArena(.rm, "\"{s}\" may not be removed\n", .{resolved_path});
+                                            const error_string = this.bltn().fmtErrorArena(.rm, "\"{s}\" may not be removed\n", .{resolved_path});
 
-                                            _ = this.bltn.writeNoIO(.stderr, error_string);
+                                            _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                                            this.bltn.done(1);
+                                            this.bltn().done(1);
                                             return Maybe(void).success;
                                         }
                                     }
@@ -223,29 +222,29 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                             },
                             .illegal_option => {
                                 const error_string = "rm: illegal option -- -\n";
-                                if (this.bltn.stderr.needsIO()) |safeguard| {
+                                if (this.bltn().stderr.needsIO()) |safeguard| {
                                     parse_opts.state = .wait_write_err;
-                                    this.bltn.stderr.enqueue(this, error_string, safeguard);
+                                    this.bltn().stderr.enqueue(this, error_string, safeguard);
                                     return Maybe(void).success;
                                 }
 
-                                _ = this.bltn.writeNoIO(.stderr, error_string);
+                                _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                                this.bltn.done(1);
+                                this.bltn().done(1);
                                 return Maybe(void).success;
                             },
                             .illegal_option_with_flag => {
                                 const flag = arg;
-                                if (this.bltn.stderr.needsIO()) |safeguard| {
+                                if (this.bltn().stderr.needsIO()) |safeguard| {
                                     parse_opts.state = .wait_write_err;
-                                    this.bltn.stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]}, safeguard);
+                                    this.bltn().stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]}, safeguard);
                                     return Maybe(void).success;
                                 }
-                                const error_string = this.bltn.fmtErrorArena(.rm, "illegal option -- {s}\n", .{flag[1..]});
+                                const error_string = this.bltn().fmtErrorArena(.rm, "illegal option -- {s}\n", .{flag[1..]});
 
-                                _ = this.bltn.writeNoIO(.stderr, error_string);
+                                _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                                this.bltn.done(1);
+                                this.bltn().done(1);
                                 return Maybe(void).success;
                             },
                         }
@@ -270,7 +269,7 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                 }
             },
             .exec => {
-                const cwd = this.bltn.parentCmd().base.shell.cwd_fd;
+                const cwd = this.bltn().parentCmd().base.shell.cwd_fd;
                 // Schedule task
                 if (this.state.exec.state == .idle) {
                     this.state.exec.state = .{ .waiting = .{} };
@@ -291,14 +290,10 @@ pub noinline fn next(this: *Rm) Maybe(void) {
         }
     }
 
-    if (this.state == .done) {
-        this.bltn.done(0);
-        return Maybe(void).success;
-    }
-
-    if (this.state == .err) {
-        this.bltn.done(this.state.err);
-        return Maybe(void).success;
+    switch (this.state) {
+        .done => this.bltn().done(0),
+        .err => this.bltn().done(this.state.err),
+        else => {},
     }
 
     return Maybe(void).success;
@@ -316,7 +311,7 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
         this.state.exec.incrementOutputCount(.output_done);
         if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
             const code: ExitCode = if (this.state.exec.err != null) 1 else 0;
-            this.bltn.done(code);
+            this.bltn().done(code);
             return;
         }
         return;
@@ -325,34 +320,21 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
     if (e != null) {
         defer e.?.deref();
         this.state = .{ .err = @intFromEnum(e.?.getErrno()) };
-        this.bltn.done(e.?.getErrno());
+        this.bltn().done(e.?.getErrno());
         return;
     }
 
-    this.bltn.done(1);
+    this.bltn().done(1);
     return;
 }
 
-// pub fn writeToStdoutFromAsyncTask(this: *Rm, comptime fmt: []const u8, args: anytype) Maybe(void) {
-//     const buf = this.rm.bltn.fmtErrorArena(null, fmt, args);
-//     if (!this.rm.bltn.stdout.needsIO()) {
-//         this.state.exec.lock.lock();
-//         defer this.state.exec.lock.unlock();
-//         _ = this.rm.bltn.writeNoIO(.stdout, buf);
-//         return Maybe(void).success;
-//     }
-
-//     var written: usize = 0;
-//     while (written < buf.len) : (written += switch (Syscall.write(this.rm.bltn.stdout.fd, buf)) {
-//         .err => |e| return Maybe(void).initErr(e),
-//         .result => |n| n,
-//     }) {}
-
-//     return Maybe(void).success;
-// }
-
 pub fn deinit(this: *Rm) void {
     _ = this;
+}
+
+pub inline fn bltn(this: *Rm) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("rm", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 const ParseFlagsResult = enum {
@@ -362,8 +344,7 @@ const ParseFlagsResult = enum {
     illegal_option_with_flag,
 };
 
-fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) ParseFlagsResult {
-    _ = bltn;
+fn parseFlag(this: *Opts, _: *Builtin, flag: []const u8) ParseFlagsResult {
     if (flag.len == 0) return .done;
     if (flag[0] != '-') return .done;
     if (flag.len > 2 and flag[1] == '-') {
@@ -436,14 +417,14 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
             const amt = exec.state.waiting.tasks_done;
             if (task.err) |err| {
                 exec.err = err;
-                const error_string = this.bltn.taskErrorToString(.rm, err);
-                if (this.bltn.stderr.needsIO()) |safeguard| {
+                const error_string = this.bltn().taskErrorToString(.rm, err);
+                if (this.bltn().stderr.needsIO()) |safeguard| {
                     log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
                     exec.incrementOutputCount(.output_count);
-                    this.bltn.stderr.enqueue(this, error_string, safeguard);
+                    this.bltn().stderr.enqueue(this, error_string, safeguard);
                     return;
                 } else {
-                    _ = this.bltn.writeNoIO(.stderr, error_string);
+                    _ = this.bltn().writeNoIO(.stderr, error_string);
                 }
             }
             break :brk amt;
@@ -462,15 +443,15 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
 }
 
 fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
-    if (this.bltn.stdout.needsIO()) |safeguard| {
+    if (this.bltn().stdout.needsIO()) |safeguard| {
         const buf = verbose.takeDeletedEntries();
         defer buf.deinit();
-        this.bltn.stdout.enqueue(this, buf.items, safeguard);
+        this.bltn().stdout.enqueue(this, buf.items, safeguard);
     } else {
-        _ = this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items);
+        _ = this.bltn().writeNoIO(.stdout, verbose.deleted_entries.items);
         _ = this.state.exec.incrementOutputCount(.output_done);
         if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
-            this.bltn.done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
+            this.bltn().done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
             return;
         }
         return;
@@ -720,10 +701,10 @@ pub const ShellRmTask = struct {
                 .subtask_count = std.atomic.Value(usize).init(1),
                 .kind_hint = .idk,
                 .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
-                .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn.eventLoop()),
+                .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             },
-            .event_loop = rm.bltn.parentCmd().base.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn.eventLoop()),
+            .event_loop = rm.bltn().parentCmd().base.eventLoop(),
+            .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             .error_signal = error_signal,
             .root_is_absolute = is_absolute,
             .join_style = JoinStyle.fromPath(root_path),

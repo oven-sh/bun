@@ -1,4 +1,3 @@
-bltn: *Builtin,
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -27,13 +26,13 @@ pub fn deinit(this: *Touch) void {
 }
 
 pub fn start(this: *Touch) Maybe(void) {
-    const filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
+    const filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |filepath_args| filepath_args,
         .err => |e| {
             const buf = switch (e) {
-                .illegal_option => |opt_str| this.bltn.fmtErrorArena(.touch, "illegal option -- {s}\n", .{opt_str}),
+                .illegal_option => |opt_str| this.bltn().fmtErrorArena(.touch, "illegal option -- {s}\n", .{opt_str}),
                 .show_usage => Builtin.Kind.touch.usageString(),
-                .unsupported => |unsupported| this.bltn.fmtErrorArena(.touch, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
+                .unsupported => |unsupported| this.bltn().fmtErrorArena(.touch, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
             _ = this.writeFailingError(buf, 1);
@@ -64,7 +63,7 @@ pub fn next(this: *Touch) void {
                 if (this.state.exec.tasks_done >= this.state.exec.tasks_count and this.state.exec.output_done >= this.state.exec.output_waiting) {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                     this.state = .done;
-                    this.bltn.done(exit_code);
+                    this.bltn().done(exit_code);
                     return;
                 }
                 return;
@@ -75,18 +74,18 @@ pub fn next(this: *Touch) void {
 
             for (exec.args) |dir_to_mk_| {
                 const dir_to_mk = dir_to_mk_[0..std.mem.len(dir_to_mk_) :0];
-                var task = ShellTouchTask.create(this, this.opts, dir_to_mk, this.bltn.parentCmd().base.shell.cwdZ());
+                var task = ShellTouchTask.create(this, this.opts, dir_to_mk, this.bltn().parentCmd().base.shell.cwdZ());
                 task.schedule();
             }
         },
         .waiting_write_err => return,
-        .done => this.bltn.done(0),
+        .done => this.bltn().done(0),
     }
 }
 
 pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?JSC.SystemError) void {
     if (this.state == .waiting_write_err) {
-        return this.bltn.done(1);
+        return this.bltn().done(1);
     }
 
     if (e) |err| err.deref();
@@ -95,15 +94,15 @@ pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?JSC.SystemError) void {
 }
 
 pub fn writeFailingError(this: *Touch, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-    if (this.bltn.stderr.needsIO()) |safeguard| {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn.stderr.enqueue(this, buf, safeguard);
+        this.bltn().stderr.enqueue(this, buf, safeguard);
         return Maybe(void).success;
     }
 
-    _ = this.bltn.writeNoIO(.stderr, buf);
+    _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
     return Maybe(void).success;
 }
 
@@ -120,7 +119,7 @@ pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
             .output = .{ .arrlist = .{} },
             .state = .waiting_write_err,
         });
-        const error_string = this.bltn.taskErrorToString(.touch, e);
+        const error_string = this.bltn().taskErrorToString(.touch, e);
         this.state.exec.err = e;
         output_task.start(error_string);
         return;
@@ -139,12 +138,12 @@ pub const ShellTouchOutputTask = OutputTask(Touch, .{
 
 const ShellTouchOutputTaskVTable = struct {
     pub fn writeErr(this: *Touch, childptr: anytype, errbuf: []const u8) CoroutineResult {
-        if (this.bltn.stderr.needsIO()) |safeguard| {
+        if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
+            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stderr, errbuf);
+        _ = this.bltn().writeNoIO(.stderr, errbuf);
         return .cont;
     }
 
@@ -153,14 +152,14 @@ const ShellTouchOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Touch, childptr: anytype, output: *OutputSrc) CoroutineResult {
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
-            this.bltn.stdout.enqueue(childptr, slice, safeguard);
+            this.bltn().stdout.enqueue(childptr, slice, safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stdout, output.slice());
+        _ = this.bltn().writeNoIO(.stdout, output.slice());
         return .cont;
     }
 
@@ -205,8 +204,8 @@ pub const ShellTouchTask = struct {
             .opts = opts,
             .cwd_path = cwd_path,
             .filepath = filepath,
-            .event_loop = touch.bltn.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(touch.bltn.eventLoop()),
+            .event_loop = touch.bltn().eventLoop(),
+            .concurrent_task = JSC.EventLoopTask.fromEventLoop(touch.bltn().eventLoop()),
         };
         return task;
     }
@@ -387,6 +386,11 @@ const Opts = struct {
         return null;
     }
 };
+
+pub inline fn bltn(this: *Touch) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("touch", this));
+    return @fieldParentPtr("impl", impl);
+}
 
 // --
 const debug = bun.Output.scoped(.ShellTouch, true);

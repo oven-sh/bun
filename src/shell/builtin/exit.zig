@@ -1,4 +1,3 @@
-bltn: *Builtin,
 state: enum {
     idle,
     waiting_io,
@@ -7,10 +6,10 @@ state: enum {
 } = .idle,
 
 pub fn start(this: *Exit) Maybe(void) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
     switch (args.len) {
         0 => {
-            this.bltn.done(0);
+            this.bltn().done(0);
             return Maybe(void).success;
         },
         1 => {
@@ -19,7 +18,7 @@ pub fn start(this: *Exit) Maybe(void) {
                 error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required\n")) % 256),
                 error.InvalidCharacter => return this.fail("exit: numeric argument required\n"),
             };
-            this.bltn.done(exit_code);
+            this.bltn().done(exit_code);
             return Maybe(void).success;
         },
         else => {
@@ -29,13 +28,13 @@ pub fn start(this: *Exit) Maybe(void) {
 }
 
 fn fail(this: *Exit, msg: []const u8) Maybe(void) {
-    if (this.bltn.stderr.needsIO()) |safeguard| {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_io;
-        this.bltn.stderr.enqueue(this, msg, safeguard);
+        this.bltn().stderr.enqueue(this, msg, safeguard);
         return Maybe(void).success;
     }
-    _ = this.bltn.writeNoIO(.stderr, msg);
-    this.bltn.done(1);
+    _ = this.bltn().writeNoIO(.stderr, msg);
+    this.bltn().done(1);
     return Maybe(void).success;
 }
 
@@ -46,11 +45,11 @@ pub fn next(this: *Exit) void {
             return;
         },
         .err => {
-            this.bltn.done(1);
+            this.bltn().done(1);
             return;
         },
         .done => {
-            this.bltn.done(1);
+            this.bltn().done(1);
             return;
         },
     }
@@ -72,6 +71,11 @@ pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?JSC.SystemError) void {
 
 pub fn deinit(this: *Exit) void {
     _ = this;
+}
+
+pub inline fn bltn(this: *Exit) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("exit", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

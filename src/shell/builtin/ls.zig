@@ -1,4 +1,3 @@
-bltn: *Builtin,
 opts: Opts = .{},
 
 state: union(enum) {
@@ -20,15 +19,15 @@ pub fn start(this: *Ls) Maybe(void) {
 }
 
 pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-    if (this.bltn.stderr.needsIO()) |safeguard| {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn.stderr.enqueue(this, buf, safeguard);
+        this.bltn().stderr.enqueue(this, buf, safeguard);
         return Maybe(void).success;
     }
 
-    _ = this.bltn.writeNoIO(.stderr, buf);
+    _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
     return Maybe(void).success;
 }
 
@@ -41,7 +40,7 @@ fn next(this: *Ls) void {
                     .ok => |paths| paths,
                     .err => |e| {
                         const buf = switch (e) {
-                            .illegal_option => |opt_str| this.bltn.fmtErrorArena(.ls, "illegal option -- {s}\n", .{opt_str}),
+                            .illegal_option => |opt_str| this.bltn().fmtErrorArena(.ls, "illegal option -- {s}\n", .{opt_str}),
                             .show_usage => Builtin.Kind.ls.usageString(),
                         };
 
@@ -58,15 +57,15 @@ fn next(this: *Ls) void {
                     },
                 };
 
-                const cwd = this.bltn.cwd;
+                const cwd = this.bltn().cwd;
                 if (paths) |p| {
                     for (p) |path_raw| {
                         const path = path_raw[0..std.mem.len(path_raw) :0];
-                        var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn.eventLoop());
+                        var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn().eventLoop());
                         task.schedule();
                     }
                 } else {
-                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn.eventLoop());
+                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn().eventLoop());
                     task.schedule();
                 }
             },
@@ -82,7 +81,7 @@ fn next(this: *Ls) void {
                 if (this.state.exec.tasks_done >= this.state.exec.task_count.load(.monotonic) and this.state.exec.output_done >= this.state.exec.output_waiting) {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                     this.state = .done;
-                    this.bltn.done(exit_code);
+                    this.bltn().done(exit_code);
                     return;
                 }
                 return;
@@ -94,7 +93,7 @@ fn next(this: *Ls) void {
         }
     }
 
-    this.bltn.done(0);
+    this.bltn().done(0);
     return;
 }
 
@@ -103,7 +102,7 @@ pub fn deinit(_: *Ls) void {}
 pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) void {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
-        return this.bltn.done(1);
+        return this.bltn().done(1);
     }
     this.state.exec.output_done += 1;
     this.next();
@@ -124,7 +123,7 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
 
     if (err_) |err| {
         this.state.exec.err = err;
-        const error_string = this.bltn.taskErrorToString(.ls, err);
+        const error_string = this.bltn().taskErrorToString(.ls, err);
         output_task.start(error_string);
         return;
     }
@@ -141,12 +140,12 @@ pub const ShellLsOutputTask = OutputTask(Ls, .{
 
 const ShellLsOutputTaskVTable = struct {
     pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) CoroutineResult {
-        if (this.bltn.stderr.needsIO()) |safeguard| {
+        if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
+            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stderr, errbuf);
+        _ = this.bltn().writeNoIO(.stderr, errbuf);
         return .cont;
     }
 
@@ -155,12 +154,12 @@ const ShellLsOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) CoroutineResult {
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn.stdout.enqueue(childptr, output.slice(), safeguard);
+            this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stdout, output.slice());
+        _ = this.bltn().writeNoIO(.stdout, output.slice());
         return .cont;
     }
 
@@ -613,7 +612,7 @@ pub fn parseOpts(this: *Ls) Result(?[]const [*:0]const u8, Opts.ParseError) {
 }
 
 pub fn parseFlags(this: *Ls) Result(?[]const [*:0]const u8, Opts.ParseError) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
     var idx: usize = 0;
     if (args.len == 0) {
         return .{ .ok = null };
@@ -771,6 +770,11 @@ pub fn parseFlag(this: *Ls, flag: []const u8) union(enum) { continue_parsing, do
     }
 
     return .continue_parsing;
+}
+
+pub inline fn bltn(this: *Ls) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("ls", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 const Ls = @This();

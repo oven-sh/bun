@@ -1,4 +1,3 @@
-bltn: *Builtin,
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -66,13 +65,13 @@ const EbusyState = struct {
 };
 
 pub fn start(this: *Cp) Maybe(void) {
-    const maybe_filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
+    const maybe_filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |args| args,
         .err => |e| {
             const buf = switch (e) {
-                .illegal_option => |opt_str| this.bltn.fmtErrorArena(.cp, "illegal option -- {s}\n", .{opt_str}),
+                .illegal_option => |opt_str| this.bltn().fmtErrorArena(.cp, "illegal option -- {s}\n", .{opt_str}),
                 .show_usage => Builtin.Kind.cp.usageString(),
-                .unsupported => |unsupported| this.bltn.fmtErrorArena(.cp, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
+                .unsupported => |unsupported| this.bltn().fmtErrorArena(.cp, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
             _ = this.writeFailingError(buf, 1);
@@ -124,7 +123,7 @@ pub fn ignoreEbusyErrorIfPossible(this: *Cp) void {
     this.state.ebusy.state.deinit();
     const exit_code = this.state.ebusy.main_exit_code;
     this.state = .done;
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
 }
 
 pub fn next(this: *Cp) void {
@@ -147,7 +146,7 @@ pub fn next(this: *Cp) void {
                             exec.ebusy.deinit();
                         }
                         this.state = .done;
-                        this.bltn.done(exit_code);
+                        this.bltn().done(exit_code);
                         return;
                     }
                     return;
@@ -156,12 +155,12 @@ pub fn next(this: *Cp) void {
                 exec.started = true;
                 exec.tasks_count = @intCast(exec.paths_to_copy.len);
 
-                const cwd_path = this.bltn.parentCmd().base.shell.cwdZ();
+                const cwd_path = this.bltn().parentCmd().base.shell.cwdZ();
 
                 // Launch a task for each argument
                 for (exec.paths_to_copy) |path_raw| {
                     const path = std.mem.span(path_raw);
-                    const cp_task = ShellCpTask.create(this, this.bltn.eventLoop(), this.opts, 1 + exec.paths_to_copy.len, path, exec.target_path, cwd_path);
+                    const cp_task = ShellCpTask.create(this, this.bltn().eventLoop(), this.opts, 1 + exec.paths_to_copy.len, path, exec.target_path, cwd_path);
                     cp_task.schedule();
                 }
                 return;
@@ -177,7 +176,7 @@ pub fn next(this: *Cp) void {
         }
     }
 
-    this.bltn.done(0);
+    this.bltn().done(0);
 }
 
 pub fn deinit(cp: *Cp) void {
@@ -185,25 +184,30 @@ pub fn deinit(cp: *Cp) void {
 }
 
 pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-    if (this.bltn.stderr.needsIO()) |safeguard| {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn.stderr.enqueue(this, buf, safeguard);
+        this.bltn().stderr.enqueue(this, buf, safeguard);
         return Maybe(void).success;
     }
 
-    _ = this.bltn.writeNoIO(.stderr, buf);
+    _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
     return Maybe(void).success;
 }
 
 pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?JSC.SystemError) void {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
-        return this.bltn.done(1);
+        return this.bltn().done(1);
     }
     this.state.exec.output_done += 1;
     this.next();
+}
+
+pub inline fn bltn(this: *@This()) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("cp", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
@@ -254,7 +258,7 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
     });
     if (err_) |err| {
         this.state.exec.err = err;
-        const error_string = this.bltn.taskErrorToString(.cp, err);
+        const error_string = this.bltn().taskErrorToString(.cp, err);
         output_task.start(error_string);
         return;
     }
@@ -271,12 +275,12 @@ pub const ShellCpOutputTask = OutputTask(Cp, .{
 
 const ShellCpOutputTaskVTable = struct {
     pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) CoroutineResult {
-        if (this.bltn.stderr.needsIO()) |safeguard| {
+        if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
+            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stderr, errbuf);
+        _ = this.bltn().writeNoIO(.stderr, errbuf);
         return .cont;
     }
 
@@ -285,12 +289,12 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) CoroutineResult {
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn.stdout.enqueue(childptr, output.slice(), safeguard);
+            this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stdout, output.slice());
+        _ = this.bltn().writeNoIO(.stdout, output.slice());
         return .cont;
     }
 

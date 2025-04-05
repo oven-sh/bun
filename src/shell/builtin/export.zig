@@ -1,4 +1,3 @@
-bltn: *Builtin,
 printing: bool = false,
 
 const Entry = struct {
@@ -11,16 +10,16 @@ const Entry = struct {
 };
 
 pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), comptime fmt: []const u8, args: anytype) Maybe(void) {
-    if (this.bltn.stdout.needsIO()) |safeguard| {
-        var output: *BuiltinIO.Output = &@field(this.bltn, @tagName(io_kind));
+    if (this.bltn().stdout.needsIO()) |safeguard| {
+        var output: *BuiltinIO.Output = &@field(this.bltn(), @tagName(io_kind));
         this.printing = true;
         output.enqueueFmtBltn(this, .@"export", fmt, args, safeguard);
         return Maybe(void).success;
     }
 
-    const buf = this.bltn.fmtErrorArena(.@"export", fmt, args);
-    _ = this.bltn.writeNoIO(io_kind, buf);
-    this.bltn.done(0);
+    const buf = this.bltn().fmtErrorArena(.@"export", fmt, args);
+    _ = this.bltn().writeNoIO(io_kind, buf);
+    this.bltn().done(0);
     return Maybe(void).success;
 }
 
@@ -34,18 +33,18 @@ pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) void {
         break :brk @intFromEnum(e.?.getErrno());
     } else 0;
 
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
 }
 
 pub fn start(this: *Export) Maybe(void) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
 
     // Calling `export` with no arguments prints all exported variables lexigraphically ordered
     if (args.len == 0) {
-        var arena = this.bltn.arena;
+        var arena = this.bltn().arena;
 
         var keys = std.ArrayList(Entry).init(arena.allocator());
-        var iter = this.bltn.export_env.iterator();
+        var iter = this.bltn().export_env.iterator();
         while (iter.next()) |entry| {
             keys.append(.{
                 .key = entry.key_ptr.*,
@@ -71,15 +70,15 @@ pub fn start(this: *Export) Maybe(void) {
             }
         }
 
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             this.printing = true;
-            this.bltn.stdout.enqueue(this, buf, safeguard);
+            this.bltn().stdout.enqueue(this, buf, safeguard);
 
             return Maybe(void).success;
         }
 
-        _ = this.bltn.writeNoIO(.stdout, buf);
-        this.bltn.done(0);
+        _ = this.bltn().writeNoIO(.stdout, buf);
+        this.bltn().done(0);
         return Maybe(void).success;
     }
 
@@ -90,25 +89,30 @@ pub fn start(this: *Export) Maybe(void) {
 
         const eqsign_idx = std.mem.indexOfScalar(u8, arg, '=') orelse {
             if (!shell.isValidVarName(arg)) {
-                const buf = this.bltn.fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
+                const buf = this.bltn().fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
                 return this.writeOutput(.stderr, "{s}\n", .{buf});
             }
-            this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, EnvStr.initSlice(arg), EnvStr.initSlice(""), .exported);
+            this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, EnvStr.initSlice(arg), EnvStr.initSlice(""), .exported);
             continue;
         };
 
         const label = arg[0..eqsign_idx];
         const value = arg_sentinel[eqsign_idx + 1 .. :0];
-        this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, EnvStr.initSlice(label), EnvStr.initSlice(value), .exported);
+        this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, EnvStr.initSlice(label), EnvStr.initSlice(value), .exported);
     }
 
-    this.bltn.done(0);
+    this.bltn().done(0);
     return Maybe(void).success;
 }
 
 pub fn deinit(this: *Export) void {
     log("({s}) deinit", .{@tagName(.@"export")});
     _ = this;
+}
+
+pub inline fn bltn(this: *Export) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("export", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

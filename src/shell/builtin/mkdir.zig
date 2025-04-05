@@ -1,4 +1,3 @@
-bltn: *Builtin,
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -19,7 +18,7 @@ pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
     if (e) |err| err.deref();
 
     switch (this.state) {
-        .waiting_write_err => return this.bltn.done(1),
+        .waiting_write_err => return this.bltn().done(1),
         .exec => {
             this.state.exec.output_done += 1;
         },
@@ -29,29 +28,29 @@ pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
     this.next();
 }
 pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-    if (this.bltn.stderr.needsIO()) |safeguard| {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn.stderr.enqueue(this, buf, safeguard);
+        this.bltn().stderr.enqueue(this, buf, safeguard);
         return Maybe(void).success;
     }
 
-    _ = this.bltn.writeNoIO(.stderr, buf);
-    // if (this.bltn.writeNoIO(.stderr, buf).asErr()) |e| {
+    _ = this.bltn().writeNoIO(.stderr, buf);
+    // if (this.bltn().writeNoIO(.stderr, buf).asErr()) |e| {
     //     return .{ .err = e };
     // }
 
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
     return Maybe(void).success;
 }
 
 pub fn start(this: *Mkdir) Maybe(void) {
-    const filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
+    const filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |filepath_args| filepath_args,
         .err => |e| {
             const buf = switch (e) {
-                .illegal_option => |opt_str| this.bltn.fmtErrorArena(.mkdir, "illegal option -- {s}\n", .{opt_str}),
+                .illegal_option => |opt_str| this.bltn().fmtErrorArena(.mkdir, "illegal option -- {s}\n", .{opt_str}),
                 .show_usage => Builtin.Kind.mkdir.usageString(),
-                .unsupported => |unsupported| this.bltn.fmtErrorArena(.mkdir, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
+                .unsupported => |unsupported| this.bltn().fmtErrorArena(.mkdir, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
             _ = this.writeFailingError(buf, 1);
@@ -83,7 +82,7 @@ pub fn next(this: *Mkdir) void {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                     if (this.state.exec.err) |e| e.deref();
                     this.state = .done;
-                    this.bltn.done(exit_code);
+                    this.bltn().done(exit_code);
                     return;
                 }
                 return;
@@ -94,12 +93,12 @@ pub fn next(this: *Mkdir) void {
 
             for (exec.args) |dir_to_mk_| {
                 const dir_to_mk = dir_to_mk_[0..std.mem.len(dir_to_mk_) :0];
-                var task = ShellMkdirTask.create(this, this.opts, dir_to_mk, this.bltn.parentCmd().base.shell.cwdZ());
+                var task = ShellMkdirTask.create(this, this.opts, dir_to_mk, this.bltn().parentCmd().base.shell.cwdZ());
                 task.schedule();
             }
         },
         .waiting_write_err => return,
-        .done => this.bltn.done(0),
+        .done => this.bltn().done(0),
     }
 }
 
@@ -115,7 +114,7 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
     });
 
     if (err) |e| {
-        const error_string = this.bltn.taskErrorToString(.mkdir, e);
+        const error_string = this.bltn().taskErrorToString(.mkdir, e);
         this.state.exec.err = e;
         output_task.start(error_string);
         return;
@@ -133,12 +132,12 @@ pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
 
 const ShellMkdirOutputTaskVTable = struct {
     pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) CoroutineResult {
-        if (this.bltn.stderr.needsIO()) |safeguard| {
+        if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
+            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stderr, errbuf);
+        _ = this.bltn().writeNoIO(.stderr, errbuf);
         return .cont;
     }
 
@@ -147,14 +146,14 @@ const ShellMkdirOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) CoroutineResult {
-        if (this.bltn.stdout.needsIO()) |safeguard| {
+        if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
-            this.bltn.stdout.enqueue(childptr, slice, safeguard);
+            this.bltn().stdout.enqueue(childptr, slice, safeguard);
             return .yield;
         }
-        _ = this.bltn.writeNoIO(.stdout, output.slice());
+        _ = this.bltn().writeNoIO(.stdout, output.slice());
         return .cont;
     }
 
@@ -208,7 +207,7 @@ pub const ShellMkdirTask = struct {
         cwd_path: [:0]const u8,
     ) *ShellMkdirTask {
         const task = bun.default_allocator.create(ShellMkdirTask) catch bun.outOfMemory();
-        const evtloop = mkdir.bltn.parentCmd().base.eventLoop();
+        const evtloop = mkdir.bltn().parentCmd().base.eventLoop();
         task.* = ShellMkdirTask{
             .mkdir = mkdir,
             .opts = opts,
@@ -371,6 +370,11 @@ const Opts = struct {
         return null;
     }
 };
+
+pub inline fn bltn(this: *Mkdir) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("mkdir", this));
+    return @fieldParentPtr("impl", impl);
+}
 
 // --
 const debug = bun.Output.scoped(.ShellMkdir, true);

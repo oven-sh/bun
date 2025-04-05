@@ -1,4 +1,3 @@
-bltn: *Builtin,
 opts: Opts = .{},
 args: struct {
     sources: []const [*:0]const u8 = &[_][*:0]const u8{},
@@ -172,15 +171,15 @@ pub fn start(this: *Mv) Maybe(void) {
 }
 
 pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-    if (this.bltn.stderr.needsIO()) |safeguard| {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .{ .waiting_write_err = .{ .exit_code = exit_code } };
-        this.bltn.stderr.enqueue(this, buf, safeguard);
+        this.bltn().stderr.enqueue(this, buf, safeguard);
         return Maybe(void).success;
     }
 
-    _ = this.bltn.writeNoIO(.stderr, buf);
+    _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn.done(exit_code);
+    this.bltn().done(exit_code);
     return Maybe(void).success;
 }
 
@@ -190,7 +189,7 @@ pub fn next(this: *Mv) Maybe(void) {
             .idle => {
                 if (this.parseOpts().asErr()) |e| {
                     const buf = switch (e) {
-                        .illegal_option => |opt_str| this.bltn.fmtErrorArena(.mv, "illegal option -- {s}\n", .{opt_str}),
+                        .illegal_option => |opt_str| this.bltn().fmtErrorArena(.mv, "illegal option -- {s}\n", .{opt_str}),
                         .show_usage => Builtin.Kind.mv.usageString(),
                     };
 
@@ -200,11 +199,11 @@ pub fn next(this: *Mv) Maybe(void) {
                     .check_target = .{
                         .task = ShellMvCheckTargetTask{
                             .mv = this,
-                            .cwd = this.bltn.parentCmd().base.shell.cwd_fd,
+                            .cwd = this.bltn().parentCmd().base.shell.cwd_fd,
                             .target = this.args.target,
                             .task = .{
-                                .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn.parentCmd().base.eventLoop()),
+                                .event_loop = this.bltn().parentCmd().base.eventLoop(),
+                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                         },
                         .state = .running,
@@ -228,12 +227,12 @@ pub fn next(this: *Mv) Maybe(void) {
                                 // Means we are renaming entry, not moving to a directory
                                 if (this.args.sources.len == 1) break :brk null;
 
-                                const buf = this.bltn.fmtErrorArena(.mv, "{s}: No such file or directory\n", .{this.args.target});
+                                const buf = this.bltn().fmtErrorArena(.mv, "{s}: No such file or directory\n", .{this.args.target});
                                 return this.writeFailingError(buf, 1);
                             },
                             else => {
                                 const sys_err = e.toShellSystemError();
-                                const buf = this.bltn.fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
+                                const buf = this.bltn().fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
                                 return this.writeFailingError(buf, 1);
                             },
                         }
@@ -243,7 +242,7 @@ pub fn next(this: *Mv) Maybe(void) {
 
                 // Trying to move multiple files into a file
                 if (maybe_fd == null and this.args.sources.len > 1) {
-                    const buf = this.bltn.fmtErrorArena(.mv, "{s} is not a directory\n", .{this.args.target});
+                    const buf = this.bltn().fmtErrorArena(.mv, "{s} is not a directory\n", .{this.args.target});
                     return this.writeFailingError(buf, 1);
                 }
 
@@ -257,8 +256,8 @@ pub fn next(this: *Mv) Maybe(void) {
                 };
 
                 this.args.target_fd = maybe_fd;
-                const cwd_fd = this.bltn.parentCmd().base.shell.cwd_fd;
-                const tasks = this.bltn.arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
+                const cwd_fd = this.bltn().parentCmd().base.shell.cwd_fd;
+                const tasks = this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
                 // Initialize tasks
                 {
                     var i: usize = 0;
@@ -276,10 +275,10 @@ pub fn next(this: *Mv) Maybe(void) {
                             // We set this later
                             .error_signal = undefined,
                             .task = .{
-                                .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn.parentCmd().base.eventLoop()),
+                                .event_loop = this.bltn().parentCmd().base.eventLoop(),
+                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
-                            .event_loop = this.bltn.parentCmd().base.eventLoop(),
+                            .event_loop = this.bltn().parentCmd().base.eventLoop(),
                         };
                     }
                 }
@@ -308,12 +307,11 @@ pub fn next(this: *Mv) Maybe(void) {
         }
     }
 
-    if (this.state == .done) {
-        this.bltn.done(0);
-        return Maybe(void).success;
+    switch (this.state) {
+        .done => this.bltn().done(0),
+        else => this.bltn().done(1),
     }
 
-    this.bltn.done(1);
     return Maybe(void).success;
 }
 
@@ -326,7 +324,7 @@ pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) void {
                 _ = this.next();
                 return;
             }
-            this.bltn.done(this.state.waiting_write_err.exit_code);
+            this.bltn().done(this.state.waiting_write_err.exit_code);
             return;
         },
         else => @panic("Invalid state"),
@@ -367,7 +365,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
     if (exec.tasks_done >= exec.task_count) {
         if (exec.err) |err| {
             const e = err.toShellSystemError();
-            const buf = this.bltn.fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
+            const buf = this.bltn().fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
             _ = this.writeFailingError(buf, err.errno);
             return;
         }
@@ -431,7 +429,7 @@ pub fn parseOpts(this: *Mv) Result(void, Opts.ParseError) {
 }
 
 pub fn parseFlags(this: *Mv) Result([]const [*:0]const u8, Opts.ParseError) {
-    const args = this.bltn.argsSlice();
+    const args = this.bltn().argsSlice();
     var idx: usize = 0;
     if (args.len == 0) {
         return .{ .err = .show_usage };
@@ -487,6 +485,11 @@ pub fn parseFlag(this: *Mv, flag: []const u8) union(enum) { continue_parsing, do
     }
 
     return .continue_parsing;
+}
+
+pub inline fn bltn(this: *Mv) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("mv", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

@@ -13,9 +13,9 @@ args: *const std.ArrayList(?[*:0]const u8),
 args_slice: ?[]const [:0]const u8 = null,
 cwd: bun.FileDescriptor,
 
-impl: RealImpl,
+impl: Impl,
 
-const RealImpl = union(Kind) {
+pub const Impl = union(Kind) {
     cat: Cat,
     touch: Touch,
     mkdir: Mkdir,
@@ -269,10 +269,10 @@ pub inline fn callImpl(this: *Builtin, comptime Ret: type, comptime field: []con
     };
 }
 
-fn callImplWithType(this: *Builtin, comptime Impl: type, comptime Ret: type, comptime union_field: []const u8, comptime field: []const u8, args_: anytype) Ret {
+fn callImplWithType(this: *Builtin, comptime BuiltinImpl: type, comptime Ret: type, comptime union_field: []const u8, comptime field: []const u8, args_: anytype) Ret {
     const self = &@field(this.impl, union_field);
     const args = brk: {
-        var args: std.meta.ArgsTuple(@TypeOf(@field(Impl, field))) = undefined;
+        var args: std.meta.ArgsTuple(@TypeOf(@field(BuiltinImpl, field))) = undefined;
         args[0] = self;
 
         var i: usize = 1;
@@ -283,7 +283,7 @@ fn callImplWithType(this: *Builtin, comptime Impl: type, comptime Ret: type, com
 
         break :brk args;
     };
-    return @call(.auto, @field(Impl, field), args);
+    return @call(.auto, @field(BuiltinImpl, field), args);
 }
 
 pub inline fn allocator(this: *Builtin) Allocator {
@@ -338,7 +338,6 @@ pub fn init(
         .rm => {
             cmd.exec.bltn.impl = .{
                 .rm = Rm{
-                    .bltn = &cmd.exec.bltn,
                     .opts = .{},
                 },
             };
@@ -346,15 +345,12 @@ pub fn init(
         .echo => {
             cmd.exec.bltn.impl = .{
                 .echo = Echo{
-                    .bltn = &cmd.exec.bltn,
                     .output = std.ArrayList(u8).init(arena.allocator()),
                 },
             };
         },
         inline else => |tag| {
-            cmd.exec.bltn.impl = @unionInit(RealImpl, @tagName(tag), .{
-                .bltn = &cmd.exec.bltn,
-            });
+            cmd.exec.bltn.impl = @unionInit(Impl, @tagName(tag), .{});
         },
     }
 

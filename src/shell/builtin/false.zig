@@ -1,7 +1,5 @@
-bltn: *Builtin,
-
 pub fn start(this: *@This()) Maybe(void) {
-    this.bltn.done(1);
+    this.bltn().done(1);
     return Maybe(void).success;
 }
 
@@ -11,6 +9,11 @@ pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) void {
 
 pub fn deinit(this: *@This()) void {
     _ = this;
+}
+
+pub inline fn bltn(this: *@This()) *Builtin {
+    const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("false", this));
+    return @fieldParentPtr("impl", impl);
 }
 
 // --

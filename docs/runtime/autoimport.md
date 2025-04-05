@@ -38,6 +38,7 @@ This entire resolution algorithm can be short-circuited by specifying a version 
 import { z } from "zod@3.0.0"; // specific version
 import { z } from "zod@next"; // npm tag
 import { z } from "zod@^3.20.0"; // semver range
+import { z } from "csv-parse@5.3.10/sync"; // works for packages with relative imports too
 ```
 
 ## Benefits

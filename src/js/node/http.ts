@@ -1711,10 +1711,6 @@ const OutgoingMessagePrototype = {
   },
 
   setHeader(name, value) {
-    if (this._header) {
-      throw $ERR_HTTP_HEADERS_SENT("set");
-    }
-
     // do the cheap validations the JIT can optimize in JS
     if (typeof name !== "string" || !name) {
       throw $ERR_INVALID_HTTP_TOKEN("Header name", name);

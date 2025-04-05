@@ -138,6 +138,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_URI", URIError],
   ["ERR_INVALID_URL_SCHEME", TypeError],
   ["ERR_INVALID_URL", TypeError],
+  ["ERR_IP_BLOCKED", Error],
   ["ERR_IPC_CHANNEL_CLOSED", Error],
   ["ERR_IPC_DISCONNECTED", Error],
   ["ERR_IPC_ONE_PIPE", Error],

@@ -426,6 +426,15 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
         "onStructuredCloneDeserialize",
       )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
   }
+  if (obj.customInspect) {
+    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${protoSymbolName(typeName, "customInspect")}(JSC::JSGlobalObject*, JSC::CallFrame*);\n`;
+
+    specialSymbols += `
+    this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${protoSymbolName(
+      typeName,
+      "customInspect",
+    )}, ImplementationVisibility::Private), PropertyAttribute::Builtin | 0);`;
+  }
   if (obj.finalize) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "finalize")}(void*);` + "\n";
@@ -1784,6 +1793,7 @@ function generateZig(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
+    customInspect = false,
     getInternalProperties = false,
     callbacks = {},
   } = {} as ClassDefinition,
@@ -1806,6 +1816,10 @@ function generateZig(
     }
 
     exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
+  }
+
+  if (customInspect) {
+    exports.set("customInspect", symbolName(typeName, "customInspect"));
   }
 
   proto = {
@@ -2061,6 +2075,16 @@ const JavaScriptCoreBindings = struct {
         _ = ctx;
         _ = writeBytes;
         @compileLog("onStructuredCloneSerialize not implemented for ${typeName}");
+      }
+      `;
+    }
+
+    if (customInspect) {
+      exports.set("customInspect", protoSymbolName(typeName, "customInspect"));
+      output += `
+      pub fn ${protoSymbolName(typeName, "customInspect")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        if (comptime Environment.enable_logs) JSC.markBinding(@src());
+        return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.customInspect, .{thisValue, globalObject, callFrame})});
       }
       `;
     }

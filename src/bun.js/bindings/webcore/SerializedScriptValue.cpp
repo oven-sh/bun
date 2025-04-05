@@ -236,6 +236,7 @@ enum SerializationTag {
     Bun__BlobTag = 254,
     // bun types start at 254 and decrease with each addition
     Bun__X509CertificateTag = 253,
+    Bun__nodenet_BlockList = 252,
 
     ErrorTag = 255
 };
@@ -5690,7 +5691,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (arrayBufferContentsArray.hasException())
         return arrayBufferContentsArray.releaseException();
 
-    // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
+        // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedCanvases;

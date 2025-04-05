@@ -36,11 +36,13 @@ import type { SocketListener, SocketHandler, Socket } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { NodeAggregateError } = require("internal/shared");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
 const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const BlockList = $zig("node_net_binding.zig", "BlockList");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypePush = Array.prototype.push;
@@ -388,6 +390,23 @@ const ServerHandlers: SocketHandler = {
     _socket._rejectUnauthorized = rejectUnauthorized;
 
     _socket[kAttach](this.localPort, socket);
+
+    if (self.blockList) {
+      const addressType = isIP(socket.remoteAddress);
+      if (addressType && self.blockList.check(socket.remoteAddress, `ipv${addressType}`)) {
+        const data = {
+          localAddress: _socket.localAddress,
+          localPort: _socket.localPort || this.localPort,
+          localFamily: _socket.localFamily,
+          remoteAddress: _socket.remoteAddress,
+          remotePort: _socket.remotePort,
+          remoteFamily: _socket.remoteFamily || "IPv4",
+        };
+        socket.end();
+        self.emit("drop", data);
+        return;
+      }
+    }
     if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
       const data = {
         localAddress: _socket.localAddress,
@@ -760,6 +779,12 @@ function Socket(options?) {
     } else {
       signal.addEventListener("abort", destroyWhenAborted.bind(this));
     }
+  }
+  if (options.blockList) {
+    if (!BlockList.isBlockList(options.blockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", options.blockList);
+    }
+    this.blockList = options.blockList;
   }
 }
 $toClass(Socket, "Socket", Duplex);
@@ -1497,6 +1522,10 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
   self.emit("connectionAttempt", address, port, addressType);
 
   if (addressType === 6 || addressType === 4) {
+    if (self.blockList?.check(address, `ipv${addressType}`)) {
+      self.destroy($ERR_IP_BLOCKED(address));
+      return;
+    }
     // const req = new TCPConnectWrap();
     const req = {};
     req.oncomplete = afterConnect;
@@ -1580,6 +1609,14 @@ function internalConnectMultiple(context, canceled?) {
       internalConnectMultiple(context);
       return;
     }
+  }
+
+  if (self.blockList?.check(address, `ipv${addressType}`)) {
+    const ex = $ERR_IP_BLOCKED(address);
+    ArrayPrototypePush.$call(context.errors, ex);
+    self.emit("connectionAttemptFailed", address, port, addressType, ex);
+    internalConnectMultiple(context);
+    return;
   }
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
@@ -1786,10 +1823,16 @@ function Server(options?, connectionListener?) {
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = noDelay;
   this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
-  // TODO: options.blockList
 
   options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
+
+  if (options.blockList) {
+    if (!BlockList.isBlockList(options.blockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", options.blockList);
+    }
+    this.blockList = options.blockList;
+  }
 }
 $toClass(Server, "Server", EventEmitter);
 
@@ -2287,17 +2330,6 @@ function _setSimultaneousAccepts() {
       "DEP0121",
     );
     warnSimultaneousAccepts = false;
-  }
-}
-
-// TODO:
-class BlockList {
-  constructor() {}
-
-  addSubnet(net, prefix, type) {}
-
-  check(address, type) {
-    return false;
   }
 }
 

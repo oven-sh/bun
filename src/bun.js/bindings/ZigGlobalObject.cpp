@@ -4060,7 +4060,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
-    thisObject->m_lazyRequireExtensionsObject.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSStatsClassStructure.visit(visitor);

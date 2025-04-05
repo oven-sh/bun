@@ -6,18 +6,18 @@ extern const jsc_llint_end: u8;
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 pub export fn dumpBtjsTrace() [*:0]const u8 {
     if (comptime bun.Environment.isDebug) {
-        return dumpBtjsTraceDebugImpl();
-    }
-
-    return "btjs is disabled in release builds";
-}
-
-fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
-    var result_writer = std.ArrayList(u8).init(bun.default_allocator);
-    const w = result_writer.writer();
-
-    const debug_info = std.debug.getSelfDebugInfo() catch |err| {
-        w.print("Unable to dump stack trace: Unable to open debug info: {s}\x00", .{@errorName(err)}) catch {
+        var result_writer = std.ArrayList(u8).init(bun.default_allocator);
+        const w = result_writer.writer();
+        dumpBtjsTraceDebugImpl(w.any()) catch {
+            result_writer.deinit();
+            return "<oom>".ptr;
+        };
+        // remove nulls
+        for (result_writer.items) |*itm| if (itm.* == 0) {
+            itm.* = ' ';
+        };
+        // add null terminator
+        result_writer.append(0) catch {
             result_writer.deinit();
             return "<oom>".ptr;
         };
@@ -25,6 +25,17 @@ fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
             result_writer.deinit();
             return "<oom>".ptr;
         }).ptr);
+    }
+
+    return "btjs is disabled in release builds";
+}
+pub fn printBtjsTrace() void {
+    dumpBtjsTraceDebugImpl(std.io.getStdOut().writer().any()) catch |err| std.log.info("Unable to dump stack trace: {s}", .{@errorName(err)});
+}
+
+fn dumpBtjsTraceDebugImpl(w: std.io.AnyWriter) !void {
+    const debug_info = std.debug.getSelfDebugInfo() catch |err| {
+        return w.print("Unable to dump stack trace: Unable to open debug info: {s}", .{@errorName(err)});
     };
 
     // std.log.info("jsc_llint_begin: {x}", .{@intFromPtr(&jsc_llint_begin)});
@@ -53,20 +64,6 @@ fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
     } else {
         printLastUnwindError(&it, debug_info, w, tty_config);
     }
-
-    // remove nulls
-    for (result_writer.items) |*itm| if (itm.* == 0) {
-        itm.* = ' ';
-    };
-    // add null terminator
-    result_writer.append(0) catch {
-        result_writer.deinit();
-        return "<oom>".ptr;
-    };
-    return @ptrCast((result_writer.toOwnedSlice() catch {
-        result_writer.deinit();
-        return "<oom>".ptr;
-    }).ptr);
 }
 
 fn printSourceAtAddress(debug_info: *std.debug.SelfInfo, out_stream: anytype, address: usize, tty_config: std.io.tty.Config, fp: usize) !void {

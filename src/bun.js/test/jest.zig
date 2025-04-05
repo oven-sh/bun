@@ -1336,6 +1336,9 @@ pub const TestRunnerTask = struct {
         var globalThis = this.globalThis;
         var jsc_vm = globalThis.bunVM();
 
+        describe.ref();
+        defer describe.deref();
+
         // reset the global state for each test
         // prior to the run
         expect.active_test_expectation_counter = .{};

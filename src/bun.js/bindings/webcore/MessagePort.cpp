@@ -28,6 +28,8 @@
 #include "MessagePort.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
+#include "AsyncContextFrame.h"
 // #include "Document.h"
 #include "EventNames.h"
 // #include "Logging.h"
@@ -143,7 +145,7 @@ MessagePort::~MessagePort()
     }
 
     if (m_entangled)
-        close();
+        close(nullptr, {});
 
     if (auto* context = scriptExecutionContext())
         context->destroyedMessagePort(*this);
@@ -232,7 +234,7 @@ void MessagePort::start()
     scriptExecutionContext()->processMessageWithMessagePortsSoon([pendingActivity = Ref { *this }] {});
 }
 
-void MessagePort::close()
+void MessagePort::close(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
     if (m_isDetached)
         return;
@@ -241,6 +243,15 @@ void MessagePort::close()
     MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
 
     removeAllEventListeners();
+
+    if (lexicalGlobalObject && callback) {
+        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        if (globalObject && callback.isCallable()) {
+            if (auto* process = jsDynamicCast<Bun::Process*>(globalObject->processObject())) {
+                process->queueNextTick(globalObject, AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback));
+            }
+        }
+    }
 }
 
 void MessagePort::dispatchMessages()
@@ -379,7 +390,7 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
-    close();
+    close(nullptr, {});
     // ActiveDOMObject::contextDestroyed();
 }
 

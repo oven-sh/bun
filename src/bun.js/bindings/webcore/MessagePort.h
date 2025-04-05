@@ -60,7 +60,7 @@ public:
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
     void start();
-    void close();
+    void close(JSC::JSGlobalObject* lexicalGlobalObject, JSValue callback);
     void entangle();
 
     // Returns nullptr if the passed-in vector is empty.

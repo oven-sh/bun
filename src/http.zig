@@ -222,6 +222,10 @@ pub const Sendfile = struct {
 };
 
 const ProxyTunnel = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
+    pub const ref = ProxyTunnel.RefCount.ref;
+    pub const deref = ProxyTunnel.RefCount.deref;
+
     wrapper: ?ProxyTunnelWrapper = null,
     shutdown_err: anyerror = error.ConnectionClosed,
     // active socket is the socket that is currently being used
@@ -231,11 +235,9 @@ const ProxyTunnel = struct {
         none: void,
     } = .{ .none = {} },
     write_buffer: bun.io.StreamBuffer = .{},
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
-
-    usingnamespace bun.NewRefCounted(ProxyTunnel, _deinit, null);
 
     fn onOpen(this: *HTTPClient) void {
         this.state.response_stage = .proxy_handshake;
@@ -436,7 +438,9 @@ const ProxyTunnel = struct {
     }
 
     fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
-        const proxy_tunnel = ProxyTunnel.new(.{});
+        const proxy_tunnel = bun.new(ProxyTunnel, .{
+            .ref_count = .init(),
+        });
 
         var custom_options = ssl_options;
         // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
@@ -520,14 +524,14 @@ const ProxyTunnel = struct {
         this.deref();
     }
 
-    fn _deinit(this: *ProxyTunnel) void {
+    fn deinit(this: *ProxyTunnel) void {
         this.socket = .{ .none = {} };
         if (this.wrapper) |*wrapper| {
             wrapper.deinit();
             this.wrapper = null;
         }
         this.write_buffer.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -1063,7 +1067,8 @@ pub const HTTPThread = struct {
         buffer: [512 * 1024]u8 = undefined,
         fixed_buffer_allocator: std.heap.FixedBufferAllocator,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
 
         pub fn init() *@This() {
             var this = HeapRequestBodyBuffer.new(.{
@@ -1081,10 +1086,6 @@ pub const HTTPThread = struct {
             } else {
                 this.deinit();
             }
-        }
-
-        pub fn deinit(this: *@This()) void {
-            this.destroy();
         }
     };
 
@@ -1138,7 +1139,7 @@ pub const HTTPThread = struct {
         decompressor: *bun.libdeflate.Decompressor = undefined,
         shared_buffer: [512 * 1024]u8 = undefined,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
     };
 
     const request_body_send_stack_buffer_size = 32 * 1024;
@@ -2523,7 +2524,7 @@ pub const AsyncHTTP = struct {
         url: bun.URL,
         is_url_owned: bool,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn onResult(this: *Preconnect, _: *AsyncHTTP, _: HTTPClientResult) void {
             this.response_buffer.deinit();
@@ -2533,7 +2534,7 @@ pub const AsyncHTTP = struct {
                 bun.default_allocator.free(this.url.href);
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -2847,7 +2848,7 @@ pub const AsyncHTTP = struct {
             {
                 this.client.deinit();
                 var threadlocal_http: *ThreadlocalAsyncHTTP = @fieldParentPtr("async_http", async_http);
-                defer threadlocal_http.destroy();
+                defer threadlocal_http.deinit();
                 log("onAsyncHTTPCallback: {any}", .{std.fmt.fmtDuration(this.elapsed)});
                 callback.function(callback.ctx, async_http, result);
             }
@@ -4665,6 +4666,8 @@ const assert = bun.assert;
 
 // Exists for heap stats reasons.
 const ThreadlocalAsyncHTTP = struct {
+    pub const new = bun.TrivialNew(@This());
+    pub const deinit = bun.TrivialDeinit(@This());
+
     async_http: AsyncHTTP,
-    pub usingnamespace bun.New(@This());
 };

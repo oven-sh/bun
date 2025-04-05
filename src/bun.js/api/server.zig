@@ -2201,7 +2201,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: ?*uws.Request,
-        request_weakref: Request.WeakRef = .{},
+        request_weakref: Request.WeakRef = .empty,
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
         cookies: ?*JSC.WebCore.CookieMap = null,
@@ -2758,7 +2758,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
-                this.request_weakref.deinit();
+                this.request_weakref.deref();
             }
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
@@ -2834,7 +2834,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 request.request_context = AnyRequestContext.Null;
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
-                this.request_weakref.deinit();
+                this.request_weakref.deref();
             }
 
             // if signal is not aborted, abort the signal
@@ -4915,10 +4915,12 @@ pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
     state: State,
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     /// Reference count is incremented while there are other objects that are waiting on plugin loads.
-    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const State = union(enum) {
         unqueued: []const []const u8,
@@ -4947,17 +4949,17 @@ const ServePlugins = struct {
     };
 
     pub fn init(plugins: []const []const u8) *ServePlugins {
-        return ServePlugins.new(.{ .state = .{ .unqueued = plugins } });
+        return bun.new(ServePlugins, .{ .ref_count = .init(), .state = .{ .unqueued = plugins } });
     }
 
-    pub fn deinit(this: *ServePlugins) void {
+    fn deinit(this: *ServePlugins) void {
         switch (this.state) {
             .unqueued => {},
             .pending => assert(false), // should have one ref while pending!
             .loaded => |loaded| loaded.deinit(),
             .err => {},
         }
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
@@ -5142,7 +5144,7 @@ const PluginsResult = union(enum) {
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
         pub usingnamespace NamespaceType;
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub const ssl_enabled = ssl_enabled_;
         pub const debug_mode = debug_mode_;
@@ -5577,7 +5579,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
-            upgrader.request_weakref.deinit();
+            upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
             const ws = ServerWebSocket.new(.{
@@ -6188,7 +6190,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 plugins.deref();
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn init(config: *ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
@@ -6772,7 +6774,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .signal = signal.ref(),
                 .body = body.ref(),
             });
-            ctx.request_weakref = Request.WeakRef.create(request_object);
+            ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
@@ -6895,7 +6897,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .body = body.ref(),
             });
             ctx.upgrade_context = upgrade_ctx;
-            ctx.request_weakref = Request.WeakRef.create(request_object);
+            ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.JSValue{
                 request_object.toJS(this.globalThis),
@@ -7329,7 +7331,7 @@ pub const ServerAllConnectionsClosedTask = struct {
     promise: JSC.JSPromise.Strong,
     tracker: JSC.AsyncTaskTracker,
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
@@ -7341,7 +7343,7 @@ pub const ServerAllConnectionsClosedTask = struct {
 
         var promise = this.promise;
         defer promise.deinit();
-        this.destroy();
+        bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
             promise.resolve(globalObject, .undefined);

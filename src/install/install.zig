@@ -1800,10 +1800,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             pub fn deinit(task: *@This()) void {
                 bun.default_allocator.free(task.bytes);
-                task.destroy();
+                bun.destroy(task);
             }
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn run(task: *@This()) ?anyerror {
                 const src = task.src;
@@ -2140,8 +2140,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     //
 
                     const UninstallTask = struct {
+                        pub const new = bun.TrivialNew(@This());
+
                         absolute_path: []const u8,
                         task: JSC.WorkPoolTask = .{ .callback = &run },
+
                         pub fn run(task: *JSC.WorkPoolTask) void {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
@@ -2179,10 +2182,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                         pub fn deinit(uninstall_task: *@This()) void {
                             bun.default_allocator.free(uninstall_task.absolute_path);
-                            uninstall_task.destroy();
+                            bun.destroy(uninstall_task);
                         }
-
-                        pub usingnamespace bun.New(@This());
                     };
                     var task = UninstallTask.new(.{
                         .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
@@ -13700,7 +13701,7 @@ pub const PackageManager = struct {
                             );
                             if (Environment.isDebug) {
                                 var t = cause.debug_trace;
-                                bun.crash_handler.dumpStackTrace(t.trace());
+                                bun.crash_handler.dumpStackTrace(t.trace(), .{});
                             }
                             this.summary.fail += 1;
                         }

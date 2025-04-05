@@ -206,7 +206,12 @@ const CppWebSocket = opaque {
 
 pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
     return struct {
+        pub const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
         pub const Socket = uws.NewSocketHandler(ssl);
+
+        ref_count: RefCount,
         tcp: Socket,
         outgoing_websocket: ?*CppWebSocket,
         input_body_buf: []u8 = &[_]u8{},
@@ -219,11 +224,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
-        ref_count: u32 = 1,
 
         const State = enum { initializing, reading, failed };
-
-        pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
         const HTTPClient = @This();
         pub fn register(_: *JSC.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
@@ -245,10 +247,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             );
         }
 
-        pub fn deinit(this: *HTTPClient) void {
+        fn deinit(this: *HTTPClient) void {
             this.clearData();
             bun.debugAssert(this.tcp.isDetached());
-            this.destroy();
+            bun.destroy(this);
         }
 
         /// On error, this returns null.
@@ -281,7 +283,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 NonUTF8Headers.init(header_names, header_values, header_count),
             ) catch return null;
 
-            var client = HTTPClient.new(.{
+            var client = bun.new(HTTPClient, .{
+                .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
@@ -986,6 +989,13 @@ const Copy = union(enum) {
 pub fn NewWebSocketClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
+
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
+
         tcp: Socket,
         outgoing_websocket: ?*CppWebSocket = null,
 
@@ -1016,13 +1026,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         initial_data_handler: ?*InitialDataHandler = null,
         event_loop: *JSC.EventLoop = undefined,
-        ref_count: u32 = 1,
 
         const stack_frame_size = 1024;
 
         const WebSocket = @This();
 
-        pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
@@ -1868,7 +1876,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             pub const Handle = JSC.AnyTask.New(@This(), handle);
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn handleWithoutDeinit(this: *@This()) void {
                 var this_socket = this.adopted orelse return;
@@ -1889,7 +1897,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             pub fn deinit(this: *@This()) void {
                 bun.default_allocator.free(this.slice);
-                this.destroy();
+                bun.destroy(this);
             }
         };
 
@@ -1903,7 +1911,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) callconv(.C) ?*anyopaque {
             const tcp = @as(*uws.Socket, @ptrCast(input_socket));
             const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
-            var ws = WebSocket.new(WebSocket{
+            var ws = bun.new(WebSocket, .{
+                .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = outgoing,
                 .globalThis = globalThis,
@@ -1974,7 +1983,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn deinit(this: *WebSocket) void {
             this.clearData();
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn memoryCost(this: *WebSocket) callconv(.C) usize {

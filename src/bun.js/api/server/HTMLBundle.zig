@@ -3,16 +3,19 @@
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
 pub usingnamespace JSC.Codegen.JSHTMLBundle;
-// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit, null);
+/// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
-ref_count: u32 = 1,
+ref_count: RefCount,
 global: *JSGlobalObject,
 path: []const u8,
 
 /// Initialize an HTMLBundle given a path.
 pub fn init(global: *JSGlobalObject, path: []const u8) !*HTMLBundle {
-    return HTMLBundle.new(.{
+    return bun.new(HTMLBundle, .{
+        .ref_count = .init(),
         .global = global,
         .path = try bun.default_allocator.dupe(u8, path),
     });
@@ -22,9 +25,9 @@ pub fn finalize(this: *HTMLBundle) void {
     this.deref();
 }
 
-pub fn deinit(this: *HTMLBundle) void {
+fn deinit(this: *HTMLBundle) void {
     bun.default_allocator.free(this.path);
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
@@ -40,9 +43,13 @@ pub const HTMLBundleRoute = Route;
 /// reference-counted because a server can have multiple instances of the same
 /// html file on multiple endpoints.
 pub const Route = struct {
-    /// Rename to `bundle`
-    html_bundle: *HTMLBundle,
-    ref_count: u32 = 1,
+    /// One HTMLBundle.Route can be specified multiple times
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{});
+    pub const ref = Route.RefCount.ref;
+    pub const deref = Route.RefCount.deref;
+
+    bundle: RefPtr(HTMLBundle),
+    ref_count: Route.RefCount,
     // TODO: attempt to remove the null case. null is only present during server
     // initialization as only a ServerConfig object is present.
     server: ?AnyServer = null,
@@ -54,9 +61,6 @@ pub const Route = struct {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
 
-    /// One HTMLBundle.Route can be specified multiple times
-    pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
-
     pub fn memoryCost(this: *const Route) usize {
         var cost: usize = 0;
         cost += @sizeOf(Route);
@@ -66,14 +70,21 @@ pub const Route = struct {
     }
 
     pub fn init(html_bundle: *HTMLBundle) *Route {
-        html_bundle.ref();
-        return Route.new(.{
-            .html_bundle = html_bundle,
+        return bun.new(Route, .{
+            .bundle = .initRef(html_bundle),
             .pending_responses = .{},
-            .ref_count = 1,
+            .ref_count = .init(),
             .server = null,
             .state = .pending,
         });
+    }
+
+    fn deinit(this: *Route) void {
+        bun.assert(this.pending_responses.items.len == 0); // pending responses keep a ref to the route
+        this.pending_responses.deinit(bun.default_allocator);
+        this.bundle.deref();
+        this.state.deinit();
+        bun.destroy(this);
     }
 
     pub const State = union(enum) {
@@ -107,16 +118,6 @@ pub const Route = struct {
             };
         }
     };
-
-    fn _deinit(this: *Route) void {
-        for (this.pending_responses.items) |pending_response| {
-            pending_response.deref();
-        }
-        this.pending_responses.deinit(bun.default_allocator);
-        this.html_bundle.deref();
-        this.state.deinit();
-        this.destroy();
-    }
 
     pub fn onRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
         this.onAnyRequest(req, resp, false);
@@ -162,7 +163,7 @@ pub const Route = struct {
                     debug("onRequest: {s} - building", .{req.url()});
 
                 // create the PendingResponse, add it to the list
-                var pending = PendingResponse.new(.{
+                const pending = bun.new(PendingResponse, .{
                     .method = bun.http.Method.which(req.method()) orelse {
                         resp.writeStatus("405 Method Not Allowed");
                         resp.endWithoutBody(true);
@@ -171,13 +172,11 @@ pub const Route = struct {
                     .resp = resp,
                     .server = this.server,
                     .route = this,
-                    .ref_count = 1,
                 });
 
                 this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
 
                 this.ref();
-                pending.ref();
                 resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
                 req.setYield(false);
             },
@@ -210,14 +209,14 @@ pub const Route = struct {
     }
 
     pub fn onPluginsResolved(this: *Route, plugins: ?*JSC.API.JSBundler.Plugin) !void {
-        const global = this.html_bundle.global;
+        const global = this.bundle.data.global;
         const server = this.server.?;
         const development = server.config().development;
         const vm = global.bunVM();
 
         var config: JSBundler.Config = .{};
         errdefer config.deinit(bun.default_allocator);
-        try config.entry_points.insert(this.html_bundle.path);
+        try config.entry_points.insert(this.bundle.data.path);
         if (vm.transpiler.options.transform_options.serve_public_path) |public_path| {
             if (public_path.len > 0) {
                 try config.public_path.appendSlice(public_path);
@@ -345,7 +344,7 @@ pub const Route = struct {
                         byte_length += output_file.size_without_sourcemap;
                     }
 
-                    bun.Output.prettyErrorln(" <green>bundle<r> {s} <d>{d:.2} KB<r>", .{ std.fs.path.basename(this.html_bundle.path), @as(f64, @floatFromInt(byte_length)) / 1000.0 });
+                    bun.Output.prettyErrorln(" <green>bundle<r> {s} <d>{d:.2} KB<r>", .{ std.fs.path.basename(this.bundle.data.path), @as(f64, @floatFromInt(byte_length)) / 1000.0 });
                     bun.Output.flush();
                 }
 
@@ -381,7 +380,8 @@ pub const Route = struct {
                         }
                     }
 
-                    const static_route = StaticRoute.new(.{
+                    const static_route = bun.new(StaticRoute, .{
+                        .ref_count = .init(),
                         .blob = blob,
                         .server = server,
                         .status_code = 200,
@@ -426,7 +426,7 @@ pub const Route = struct {
         defer pending.deinit(bun.default_allocator);
         this.pending_responses = .{};
         for (pending.items) |pending_response| {
-            defer pending_response.deref(); // First ref for being in the pending items array.
+            defer pending_response.deinit();
 
             const resp = pending_response.resp;
             const method = pending_response.method;
@@ -434,9 +434,6 @@ pub const Route = struct {
                 // Aborted
                 continue;
             }
-            // Second ref for UWS abort callback.
-            defer pending_response.deref();
-
             pending_response.is_response_pending = false;
             resp.clearAborted();
 
@@ -469,25 +466,21 @@ pub const Route = struct {
     pub const PendingResponse = struct {
         method: bun.http.Method,
         resp: HTTPResponse,
-        ref_count: u32 = 1,
         is_response_pending: bool = true,
         server: ?AnyServer = null,
         route: *Route,
 
-        pub usingnamespace bun.NewRefCounted(@This(), destroyInternal, null);
-
-        fn destroyInternal(this: *PendingResponse) void {
+        pub fn deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();
                 this.resp.endWithoutBody(true);
             }
             this.route.deref();
-            this.destroy();
+            bun.destroy(this);
         }
 
-        pub fn onAborted(this: *PendingResponse, resp: HTTPResponse) void {
-            _ = resp; // autofix
+        pub fn onAborted(this: *PendingResponse, _: HTTPResponse) void {
             bun.debugAssert(this.is_response_pending == true);
             this.is_response_pending = false;
 
@@ -499,8 +492,6 @@ pub const Route = struct {
                 _ = this.route.pending_responses.orderedRemove(index);
                 this.route.deref();
             }
-
-            this.deref();
         }
     };
 };
@@ -517,6 +508,7 @@ const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
 const StaticRoute = @import("./StaticRoute.zig");
+const RefPtr = bun.ptr.RefPtr;
 
 const debug = bun.Output.scoped(.HTMLBundle, true);
 const strings = bun.strings;

@@ -2672,6 +2672,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 pub const HTTPSResponseSink = HTTPServerWritable(true);
 pub const HTTPResponseSink = HTTPServerWritable(false);
 pub const NetworkSink = struct {
+    pub const new = bun.TrivialNew(@This());
+    pub const deinit = bun.TrivialDeinit(@This());
+
     task: ?HTTPWritableStream = null,
     signal: Signal = .{},
     globalThis: *JSGlobalObject = undefined,
@@ -2686,7 +2689,6 @@ pub const NetworkSink = struct {
 
     auto_flusher: AutoFlusher = AutoFlusher{},
 
-    pub usingnamespace bun.New(NetworkSink);
     const HTTPWritableStream = union(enum) {
         fetch: *JSC.WebCore.Fetch.FetchTasklet,
         s3_upload: *bun.S3.MultiPartUpload,
@@ -2844,7 +2846,7 @@ pub const NetworkSink = struct {
     }
     pub fn finalizeAndDestroy(this: *@This()) void {
         this.finalize();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn abort(this: *@This()) void {
@@ -3034,10 +3036,12 @@ pub fn ReadableStreamSource(
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: JSC.JSValue = .zero,
         is_closed: bool = false,
+
         const This = @This();
         const ReadableStreamSourceType = @This();
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
 
         pub fn pull(this: *This, buf: []u8) StreamResult {
             return onPull(&this.context, buf, JSValue.zero);
@@ -3425,7 +3429,7 @@ pub const FileSink = struct {
     writer: IOWriter = .{},
     event_loop_handle: JSC.EventLoopHandle,
     written: usize = 0,
-    ref_count: u32 = 1,
+    ref_count: bun.ptr.RefCount(FileSink, "ref_count", deinit, .{}),
     pending: StreamResult.Writable.Pending = .{
         .result = .{ .done = {} },
     },
@@ -3448,7 +3452,14 @@ pub const FileSink = struct {
 
     const log = Output.scoped(.FileSink, false);
 
-    pub usingnamespace bun.NewRefCounted(FileSink, deinit, null);
+    // TODO: this usingnamespace is load-bearing, likely due to a compiler bug.
+    pub usingnamespace brk: {
+        const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
+        break :brk struct {
+            pub const ref = RefCount.ref;
+            pub const deref = RefCount.deref;
+        };
+    };
 
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
@@ -3598,7 +3609,8 @@ pub const FileSink = struct {
             else => JSC.EventLoopHandle.init(event_loop_),
         };
 
-        var this = FileSink.new(.{
+        var this = bun.new(FileSink, .{
+            .ref_count = .init(),
             .event_loop_handle = JSC.EventLoopHandle.init(evtloop),
             .fd = pipe.fd(),
         });
@@ -3615,7 +3627,8 @@ pub const FileSink = struct {
             JSC.EventLoopHandle => event_loop_,
             else => JSC.EventLoopHandle.init(event_loop_),
         };
-        var this = FileSink.new(.{
+        var this = bun.new(FileSink, .{
+            .ref_count = .init(),
             .event_loop_handle = JSC.EventLoopHandle.init(evtloop),
             .fd = fd,
         });
@@ -3863,7 +3876,8 @@ pub const FileSink = struct {
     }
 
     pub fn init(fd: bun.FileDescriptor, event_loop_handle: anytype) *FileSink {
-        var this = FileSink.new(.{
+        var this = bun.new(FileSink, .{
+            .ref_count = .init(),
             .writer = .{},
             .fd = fd,
             .event_loop_handle = JSC.EventLoopHandle.init(event_loop_handle),
@@ -3873,12 +3887,9 @@ pub const FileSink = struct {
         return this;
     }
 
-    pub fn construct(
-        this: *FileSink,
-        allocator: std.mem.Allocator,
-    ) void {
-        _ = allocator; // autofix
+    pub fn construct(this: *FileSink, _: std.mem.Allocator) void {
         this.* = FileSink{
+            .ref_count = .init(),
             .event_loop_handle = JSC.EventLoopHandle.init(JSC.VirtualMachine.get().eventLoop()),
         };
     }
@@ -3939,12 +3950,14 @@ pub const FileSink = struct {
             },
         }
     }
-    pub fn deinit(this: *FileSink) void {
+
+    fn deinit(this: *FileSink) void {
         this.pending.deinit();
         this.writer.deinit();
         if (this.event_loop_handle.globalObject()) |global| {
             AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
         }
+        bun.destroy(this);
     }
 
     pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
@@ -4348,7 +4361,7 @@ pub const FileReader = struct {
             this.lazy = .none;
         }
 
-        this.parent().destroy();
+        this.parent().deinit();
     }
 
     pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
@@ -4820,8 +4833,7 @@ pub const ByteBlobLoader = struct {
 
     pub fn deinit(this: *ByteBlobLoader) void {
         this.clearStore();
-
-        this.parent().destroy();
+        this.parent().deinit();
     }
 
     fn clearStore(this: *ByteBlobLoader) void {
@@ -5319,7 +5331,7 @@ pub const ByteStream = struct {
         if (this.buffer_action) |*action| {
             action.deinit();
         }
-        this.parent().destroy();
+        this.parent().deinit();
     }
 
     pub fn drain(this: *@This()) bun.ByteList {

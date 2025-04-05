@@ -653,8 +653,11 @@ const Handlers = struct {
 
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
+    const Self = @This();
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, "H2");
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
     const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
@@ -708,7 +711,7 @@ pub const H2FrameParser = struct {
 
     autouncork_registered: bool = false,
     has_nonnative_backpressure: bool = false,
-    ref_count: u8 = 1,
+    ref_count: RefCount,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
@@ -771,7 +774,7 @@ pub const H2FrameParser = struct {
             parser: *H2FrameParser,
             stream_id: u32,
 
-            usingnamespace bun.New(SignalRef);
+            pub const new = bun.TrivialNew(SignalRef);
 
             pub fn isAborted(this: *SignalRef) bool {
                 return this.signal.aborted();
@@ -790,7 +793,7 @@ pub const H2FrameParser = struct {
             pub fn deinit(this: *SignalRef) void {
                 this.signal.detach(this);
                 this.parser.deref();
-                this.destroy();
+                bun.destroy(this);
             }
         };
         const PendingQueue = struct {
@@ -4071,6 +4074,7 @@ pub const H2FrameParser = struct {
                 const self = H2FrameParser.pool.?.tryGet() catch bun.outOfMemory();
 
                 self.* = H2FrameParser{
+                    .ref_count = .init(),
                     .handlers = handlers,
                     .globalThis = globalObject,
                     .allocator = bun.default_allocator,
@@ -4085,7 +4089,8 @@ pub const H2FrameParser = struct {
                 };
                 break :brk self;
             } else {
-                break :brk H2FrameParser.new(.{
+                break :brk bun.new(H2FrameParser, .{
+                    .ref_count = .init(),
                     .handlers = handlers,
                     .globalThis = globalObject,
                     .allocator = bun.default_allocator,
@@ -4212,14 +4217,14 @@ pub const H2FrameParser = struct {
         this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
     }
 
-    pub fn deinit(this: *H2FrameParser) void {
+    fn deinit(this: *H2FrameParser) void {
         log("deinit", .{});
 
         defer {
             if (ENABLE_ALLOCATOR_POOL) {
                 H2FrameParser.pool.?.put(this);
             } else {
-                this.destroy();
+                bun.destroy(this);
             }
         }
         this.detach(true);

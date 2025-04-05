@@ -1758,7 +1758,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var queue: Queue = undefined;
             pub fn getQueue() *Queue {
                 queue = Queue{
-                    .thread_pool = &PackageManager.get().thread_pool,
+                    .thread_pool = PackageManager.get().thread_pool,
                 };
                 return &queue;
             }
@@ -2687,7 +2687,7 @@ pub const PackageManager = struct {
         }
     } = .{},
 
-    thread_pool: ThreadPool,
+    thread_pool: *ThreadPool,
     task_batch: ThreadPool.Batch = .{},
     task_queue: TaskDependencyQueue = .{},
 
@@ -8982,9 +8982,7 @@ pub const PackageManager = struct {
             .root_dir = entries_option.entries,
             .env = env,
             .cpu_count = cpu_count,
-            .thread_pool = ThreadPool.init(.{
-                .max_threads = cpu_count,
-            }),
+            .thread_pool = JSC.WorkPool.get(),
             .resolve_tasks = .{},
             .lockfile = undefined,
             .root_package_json_file = root_package_json_file,
@@ -9152,9 +9150,7 @@ pub const PackageManager = struct {
             .root_dir = root_dir.entries,
             .env = env,
             .cpu_count = cpu_count,
-            .thread_pool = ThreadPool.init(.{
-                .max_threads = cpu_count,
-            }),
+            .thread_pool = JSC.WorkPool.get(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .event_loop = .{

@@ -278,6 +278,7 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip,
                                  int ip_length);
   struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
+  struct us_socket_t *(*on_fd)(struct us_socket_t *, int fd);
   struct us_socket_t *(*on_writable)(struct us_socket_t *);
   struct us_socket_t *(*on_close)(struct us_socket_t *, int code, void *reason);
   // void (*on_timeout)(struct us_socket_context *);
@@ -287,6 +288,7 @@ struct us_socket_context_t {
   struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
   struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
+  bool is_ipc;
   
 };
 

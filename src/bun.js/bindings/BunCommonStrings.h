@@ -32,8 +32,6 @@
     macro(IN4Loopback, "127.0.0.1") \
     macro(IN6Any, "::") \
     macro(OperationWasAborted, "The operation was aborted.") \
-    macro(OperationTimedOut, "The operation timed out.") \
-    macro(ConnectionWasClosed, "The connection was closed.") \
     macro(OperationFailed, "The operation failed.") \
     macro(strict, "strict") \
     macro(lax, "lax") \

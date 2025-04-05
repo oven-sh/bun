@@ -1,4 +1,4 @@
-const uws = @import("../deps/uws.zig");
+const uws = bun.uws;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Global = bun.Global;

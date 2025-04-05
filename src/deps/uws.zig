@@ -1653,6 +1653,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
+        pub fn remotePort(this: ThisSocket) i32 {
+            return switch (this.socket) {
+                .connected => |socket| socket.remotePort(is_ssl),
+                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+            };
+        }
+
         /// `buf` cannot be longer than 2^31 bytes long.
         pub fn remoteAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
@@ -3006,6 +3013,10 @@ pub const Request = opaque {
 pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@intFromBool(ssl), this);
+    }
+    pub fn getLocalAddress(this: *ListenSocket, ssl: bool, buf: []u8) ![]const u8 {
+        const self: *uws.Socket = @ptrCast(this);
+        return self.localAddress(ssl, buf);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
         const self: *uws.Socket = @ptrCast(this);

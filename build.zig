@@ -465,6 +465,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         }
     }
     obj.bundle_compiler_rt = false;
+    obj.bundle_ubsan_rt = false;
     obj.root_module.omit_frame_pointer = false;
 
     // Link libc

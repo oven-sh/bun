@@ -2455,22 +2455,15 @@ pub const PackCommand = struct {
             isSpecialFileOrVariant(filename, "README"));
     }
 
-    // TODO: should this be case insensitive on all platforms?
-    const stringsEql = if (Environment.isLinux)
-        strings.eqlComptime
-    else
-        strings.eqlCaseInsensitiveASCIIICheckLength;
+    const stringsEql = strings.eqlCaseInsensitiveASCIIICheckLength;
 
     fn isSpecialFileOrVariant(filename: []const u8, comptime name: []const u8) callconv(bun.callconv_inline) bool {
-        return switch (filename.len) {
-            inline 0...name.len - 1 => false,
-            inline name.len => stringsEql(filename, name),
-            inline name.len + 1 => false,
-            else => blk: {
-                bun.unsafeAssert(filename.len > name.len + 1);
-                break :blk filename[name.len] == '.' and stringsEql(filename[0..name.len], name);
-            },
-        };
+        if (filename.len < name.len) return false;
+        if (filename.len == name.len) return strings.eqlCaseInsensitiveASCIIIgnoreLength(filename, name);
+        if (filename.len > name.len + 1 and filename[name.len] == '.') {
+            return strings.eqlCaseInsensitiveASCIIIgnoreLength(filename[0..name.len], name);
+        }
+        return false;
     }
 };
 

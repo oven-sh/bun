@@ -761,6 +761,70 @@ pub const JSGlobalObject = opaque {
         return Zig__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
+    /// Name of main module. This is usually a path, but can be something else
+    /// when Bun is not run on a file (e.g. `[eval]` for `bun --eval <code>`).
+    /// Always returns a `JSC::JSString*`.
+    ///
+    /// You usually don't need to call this directly since this is lazily
+    /// initialized and cached on the global object.
+    fn determineMainModule(globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const bun_vm = globalThis.bunVM();
+
+        // Attempt to use the resolved filesystem path
+        // This makes `eval('require.main === module')` work when the main module is a symlink.
+        // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
+        use_resolved_path: {
+            if (bun_vm.main_resolved_path.isEmpty()) {
+                // If it's from eval, don't try to resolve it.
+                if (strings.hasSuffixComptime(bun_vm.main, "[eval]")) {
+                    @branchHint(.unlikely);
+                    break :use_resolved_path;
+                }
+                if (strings.hasSuffixComptime(bun_vm.main, "[stdin]")) {
+                    @branchHint(.unlikely);
+                    break :use_resolved_path;
+                }
+                if (bun_vm.main.len == 0) {
+                    @branchHint(.cold);
+                    return bun.String.empty.toJS(globalThis);
+                }
+
+                const fd = bun.sys.openatA(
+                    if (comptime bun.Environment.isWindows) bun.invalid_fd else bun.FD.cwd(),
+                    bun_vm.main,
+
+                    // Open with the minimum permissions necessary for resolving the file path.
+                    if (comptime bun.Environment.isLinux) bun.O.PATH else bun.O.RDONLY,
+
+                    0,
+                ).unwrap() catch break :use_resolved_path;
+
+                defer _ = bun.sys.close(fd);
+                if (comptime bun.Environment.isWindows) {
+                    var wpath: bun.WPathBuffer = undefined;
+                    const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
+                    bun_vm.main_resolved_path = bun.String.createUTF16(fdpath);
+                } else {
+                    var path: bun.PathBuffer = undefined;
+                    const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
+
+                    // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+                    if (bun.String.tryCreateAtom(fdpath)) |atom| {
+                        bun_vm.main_resolved_path = atom;
+                    } else {
+                        bun_vm.main_resolved_path = bun.String.createUTF8(fdpath);
+                    }
+                }
+            }
+
+            return bun_vm.main_resolved_path.toJS(globalThis);
+        }
+
+        // NOTE: we cannot assume `main` is ascii.
+        var main_module = bun.String.init(bun_vm.main);
+        return main_module.transferToJS(globalThis);
+    }
+
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
         return JSC.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
@@ -782,6 +846,7 @@ pub const JSGlobalObject = opaque {
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
+        @export(&determineMainModule, .{ .name = "Zig__GlobalObject__determineMainModule" });
         @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
         @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
         @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });

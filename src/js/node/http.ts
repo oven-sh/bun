@@ -952,8 +952,13 @@ const ServerPrototype = {
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
-          // start buffering data if any, the user will need to resume() or .on("data") to read it
-          handle.pause();
+
+          if (hasBody) {
+            // Don't automatically read the body, the user will need to resume() or .on("data") to read it.
+            // But, avoid the system call overhead unless we are going to receive body data.
+            handle.pause();
+          }
+
           drainMicrotasks();
 
           let capturedError;

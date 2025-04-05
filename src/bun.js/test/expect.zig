@@ -378,11 +378,13 @@ pub const Expect = struct {
             .custom_label = custom_label,
             .parent = if (Jest.runner) |runner|
                 if (runner.pending_test) |pending|
-                    Expect.ParentScope{ .TestScope = Expect.TestScope{
-                        // FIXME: Expect obtains a DescribeScope reference without managing its count.
-                        .describe = pending.describe.get(),
-                        .test_id = pending.test_id,
-                    } }
+                    Expect.ParentScope{
+                        .TestScope = Expect.TestScope{
+                            // FIXME: Expect obtains a DescribeScope reference without managing its count.
+                            .describe = pending.describe.get(),
+                            .test_id = pending.test_id,
+                        },
+                    }
                 else
                     Expect.ParentScope{ .global = {} }
             else

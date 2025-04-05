@@ -557,11 +557,11 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
-    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
+    pub fn deinit(this: *TestScope) void {
         if (this.label.len > 0) {
             const label = this.label;
             this.label = "";
-            getAllocator(globalThis).free(label);
+            bun.default_allocator.free(label);
         }
     }
 
@@ -811,7 +811,10 @@ pub const DescribeScope = struct {
     value: JSValue = .zero,
     done: bool = false,
     skip_count: u32 = 0,
+    ref_count: u32 = 1,
     tag: Tag = .pass,
+
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, "DescribeScope");
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1117,7 +1120,7 @@ pub const DescribeScope = struct {
         globalObject.clearTerminationException();
 
         const file = this.file_id;
-        const allocator = getAllocator(globalObject);
+        const allocator = bun.default_allocator;
         const tests: []TestScope = this.tests.items;
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
@@ -1136,21 +1139,20 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.deinit(globalObject);
+                this.deref();
                 return;
             }
             if (end == 0) {
-                var runner = allocator.create(TestRunnerTask) catch unreachable;
-                runner.* = .{
+                var task = bun.new(TestRunnerTask, .{
                     .test_id = std.math.maxInt(TestRunner.Test.ID),
-                    .describe = this,
+                    .describe = this.refPtr(),
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
                     .test_id_for_debugger = 0,
-                };
-                runner.ref.ref(globalObject.bunVM());
+                });
+                task.ref.ref(globalObject.bunVM());
 
-                Jest.runner.?.enqueue(runner);
+                Jest.runner.?.enqueue(task);
                 return;
             }
         }
@@ -1158,17 +1160,16 @@ pub const DescribeScope = struct {
         const maybe_report_debugger = max_test_id_for_debugger > 0;
 
         while (i < end) : (i += 1) {
-            var runner = allocator.create(TestRunnerTask) catch unreachable;
-            runner.* = .{
+            var task = bun.new(TestRunnerTask, .{
                 .test_id = i,
-                .describe = this,
+                .describe = this.refPtr(),
                 .globalThis = globalObject,
                 .source_file_path = source.path.text,
                 .test_id_for_debugger = if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
-            };
-            runner.ref.ref(globalObject.bunVM());
+            });
+            task.ref.ref(globalObject.bunVM());
 
-            Jest.runner.?.enqueue(runner);
+            Jest.runner.?.enqueue(task);
         }
     }
 
@@ -1195,11 +1196,11 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
-        this.deinit(globalThis);
+        this.deref();
     }
 
-    pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
-        const allocator = getAllocator(globalThis);
+    fn deinit(this: *DescribeScope) void {
+        const allocator = bun.default_allocator;
 
         if (this.label.len > 0) {
             const label = this.label;
@@ -1209,7 +1210,7 @@ pub const DescribeScope = struct {
 
         this.pending_tests.deinit(allocator);
         for (this.tests.items) |*t| {
-            t.deinit(globalThis);
+            t.deinit();
         }
         this.tests.clearAndFree(allocator);
     }
@@ -1259,7 +1260,7 @@ pub const WrappedDescribeScope = struct {
 pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
     test_id_for_debugger: TestRunner.Test.ID,
-    describe: *DescribeScope,
+    describe: DescribeScope.Ptr,
     globalThis: *JSGlobalObject,
     source_file_path: string = "",
     needs_before_each: bool = true,
@@ -1331,9 +1332,12 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn run(this: *TestRunnerTask) bool {
-        var describe = this.describe;
+        var describe = this.describe.get();
         var globalThis = this.globalThis;
         var jsc_vm = globalThis.bunVM();
+
+        describe.ref();
+        defer describe.deref();
 
         // reset the global state for each test
         // prior to the run
@@ -1350,7 +1354,7 @@ pub const TestRunnerTask = struct {
             return false;
         }
 
-        var test_: TestScope = this.describe.tests.items[test_id];
+        var test_: TestScope = describe.tests.items[test_id];
         describe.current_test_id = test_id;
         const test_id_for_debugger = test_.test_id_for_debugger;
         this.test_id_for_debugger = test_id_for_debugger;
@@ -1377,9 +1381,9 @@ pub const TestRunnerTask = struct {
             this.needs_before_each = false;
             const label = test_.label;
 
-            if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
+            if (describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, describe);
                 return false;
             }
         }
@@ -1388,8 +1392,8 @@ pub const TestRunnerTask = struct {
         jsc_vm.auto_killer.enable();
         var result = TestScope.run(&test_, this);
 
-        if (this.describe.tests.items.len > test_id) {
-            this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
+        if (describe.tests.items.len > test_id) {
+            describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
         }
 
         // rejected promises should fail the test
@@ -1516,12 +1520,12 @@ pub const TestRunnerTask = struct {
         this.reported = true;
 
         const test_id = this.test_id;
-        var test_ = this.describe.tests.items[test_id];
+        var test_ = this.describe.get().tests.items[test_id];
         if (from == .timeout) {
             test_.timeout_millis = @truncate(from.timeout);
         }
 
-        var describe = this.describe;
+        var describe = this.describe.get();
         describe.tests.items[test_id] = test_;
 
         if (from == .timeout) {
@@ -1640,6 +1644,7 @@ pub const TestRunnerTask = struct {
 
     fn deinit(this: *TestRunnerTask) void {
         const vm = JSC.VirtualMachine.get();
+        this.describe.deinit();
         if (vm.onUnhandledRejectionCtx) |ctx| {
             if (ctx == @as(*anyopaque, @ptrCast(this))) {
                 vm.onUnhandledRejectionCtx = null;
@@ -2043,7 +2048,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     const parent = DescribeScope.active.?;
 
     if (JSC.getFunctionData(callee)) |data| {
-        const allocator = getAllocator(globalThis);
+        const allocator = bun.default_allocator;
         const each_data = bun.cast(*EachData, data);
         JSC.setFunctionData(callee, null);
         const array = each_data.*.strong.get() orelse return .undefined;
@@ -2146,13 +2151,24 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     }) catch unreachable;
                 }
             } else {
-                var scope = allocator.create(DescribeScope) catch unreachable;
-                scope.* = .{
+                var scope = DescribeScope.new(.{
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
-                };
+                });
+                // scope.* = .{
+                //     .label = formattedLabel,
+                //     .parent = parent,
+                //     .file_id = parent.file_id,
+                //     .tag = tag,
+                // };
+                // var scope = DescribeScope.Ptr.new(.{
+                //     .label = formattedLabel,
+                //     .parent = parent,
+                //     .file_id = parent.file_id,
+                //     .tag = tag,
+                // });
 
                 const ret = scope.run(globalThis, function, function_args);
                 _ = ret;

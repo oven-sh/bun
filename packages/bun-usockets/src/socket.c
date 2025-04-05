@@ -37,6 +37,15 @@ int us_socket_local_port(int ssl, struct us_socket_t *s) {
     }
 }
 
+int us_socket_remote_port(int ssl, struct us_socket_t *s) {
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+        return -1;
+    } else {
+        return bsd_addr_get_port(&addr);
+    }
+}
+
 void us_socket_shutdown_read(int ssl, struct us_socket_t *s) {
     /* This syscall is idempotent so no extra check is needed */
     bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));

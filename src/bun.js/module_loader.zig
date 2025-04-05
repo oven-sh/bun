@@ -42,6 +42,7 @@ const JSC = bun.JSC;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
@@ -78,7 +79,6 @@ inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) Resolve
         .source_code = bun.String.empty,
         .specifier = specifier,
         .source_url = bun.String.static(@tagName(name)),
-        .hash = 0,
         .tag = name,
         .source_code_needs_deref = false,
     };
@@ -568,7 +568,6 @@ pub const RuntimeTranspilerStore = struct {
                             break :brk result;
                         },
                     },
-                    .hash = 0,
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
                     .tag = this.resolved_source.tag,
                 };
@@ -582,7 +581,6 @@ pub const RuntimeTranspilerStore = struct {
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .already_bundled = true,
-                    .hash = 0,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
@@ -684,7 +682,6 @@ pub const RuntimeTranspilerStore = struct {
                 .allocator = null,
                 .source_code = source_code,
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-                .hash = 0,
                 .tag = this.resolved_source.tag,
             };
         }
@@ -1447,8 +1444,6 @@ pub const ModuleLoader = struct {
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-
-                .hash = 0,
             };
         }
 
@@ -1509,7 +1504,6 @@ pub const ModuleLoader = struct {
                     .source_code = bun.String.empty,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .hash = 0,
                 };
             }
         }
@@ -1741,8 +1735,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createUTF8(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-
-                        .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
                     };
                 }
@@ -1757,7 +1749,6 @@ pub const ModuleLoader = struct {
                         },
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                     };
                 }
 
@@ -1767,7 +1758,6 @@ pub const ModuleLoader = struct {
                             .allocator = null,
                             .specifier = input_specifier,
                             .source_url = input_specifier.createIfDifferent(path.text),
-                            .hash = 0,
                             .jsvalue_for_export = JSValue.createEmptyObject(jsc_vm.global, 0),
                             .tag = .exports_object,
                         };
@@ -1777,7 +1767,6 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                         .tag = .exports_object,
                     };
@@ -1791,7 +1780,6 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
-                        .hash = 0,
                         .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                         .bytecode_cache_size = bytecode_slice.len,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
@@ -1810,7 +1798,6 @@ pub const ModuleLoader = struct {
                             .specifier = input_specifier,
                             .source_url = input_specifier.createIfDifferent(path.text),
                             .is_commonjs_module = true,
-                            .hash = 0,
                             .tag = .javascript,
                         };
                     }
@@ -1839,7 +1826,6 @@ pub const ModuleLoader = struct {
                         },
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .is_commonjs_module = entry.metadata.module_type == .cjs,
                         .tag = brk: {
                             if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
@@ -1970,7 +1956,6 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-                    .hash = 0,
                     .tag = tag,
                 };
             },
@@ -2013,7 +1998,6 @@ pub const ModuleLoader = struct {
             //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
             //         .specifier = ZigString.init(specifier),
             //         .source_url = input_specifier.createIfDifferent(path.text),
-            //         .hash = 0,
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
             // },
@@ -2039,7 +2023,6 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
-                        .hash = 0,
                     };
                 }
 
@@ -2099,7 +2082,6 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,
-                    .hash = 0,
                 };
             },
 
@@ -2110,7 +2092,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.empty,
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .tag = .esm,
                     };
                 }
@@ -2125,7 +2106,6 @@ pub const ModuleLoader = struct {
                     .jsvalue_for_export = html_bundle.toJS(globalObject.?),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .hash = 0,
                     .tag = .export_default_object,
                 };
             },
@@ -2137,7 +2117,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.empty,
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .tag = .esm,
                     };
                 }
@@ -2209,7 +2188,6 @@ pub const ModuleLoader = struct {
                     .jsvalue_for_export = value,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .hash = 0,
                     .tag = .export_default_object,
                 };
             },
@@ -2277,6 +2255,8 @@ pub const ModuleLoader = struct {
         type_attribute: ?*const bun.String,
         ret: *JSC.ErrorableResolvedSource,
         allow_promise: bool,
+        is_commonjs_require: bool,
+        force_loader_type: bun.options.Loader.Optional,
     ) ?*anyopaque {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.transpiler.allocator);
@@ -2294,13 +2274,66 @@ pub const ModuleLoader = struct {
 
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
-        const lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
+        var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
             ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
             return null;
         };
         defer if (blob_to_deinit) |*blob| blob.deinit();
 
-        const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
+        if (force_loader_type.unwrap()) |loader_type| {
+            @branchHint(.unlikely);
+            bun.assert(!is_commonjs_require);
+            lr.loader = loader_type;
+        } else if (is_commonjs_require and jsc_vm.has_mutated_built_in_extensions > 0) {
+            @branchHint(.unlikely);
+            if (node_module_module.findLongestRegisteredExtension(jsc_vm, _specifier.slice())) |entry| {
+                switch (entry) {
+                    .loader => |loader| {
+                        lr.loader = loader;
+                    },
+                    .custom => |index| {
+                        ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
+                            .allocator = null,
+                            .source_code = bun.String.empty,
+                            .specifier = .empty,
+                            .source_url = .empty,
+                            .cjs_custom_extension_index = index,
+                            .tag = .common_js_custom_extension,
+                        });
+                        return null;
+                    },
+                }
+            }
+        }
+
+        const module_type: options.ModuleType = brk: {
+            const ext = lr.path.name.ext;
+            // regular expression /.[cm][jt]s$/
+            if (ext.len == ".cjs".len) {
+                if (strings.eqlComptimeIgnoreLen(ext, ".cjs"))
+                    break :brk .cjs;
+                if (strings.eqlComptimeIgnoreLen(ext, ".mjs"))
+                    break :brk .esm;
+                if (strings.eqlComptimeIgnoreLen(ext, ".cts"))
+                    break :brk .cjs;
+                if (strings.eqlComptimeIgnoreLen(ext, ".mts"))
+                    break :brk .esm;
+            }
+            // regular expression /.[jt]s$/
+            if (ext.len == ".ts".len) {
+                if (strings.eqlComptimeIgnoreLen(ext, ".js") or
+                    strings.eqlComptimeIgnoreLen(ext, ".ts"))
+                {
+                    // Use the package.json module type if it exists
+                    break :brk if (lr.package_json) |pkg|
+                        pkg.module_type
+                    else
+                        .unknown;
+                }
+            }
+            // For JSX TSX and other extensions, let the file contents.
+            break :brk .unknown;
+        };
         const pkg_name: ?[]const u8 = if (lr.package_json) |pkg|
             if (pkg.name.len > 0) pkg.name else null
         else
@@ -2367,19 +2400,48 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const synchronous_loader = lr.loader orelse loader: {
+        const synchronous_loader: options.Loader = lr.loader orelse loader: {
             if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
                 // Extensionless files in this context are treated as the JS loader
                 if (lr.path.name.ext.len == 0) {
-                    break :loader options.Loader.tsx;
+                    break :loader .tsx;
                 }
 
                 // Unknown extensions are to be treated as file loader
-                break :loader options.Loader.file;
+                if (is_commonjs_require) {
+                    if (jsc_vm.commonjs_custom_extensions.entries.len > 0 and
+                        jsc_vm.has_mutated_built_in_extensions == 0)
+                    {
+                        @branchHint(.unlikely);
+                        if (node_module_module.findLongestRegisteredExtension(jsc_vm, lr.path.text)) |entry| {
+                            switch (entry) {
+                                .loader => |loader| break :loader loader,
+                                .custom => |index| {
+                                    ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
+                                        .allocator = null,
+                                        .source_code = bun.String.empty,
+                                        .specifier = .empty,
+                                        .source_url = .empty,
+                                        .cjs_custom_extension_index = index,
+                                        .tag = .common_js_custom_extension,
+                                    });
+                                    return null;
+                                },
+                            }
+                        }
+                    }
+
+                    // For Node.js compatibility, requiring a file with an
+                    // unknown extension will be treated as a JS file
+                    break :loader .ts;
+                }
+
+                // For ESM, Bun treats unknown extensions as file loader
+                break :loader .file;
             } else {
                 // Unless it's potentially the main module
                 // This is important so that "bun run ./foo-i-have-no-extension" works
-                break :loader options.Loader.tsx;
+                break :loader .tsx;
             }
         };
 
@@ -2451,7 +2513,6 @@ pub const ModuleLoader = struct {
                 .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
                 .specifier = specifier,
                 .source_url = specifier,
-                .hash = 0,
                 .tag = .esm,
                 .source_code_needs_deref = true,
             },
@@ -2460,14 +2521,13 @@ pub const ModuleLoader = struct {
                     if (!is_allowed_to_use_internal_testing_apis)
                         return null;
                 }
-                return jsSyntheticModule(.InternalForTesting, specifier);
+                return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
             },
             .@"bun:wrap" => .{
                 .allocator = null,
                 .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
-                .hash = Runtime.Runtime.versionHash(),
             },
             inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier),
         };
@@ -2487,7 +2547,6 @@ pub const ModuleLoader = struct {
                     .source_code = bun.String.createUTF8(entry.source.contents),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
-                    .hash = 0,
                 };
             }
         } else if (jsc_vm.standalone_module_graph) |graph| {
@@ -2509,7 +2568,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.static(code),
                         .specifier = specifier,
                         .source_url = specifier.dupeRef(),
-                        .hash = 0,
                         .source_code_needs_deref = false,
                     };
                 }
@@ -2519,7 +2577,6 @@ pub const ModuleLoader = struct {
                     .source_code = file.toWTFString(),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
-                    .hash = 0,
                     .source_code_needs_deref = false,
                     .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                     .bytecode_cache_size = file.bytecode.len,
@@ -2786,6 +2843,7 @@ pub const HardcodedModule = enum {
         path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
         node_builtin: bool = false,
+        node_only_prefix: bool = false,
 
         fn nodeEntry(path: [:0]const u8) struct { string, Alias } {
             return .{
@@ -2793,6 +2851,16 @@ pub const HardcodedModule = enum {
                 .{
                     .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
                     .node_builtin = true,
+                },
+            };
+        }
+        fn nodeEntryOnlyPrefix(path: [:0]const u8) struct { string, Alias } {
+            return .{
+                path,
+                .{
+                    .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
+                    .node_builtin = true,
+                    .node_only_prefix = true,
                 },
             };
         }
@@ -2855,7 +2923,7 @@ pub const HardcodedModule = enum {
             nodeEntry("node:worker_threads"),
             nodeEntry("node:zlib"),
             // New Node.js builtins only resolve from the prefixed one.
-            nodeEntry("node:test"),
+            nodeEntryOnlyPrefix("node:test"),
 
             nodeEntry("assert"),
             nodeEntry("assert/strict"),

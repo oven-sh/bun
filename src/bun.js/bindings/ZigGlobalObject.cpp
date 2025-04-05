@@ -80,6 +80,7 @@
 #include "JSBufferList.h"
 #include "JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
+#include "JSCommonJSExtensions.h"
 #include "JSCountQueuingStrategy.h"
 #include "JSCustomEvent.h"
 #include "JSDOMConvertBase.h"
@@ -2939,18 +2940,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(crypto);
         });
 
-    m_lazyRequireCacheObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            init.set(result.toObject(globalObject));
-        });
-
     m_lazyTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
@@ -4026,6 +4015,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_currentNapiHandleScopeImpl);
 
     thisObject->m_moduleResolveFilenameFunction.visit(visitor);
+    thisObject->m_modulePrototypeUnderscoreCompileFunction.visit(visitor);
+    thisObject->m_commonJSRequireESMFromHijackedExtensionFunction.visit(visitor);
     thisObject->m_moduleRunMainFunction.visit(visitor);
     thisObject->m_nodeModuleConstructor.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
@@ -4070,6 +4061,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
+    thisObject->m_lazyRequireExtensionsObject.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSStatsClassStructure.visit(visitor);

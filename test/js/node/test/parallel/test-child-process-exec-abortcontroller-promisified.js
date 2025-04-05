@@ -1,5 +1,4 @@
-// Modified to allow the abort error to have a 'stack' property and use the web-standard error message
-// rather than the node one. <https://github.com/nodejs/node/pull/57735>
+// Modified to allow the abort error to have a 'stack' property
 
 'use strict';
 const common = require('../common');

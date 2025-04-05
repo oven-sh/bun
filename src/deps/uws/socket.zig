@@ -62,6 +62,10 @@ pub const Socket = opaque {
         return us_socket_local_port(@intFromBool(ssl), this);
     }
 
+    pub fn remotePort(this: *Socket, ssl: bool) i32 {
+        return us_socket_remote_port(@intFromBool(ssl), this);
+    }
+
     /// Returned slice is a view into `buf`.
     pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) ![]const u8 {
         var length: i32 = @intCast(buf.len);
@@ -151,6 +155,7 @@ pub const Socket = opaque {
     extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 
     extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
+    extern fn us_socket_remote_port(ssl: i32, s: ?*Socket) i32;
     extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;

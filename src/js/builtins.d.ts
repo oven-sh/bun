@@ -22,7 +22,11 @@ declare function $debug(...args: any[]): void;
 declare function $assert(check: any, ...message: any[]): asserts check;
 
 /** Asserts the input is a promise. Returns `true` if the promise is resolved */
-declare function $isPromiseResolved(promise: Promise<any>): boolean;
+declare function $isPromiseFulfilled(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is rejected */
+declare function $isPromiseRejected(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is pending */
+declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
 
@@ -484,11 +488,11 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: ?JSCommonJSModule,
+  parent: JSCommonJSModule | undefined,
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
-  sourceModule: JSCommonJSModule
+  sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
@@ -644,6 +648,7 @@ declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
 declare function $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(value, expected): TypeError;
 declare function $ERR_CRYPTO_INCOMPATIBLE_KEY(name, value): Error;
 declare function $ERR_CHILD_PROCESS_IPC_REQUIRED(where): Error;
+declare function $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(message): Error;
 declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
 declare function $ERR_ASYNC_TYPE(name): TypeError;
 declare function $ERR_ASYNC_CALLBACK(name): TypeError;

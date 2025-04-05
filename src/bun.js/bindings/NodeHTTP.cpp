@@ -1304,13 +1304,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetTimeout, (JSGlobalObject * globalObject, CallF
 
     if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
         Request__setTimeout(jsRequest->wrapped(), JSValue::encode(seconds), globalObject);
+        return JSValue::encode(jsBoolean(true));
     }
 
     if (auto* nodeHttpResponse = jsDynamicCast<WebCore::JSNodeHTTPResponse*>(requestValue)) {
         NodeHTTPResponse__setTimeout(nodeHttpResponse->wrapped(), JSValue::encode(seconds), globalObject);
+        return JSValue::encode(jsBoolean(true));
     }
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(false));
 }
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

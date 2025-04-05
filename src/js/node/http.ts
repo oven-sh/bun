@@ -1545,8 +1545,12 @@ const IncomingMessagePrototype = {
     const req = this[kHandle] || this[webRequestOrResponse];
 
     if (req) {
-      setRequestTimeout(req, Math.ceil(msecs / 1000));
-      typeof callback === "function" && this.once("timeout", callback);
+      if (setRequestTimeout(req, Math.ceil(msecs / 1000))) {
+        typeof callback === "function" && this.once("timeout", callback);
+      } else {
+        // Actually a Response object
+        req.setTimeout?.(msecs, callback);
+      }
     }
     return this;
   },
@@ -2659,6 +2663,10 @@ function ClientRequest(input, options, cb) {
 
     this.finished = true;
 
+    if (this.res && !this.res.complete) {
+      this.res.emit("end");
+    }
+
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
@@ -2843,6 +2851,19 @@ function ClientRequest(input, options, cb) {
           }));
           isNextIncomingMessageHTTPS = prevIsHTTPS;
           res.req = this;
+          let timer;
+          response.setTimeout = (msecs, callback) => {
+            if (timer) {
+              clearTimeout(timer);
+            }
+            timer = setTimeout(() => {
+              if (res.complete) {
+                return;
+              }
+              res.emit("timeout");
+              callback?.();
+            }, msecs);
+          };
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -2958,9 +2979,8 @@ function ClientRequest(input, options, cb) {
 
   const send = () => {
     this.finished = true;
-    const controller = new AbortController();
-    this[kAbortController] = controller;
-    controller.signal.addEventListener("abort", onAbort, { once: true });
+    this[kAbortController] = new AbortController();
+    this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
 
@@ -3093,7 +3113,7 @@ function ClientRequest(input, options, cb) {
     signal.addEventListener(
       "abort",
       () => {
-        this[kAbortController]?.abort?.();
+        this[kAbortController]?.abort();
       },
       { once: true },
     );
@@ -3304,7 +3324,7 @@ function ClientRequest(input, options, cb) {
 
   const onTimeout = () => {
     this[kTimeoutTimer] = undefined;
-    this[kAbortController]?.abort?.();
+    this[kAbortController]?.abort();
     this.emit("timeout");
   };
 
@@ -3370,7 +3390,7 @@ const ClientRequestPrototype = {
   },
 
   get aborted() {
-    return this[abortedSymbol] || this[kSignal]?.aborted || !!this[kAbortController]?.signal?.aborted;
+    return this[abortedSymbol] || this[kSignal]?.aborted || !!this[kAbortController]?.signal.aborted;
   },
 
   set aborted(value) {

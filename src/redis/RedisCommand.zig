@@ -3,14 +3,25 @@ args: Args,
 command_type: Type,
 
 pub const Args = union(enum) {
-    slices: []const JSC.ZigString.Slice,
+    slices: []const Slice,
     raw: []const []const u8,
 
-    pub fn len(this: @This()) usize {
-        return switch (this) {
+    pub fn len(this: *const @This()) usize {
+        return switch (this.*) {
             .slices => |args| args.len,
             .raw => |args| args.len,
         };
+    }
+
+    pub fn deinit(this: *@This()) void {
+        switch (this.*) {
+            .slices => |args| {
+                for (args) |*arg| {
+                    arg.deinit();
+                }
+            },
+            .raw => {}, // lifetime is not owned by this command.
+        }
     }
 };
 
@@ -49,12 +60,12 @@ pub fn serialize(this: *const Command, allocator: std.mem.Allocator) ![]u8 {
 }
 
 /// Command stored in offline queue when disconnected
-pub const Offline = struct {
+pub const Entry = struct {
     serialized_data: []u8, // Pre-serialized RESP protocol bytes
     command_type: Type,
     promise: Promise,
 
-    pub const Queue = std.fifo.LinearFifo(Offline, .Dynamic);
+    pub const Queue = std.fifo.LinearFifo(Entry, .Dynamic);
 
     pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
         allocator.free(self.serialized_data);
@@ -65,14 +76,18 @@ pub const Offline = struct {
         allocator: std.mem.Allocator,
         command: *const Command,
         promise: Promise,
-    ) !Offline {
-        return Offline{
+    ) !Entry {
+        return Entry{
             .serialized_data = try command.serialize(allocator),
             .command_type = command.command_type,
             .promise = promise,
         };
     }
 };
+
+pub fn deinit(this: *Command) void {
+    this.args.deinit();
+}
 
 /// Redis command types with special handling
 pub const Type = enum {
@@ -129,3 +144,4 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const protocol = @import("redis_protocol.zig");
 const std = @import("std");
+const Slice = JSC.ZigString.Slice;

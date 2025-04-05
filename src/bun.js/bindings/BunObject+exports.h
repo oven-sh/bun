@@ -34,7 +34,7 @@
     macro(TOML) \
     macro(Transpiler) \
     macro(unsafe) \
-
+    macro(ValkeyClient) \
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(allocUnsafe) \
@@ -72,7 +72,6 @@
     macro(shellEscape) \
     macro(createShellInterpreter) \
     macro(createParsedShellScript) \
-    macro(valkey) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

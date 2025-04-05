@@ -2,9 +2,9 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
-    name: "Valkey",
-    noConstructor: true,
-    call: true,
+    name: "ValkeyClient",
+    construct: true,
+    call: false,
     finalize: true,
     configurable: false,
     JSType: "0b11101110",
@@ -109,6 +109,6 @@ export default [
         length: 3,
       },
     },
-    values: ["onconnect", "onclose"],
+    values: ["onconnect", "onclose", "connectionPromise"],
   }),
 ];

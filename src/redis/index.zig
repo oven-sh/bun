@@ -15,7 +15,6 @@ pub const JSRedisClient = js_redis.JSRedisClient;
 
 // Re-export key types for easy access
 pub const RedisClient = redis.RedisClient;
-pub const CommandType = redis.CommandType;
 pub const Protocol = redis.Protocol;
 pub const Status = redis.Status;
 pub const Options = redis.Options;

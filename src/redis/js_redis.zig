@@ -31,51 +31,151 @@ pub const JSRedisClient = struct {
             .nsec = 0,
         },
     },
-    connection_promise: ?*Command.Promise = null,
+
     ref_count: u32 = 1,
 
-    pub usingnamespace JSC.Codegen.JSValkey;
+    pub usingnamespace JSC.Codegen.JSValkeyClient;
     pub usingnamespace bun.NewRefCounted(JSRedisClient, deinit, null);
+
+    // Factory function to create a new Redis client from JS
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSRedisClient {
+        const arguments = callframe.arguments();
+
+        const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
+            bun.String.init("redis://localhost:6379")
+        else
+            try arguments[0].toBunString(globalObject);
+        defer url_str.deref();
+
+        const url_utf8 = url_str.toUTF8WithoutRef(bun.default_allocator);
+        defer url_utf8.deinit();
+        const url = bun.URL.parse(url_utf8.slice());
+
+        const port = url.getPort() orelse 6379;
+        const uri = if (url.protocol.len > 0)
+            redis.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of redis, rediss, redis+tls, redis+unix, redis+tls+unix", .{})
+        else
+            .standalone;
+
+        if (uri.isUnix() or uri.isTLS()) {
+            return globalObject.throwTODO("Unix and TLS connections are not supported yet");
+        }
+
+        const options = if (arguments.len >= 2 and !arguments[1].isUndefinedOrNull() and arguments[1].isObject())
+            try Options.fromJS(globalObject, arguments[1])
+        else
+            redis.Options{};
+
+        var username: []const u8 = "";
+        var password: []const u8 = "";
+        var hostname: []const u8 = url.displayHostname();
+        var connection_strings: []u8 = &.{};
+
+        if (url.username.len > 0 or url.password.len > 0 or hostname.len > 0) {
+            var b = bun.StringBuilder{};
+            b.count(url.username);
+            b.count(url.password);
+            b.count(hostname);
+            try b.allocate(bun.default_allocator);
+            username = b.append(url.username);
+            password = b.append(url.password);
+            hostname = b.append(hostname);
+            connection_strings = b.allocatedSlice();
+        }
+
+        const database = if (url.pathname.len > 0) std.fmt.parseInt(u32, url.pathname[1..], 10) catch 0 else 0;
+
+        bun.analytics.Features.redis_connections += 1;
+
+        return JSRedisClient.new(.{
+            .client = redis.RedisClient{
+                .hostname = hostname,
+                .protocol = uri,
+                .port = port,
+                .username = username,
+                .password = password,
+                .in_flight = .init(bun.default_allocator),
+                .queue = .init(bun.default_allocator),
+                .status = .disconnected,
+                .connection_strings = connection_strings,
+                .socket = .{
+                    .SocketTCP = .{
+                        .socket = .{
+                            .detached = {},
+                        },
+                    },
+                },
+                .database = database,
+                .allocator = bun.default_allocator,
+                .enable_auto_reconnect = options.enable_auto_reconnect,
+                .enable_offline_queue = options.enable_offline_queue,
+                .max_retries = options.max_retries,
+                .connection_timeout_ms = options.connection_timeout_ms,
+                .socket_timeout_ms = options.socket_timeout_ms,
+                .idle_timeout_interval_ms = options.idle_timeout_ms,
+            },
+            .globalObject = globalObject,
+            .ref_count = 1,
+        });
+    }
+
     pub fn getConnected(this: *JSRedisClient, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.client.status == .connected);
     }
 
-    pub fn jsConnect(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsConnect(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
 
+        const this_value = callframe.this();
+
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            var promise = JSC.JSPromise.create(globalObject);
-            promise.resolve(globalObject, .undefined);
-            return promise.promise.get().asValue(globalObject);
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, .undefined);
         }
 
-        // Create a promise to track connect result
-        var promise = Command.Promise.create(globalObject, .Generic);
+        if (JSRedisClient.connectionPromiseGetCached(this_value)) |promise| {
+            return promise;
+        }
 
-        // Store promise in a special connection promise
-        this.connection_promise = promise;
+        const promise_ptr = JSC.JSPromise.create(globalObject);
+        const promise = promise_ptr.asValue(globalObject);
+        JSRedisClient.connectionPromiseSetCached(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
+        this.this_value.set(globalObject, this_value);
 
-        // If disconnected, force a reconnection
-        if (this.client.status == .disconnected) {
-            this.client.flags.is_reconnecting = true;
-            this.client.retry_attempts = 0;
-            this.reconnect();
+        if (this.client.flags.needs_to_open_socket) {
+            this.poll_ref.ref(globalObject.bunVM());
+
+            this.connect() catch |err| {
+                this.client.flags.needs_to_open_socket = true;
+                const err_value = globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
+                promise_ptr.reject(globalObject, err_value);
+                return promise;
+            };
+
+            this.resetConnectionTimeout();
+            return promise;
         }
 
-        // If failed, reset status and try again
-        if (this.client.status == .failed) {
-            this.client.status = .disconnected;
-            this.client.flags.is_reconnecting = true;
-            this.client.retry_attempts = 0;
-            this.reconnect();
+        switch (this.client.status) {
+            .disconnected => {
+                this.client.flags.is_reconnecting = true;
+                this.client.retry_attempts = 0;
+                this.reconnect();
+            },
+            .failed => {
+                this.client.status = .disconnected;
+                this.client.flags.is_reconnecting = true;
+                this.client.retry_attempts = 0;
+                this.reconnect();
+            },
+            else => {},
         }
 
-        return promise.promise.get().asValue(globalObject);
+        return promise;
     }
 
     pub fn jsDisconnect(this: *JSRedisClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -86,9 +186,7 @@ pub const JSRedisClient = struct {
         return .undefined;
     }
 
-    pub fn consumeOnConnectCallback(this: *const JSRedisClient, globalObject: *JSC.JSGlobalObject) ?JSValue {
-        const js_this = this.this_value.get() orelse return null;
-        debug("consumeOnConnectCallback", .{});
+    pub fn consumeOnConnectCallback(globalObject: *JSC.JSGlobalObject, js_this: JSValue) ?JSValue {
         const on_connect = JSRedisClient.onconnectGetCached(js_this) orelse return null;
         debug("consumeOnConnectCallback exists", .{});
 
@@ -96,9 +194,8 @@ pub const JSRedisClient = struct {
         return on_connect;
     }
 
-    pub fn consumeOnCloseCallback(this: *const JSRedisClient, globalObject: *JSC.JSGlobalObject) ?JSValue {
+    pub fn consumeOnCloseCallback(globalObject: *JSC.JSGlobalObject, js_this: JSValue) ?JSValue {
         debug("consumeOnCloseCallback", .{});
-        const js_this = this.this_value.get() orelse return null;
         const on_close = JSRedisClient.oncloseGetCached(js_this) orelse return null;
         debug("consumeOnCloseCallback exists", .{});
         JSRedisClient.oncloseSetCached(js_this, globalObject, .zero);
@@ -147,9 +244,6 @@ pub const JSRedisClient = struct {
         // Store VM reference to use later
         const vm = this.globalObject.bunVM();
 
-        // Ensure event loop stays alive by incrementing keepalive count
-        this.poll_ref.ref(vm);
-
         // Set up timer and add to event loop
         timer.next = bun.timespec.msFromNow(@intCast(next_timeout_ms));
         vm.timer.insert(timer);
@@ -168,9 +262,6 @@ pub const JSRedisClient = struct {
 
             // Remove the timer from the event loop
             vm.timer.remove(timer);
-
-            // Decrement event loop keepalive count using stored VM reference
-            this.poll_ref.unref(vm);
 
             // Balance the ref from addTimer
             this.deref();
@@ -271,6 +362,8 @@ pub const JSRedisClient = struct {
         this.client.retry_attempts = 0;
 
         // Ref the poll to keep event loop alive during connection
+        this.poll_ref.disable();
+        this.poll_ref = .{};
         this.poll_ref.ref(vm);
 
         this.client.socket = .{
@@ -295,86 +388,92 @@ pub const JSRedisClient = struct {
     }
 
     // Callback for when Redis client connects
-    pub fn onRedisConnect(self: *JSRedisClient) void {
+    pub fn onRedisConnect(this: *JSRedisClient) void {
         // Safety check to ensure a valid connection state
-        if (self.client.status != .connected) {
-            debug("onRedisConnect called but client status is not 'connected': {s}", .{@tagName(self.client.status)});
+        if (this.client.status != .connected) {
+            debug("onRedisConnect called but client status is not 'connected': {s}", .{@tagName(this.client.status)});
             return;
         }
-        
-        // Process offline queue (commands queued while disconnected)
-        self.client.processOfflineQueue();
 
-        // Process any pending write buffer
-        if (self.client.write_buffer.len() > 0) {
-            if (!self.client.socket.isClosed()) {
-                self.client.flushData();
-            } else {
-                debug("Socket is closed, cannot flush data", .{});
+        const globalObject = this.globalObject;
+        const event_loop = globalObject.bunVM().eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
+
+        if (this.this_value.trySwap()) |this_value| {
+            // Call onConnect callback if defined by the user
+            // Call onConnect callback if defined by the user
+            if (consumeOnConnectCallback(globalObject, this_value)) |on_connect| {
+                const js_value = this_value;
+                js_value.ensureStillAlive();
+                globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
             }
-        } else {
-            self.poll_ref.unref(self.globalObject.bunVM());
+
+            if (JSRedisClient.connectionPromiseGetCached(this_value)) |promise| {
+                JSRedisClient.connectionPromiseSetCached(this_value, globalObject, .zero);
+                promise.asPromise().?.resolve(globalObject, .undefined);
+            }
         }
 
-        // Resolve connection promise if it exists
-        if (self.connection_promise) |promise| {
-            promise.resolve(self.globalObject, .undefined);
-            self.connection_promise = null;
-        }
-
-        // Call onConnect callback if defined by the user
-        const on_connect = self.consumeOnConnectCallback(self.globalObject) orelse return;
-        const js_value = self.this_value.get() orelse return;
-        js_value.ensureStillAlive();
-        self.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
+        this.client.onWritable();
+        this.updatePollRef();
     }
 
     // Callback for when Redis client needs to reconnect
-    pub fn onRedisReconnect(self: *JSRedisClient) void {
+    pub fn onRedisReconnect(this: *JSRedisClient) void {
         // Schedule reconnection using our safe timer methods
-        if (self.reconnect_timer.state == .ACTIVE) {
-            self.removeTimer(&self.reconnect_timer);
+        if (this.reconnect_timer.state == .ACTIVE) {
+            this.removeTimer(&this.reconnect_timer);
         }
 
-        const delay_ms = self.client.getReconnectDelay();
+        const delay_ms = this.client.getReconnectDelay();
         if (delay_ms > 0) {
-            self.addTimer(&self.reconnect_timer, delay_ms);
+            this.addTimer(&this.reconnect_timer, delay_ms);
         }
     }
 
     // Callback for when Redis client closes
-    pub fn onRedisClose(self: *JSRedisClient) void {
-        // Create an error value
-        const error_value = protocol.redisErrorToJS(self.globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
+    pub fn onRedisClose(this: *JSRedisClient) void {
+        const globalObject = this.globalObject;
+        this.poll_ref.disable();
+        this.ref();
+        defer this.deref();
+        defer {
+            // If we're still disconnected, then clear it so we can finalize
+            if (this.client.status == .disconnected) {
+                this.deref();
+            }
+        }
 
-        // Reject connection promise if it exists
-        if (self.connection_promise) |promise| {
-            promise.reject(self.globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
-            self.connection_promise = null;
+        const this_jsvalue = this.this_value.trySwap() orelse .undefined;
+
+        // Create an error value
+        const error_value = protocol.redisErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
+
+        const loop = globalObject.bunVM().eventLoop();
+        loop.enter();
+        defer loop.exit();
+
+        if (this_jsvalue != .undefined) {
+            if (JSRedisClient.connectionPromiseGetCached(this_jsvalue)) |promise| {
+                JSRedisClient.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
+                promise.asPromise().?.reject(globalObject, error_value);
+            }
         }
 
         // Call onClose callback if it exists
-        const on_close = self.consumeOnCloseCallback(self.globalObject) orelse return;
+        const on_close = this.consumeOnCloseCallback(globalObject) orelse return;
 
-        const loop = self.globalObject.bunVM().eventLoop();
-        loop.enter();
-        defer loop.exit();
         _ = on_close.call(
-            self.globalObject,
-            self.this_value.get() orelse return,
+            globalObject,
+            this_jsvalue,
             &[_]JSValue{error_value},
-        ) catch |e| self.globalObject.reportActiveExceptionAsUnhandled(e);
+        ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
     }
 
     // Callback for when Redis client times out
-    pub fn onRedisTimeout(self: *JSRedisClient) void {
-        // Reject connection promise if it exists
-        if (self.connection_promise) |promise| {
-            promise.reject(self.globalObject, "Connection timeout", protocol.RedisError.ConnectionClosed);
-            self.connection_promise = null;
-        }
-
-        self.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
+    pub fn onRedisTimeout(this: *JSRedisClient) void {
+        this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
     }
 
     pub fn clientFail(this: *JSRedisClient, message: []const u8, err: protocol.RedisError) void {
@@ -385,22 +484,25 @@ pub const JSRedisClient = struct {
     }
 
     pub fn failWithJSValue(this: *JSRedisClient, value: JSValue) void {
-        const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
-        const loop = this.globalObject.bunVM().eventLoop();
+        const this_value = this.this_value.trySwap() orelse return;
+        const globalObject = this.globalObject;
+        const on_close = consumeOnCloseCallback(globalObject, this_value) orelse return;
+        const loop = globalObject.bunVM().eventLoop();
         loop.enter();
         defer loop.exit();
         _ = on_close.call(
-            this.globalObject,
-            this.this_value.get() orelse return,
+            globalObject,
+            this_value,
             &[_]JSValue{value},
-        ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+        ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
     }
 
     pub fn finalize(this: *JSRedisClient) void {
         debug("JSRedisClient finalize", .{});
         this.stopTimers();
         this.this_value.clearWithoutDeallocation();
-        this.client.deref();
+        this.client.socket.close();
+        this.deref();
     }
 
     pub fn stopTimers(this: *JSRedisClient) void {
@@ -411,6 +513,52 @@ pub const JSRedisClient = struct {
         if (this.reconnect_timer.state == .ACTIVE) {
             this.removeTimer(&this.reconnect_timer);
         }
+    }
+
+    fn connect(this: *JSRedisClient) !void {
+        this.client.flags.needs_to_open_socket = false;
+        const vm = this.globalObject.bunVM();
+
+        const ctx = vm.rareData().redis_context.tcp orelse brk: {
+            var err: uws.create_bun_socket_error_t = .none;
+            const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
+            uws.NewSocketHandler(false).configure(ctx_, true, *JSRedisClient, SocketHandler(false));
+            vm.rareData().redis_context.tcp = ctx_;
+            break :brk ctx_;
+        };
+
+        this.client.socket = uws.AnySocket{
+            .SocketTCP = try uws.SocketTCP.connectAnon(
+                this.client.hostname,
+                this.client.port,
+                ctx,
+                this,
+                false,
+            ),
+        };
+    }
+
+    fn send(this: *JSRedisClient, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*JSC.JSPromise {
+        if (this.client.flags.needs_to_open_socket) {
+            @branchHint(.unlikely);
+
+            if (!this.this_value.has()) {
+                this.this_value.set(globalThis, this_jsvalue);
+            }
+
+            this.connect() catch |err| {
+                this.client.flags.needs_to_open_socket = true;
+                const err_value = globalThis.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
+                const promise = JSC.JSPromise.create(globalThis);
+                promise.reject(globalThis, err_value);
+                return promise;
+            };
+            this.resetConnectionTimeout();
+        }
+
+        defer this.updatePollRef();
+
+        return try this.client.send(globalThis, command);
     }
 
     pub fn jsSendCommand(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -440,11 +588,15 @@ pub const JSRedisClient = struct {
         const cmd_str = command.toUTF8WithoutRef(bun.default_allocator);
         defer cmd_str.deinit();
         // Send command with slices directly
-        const promise = this.client.send(&.{
-            .command = cmd_str.slice(),
-            .args = .{ .slices = args.items },
-            .command_type = .Generic,
-        }) catch |err| {
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
+            &.{
+                .command = cmd_str.slice(),
+                .args = .{ .slices = args.items },
+                .command_type = .Generic,
+            },
+        ) catch |err| {
             return protocol.redisErrorToJS(globalObject, "Failed to send command", err);
         };
         return promise.asValue(globalObject);
@@ -457,7 +609,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send GET command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "GET",
                 .args = .{ .slices = &.{key_slice} },
@@ -481,7 +635,9 @@ pub const JSRedisClient = struct {
         defer value_slice.deinit();
 
         // Send SET command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SET",
                 .args = .{ .slices = &.{ key_slice, value_slice } },
@@ -501,7 +657,9 @@ pub const JSRedisClient = struct {
         defer key_slice.deinit();
 
         // Send DEL command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "DEL",
                 .args = .{ .slices = &.{key_slice} },
@@ -520,7 +678,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send INCR command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "INCR",
                 .args = .{ .slices = &.{key_slice} },
@@ -539,7 +699,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send DECR command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "DECR",
                 .args = .{ .slices = &.{key_slice} },
@@ -558,7 +720,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send EXISTS command with special Exists type for boolean conversion
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "EXISTS",
                 .args = .{ .slices = &.{key_slice} },
@@ -583,7 +747,9 @@ pub const JSRedisClient = struct {
         const seconds_slice = int_buf[0..seconds_len];
 
         // Send EXPIRE command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "EXPIRE",
                 .args = .{ .raw = &.{ key_slice.slice(), seconds_slice } },
@@ -602,7 +768,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send TTL command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "TTL",
                 .args = .{ .slices = &.{key_slice} },
@@ -627,7 +795,9 @@ pub const JSRedisClient = struct {
         defer value_slice.deinit();
 
         // Send SREM command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SREM",
                 .args = .{ .slices = &.{ key_slice, value_slice } },
@@ -647,7 +817,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send SRANDMEMBER command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SRANDMEMBER",
                 .args = .{ .slices = &.{key_slice} },
@@ -667,7 +839,9 @@ pub const JSRedisClient = struct {
         const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
         defer key_slice.deinit();
         // Send SMEMBERS command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SMEMBERS",
                 .args = .{ .slices = &.{key_slice} },
@@ -688,7 +862,9 @@ pub const JSRedisClient = struct {
         defer key_slice.deinit();
 
         // Send SPOP command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SPOP",
                 .args = .{ .slices = &.{key_slice} },
@@ -713,7 +889,9 @@ pub const JSRedisClient = struct {
         defer value_slice.deinit();
 
         // Send SADD command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SADD",
                 .args = .{ .slices = &.{ key_slice, value_slice } },
@@ -738,7 +916,9 @@ pub const JSRedisClient = struct {
         defer value_slice.deinit();
 
         // Send SISMEMBER command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "SISMEMBER",
                 .args = .{ .slices = &.{ key_slice, value_slice } },
@@ -786,7 +966,9 @@ pub const JSRedisClient = struct {
         }
 
         // Send HMGET command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "HMGET",
                 .args = .{ .slices = args.items },
@@ -815,7 +997,9 @@ pub const JSRedisClient = struct {
         defer value_slice.deinit();
 
         // Send HINCRBY command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "HINCRBY",
                 .args = .{ .slices = &.{ key_slice, field_slice, value_slice } },
@@ -844,7 +1028,9 @@ pub const JSRedisClient = struct {
         defer value_slice.deinit();
 
         // Send HINCRBYFLOAT command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "HINCRBYFLOAT",
                 .args = .{ .slices = &.{ key_slice, field_slice, value_slice } },
@@ -905,7 +1091,9 @@ pub const JSRedisClient = struct {
         }
 
         // Send HMSET command
-        const promise = this.client.send(
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
             &.{
                 .command = "HMSET",
                 .args = .{ .slices = args.items },
@@ -927,137 +1115,16 @@ pub const JSRedisClient = struct {
         memory_cost += this.client.read_buffer.byte_list.cap;
 
         // Add queue sizes
-        memory_cost += this.client.command_queue.count * @sizeOf(redis.Command.PromisePair);
-        for (this.client.offline_queue.readableSlice(0)) |*command| {
+        memory_cost += this.client.in_flight.count * @sizeOf(redis.Command.PromisePair);
+        for (this.client.queue.readableSlice(0)) |*command| {
             memory_cost += command.serialized_data.len;
         }
-        memory_cost += this.client.offline_queue.count * @sizeOf(redis.Command.Offline);
+        memory_cost += this.client.queue.count * @sizeOf(redis.Command.Entry);
         return memory_cost;
-    }
-
-    // Factory function to create a new Redis client from JS
-    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        var vm = globalObject.bunVM();
-        const arguments = callframe.arguments();
-
-        const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
-            bun.String.init("redis://localhost:6379")
-        else
-            try arguments[0].toBunString(globalObject);
-        defer url_str.deref();
-
-        const url_utf8 = url_str.toUTF8WithoutRef(bun.default_allocator);
-        defer url_utf8.deinit();
-        const url = bun.URL.parse(url_utf8.slice());
-
-        const port = url.getPort() orelse 6379;
-        const uri = if (url.protocol.len > 0)
-            redis.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of redis, rediss, redis+tls, redis+unix, redis+tls+unix", .{})
-        else
-            .standalone;
-
-        if (uri.isUnix() or uri.isTLS()) {
-            return globalObject.throwTODO("Unix and TLS connections are not supported yet");
-        }
-
-        const options = if (arguments.len >= 2 and !arguments[1].isUndefinedOrNull() and arguments[1].isObject())
-            try Options.fromJS(globalObject, arguments[1])
-        else
-            redis.Options{};
-
-        var username: []const u8 = "";
-        var password: []const u8 = "";
-        var hostname: []const u8 = url.displayHostname();
-        var connection_strings: []u8 = &.{};
-
-        if (url.username.len > 0 or url.password.len > 0 or hostname.len > 0) {
-            var b = bun.StringBuilder{};
-            b.count(url.username);
-            b.count(url.password);
-            b.count(hostname);
-            try b.allocate(bun.default_allocator);
-            username = b.append(url.username);
-            password = b.append(url.password);
-            hostname = b.append(hostname);
-            connection_strings = b.allocatedSlice();
-        }
-
-        const database = if (url.pathname.len > 0) std.fmt.parseInt(u32, url.pathname[1..], 10) catch 0 else 0;
-
-        // Create the Redis client
-
-        // Create the JS wrapper
-        const this: *JSRedisClient = JSRedisClient.new(.{
-            .client = redis.RedisClient{
-                .hostname = hostname,
-                .port = port,
-                .username = username,
-                .password = password,
-                .command_queue = .init(bun.default_allocator),
-                .offline_queue = .init(bun.default_allocator),
-                .status = .disconnected,
-                .connection_strings = connection_strings,
-                .socket = .{
-                    .SocketTCP = .{
-                        .socket = .{
-                            .detached = {},
-                        },
-                    },
-                },
-                .database = database,
-                .allocator = bun.default_allocator,
-                .enable_auto_reconnect = options.enable_auto_reconnect,
-                .enable_offline_queue = options.enable_offline_queue,
-                .max_retries = options.max_retries,
-                .connection_timeout_ms = options.connection_timeout_ms,
-                .socket_timeout_ms = options.socket_timeout_ms,
-                .idle_timeout_interval_ms = options.idle_timeout_ms,
-            },
-            .globalObject = globalObject,
-            .ref_count = 2,
-        });
-        defer this.deref();
-
-        bun.analytics.Features.redis_connections += 1;
-
-        {
-            const ctx = vm.rareData().redis_context.tcp orelse brk: {
-                var err: uws.create_bun_socket_error_t = .none;
-                const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
-                uws.NewSocketHandler(false).configure(ctx_, true, *JSRedisClient, SocketHandler(false));
-                vm.rareData().redis_context.tcp = ctx_;
-                break :brk ctx_;
-            };
-
-            // Don't connect automatically, let the user call connect() explicitly
-            this.client.socket = .{
-                .SocketTCP = .{
-                    .socket = .{
-                        .detached = {},
-                    },
-                },
-            };
-
-            // Start in disconnected state - user must call connect()
-            this.client.status = .disconnected;
-        }
-        const js_value = this.toJS(globalObject);
-        js_value.ensureStillAlive();
-        this.ref();
-        this.this_value.set(globalObject, js_value);
-        // Don't ref the poll initially - only when connected
-        // this.poll_ref.ref(vm);
-        return js_value;
     }
 
     pub fn deinit(this: *JSRedisClient) void {
         bun.debugAssert(this.client.socket.isClosed());
-
-        // Clean up connection promise if it exists
-        if (this.connection_promise) |promise| {
-            promise.reject(this.globalObject, "Client destroyed", protocol.RedisError.ConnectionClosed);
-            this.connection_promise = null;
-        }
 
         this.client.deinit();
         this.poll_ref.disable();
@@ -1065,6 +1132,16 @@ pub const JSRedisClient = struct {
         this.this_value.deinit();
         bun.debugAssert(this.ref_count == 0);
         this.destroy();
+    }
+
+    /// Keep the event loop alive, or don't keep it alive
+    pub fn updatePollRef(this: *JSRedisClient) void {
+        if (!this.client.hasAnyPendingCommands() and this.client.status == .connected) {
+            this.poll_ref.unref(this.globalObject.bunVM());
+            this.this_value.deinit();
+        } else if (this.client.hasAnyPendingCommands()) {
+            this.poll_ref.ref(this.globalObject.bunVM());
+        }
     }
 
     // Socket handler for the uWebSockets library
@@ -1096,9 +1173,8 @@ pub const JSRedisClient = struct {
                 this.client.onClose();
             }
 
-            pub fn onEnd(this: *JSRedisClient, socket: SocketType) void {
-                _ = socket;
-                this.client.onClose();
+            pub fn onEnd(_: *JSRedisClient, socket: SocketType) void {
+                socket.close(.normal);
             }
 
             pub fn onConnectError(this: *JSRedisClient, socket: SocketType, _: i32) void {
@@ -1114,12 +1190,18 @@ pub const JSRedisClient = struct {
 
             pub fn onData(this: *JSRedisClient, socket: SocketType, data: []const u8) void {
                 _ = socket;
+                this.ref();
+                defer this.deref();
                 this.client.onData(data);
+                this.updatePollRef();
             }
 
             pub fn onWritable(this: *JSRedisClient, socket: SocketType) void {
                 _ = socket;
-                this.client.flushData();
+                this.ref();
+                defer this.deref();
+                this.client.onWritable();
+                this.updatePollRef();
             }
         };
     }

@@ -61,34 +61,47 @@ describe("Valkey: Set Data Type Operations", () => {
     test("SMEMBERS command", async () => {
       const key = ctx.generateKey("smembers-test");
 
-      // Add members
-      await ctx.redis.send("SADD", [key, "apple", "banana", "cherry"]);
+      // Add members one at a time using direct sadd method
+      await ctx.redis.sadd(key, "apple");
+      await ctx.redis.sadd(key, "banana");
+      await ctx.redis.sadd(key, "cherry");
 
-      // Get all members
+      // Get all members using direct smembers method
       const members = await ctx.redis.smembers(key);
       expect(Array.isArray(members)).toBe(true);
-      expect(members.length).toBe(3);
-      expect(members).toContain("apple");
-      expect(members).toContain("banana");
-      expect(members).toContain("cherry");
+      
+      // Sort for consistent snapshot since set members can come in any order
+      const sortedMembers = [...members].sort();
+      expect(sortedMembers).toMatchInlineSnapshot(`
+        [
+          "apple",
+          "banana",
+          "cherry",
+        ]
+      `);
     });
 
     test("SCARD command", async () => {
       const key = ctx.generateKey("scard-test");
 
-      // Add members
-      await ctx.redis.send("SADD", [key, "item1", "item2", "item3", "item4"]);
+      // Add members - using direct sadd method for first item, then send for multiple
+      await ctx.redis.sadd(key, "item1");
+      await ctx.redis.send("SADD", [key, "item2", "item3", "item4"]);
 
       // Get set cardinality (size)
+      // TODO: When a direct scard method is implemented, use that instead
       const size = await ctx.redis.send("SCARD", [key]);
       expectType<number>(size, "number");
-      expect(size).toBe(4);
+      expect(size).toMatchInlineSnapshot(`4`);
 
-      // Remove some members and check again
-      await ctx.redis.send("SREM", [key, "item1", "item2"]);
+      // Remove some members - using direct srem method for first item, then send for second
+      await ctx.redis.srem(key, "item1");
+      await ctx.redis.send("SREM", [key, "item2"]);
+      
+      // Check size again
       const updatedSize = await ctx.redis.send("SCARD", [key]);
       expectType<number>(updatedSize, "number");
-      expect(updatedSize).toBe(2);
+      expect(updatedSize).toMatchInlineSnapshot(`2`);
     });
   });
 
@@ -96,45 +109,50 @@ describe("Valkey: Set Data Type Operations", () => {
     test("SPOP command", async () => {
       const key = ctx.generateKey("spop-test");
 
-      // Add members
-      await ctx.redis.sadd("SADD", [key, "red", "green", "blue", "yellow", "purple"]);
+      // Add members - using send for multiple values
+      // TODO: When a SADD method that supports multiple values is added, use that instead
+      await ctx.redis.send("SADD", [key, "red", "green", "blue", "yellow", "purple"]);
 
-      // Pop a single member
+      // Pop a single member - using direct spop method
       const popResult = await ctx.redis.spop(key);
       expect(popResult).toBeDefined();
       expect(typeof popResult).toBe("string");
 
       // Pop multiple members
+      // TODO: When SPOP method that supports count parameter is added, use that instead
       const multiPopResult = await ctx.redis.send("SPOP", [key, "2"]);
       expect(Array.isArray(multiPopResult)).toBe(true);
-      expect(multiPopResult.length).toBe(2);
+      expect(multiPopResult.length).toMatchInlineSnapshot(`2`);
 
       // Verify remaining members
+      // TODO: When a direct scard method is added, use that instead
       const remainingCount = await ctx.redis.send("SCARD", [key]);
       expectType<number>(remainingCount, "number");
-      expect(remainingCount).toBe(2); // 5 original - 1 - 2 = 2 remaining
+      expect(remainingCount).toMatchInlineSnapshot(`2`); // 5 original - 1 - 2 = 2 remaining
     });
 
     test("SRANDMEMBER command", async () => {
       const key = ctx.generateKey("srandmember-test");
 
-      // Add members
-      await ctx.redis.send("SADD", [key, "one", "two", "three", "four", "five"]);
+      // Add members - first with direct sadd, then with send for remaining
+      await ctx.redis.sadd(key, "one");
+      await ctx.redis.send("SADD", [key, "two", "three", "four", "five"]);
 
-      // Get a random member
+      // Get a random member - using direct srandmember method
       const randResult = await ctx.redis.srandmember(key);
       expect(randResult).toBeDefined();
       expect(typeof randResult).toBe("string");
 
       // Get multiple random members
+      // TODO: When srandmember method with count parameter is added, use that instead
       const multiRandResult = await ctx.redis.send("SRANDMEMBER", [key, "3"]);
       expect(Array.isArray(multiRandResult)).toBe(true);
-      expect(multiRandResult.length).toBe(3);
+      expect(multiRandResult.length).toMatchInlineSnapshot(`3`);
 
       // Verify set is unchanged
       const count = await ctx.redis.send("SCARD", [key]);
       expectType<number>(count, "number");
-      expect(count).toBe(5); // All members still present unlike SPOP
+      expect(count).toMatchInlineSnapshot(`5`); // All members still present unlike SPOP
     });
 
     test("SMOVE command", async () => {

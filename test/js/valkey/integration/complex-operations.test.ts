@@ -203,10 +203,17 @@ describe("Valkey: Complex Operations", () => {
       // Should find all our keys
       expect(Array.isArray(patternResult)).toBe(true);
       expect(patternResult.length).toBe(4);
-      expect(patternResult).toContain(`${baseKey}:name`);
-      expect(patternResult).toContain(`${baseKey}:email`);
-      expect(patternResult).toContain(`${baseKey}:age`);
-      expect(patternResult).toContain(`${baseKey}:visits`);
+      
+      // Sort for consistent snapshot
+      const sortedKeys = [...patternResult].sort();
+      expect(sortedKeys).toMatchInlineSnapshot(`
+        [
+          "${baseKey}:age",
+          "${baseKey}:email",
+          "${baseKey}:name",
+          "${baseKey}:visits",
+        ]
+      `);
 
       // Verify values
       const nameValue = await ctx.redis.get(`${baseKey}:name`);
@@ -279,18 +286,20 @@ describe("Valkey: Complex Operations", () => {
         results.push(await isRateLimited());
       }
 
-      // First 5 requests should not be limited
-      expect(results[0]).toBe(false);
-      expect(results[1]).toBe(false);
-      expect(results[2]).toBe(false);
-      expect(results[3]).toBe(false);
-      expect(results[4]).toBe(false);
+      // Check results with inline snapshot for better readability
+      expect(results).toMatchInlineSnapshot(`
+        [
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          true,
+        ]
+      `);
 
-      // 6th and 7th should be limited
-      expect(results[5]).toBe(true);
-      expect(results[6]).toBe(true);
 
-      // Verify the counter value
       const finalCount = await ctx.redis.get(rateLimitKey);
       expect(finalCount).toBe("7");
 

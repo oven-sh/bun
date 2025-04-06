@@ -3,6 +3,26 @@ import { RedisClient } from "bun";
 
 /**
  * Test utilities for Valkey/Redis tests
+ * 
+ * Available direct methods (avoid using .send() for these):
+ * - get(key): Get value of a key
+ * - set(key, value): Set value of a key
+ * - del(key): Delete a key
+ * - incr(key): Increment value by 1
+ * - decr(key): Decrement value by 1
+ * - exists(key): Check if key exists
+ * - expire(key, seconds): Set key expiration in seconds
+ * - ttl(key): Get time-to-live for a key
+ * - hmset(key, fields): Set multiple hash fields
+ * - hmget(key, fields): Get multiple hash field values
+ * - sismember(key, member): Check if member is in set
+ * - sadd(key, member): Add member to set
+ * - srem(key, member): Remove member from set
+ * - smembers(key): Get all members in a set
+ * - srandmember(key): Get random member from set
+ * - spop(key): Remove and return random member from set
+ * - hincrby(key, field, value): Increment hash field by integer
+ * - hincrbyfloat(key, field, value): Increment hash field by float
  */
 
 // Default test options
@@ -82,7 +102,12 @@ export function setupTestContext(): TestContext {
       // Clean up Redis keys created during tests
       const keys = await context.redis.send("KEYS", [`${TEST_KEY_PREFIX}*`]);
       if (Array.isArray(keys) && keys.length > 0) {
-        await context.redis.send("DEL", keys);
+        // Using del command directly when available 
+        if (keys.length === 1) {
+          await context.redis.del(keys[0]);
+        } else {
+          await context.redis.send("DEL", keys);
+        }
       }
 
       // Disconnect the client

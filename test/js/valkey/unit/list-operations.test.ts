@@ -80,36 +80,71 @@ describe("Valkey: List Data Type Operations", () => {
       // Set up test list with 10 elements
       await ctx.redis.send("RPUSH", [key, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 
-      // Get full range
+      // Get full range - using LRANGE command
+      // TODO: When a direct lrange method is implemented, use that instead
       const fullRange = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
       expect(Array.isArray(fullRange)).toBe(true);
-      expect(fullRange.length).toBe(10);
-      expect(fullRange[0]).toBe("0");
-      expect(fullRange[9]).toBe("9");
+      expect(fullRange).toMatchInlineSnapshot(`
+        [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+        ]
+      `);
 
       // Get partial range from start
       const startRange = await ctx.redis.send("LRANGE", [key, "0", "2"]);
       expect(Array.isArray(startRange)).toBe(true);
-      expect(startRange.length).toBe(3);
-      expect(startRange).toEqual(["0", "1", "2"]);
+      expect(startRange).toMatchInlineSnapshot(`
+        [
+          "0",
+          "1",
+          "2",
+        ]
+      `);
 
       // Get partial range from middle
       const midRange = await ctx.redis.send("LRANGE", [key, "3", "6"]);
       expect(Array.isArray(midRange)).toBe(true);
-      expect(midRange.length).toBe(4);
-      expect(midRange).toEqual(["3", "4", "5", "6"]);
+      expect(midRange).toMatchInlineSnapshot(`
+        [
+          "3",
+          "4",
+          "5",
+          "6",
+        ]
+      `);
 
-      // Get partial range from end
+      // Get partial range from end using negative indices
       const endRange = await ctx.redis.send("LRANGE", [key, "-3", "-1"]);
       expect(Array.isArray(endRange)).toBe(true);
-      expect(endRange.length).toBe(3);
-      expect(endRange).toEqual(["7", "8", "9"]);
+      expect(endRange).toMatchInlineSnapshot(`
+        [
+          "7",
+          "8",
+          "9",
+        ]
+      `);
 
       // Out of range indexes should be limited
       const outOfRange = await ctx.redis.send("LRANGE", [key, "5", "100"]);
       expect(Array.isArray(outOfRange)).toBe(true);
-      expect(outOfRange.length).toBe(5);
-      expect(outOfRange).toEqual(["5", "6", "7", "8", "9"]);
+      expect(outOfRange).toMatchInlineSnapshot(`
+        [
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+        ]
+      `);
     });
 
     test("LTRIM command", async () => {
@@ -119,14 +154,23 @@ describe("Valkey: List Data Type Operations", () => {
       await ctx.redis.send("RPUSH", [key, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 
       // Trim the list to keep only elements from index 2 to 7
+      // TODO: When a direct ltrim method is implemented, use that instead
       const trimResult = await ctx.redis.send("LTRIM", [key, "2", "7"]);
-      expect(trimResult).toBe("OK");
+      expect(trimResult).toMatchInlineSnapshot(`"OK"`);
 
       // Verify the trimmed list
       const result = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
       expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(6);
-      expect(result).toEqual(["2", "3", "4", "5", "6", "7"]);
+      expect(result).toMatchInlineSnapshot(`
+        [
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+        ]
+      `);
     });
   });
 

@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { randomUUIDv7, RedisClient } from "bun";
 import { createClient } from "./test-utils";
+import { expectType } from "./test-utils";
 
 describe("Valkey Redis Client", () => {
   let redis: RedisClient;
@@ -15,15 +16,13 @@ describe("Valkey Redis Client", () => {
       const testKey = "greeting";
       const testValue = "Hello from Bun Redis!";
 
-      // Now we can reliably test SET and GET since we've already consumed the HELLO response
+      // Using direct set and get methods
       const setResult = await client.set(testKey, testValue);
+      expect(setResult).toMatchInlineSnapshot(`"OK"`);
 
-      // SET should return OK (or similar response depending on RESP3 protocol)
-      expect(setResult).toBeDefined();
-
-      // GET should now return the actual value we set
+      // GET should return the value we set
       const getValue = await client.get(testKey);
-      expect(getValue).toBe(testValue);
+      expect(getValue).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);
 
       await client.disconnect();
     });
@@ -72,35 +71,38 @@ describe("Valkey Redis Client", () => {
 
       // EXPIRE should return 1 if the timeout was set, 0 otherwise
       const result = await redis.expire(tempKey, 60);
-      expect(result).toBeDefined();
+      // Using native expire command instead of send()
+      expect(result).toMatchInlineSnapshot(`1`);
 
-      // Check TTL using the sendCommand API since ttl() doesn't exist yet
-      const ttl = await redis.send("TTL", [tempKey]);
-      expect(ttl).toBeDefined();
-      expect(typeof ttl).toBe("number");
-      expect(ttl).toBeGreaterThan(0); // Should be positive if expiration was set
+      // Use the TTL command directly
+      const ttl = await redis.ttl(tempKey);
+      expectType<number>(ttl, "number");
+      expect(ttl).toBeGreaterThan(0); 
+      expect(ttl).toBeLessThanOrEqual(60); // Should be positive and not exceed our set time
     });
 
-    test("should implement TTL command", async () => {
-      // This is a workaround until TTL is properly implemented
+    test("should implement TTL command correctly for different cases", async () => {
+      // 1. Key with expiration
       const tempKey = "ttl-test-key";
       await redis.set(tempKey, "ttl test value");
       await redis.expire(tempKey, 60);
 
-      // Use sendCommand to access TTL functionality
-      const ttl = await redis.send("TTL", [tempKey]);
-      expect(ttl).toBeGreaterThan(0); // Should be positive if expiration was set
+      // Use native ttl command
+      const ttl = await redis.ttl(tempKey);
+      expectType<number>(ttl, "number");
+      expect(ttl).toBeGreaterThan(0); 
+      expect(ttl).toBeLessThanOrEqual(60);
 
-      // For keys with no expiration
+      // 2. Key with no expiration
       const permanentKey = "permanent-key";
       await redis.set(permanentKey, "no expiry");
-      const noExpiry = await redis.send("TTL", [permanentKey]);
-      expect(noExpiry).toBe(-1); // -1 indicates no expiration
+      const noExpiry = await redis.ttl(permanentKey);
+      expect(noExpiry).toMatchInlineSnapshot(`-1`); // -1 indicates no expiration
 
-      // For non-existent keys
+      // 3. Non-existent key
       const nonExistentKey = "non-existent-" + randomUUIDv7();
-      const noKey = await redis.send("TTL", [nonExistentKey]);
-      expect(noKey).toBe(-2); // -2 indicates key doesn't exist
+      const noKey = await redis.ttl(nonExistentKey);
+      expect(noKey).toMatchInlineSnapshot(`-2`); // -2 indicates key doesn't exist
     });
   });
 

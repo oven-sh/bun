@@ -40,16 +40,22 @@ describe("Valkey: Hash Data Type Operations", () => {
       // HMGET specific fields
       const hmgetResult = await ctx.redis.hmget(key, ["name", "age"]);
       expect(Array.isArray(hmgetResult)).toBe(true);
-      expect(hmgetResult.length).toBe(2);
-      expect(hmgetResult[0]).toBe("Alice");
-      expect(hmgetResult[1]).toBe("30");
+      expect(hmgetResult).toMatchInlineSnapshot(`
+        [
+          "Alice",
+          "30",
+        ]
+      `);
 
       // HMGET with non-existent fields
       const mixedResult = await ctx.redis.hmget(key, ["name", "nonexistent"]);
       expect(Array.isArray(mixedResult)).toBe(true);
-      expect(mixedResult.length).toBe(2);
-      expect(mixedResult[0]).toBe("Alice");
-      expect(mixedResult[1]).toBeNull();
+      expect(mixedResult).toMatchInlineSnapshot(`
+        [
+          "Alice",
+          null,
+        ]
+      `);
     });
 
     test("HMSET with object-style syntax", async () => {
@@ -63,9 +69,14 @@ describe("Valkey: Hash Data Type Operations", () => {
       expect(allFields).toBeDefined();
 
       if (typeof allFields === "object" && allFields !== null) {
-        expect(allFields.name).toBe("Bob");
-        expect(allFields.age).toBe("25");
-        expect(allFields.email).toBe("bob@example.com");
+        // Use snapshot to verify the entire object structure
+        expect(allFields).toMatchInlineSnapshot(`
+          {
+            "age": "25",
+            "email": "bob@example.com",
+            "name": "Bob",
+          }
+        `);
       }
     });
 

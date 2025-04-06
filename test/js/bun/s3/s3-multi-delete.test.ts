@@ -704,6 +704,52 @@ describe("s3 - multi delete", () => {
     });
   });
 
+  it("Should work with spaceless xml", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Deleted><Key>valid/file_1001</Key></Deleted><Deleted><Key>valid/file_1000</Key></Deleted><Error><Key>invalid/file_1002</Key><VersionId>8</VersionId><Code>NoSuchVersion</Code><Message>The specified version does not exist.</Message></Error><Error><Key>invalid/file_1004</Key><VersionId>4</VersionId><Code>NoSuchVersion</Code><Message>The specified version does not exist.</Message></Error></DeleteResult>`;
+
+    using server = createBunServer(async => {
+      return new Response(xml, {
+        headers: {
+          "Content-Type": "application/xml",
+        },
+        status: 200,
+      });
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    const res = await client.deleteObjects(["dont care"]);
+
+    expect(res).toEqual({
+      deleted: [
+        {
+          key: "valid/file_1001",
+        },
+        {
+          key: "valid/file_1000",
+        },
+      ],
+      errors: [
+        {
+          key: "invalid/file_1002",
+          versionId: "8",
+          code: "NoSuchVersion",
+          message: "The specified version does not exist.",
+        },
+        {
+          key: "invalid/file_1004",
+          versionId: "4",
+          code: "NoSuchVersion",
+          message: "The specified version does not exist.",
+        },
+      ],
+    });
+  });
+
   it("Should throw S3Error on Unknown status code", async () => {
     using server = createBunServer(async => {
       return new Response(

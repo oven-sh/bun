@@ -238,8 +238,6 @@ pub fn parseS3DeleteObjectsSuccessResult(xml: []u8) !S3DeleteObjectsSuccessResul
                             .message = error_message,
                         }) catch bun.outOfMemory();
                     }
-                } else {
-                    i += 1;
                 }
             } else {
                 i += 1;

@@ -13,32 +13,32 @@ declare module "bun" {
     constructor(url?: string, options?: ValkeyOptions);
 
     /**
-     * Whether the client is connected to the Redis server
+     * Whether the client is connected to the Valkey server
      */
     readonly connected: boolean;
 
     /**
-     * Callback fired when the client connects to the Redis server
+     * Callback fired when the client connects to the Valkey server
      */
     onconnect: (() => void) | null;
 
     /**
-     * Callback fired when the client disconnects from the Redis server
+     * Callback fired when the client disconnects from the Valkey server
      */
     onclose: (() => void) | null;
 
     /**
-     * Connect to the Redis server
+     * Connect to the Valkey server
      */
     connect(): Promise<void>;
 
     /**
-     * Disconnect from the Redis server
+     * Disconnect from the Valkey server
      */
     disconnect(): Promise<void>;
 
     /**
-     * Send a raw command to the Redis server
+     * Send a raw command to the Valkey server
      */
     sendCommand(command: string, args: string[]): Promise<any>;
 

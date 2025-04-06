@@ -110,8 +110,10 @@ pub const JSRedisClient = struct {
                 },
                 .database = database,
                 .allocator = bun.default_allocator,
-                .enable_auto_reconnect = options.enable_auto_reconnect,
-                .enable_offline_queue = options.enable_offline_queue,
+                .flags = .{
+                    .enable_auto_reconnect = options.enable_auto_reconnect,
+                    .enable_offline_queue = options.enable_offline_queue,
+                },
                 .max_retries = options.max_retries,
                 .connection_timeout_ms = options.connection_timeout_ms,
                 .socket_timeout_ms = options.socket_timeout_ms,
@@ -261,7 +263,6 @@ pub const JSRedisClient = struct {
     }
 
     fn resetConnectionTimeout(this: *JSRedisClient) void {
-        if (this.client.flags.is_processing_data) return;
         const interval = this.client.getTimeoutInterval();
 
         // First remove existing timer if active
@@ -291,10 +292,6 @@ pub const JSRedisClient = struct {
         // Increment ref to ensure 'this' stays alive throughout the function
         this.ref();
         defer this.deref();
-
-        if (this.client.flags.is_processing_data) {
-            return .disarm;
-        }
 
         if (this.client.getTimeoutInterval() == 0) {
             this.resetConnectionTimeout();

@@ -6,13 +6,12 @@ pub const RedisContext = @import("RedisContext.zig");
 
 /// Connection flags to track Redis client state
 pub const ConnectionFlags = packed struct {
-    is_ready_for_query: bool = false,
-    is_processing_data: bool = false,
     is_authenticated: bool = false,
-    is_reconnecting: bool = false,
     is_manually_closed: bool = false,
     enable_offline_queue: bool = true,
     needs_to_open_socket: bool = true,
+    enable_auto_reconnect: bool = true,
+    is_reconnecting: bool = false,
 };
 
 /// TLS connection status
@@ -108,8 +107,6 @@ pub const RedisClient = struct {
     socket_timeout_ms: u32 = 0,
     retry_attempts: u32 = 0,
     max_retries: u32 = 20, // Maximum retry attempts
-    enable_auto_reconnect: bool = true,
-    enable_offline_queue: bool = true,
 
     flags: ConnectionFlags = .{},
     allocator: std.mem.Allocator,
@@ -217,6 +214,11 @@ pub const RedisClient = struct {
         this.status = .failed;
 
         this.rejectAllPendingCommands(message, err);
+
+        if (!this.flags.is_authenticated) {
+            this.flags.is_manually_closed = true;
+            this.socket.close();
+        }
     }
 
     /// Handle connection closed event
@@ -232,7 +234,7 @@ pub const RedisClient = struct {
         }
 
         // If auto reconnect is disabled, just fail
-        if (!this.enable_auto_reconnect) {
+        if (!this.flags.enable_auto_reconnect) {
             debug("skip reconnecting since auto reconnect is disabled", .{});
             this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
             this.onRedisClose();
@@ -294,6 +296,9 @@ pub const RedisClient = struct {
                 this.fail("Failed to handle response", err);
                 return;
             };
+            if (this.status == .disconnected) {
+                return;
+            }
             this.sendNextCommand();
             if (reader.pos == data.len) {
                 break;
@@ -304,11 +309,6 @@ pub const RedisClient = struct {
     /// Process data received from socket
     pub fn onData(this: *RedisClient, data: []const u8) void {
         // Caller refs / derefs.
-        this.flags.is_processing_data = true;
-
-        defer {
-            this.flags.is_processing_data = false;
-        }
 
         this.read_buffer.head = this.last_message_start;
 
@@ -339,7 +339,9 @@ pub const RedisClient = struct {
                 return;
             };
 
-            debug("clean read_buffer", .{});
+            if (this.status == .disconnected) {
+                return;
+            }
 
             this.sendNextCommand();
 
@@ -364,7 +366,8 @@ pub const RedisClient = struct {
                     this.onRedisConnect();
                     return;
                 }
-                this.fail("Authentication failed", protocol.RedisError.AuthenticationFailed);
+                this.fail("Authentication failed (unexpected response)", protocol.RedisError.AuthenticationFailed);
+
                 return;
             },
             .Map => |map| {

@@ -349,15 +349,15 @@ pub const RedisReader = struct {
     }
 
     pub fn readUntilCRLF(self: *RedisReader) RedisError![]const u8 {
-        var pos = self.pos;
-        const start = pos;
-        while (pos < self.buffer.len - 1) : (pos += 1) {
-            if (self.buffer[pos] == '\r' and self.buffer[pos + 1] == '\n') {
-                const result = self.buffer[start..pos];
-                self.pos = pos + 2;
+        const buffer = self.buffer[self.pos..];
+        for (buffer, 0..) |byte, i| {
+            if (byte == '\r' and buffer[i + 1] == '\n') {
+                const result = buffer[0..i];
+                self.pos += i + 2;
                 return result;
             }
         }
+
         return error.InvalidResponse;
     }
 

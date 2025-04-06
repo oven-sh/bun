@@ -1,53 +1,31 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { randomUUIDv7, valkey } from "bun";
+import { randomUUIDv7, ValkeyClient } from "bun";
+import { createClient } from "./test-utils";
 
 describe("Valkey Redis Client", () => {
-  let redis: ReturnType<typeof valkey>;
-  let connectionInitialized = false;
+  let redis: ValkeyClient;
 
   beforeAll(async () => {
-    // Create Redis client with options
-    redis = valkey("redis://localhost:6379", {
-      idleTimeout: 30000, // 30 seconds idle timeout
-      connectionTimeout: 5000, // 5 seconds connection timeout
-      autoReconnect: true, // Enable auto reconnection
-      maxRetries: 10, // Max 10 retry attempts
-      enableOfflineQueue: true, // Queue commands when disconnected
-    });
-    
-    // Explicitly connect to Redis
-    try {
-      await redis.connect();
-      
-      // Verify connection works by making a simple request
-      await redis.set("__test_init__", "initialized");
-      connectionInitialized = true;
-      console.log("Redis connection initialized successfully");
-    } catch (err) {
-      console.error("Failed to initialize Redis connection:", err);
-    }
+    redis = createClient();
   });
 
   describe("Basic Operations", () => {
     test("should set and get strings", async () => {
-      // Skip this test if initialization failed
-      if (!connectionInitialized) {
-        console.warn("Skipping test because initialization failed");
-        return;
-      }
-
+      const client = createClient();
       const testKey = "greeting";
       const testValue = "Hello from Bun Redis!";
 
       // Now we can reliably test SET and GET since we've already consumed the HELLO response
-      const setResult = await redis.set(testKey, testValue);
+      const setResult = await client.set(testKey, testValue);
 
       // SET should return OK (or similar response depending on RESP3 protocol)
       expect(setResult).toBeDefined();
 
       // GET should now return the actual value we set
-      const getValue = await redis.get(testKey);
+      const getValue = await client.get(testKey);
       expect(getValue).toBe(testValue);
+
+      await client.disconnect();
     });
 
     test("should test key existence", async () => {
@@ -177,44 +155,12 @@ describe("Valkey Redis Client", () => {
   });
 
   describe("Connection Options", () => {
-    test("should accept connection options", async () => {
-      const customRedis = valkey("redis://localhost:6379", {
-        idleTimeout: 15000,
-        connectionTimeout: 3000,
-        autoReconnect: false,
-        maxRetries: 5,
-        enableOfflineQueue: false,
-      });
+    test("connection errors", async () => {
+      const customRedis = new ValkeyClient("redis://badusername:secretpassword@localhost:6379");
 
-      // Testing the client was created successfully
-      expect(customRedis).toBeDefined();
-
-      // Explicitly connect and test
-      try {
+      expect(async () => {
         await customRedis.connect();
-        await customRedis.set("__init_key", "__init_value");
-
-        // Test that the client works after initialization
-        const testValue = "connection options test";
-        await customRedis.set("custom-client-test", testValue);
-        const result = await customRedis.get("custom-client-test");
-        expect(result).toBe(testValue);
-      } catch (e) {
-        console.error("Error with custom client:", e);
-      } finally {
-        // Cleanup
-        await customRedis.disconnect();
-      }
+      }).toThrow();
     });
-  });
-
-  // Clean up after all tests
-  afterAll(async () => {
-    try {
-      await redis.disconnect();
-      console.log("Redis client disconnected after tests");
-    } catch (e) {
-      console.error("Error disconnecting Redis client:", e);
-    }
   });
 });

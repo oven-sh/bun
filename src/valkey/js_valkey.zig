@@ -1298,10 +1298,10 @@ const Options = struct {
                 if (try JSC.API.ServerConfig.SSLConfig.fromJS(globalObject.bunVM(), globalObject, tls)) |ssl_config| {
                     this.tls = .{ .custom = ssl_config };
                 } else {
-                    return globalObject.throw("Invalid TLS configuration", .{});
+                    return globalObject.throwInvalidArgumentType("tls", "tls", "object");
                 }
             } else {
-                return globalObject.throw("Invalid TLS configuration", .{});
+                return globalObject.throwInvalidArgumentType("tls", "tls", "boolean or object");
             }
         }
 

@@ -196,6 +196,7 @@ pub const ValkeyClient = struct {
                 offline_cmd.deinit(this.allocator);
             }
         } else {
+            // finalizing. we can't call into JS.
             for (pending.readableSlice(0)) |pair| {
                 var pair_ = pair;
                 pair_.promise.deinit();

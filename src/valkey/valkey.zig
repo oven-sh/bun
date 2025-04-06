@@ -45,6 +45,11 @@ pub const Protocol = enum {
         .{ "valkey+tls", .standalone_tls },
         .{ "valkey+unix", .standalone_unix },
         .{ "valkey+tls+unix", .standalone_tls_unix },
+        .{ "redis", .standalone },
+        .{ "rediss", .standalone_tls },
+        .{ "redis+tls", .standalone_tls },
+        .{ "redis+unix", .standalone_unix },
+        .{ "redis+tls+unix", .standalone_tls_unix },
     });
 
     pub fn isTLS(self: Protocol) bool {

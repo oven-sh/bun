@@ -93,7 +93,7 @@ pub const RESPType = enum(u8) {
     BigNumber = '(',
 
     pub fn fromByte(byte: u8) ?RESPType {
-        switch (byte) {
+        return switch (byte) {
             @intFromEnum(RESPType.SimpleString) => .SimpleString,
             @intFromEnum(RESPType.Error) => .Error,
             @intFromEnum(RESPType.Integer) => .Integer,
@@ -110,7 +110,7 @@ pub const RESPType = enum(u8) {
             @intFromEnum(RESPType.Push) => .Push,
             @intFromEnum(RESPType.BigNumber) => .BigNumber,
             else => null,
-        }
+        };
     }
 };
 

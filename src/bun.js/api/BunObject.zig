@@ -73,6 +73,7 @@ pub const BunObject = struct {
     pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     pub const s3 = toJSGetter(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSGetter(Bun.getValkeyClientConstructor);
+    pub const valkey = toJSGetter(Bun.getValkeyDefaultClient);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -133,6 +134,7 @@ pub const BunObject = struct {
         @export(&BunObject.S3Client, .{ .name = getterName("S3Client") });
         @export(&BunObject.s3, .{ .name = getterName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = getterName("ValkeyClient") });
+        @export(&BunObject.valkey, .{ .name = getterName("valkey") });
         // --- Getters --
 
         // -- Callbacks --
@@ -166,6 +168,7 @@ pub const BunObject = struct {
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
+
         // -- Callbacks --
     }
 };
@@ -1234,6 +1237,18 @@ pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject)
 
 pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
+}
+
+pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    const valkey = JSC.API.Valkey.create(globalThis, &[_]JSValue{.undefined}) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Valkey client");
+            return .zero;
+        }
+        return .zero;
+    };
+
+    return valkey.toJS(globalThis);
 }
 
 pub fn getValkeyClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {

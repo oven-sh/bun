@@ -26,7 +26,10 @@ pub const JSValkeyClient = struct {
 
     // Factory function to create a new Valkey client from JS
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSValkeyClient {
-        const arguments = callframe.arguments();
+        return try create(globalObject, callframe.arguments());
+    }
+
+    pub fn create(globalObject: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
         const vm = globalObject.bunVM();
         const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
             if (vm.transpiler.env.get("REDIS_URL") orelse vm.transpiler.env.get("VALKEY_URL")) |url|
@@ -42,7 +45,7 @@ pub const JSValkeyClient = struct {
         const url = bun.URL.parse(url_utf8.slice());
 
         const uri: valkey.Protocol = if (url.protocol.len > 0)
-            valkey.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of valkey, valkeys, valkey+tls, valkey+unix, valkey+tls+unix", .{})
+            valkey.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix", .{})
         else
             .standalone;
 
@@ -93,7 +96,7 @@ pub const JSValkeyClient = struct {
 
         const database = if (url.pathname.len > 0) std.fmt.parseInt(u32, url.pathname[1..], 10) catch 0 else 0;
 
-        bun.analytics.Features.valkey_connections += 1;
+        bun.analytics.Features.valkey += 1;
 
         return JSValkeyClient.new(.{
             .client = valkey.ValkeyClient{

@@ -201,12 +201,12 @@ pub const RedisClient = struct {
     /// Flush pending data to the socket
     pub fn flushData(this: *RedisClient) bool {
         const chunk = this.write_buffer.remaining();
-        if (chunk.len == 0) return true;
+        if (chunk.len == 0) return false;
         const wrote = this.socket.write(chunk, false);
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
-        return this.write_buffer.len() == 0;
+        return this.write_buffer.len() > 0;
     }
 
     /// Mark the connection as failed with error message
@@ -261,10 +261,44 @@ pub const RedisClient = struct {
 
     pub fn sendNextCommand(this: *RedisClient) void {
         if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
-            _ = this.drain();
+            if (this.in_flight.readableLength() == 0) {
+                _ = this.drain();
+            }
         }
 
         _ = this.flushData();
+    }
+
+    fn onDataStackAllocated(this: *RedisClient, data: []const u8) void {
+        var reader = protocol.RedisReader.init(data);
+        while (true) {
+            const before_read = reader.pos;
+            var value = reader.readValue(this.allocator) catch |err| {
+                if (err == error.InvalidResponse) {
+                    if (comptime bun.Environment.allow_assert) {
+                        debug("read_buffer: empty and received short read", .{});
+                    }
+
+                    this.read_buffer.head = 0;
+                    this.last_message_start = 0;
+                    this.read_buffer.byte_list.len = 0;
+                    this.read_buffer.write(this.allocator, data[before_read..]) catch @panic("failed to write to read buffer");
+                } else {
+                    this.fail("Failed to read data", err);
+                }
+                return;
+            };
+            defer value.deinit(this.allocator);
+
+            this.handleResponse(&value) catch |err| {
+                this.fail("Failed to handle response", err);
+                return;
+            };
+            this.sendNextCommand();
+            if (reader.pos == data.len) {
+                break;
+            }
+        }
     }
 
     /// Process data received from socket
@@ -279,115 +313,103 @@ pub const RedisClient = struct {
         this.read_buffer.head = this.last_message_start;
 
         if (this.read_buffer.remaining().len == 0) {
-            var reader = protocol.RedisReader.init(data);
-            var value = reader.readValue(this.allocator) catch |err| {
-                if (err == error.InvalidResponse) {
-                    if (comptime bun.Environment.allow_assert) {
-                        debug("read_buffer: empty and received short read", .{});
-                    }
+            this.onDataStackAllocated(data);
+            return;
+        }
 
-                    this.read_buffer.head = 0;
-                    this.last_message_start = 0;
-                    this.read_buffer.byte_list.len = 0;
-                    this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
-                } else {
+        this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
+        while (true) {
+            var reader = protocol.RedisReader.init(this.read_buffer.remaining());
+            var value = reader.readValue(this.allocator) catch |err| {
+                if (err != error.InvalidResponse) {
                     this.fail("Failed to read data", err);
+                    return;
+                }
+
+                if (comptime bun.Environment.allow_assert) {
+                    debug("read_buffer: not empty and received short read", .{});
                 }
                 return;
             };
             defer value.deinit(this.allocator);
+            this.read_buffer.consume(@truncate(reader.pos));
 
             this.handleResponse(&value) catch |err| {
                 this.fail("Failed to handle response", err);
                 return;
             };
+
+            debug("clean read_buffer", .{});
+
             this.sendNextCommand();
-            return;
+
+            if (this.read_buffer.remaining().len == 0) {
+                break;
+            }
         }
+    }
 
-        this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
-        var reader = protocol.RedisReader.init(this.read_buffer.remaining());
-        var value = reader.readValue(this.allocator) catch |err| {
-            if (err != error.InvalidResponse) {
-                this.fail("Failed to read data", err);
+    fn handleHelloResponse(this: *RedisClient, value: *protocol.RESPValue) void {
+        debug("Processing HELLO response", .{});
+
+        switch (value.*) {
+            .Error => |err| {
+                this.fail(err, protocol.RedisError.AuthenticationFailed);
                 return;
-            }
+            },
+            .SimpleString => |str| {
+                if (std.mem.eql(u8, str, "OK")) {
+                    this.status = .connected;
+                    this.flags.is_authenticated = true;
+                    this.onRedisConnect();
+                    return;
+                }
+                this.fail("Authentication failed", protocol.RedisError.AuthenticationFailed);
+                return;
+            },
+            .Map => |map| {
+                // This is the HELLO response map
+                debug("Got HELLO response map with {d} entries", .{map.len});
 
-            if (comptime bun.Environment.allow_assert) {
-                debug("read_buffer: not empty and received short read", .{});
-            }
-            return;
-        };
-        defer value.deinit(this.allocator);
+                // Process the Map response - find the protocol version
+                for (map) |*entry| {
+                    switch (entry.key) {
+                        .SimpleString => |key| {
+                            if (std.mem.eql(u8, key, "proto")) {
+                                if (entry.value == .Integer) {
+                                    const proto_version = entry.value.Integer;
+                                    debug("Server protocol version: {d}", .{proto_version});
+                                    if (proto_version != 3) {
+                                        this.fail("Server does not support RESP3", protocol.RedisError.UnsupportedProtocol);
+                                        return;
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
 
-        this.handleResponse(&value) catch |err| {
-            this.fail("Failed to handle response", err);
-            return;
-        };
+                // Authentication successful via HELLO
+                this.status = .connected;
+                this.flags.is_authenticated = true;
 
-        debug("clean read_buffer", .{});
-        this.last_message_start = 0;
-        this.read_buffer.head = 0;
-
-        this.sendNextCommand();
+                this.onRedisConnect();
+                return;
+            },
+            else => {
+                this.fail("Authentication failed with unexpected response", protocol.RedisError.AuthenticationFailed);
+                return;
+            },
+        }
     }
 
     /// Handle Redis protocol response
     fn handleResponse(this: *RedisClient, value: *protocol.RESPValue) !void {
+        debug("onData() {any}", .{value.*});
         // Special handling for the initial HELLO response
         if (!this.flags.is_authenticated) {
-            debug("Processing HELLO response", .{});
-
-            switch (value.*) {
-                .Error => |err| {
-                    this.fail(err, protocol.RedisError.AuthenticationFailed);
-                    return;
-                },
-                .SimpleString => |str| {
-                    if (std.mem.eql(u8, str, "OK")) {
-                        this.status = .connected;
-                        this.flags.is_authenticated = true;
-                        this.onRedisConnect();
-                        return;
-                    }
-                    this.fail("Authentication failed", protocol.RedisError.AuthenticationFailed);
-                    return;
-                },
-                .Map => |map| {
-                    // This is the HELLO response map
-                    debug("Got HELLO response map with {d} entries", .{map.len});
-
-                    // Process the Map response - find the protocol version
-                    for (map) |*entry| {
-                        switch (entry.key) {
-                            .SimpleString => |key| {
-                                if (std.mem.eql(u8, key, "proto")) {
-                                    if (entry.value == .Integer) {
-                                        const proto_version = entry.value.Integer;
-                                        debug("Server protocol version: {d}", .{proto_version});
-                                        if (proto_version != 3) {
-                                            this.fail("Server does not support RESP3", protocol.RedisError.UnsupportedProtocol);
-                                            return;
-                                        }
-                                    }
-                                }
-                            },
-                            else => {},
-                        }
-                    }
-
-                    // Authentication successful via HELLO
-                    this.status = .connected;
-                    this.flags.is_authenticated = true;
-
-                    this.onRedisConnect();
-                    return;
-                },
-                else => {
-                    this.fail("Authentication failed with unexpected response", protocol.RedisError.AuthenticationFailed);
-                    return;
-                },
-            }
+            this.handleHelloResponse(value);
 
             // We've handled the HELLO response without consuming anything from the command queue
             return;
@@ -541,11 +563,15 @@ pub const RedisClient = struct {
         defer this.deref();
 
         this.sendNextCommand();
-        _ = this.flushData();
     }
 
     fn enqueue(this: *RedisClient, command: *const Command, promise: *Command.Promise) !void {
-        if (this.queue.readableLength() > 0 or !this.flags.is_authenticated) {
+        if (
+        // If there are any pending commands, queue this one
+        this.queue.readableLength() > 0 or
+            // TODO: pipelining. Unitl then, we need to wait for the previous command to finish.
+            this.in_flight.readableLength() > 0 or !this.flags.is_authenticated)
+        {
             try this.queue.writeItem(try Command.Entry.create(this.allocator, command, promise.*));
             return;
         }

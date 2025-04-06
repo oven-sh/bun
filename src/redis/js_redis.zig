@@ -40,9 +40,12 @@ pub const JSRedisClient = struct {
     // Factory function to create a new Redis client from JS
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSRedisClient {
         const arguments = callframe.arguments();
-
+        const vm = globalObject.bunVM();
         const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
-            bun.String.init("redis://localhost:6379")
+            if (vm.transpiler.env.get("REDIS_URL")) |url|
+                bun.String.init(url)
+            else
+                bun.String.init("redis://localhost:6379")
         else
             try arguments[0].toBunString(globalObject);
         defer url_str.deref();
@@ -157,6 +160,7 @@ pub const JSRedisClient = struct {
             this.poll_ref.ref(globalObject.bunVM());
 
             this.connect() catch |err| {
+                this.poll_ref.unref(globalObject.bunVM());
                 this.client.flags.needs_to_open_socket = true;
                 const err_value = globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
                 promise_ptr.reject(globalObject, err_value);
@@ -1125,13 +1129,15 @@ pub const JSRedisClient = struct {
     pub fn updatePollRef(this: *JSRedisClient) void {
         if (!this.client.hasAnyPendingCommands() and this.client.status == .connected) {
             this.poll_ref.unref(this.globalObject.bunVM());
-            this.this_value.upgrade(this.globalObject);
+            // If we don't have any pending commands and we're connected, we don't need to keep the object alive.
+            if (this.this_value.tryGet()) |value| {
+                this.this_value.setWeak(value);
+            }
         } else if (this.client.hasAnyPendingCommands()) {
             this.poll_ref.ref(this.globalObject.bunVM());
-            if (this.this_value == .strong) {
-                if (this.this_value.strong.trySwap()) |value| {
-                    this.this_value.setWeak(value);
-                }
+            // If we have pending commands, we need to keep the object alive.
+            if (this.this_value == .weak) {
+                this.this_value.upgrade(this.globalObject);
             }
         }
     }

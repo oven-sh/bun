@@ -153,14 +153,14 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    pub fn format(self: RESPValue, writer: anytype) !void {
+    pub fn format(self: @This(), comptime _: []const u8, options: anytype, writer: anytype) !void {
         switch (self) {
-            .SimpleString => |str| try writer.print("{s}", .{str}),
-            .Error => |str| try writer.print("-ERR {s}", .{str}),
+            .SimpleString => |str| try writer.writeAll(str),
+            .Error => |str| try writer.writeAll(str),
             .Integer => |int| try writer.print("{d}", .{int}),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
-                    try writer.print("{s}", .{str});
+                    try writer.writeAll(str);
                 } else {
                     try writer.writeAll("(nil)");
                 }
@@ -169,7 +169,7 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("[");
                 for (array, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format(writer);
+                    try value.format("", options, writer);
                 }
                 try writer.writeAll("]");
             },
@@ -182,9 +182,9 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("{");
                 for (entries, 0..) |entry, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try entry.key.format(writer);
+                    try entry.key.format("", options, writer);
                     try writer.writeAll(": ");
-                    try entry.value.format(writer);
+                    try entry.value.format("", options, writer);
                 }
                 try writer.writeAll("}");
             },
@@ -192,7 +192,7 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("Set{");
                 for (set, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format(writer);
+                    try value.format("", options, writer);
                 }
                 try writer.writeAll("}");
             },
@@ -201,19 +201,19 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("{");
                 for (attribute.attributes, 0..) |entry, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try entry.key.format(writer);
+                    try entry.key.format("", options, writer);
                     try writer.writeAll(": ");
-                    try entry.value.format(writer);
+                    try entry.value.format("", options, writer);
                 }
                 try writer.writeAll("} => ");
-                try attribute.value.format(writer);
+                try attribute.value.format("", options, writer);
                 try writer.writeAll(")");
             },
             .Push => |push| {
                 try writer.print("Push({s}: [", .{push.kind});
                 for (push.data, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format(writer);
+                    try value.format("", options, writer);
                 }
                 try writer.writeAll("])");
             },

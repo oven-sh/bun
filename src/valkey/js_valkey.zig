@@ -931,6 +931,7 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SISMEMBER",
                 .args = .{ .args = &.{ key, value } },
+                .meta = .{ .return_as_bool = true },
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SISMEMBER command", err);

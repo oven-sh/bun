@@ -264,7 +264,7 @@ pub const ValkeyClient = struct {
         // Start draining the command queue
         var have_more = false;
         var commands_processed: usize = 0;
-        const max_pipeline_commands = 20; // Reasonable batch size
+        const max_pipeline_commands = 1000; // Reasonable batch size
 
         // Only process commands if we don't have in-flight requests waiting for responses
         if (this.in_flight.readableLength() == 0) {

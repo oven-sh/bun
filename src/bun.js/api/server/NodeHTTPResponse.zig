@@ -21,7 +21,7 @@ upgrade_context: UpgradeCTX = .{},
 const log = bun.Output.scoped(.NodeHTTPResponse, false);
 pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
-pub const Flags = packed struct(u16) {
+pub const Flags = packed struct(u8) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
     ended: bool = false,
@@ -31,8 +31,6 @@ pub const Flags = packed struct(u16) {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
-    is_paused: bool = false,
-    _reserved: u7 = 0,
 };
 pub const UpgradeCTX = struct {
     context: ?*uws.uws_socket_context_t = null,
@@ -102,18 +100,12 @@ pub fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
 
 pub fn pauseSocket(this: *NodeHTTPResponse) void {
     log("pauseSocket", .{});
-    if (!this.flags.is_paused) {
-        this.flags.is_paused = true;
-        this.raw_response.pause();
-    }
+    this.raw_response.pause();
 }
 
 pub fn resumeSocket(this: *NodeHTTPResponse) void {
     log("resumeSocket", .{});
-    if (this.flags.is_paused) {
-        this.flags.is_paused = false;
-        this.raw_response.@"resume"();
-    }
+    this.raw_response.@"resume"();
 }
 pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
     const upgrade_ctx = this.upgrade_context.context orelse return false;
@@ -350,7 +342,7 @@ pub fn getFinished(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JS
 }
 
 pub fn getFlags(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSValue.jsNumber(@as(u16, @bitCast(this.flags)));
+    return JSC.JSValue.jsNumber(@as(u8, @bitCast(this.flags)));
 }
 
 pub fn getAborted(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {

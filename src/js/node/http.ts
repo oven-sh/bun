@@ -255,9 +255,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {
-    this.resume();
-  }
+  _read(size) {}
 
   get readyState() {
     if (this.connecting) return "opening";

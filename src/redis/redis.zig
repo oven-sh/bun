@@ -62,6 +62,27 @@ pub const Protocol = enum {
     }
 };
 
+pub const TLS = union(enum) {
+    none,
+    enabled,
+    custom: JSC.API.ServerConfig.SSLConfig,
+
+    pub fn deinit(this: *TLS) void {
+        switch (this.*) {
+            .custom => |*ssl_config| ssl_config.deinit(),
+            else => {},
+        }
+    }
+
+    pub fn rejectUnauthorized(this: *const TLS, vm: *JSC.VirtualMachine) bool {
+        return switch (this.*) {
+            .custom => |*ssl_config| ssl_config.reject_unauthorized != 0,
+            .enabled => vm.getTLSRejectUnauthorized(),
+            else => false,
+        };
+    }
+};
+
 /// Connection options for Redis client
 pub const Options = struct {
     idle_timeout_ms: u32 = 30000,
@@ -71,7 +92,44 @@ pub const Options = struct {
     max_retries: u32 = 20,
     enable_offline_queue: bool = true,
     enable_debug_logging: bool = false,
-    has_tls: bool = false,
+
+    tls: TLS = .none,
+};
+
+pub const Address = union(enum) {
+    unix: []const u8,
+    host: struct {
+        host: []const u8,
+        port: u16,
+    },
+
+    pub fn connect(this: *const Address, client: *RedisClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
+        switch (is_tls) {
+            inline else => |tls| {
+                const SocketType = if (tls) uws.SocketTLS else uws.SocketTCP;
+                const union_field = if (tls) "SocketTLS" else "SocketTCP";
+                switch (this.*) {
+                    .unix => |path| {
+                        return @unionInit(uws.AnySocket, union_field, try SocketType.connectUnixAnon(
+                            path,
+                            ctx,
+                            client,
+                            false,
+                        ));
+                    },
+                    .host => |h| {
+                        return @unionInit(uws.AnySocket, union_field, try SocketType.connectAnon(
+                            h.host,
+                            h.port,
+                            ctx,
+                            client,
+                            false,
+                        ));
+                    },
+                }
+            },
+        }
+    }
 };
 
 /// Core Redis client implementation
@@ -91,15 +149,13 @@ pub const RedisClient = struct {
     password: []const u8 = "",
     username: []const u8 = "",
     database: u32 = 0,
-    hostname: []const u8 = "",
-    port: u16 = 6379,
+    address: Address,
     protocol: Protocol = .standalone,
 
     connection_strings: []u8 = &.{},
 
     // TLS support
-    tls_ctx: ?*uws.SocketContext = null,
-    tls_status: TLSStatus = .none,
+    tls: TLS = .none,
 
     // Timeout and reconnection management
     idle_timeout_interval_ms: u32 = 0,
@@ -112,7 +168,7 @@ pub const RedisClient = struct {
     allocator: std.mem.Allocator,
 
     /// Clean up resources used by the Redis client
-    pub fn deinit(this: *@This()) void {
+    pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*JSC.JSGlobalObject) void {
         var pending = this.in_flight;
         this.in_flight = .init(this.allocator);
         defer pending.deinit();
@@ -120,20 +176,35 @@ pub const RedisClient = struct {
         this.queue = .init(this.allocator);
         defer commands.deinit();
 
-        for (pending.readableSlice(0)) |pair| {
-            var pair_ = pair;
-            pair_.rejectCommand(this.globalObject(), "Connection closed", protocol.RedisError.ConnectionClosed);
-        }
+        if (globalObjectOrFinalizing) |globalThis| {
+            const object = protocol.redisErrorToJS(globalThis, "Connection closed", protocol.RedisError.ConnectionClosed);
+            for (pending.readableSlice(0)) |pair| {
+                var pair_ = pair;
+                pair_.rejectCommand(globalThis, object);
+            }
 
-        for (commands.readableSlice(0)) |cmd| {
-            var offline_cmd = cmd;
-            offline_cmd.promise.reject(this.globalObject(), "Connection closed", protocol.RedisError.ConnectionClosed);
-            offline_cmd.deinit(this.allocator);
+            for (commands.readableSlice(0)) |cmd| {
+                var offline_cmd = cmd;
+                offline_cmd.promise.reject(globalThis, object);
+                offline_cmd.deinit(this.allocator);
+            }
+        } else {
+            for (pending.readableSlice(0)) |pair| {
+                var pair_ = pair;
+                pair_.promise.deinit();
+            }
+
+            for (commands.readableSlice(0)) |cmd| {
+                var offline_cmd = cmd;
+                offline_cmd.promise.deinit();
+                offline_cmd.deinit(this.allocator);
+            }
         }
 
         this.allocator.free(this.connection_strings);
         this.write_buffer.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
+        this.tls.deinit();
     }
 
     /// Get the appropriate timeout interval based on connection state
@@ -172,7 +243,7 @@ pub const RedisClient = struct {
     }
 
     /// Reject all pending commands with an error
-    fn rejectAllPendingCommands(this: *RedisClient, message: []const u8, err: protocol.RedisError) void {
+    fn rejectAllPendingCommands(this: *RedisClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
         var pending = this.in_flight;
         defer pending.deinit();
         var entries = this.queue;
@@ -180,17 +251,16 @@ pub const RedisClient = struct {
         this.in_flight = .init(this.allocator);
         this.queue = .init(this.allocator);
 
-        const globalThis = this.globalObject();
         // Reject commands in the command queue
         for (pending.readableSlice(0)) |item| {
             var command_pair = item;
-            command_pair.rejectCommand(globalThis, message, err);
+            command_pair.rejectCommand(globalThis, jsvalue);
         }
 
         // Reject commands in the offline queue
         for (entries.readableSlice(0)) |item| {
             var cmd = item;
-            cmd.promise.reject(globalThis, message, err);
+            cmd.promise.reject(globalThis, jsvalue);
             cmd.deinit(this.allocator);
         }
     }
@@ -211,9 +281,13 @@ pub const RedisClient = struct {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
         if (this.status == .failed) return;
 
-        this.status = .failed;
+        const globalThis = this.globalObject();
+        this.failWithJSValue(globalThis, protocol.redisErrorToJS(globalThis, message, err));
+    }
 
-        this.rejectAllPendingCommands(message, err);
+    pub fn failWithJSValue(this: *RedisClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+        this.status = .failed;
+        this.rejectAllPendingCommands(globalThis, jsvalue);
 
         if (!this.flags.is_authenticated) {
             this.flags.is_manually_closed = true;
@@ -519,18 +593,13 @@ pub const RedisClient = struct {
 
     /// Process queued commands in the offline queue
     pub fn drain(this: *RedisClient) bool {
-        var offline_cmd = this.queue.readItem() orelse return false;
+        const offline_cmd = this.queue.readItem() orelse return false;
 
         // Add the promise to the command queue first
         this.in_flight.writeItem(.{
             .command_type = offline_cmd.command_type,
             .promise = offline_cmd.promise,
-        }) catch |err| {
-            debug("Failed to add command to queue: {s}", .{@errorName(err)});
-            offline_cmd.promise.reject(this.globalObject(), "Failed to queue command", err);
-            offline_cmd.deinit(this.allocator);
-            return false;
-        };
+        }) catch bun.outOfMemory();
         const data = offline_cmd.serialized_data;
 
         if (this.flags.is_authenticated and this.write_buffer.remaining().len == 0) {
@@ -549,13 +618,7 @@ pub const RedisClient = struct {
         }
 
         // Write the pre-serialized data directly to the output buffer
-        _ = this.write(data) catch |err| {
-            debug("Failed to write offline command: {s}", .{@errorName(err)});
-            offline_cmd.promise.reject(this.globalObject(), "Failed to write command from offline queue", err);
-            offline_cmd.deinit(this.allocator);
-            return false;
-        };
-
+        _ = this.write(data) catch bun.outOfMemory();
         bun.default_allocator.free(data);
 
         return true;
@@ -588,8 +651,8 @@ pub const RedisClient = struct {
                 };
 
                 switch (this.status) {
-                    .connecting, .connected => cmd.format(this.writer()) catch |err| {
-                        promise.reject(this.globalObject(), "Failed to format command", err);
+                    .connecting, .connected => cmd.format(this.writer()) catch {
+                        promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
                         return;
                     },
                     else => unreachable,
@@ -622,13 +685,11 @@ pub const RedisClient = struct {
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
                 } else {
-                    promise.reject(globalThis, "Connection is closed and offline queue is disabled", protocol.RedisError.ConnectionClosed);
-                    return promise.promise.get();
+                    promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection is closed and offline queue is disabled", .{}).toJS());
                 }
             },
             .failed => {
-                promise.reject(globalThis, "Connection has failed", protocol.RedisError.ConnectionClosed);
-                return promise.promise.get();
+                promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection has failed", .{}).toJS());
             },
         }
 
@@ -651,7 +712,7 @@ pub const RedisClient = struct {
     }
 
     /// Write data to the socket buffer
-    fn write(this: *RedisClient, data: []const u8) protocol.RedisError!usize {
+    fn write(this: *RedisClient, data: []const u8) !usize {
         try this.write_buffer.write(this.allocator, data);
         return data.len;
     }

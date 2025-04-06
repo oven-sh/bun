@@ -110,15 +110,14 @@ pub const Promise = struct {
 
     pub fn resolve(self: *Promise, globalObject: *JSC.JSGlobalObject, value: *protocol.RESPValue) void {
         const js_value = value.toJS(globalObject) catch |err| {
-            self.reject(globalObject, "Failed to convert RESP value to JS", err);
+            self.reject(globalObject, globalObject.takeError(err));
             return;
         };
         self.promise.resolve(globalObject, js_value);
     }
 
-    pub fn reject(self: *Promise, globalObject: *JSC.JSGlobalObject, message: []const u8, err: protocol.RedisError) void {
-        const error_value = protocol.redisErrorToJS(globalObject, message, err);
-        self.promise.reject(globalObject, error_value);
+    pub fn reject(self: *Promise, globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+        self.promise.reject(globalObject, jsvalue);
     }
 
     pub fn deinit(self: *Promise) void {
@@ -133,8 +132,8 @@ pub const PromisePair = struct {
 
     pub const Queue = std.fifo.LinearFifo(PromisePair, .Dynamic);
 
-    pub fn rejectCommand(self: *PromisePair, globalObject: *JSC.JSGlobalObject, message: []const u8, err: protocol.RedisError) void {
-        self.promise.reject(globalObject, message, err);
+    pub fn rejectCommand(self: *PromisePair, globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+        self.promise.reject(globalObject, jsvalue);
     }
 };
 

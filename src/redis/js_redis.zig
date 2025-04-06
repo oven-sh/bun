@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const redis = @import("redis.zig");
-const protocol = @import("redis_protocol.zig");
-const JSC = bun.JSC;
-const String = bun.String;
-const debug = bun.Output.scoped(.RedisJS, false);
-const uws = bun.uws;
-
-const JSValue = JSC.JSValue;
-const Socket = uws.AnySocket;
-const RedisError = protocol.RedisError;
-const Command = @import("RedisCommand.zig");
 /// Redis client wrapper for JavaScript
 pub const JSRedisClient = struct {
     client: redis.RedisClient,
@@ -42,7 +29,7 @@ pub const JSRedisClient = struct {
         const arguments = callframe.arguments();
         const vm = globalObject.bunVM();
         const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
-            if (vm.transpiler.env.get("REDIS_URL")) |url|
+            if (vm.transpiler.env.get("REDIS_URL") orelse vm.transpiler.env.get("VALKEY_URL")) |url|
                 bun.String.init(url)
             else
                 bun.String.init("redis://localhost:6379")
@@ -54,24 +41,42 @@ pub const JSRedisClient = struct {
         defer url_utf8.deinit();
         const url = bun.URL.parse(url_utf8.slice());
 
-        const port = url.getPort() orelse 6379;
-        const uri = if (url.protocol.len > 0)
+        const uri: redis.Protocol = if (url.protocol.len > 0)
             redis.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of redis, rediss, redis+tls, redis+unix, redis+tls+unix", .{})
         else
             .standalone;
 
-        if (uri.isUnix() or uri.isTLS()) {
-            return globalObject.throwTODO("Unix and TLS connections are not supported yet");
-        }
+        var username: []const u8 = "";
+        var password: []const u8 = "";
+        var hostname: []const u8 = switch (uri) {
+            .standalone_tls, .standalone => url.displayHostname(),
+            .standalone_unix, .standalone_tls_unix => brk: {
+                const unix_socket_path = bun.strings.indexOf(url_utf8.slice(), "://") orelse {
+                    return globalObject.throwInvalidArguments("Expected unix socket path after redis+unix:// or redis+tls+unix://", .{});
+                };
+                const path = url_utf8.slice()[unix_socket_path + 3 ..];
+                if (bun.strings.indexOfChar(path, '?')) |query_index| {
+                    break :brk path[0..query_index];
+                }
+                if (path.len == 0) {
+                    // "redis+unix://?abc=123"
+                    return globalObject.throwInvalidArguments("Expected unix socket path after redis+unix:// or redis+tls+unix://", .{});
+                }
+
+                break :brk path;
+            },
+        };
+
+        const port = switch (uri) {
+            .standalone_unix, .standalone_tls_unix => 0,
+            else => url.getPort() orelse 6379,
+        };
 
         const options = if (arguments.len >= 2 and !arguments[1].isUndefinedOrNull() and arguments[1].isObject())
             try Options.fromJS(globalObject, arguments[1])
         else
             redis.Options{};
 
-        var username: []const u8 = "";
-        var password: []const u8 = "";
-        var hostname: []const u8 = url.displayHostname();
         var connection_strings: []u8 = &.{};
 
         if (url.username.len > 0 or url.password.len > 0 or hostname.len > 0) {
@@ -92,9 +97,16 @@ pub const JSRedisClient = struct {
 
         return JSRedisClient.new(.{
             .client = redis.RedisClient{
-                .hostname = hostname,
                 .protocol = uri,
-                .port = port,
+                .address = switch (uri) {
+                    .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
+                    else => .{
+                        .host = .{
+                            .host = hostname,
+                            .port = port,
+                        },
+                    },
+                },
                 .username = username,
                 .password = password,
                 .in_flight = .init(bun.default_allocator),
@@ -336,16 +348,18 @@ pub const JSRedisClient = struct {
             return;
         }
 
+        const vm = this.globalObject.bunVM();
+
+        if (vm.isShuttingDown()) {
+            @branchHint(.unlikely);
+            return;
+        }
+
         // Ref to keep this alive during the reconnection
         this.ref();
         defer this.deref();
 
         this.client.status = .connecting;
-
-        const vm = this.globalObject.bunVM();
-
-        // Recreate socket and connect again
-        const ctx = vm.rareData().redis_context.tcp orelse return;
 
         // Set retry to 0 to avoid incremental backoff from previous attempts
         this.client.retry_attempts = 0;
@@ -355,21 +369,10 @@ pub const JSRedisClient = struct {
         this.poll_ref = .{};
         this.poll_ref.ref(vm);
 
-        this.client.socket = .{
-            .SocketTCP = uws.SocketTCP.connectAnon(
-                this.client.hostname,
-                this.client.port,
-                ctx,
-                this,
-                false,
-            ) catch |err| {
-                debug("Failed to reconnect: {s}", .{@errorName(err)});
-                // Unref since connection failed
-                this.poll_ref.unref(vm);
-                // Schedule another reconnection attempt
-                this.client.onClose();
-                return;
-            },
+        this.connect() catch |err| {
+            this.failWithJSValue(this.globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION("{s} reconnecting", .{@errorName(err)}).toJS());
+            this.poll_ref.disable();
+            return;
         };
 
         // Reset the socket timeout
@@ -508,24 +511,47 @@ pub const JSRedisClient = struct {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.globalObject.bunVM();
 
-        const ctx = vm.rareData().redis_context.tcp orelse brk: {
-            var err: uws.create_bun_socket_error_t = .none;
-            const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
-            uws.NewSocketHandler(false).configure(ctx_, true, *JSRedisClient, SocketHandler(false));
-            vm.rareData().redis_context.tcp = ctx_;
-            break :brk ctx_;
-        };
+        const ctx: *uws.SocketContext, const deinit_context: bool =
+            switch (this.client.tls) {
+                .none => .{
+                    vm.rareData().redis_context.tcp orelse brk_ctx: {
+                        // TCP socket
+                        var err: uws.create_bun_socket_error_t = .none;
+                        const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        uws.NewSocketHandler(false).configure(ctx_, true, *JSRedisClient, SocketHandler(false));
+                        vm.rareData().redis_context.tcp = ctx_;
+                        break :brk_ctx ctx_;
+                    },
+                    false,
+                },
+                .enabled => .{
+                    vm.rareData().redis_context.tls orelse brk_ctx: {
+                        // TLS socket, default config
+                        var err: uws.create_bun_socket_error_t = .none;
+                        const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        uws.NewSocketHandler(true).configure(ctx_, true, *JSRedisClient, SocketHandler(true));
+                        vm.rareData().redis_context.tls = ctx_;
+                        break :brk_ctx ctx_;
+                    },
+                    false,
+                },
+                .custom => |*custom| brk_ctx: {
+                    // TLS socket, custom config
+                    var err: uws.create_bun_socket_error_t = .none;
+                    const options = custom.asUSockets();
+                    const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSRedisClient), options, &err).?;
+                    uws.NewSocketHandler(true).configure(ctx_, true, *JSRedisClient, SocketHandler(true));
+                    break :brk_ctx .{ ctx_, true };
+                },
+            };
         this.ref();
 
-        this.client.socket = uws.AnySocket{
-            .SocketTCP = try uws.SocketTCP.connectAnon(
-                this.client.hostname,
-                this.client.port,
-                ctx,
-                this,
-                false,
-            ),
-        };
+        defer {
+            if (deinit_context) {
+                ctx.deinit(true);
+            }
+        }
+        this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
     fn send(this: *JSRedisClient, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*JSC.JSPromise {
@@ -1114,7 +1140,7 @@ pub const JSRedisClient = struct {
     pub fn deinit(this: *JSRedisClient) void {
         bun.debugAssert(this.client.socket.isClosed());
 
-        this.client.deinit();
+        this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
         this.this_value.deinit();
@@ -1151,40 +1177,73 @@ pub const JSRedisClient = struct {
                 return Socket{ .SocketTCP = s };
             }
             pub fn onOpen(this: *JSRedisClient, socket: SocketType) void {
+                this.client.socket = _socket(socket);
                 this.client.onOpen(_socket(socket));
             }
 
             fn onHandshake_(this: *JSRedisClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-                // Handle TLS handshake if needed
-                _ = this;
-                _ = success;
-                _ = ssl_error;
+                debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+                const handshake_success = if (success == 1) true else false;
+                this.ref();
+                defer this.deref();
+                if (handshake_success) {
+                    const vm = this.globalObject.bunVM();
+                    if (this.client.tls.rejectUnauthorized(vm)) {
+                        if (ssl_error.error_no != 0) {
+                            // only reject the connection if reject_unauthorized == true
+
+                            const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
+                            if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                                const hostname = servername[0..bun.len(servername)];
+                                if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                                    this.client.flags.is_authenticated = false;
+                                    const loop = vm.eventLoop();
+                                    loop.enter();
+                                    defer loop.exit();
+                                    this.client.status = .failed;
+                                    this.client.flags.is_manually_closed = true;
+                                    this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
+                                    this.client.socket.close();
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             pub const onHandshake = if (ssl) onHandshake_ else null;
 
             pub fn onClose(this: *JSRedisClient, socket: SocketType, _: i32, _: ?*anyopaque) void {
-                _ = socket;
+                // Ensure the socket pointer is updated.
+                this.client.socket = _socket(socket);
+
                 this.client.onClose();
             }
 
-            pub fn onEnd(_: *JSRedisClient, socket: SocketType) void {
+            pub fn onEnd(this: *JSRedisClient, socket: SocketType) void {
+                // Ensure the socket pointer is updated before closing
+                this.client.socket = _socket(socket);
+
+                // Do not allow half-open connections
                 socket.close(.normal);
             }
 
             pub fn onConnectError(this: *JSRedisClient, socket: SocketType, _: i32) void {
-                _ = socket;
+                // Ensure the socket pointer is updated.
+                this.client.socket = _socket(socket);
+
                 this.client.onClose();
             }
 
             pub fn onTimeout(this: *JSRedisClient, socket: SocketType) void {
-                _ = socket;
-                _ = this;
+                this.client.socket = _socket(socket);
                 // Handle socket timeout
             }
 
             pub fn onData(this: *JSRedisClient, socket: SocketType, data: []const u8) void {
-                _ = socket;
+                // Ensure the socket pointer is updated.
+                this.client.socket = _socket(socket);
+
                 this.ref();
                 defer this.deref();
                 this.client.onData(data);
@@ -1192,7 +1251,7 @@ pub const JSRedisClient = struct {
             }
 
             pub fn onWritable(this: *JSRedisClient, socket: SocketType) void {
-                _ = socket;
+                this.client.socket = _socket(socket);
                 this.ref();
                 defer this.deref();
                 this.client.onWritable();
@@ -1231,11 +1290,34 @@ const Options = struct {
         }
 
         if (try options_obj.getIfPropertyExists(globalObject, "tls")) |tls| {
-            if (tls.isBoolean()) {
-                this.has_tls = tls.toBoolean();
+            if (tls.isBoolean() or tls.isUndefinedOrNull()) {
+                this.tls = if (tls.toBoolean()) .enabled else .none;
+            } else if (tls.isObject()) {
+                if (try JSC.API.ServerConfig.SSLConfig.fromJS(globalObject.bunVM(), globalObject, tls)) |ssl_config| {
+                    this.tls = .{ .custom = ssl_config };
+                } else {
+                    return globalObject.throw("Invalid TLS configuration", .{});
+                }
+            } else {
+                return globalObject.throw("Invalid TLS configuration", .{});
             }
         }
 
         return this;
     }
 };
+
+const std = @import("std");
+const bun = @import("root").bun;
+const redis = @import("redis.zig");
+const protocol = @import("redis_protocol.zig");
+const JSC = bun.JSC;
+const String = bun.String;
+const debug = bun.Output.scoped(.RedisJS, false);
+const uws = bun.uws;
+
+const JSValue = JSC.JSValue;
+const Socket = uws.AnySocket;
+const RedisError = protocol.RedisError;
+const Command = @import("RedisCommand.zig");
+const BoringSSL = bun.BoringSSL;

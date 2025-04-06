@@ -1,9 +1,10 @@
 raw_response: uws.AnyResponse,
 
 ref_count: u32 = 1,
+flags: Flags = .{},
+
 js_ref: JSC.Ref = .{},
 
-flags: Flags = .{},
 body_read_state: BodyReadState = .none,
 body_read_ref: JSC.Ref = .{},
 promise: JSC.Strong = .empty,
@@ -20,7 +21,7 @@ upgrade_context: UpgradeCTX = .{},
 const log = bun.Output.scoped(.NodeHTTPResponse, false);
 pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
-pub const Flags = packed struct(u8) {
+pub const Flags = packed struct(u16) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
     ended: bool = false,
@@ -30,6 +31,8 @@ pub const Flags = packed struct(u8) {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
+    is_paused: bool = false,
+    _reserved: u7 = 0,
 };
 pub const UpgradeCTX = struct {
     context: ?*uws.uws_socket_context_t = null,
@@ -97,6 +100,21 @@ pub fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
     return Bun__getNodeHTTPServerSocketThisValue(this.raw_response == .SSL, this.raw_response.socket());
 }
 
+pub fn pauseSocket(this: *NodeHTTPResponse) void {
+    log("pauseSocket", .{});
+    if (!this.flags.is_paused) {
+        this.flags.is_paused = true;
+        this.raw_response.pause();
+    }
+}
+
+pub fn resumeSocket(this: *NodeHTTPResponse) void {
+    log("resumeSocket", .{});
+    if (this.flags.is_paused) {
+        this.flags.is_paused = false;
+        this.raw_response.@"resume"();
+    }
+}
 pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
     const upgrade_ctx = this.upgrade_context.context orelse return false;
     const ws_handler = this.server.webSocketHandler() orelse return false;
@@ -104,7 +122,7 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     if (socketValue == .zero) {
         return false;
     }
-    this.raw_response.@"resume"();
+    resumeSocket(this);
 
     defer {
         this.setOnAbortedHandler();
@@ -332,7 +350,7 @@ pub fn getFinished(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JS
 }
 
 pub fn getFlags(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSValue.jsNumber(@as(u8, @bitCast(this.flags)));
+    return JSC.JSValue.jsNumber(@as(u16, @bitCast(this.flags)));
 }
 
 pub fn getAborted(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -535,8 +553,8 @@ pub fn onTimeout(this: *NodeHTTPResponse, _: uws.AnyResponse) void {
 pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
     _ = globalObject; // autofix
     _ = callframe; // autofix
-
-    if (this.flags.request_has_completed or this.flags.socket_closed) {
+    log("doPause", .{});
+    if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended) {
         return .false;
     }
     if (this.body_read_ref.has and NodeHTTPResponse.onDataGetCached(thisValue) == null) {
@@ -546,7 +564,7 @@ pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callf
 
     if (!Environment.isWindows) {
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
-        this.raw_response.pause();
+        pauseSocket(this);
     }
     return .true;
 }
@@ -566,7 +584,8 @@ fn drainBufferedRequestBodyFromPause(this: *NodeHTTPResponse, globalObject: *JSC
 
 pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     _ = callframe; // autofix
-    if (this.flags.request_has_completed or this.flags.socket_closed) {
+    log("doResume", .{});
+    if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended) {
         return .false;
     }
 
@@ -580,7 +599,7 @@ pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, call
         result = buffered_data;
     }
 
-    this.raw_response.@"resume"();
+    resumeSocket(this);
     return result;
 }
 
@@ -660,7 +679,7 @@ pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
     if (state.isHttpEndCalled()) {
         return .undefined;
     }
-    this.raw_response.@"resume"();
+    resumeSocket(this);
     this.raw_response.clearOnData();
     this.raw_response.clearOnWritable();
     this.raw_response.clearTimeout();
@@ -983,7 +1002,7 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).slice();
     //We dont wanna a paused socket when we call end, so is important to resume the socket
-    this.raw_response.@"resume"();
+    resumeSocket(this);
     return writeOrEnd(this, globalObject, arguments, callframe.this(), true);
 }
 

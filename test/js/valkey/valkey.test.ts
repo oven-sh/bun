@@ -1,9 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { randomUUIDv7, ValkeyClient } from "bun";
+import { randomUUIDv7, RedisClient } from "bun";
 import { createClient } from "./test-utils";
 
 describe("Valkey Redis Client", () => {
-  let redis: ValkeyClient;
+  let redis: RedisClient;
 
   beforeAll(async () => {
     redis = createClient();
@@ -156,7 +156,7 @@ describe("Valkey Redis Client", () => {
 
   describe("Connection Options", () => {
     test("connection errors", async () => {
-      const customRedis = new ValkeyClient("redis://badusername:secretpassword@localhost:6379");
+      const customRedis = new RedisClient("redis://badusername:secretpassword@localhost:6379");
 
       expect(async () => {
         await customRedis.connect();

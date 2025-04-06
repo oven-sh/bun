@@ -1,5 +1,5 @@
 import { describe, test, expect, mock } from "bun:test";
-import { randomUUIDv7, ValkeyClient } from "bun";
+import { randomUUIDv7, RedisClient } from "bun";
 import { createClient, DEFAULT_REDIS_URL, delay, testKey } from "../test-utils";
 
 /**
@@ -415,7 +415,7 @@ describe("Valkey: Error Handling", () => {
       // Skip if no Redis available (to avoid false negatives)
       try {
         // Client with wrong password
-        const client = valkey(`${DEFAULT_REDIS_URL}`, {
+        const client = redis(`${DEFAULT_REDIS_URL}`, {
           password: "wrong-password",
           connectionTimeout: 1000,
           autoReconnect: false,

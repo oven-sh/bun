@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect } from "bun:test";
-import { ValkeyClient } from "bun";
+import { RedisClient } from "bun";
 
 /**
  * Test utilities for Valkey/Redis tests
@@ -30,7 +30,7 @@ export function testKey(name: string): string {
  * Create a new client with optional custom options
  */
 export function createClient(options = {}) {
-  return new ValkeyClient(DEFAULT_REDIS_URL, {
+  return new RedisClient(DEFAULT_REDIS_URL, {
     ...DEFAULT_REDIS_OPTIONS,
     ...options,
   });
@@ -39,7 +39,7 @@ export function createClient(options = {}) {
 /**
  * Wait for the client to initialize by sending a dummy command
  */
-export async function initializeClient(client: ValkeyClient): Promise<boolean> {
+export async function initializeClient(client: RedisClient): Promise<boolean> {
   try {
     await client.set(testKey("__init__"), "initializing");
     return true;
@@ -53,7 +53,7 @@ export async function initializeClient(client: ValkeyClient): Promise<boolean> {
  * Testing context with shared clients and utilities
  */
 export interface TestContext {
-  redis: ValkeyClient;
+  redis: RedisClient;
   initialized: boolean;
   keyPrefix: string;
   generateKey: (name: string) => string;

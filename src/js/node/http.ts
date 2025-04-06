@@ -1386,11 +1386,14 @@ const IncomingMessagePrototype = {
       this._readableState.readingMore = false;
       this._consuming = true;
     }
-    const socket = this.socket;
-    if (socket) {
-      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
-      socket.resume();
-    }
+    // TODO: resume() works but socket.resume() does not and internalRequest.resume() does not work
+    this.resume();
+    // const socket = this.socket;
+    // if (socket) {
+    //   //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+    //   socket.resume();
+    // }
+    // onIncomingMessageResumeNodeHTTPResponse(this);
 
     if (this[eofInProgress]) {
       // There is a nextTick pending that will emit EOF

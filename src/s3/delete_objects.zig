@@ -260,6 +260,104 @@ pub fn parseS3DeleteObjectsSuccessResult(xml: []u8) !S3DeleteObjectsSuccessResul
     return result;
 }
 
+const MAX_OBJECT_KEY_SIZE: usize = 1024;
+
+fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
+    var written: usize = 0;
+
+    for (input) |char| {
+        switch (char) {
+            '&' => {
+                buf[written] = '&';
+                written += 1;
+
+                buf[written] = 'a';
+                written += 1;
+
+                buf[written] = 'm';
+                written += 1;
+
+                buf[written] = 'p';
+                written += 1;
+
+                buf[written] = ';';
+                written += 1;
+            },
+            '<' => {
+                buf[written] = '&';
+                written += 1;
+
+                buf[written] = 'l';
+                written += 1;
+
+                buf[written] = 't';
+                written += 1;
+
+                buf[written] = ';';
+                written += 1;
+            },
+            '>' => {
+                buf[written] = '&';
+                written += 1;
+
+                buf[written] = 'g';
+                written += 1;
+
+                buf[written] = 't';
+                written += 1;
+
+                buf[written] = ';';
+                written += 1;
+            },
+            '"' => {
+                buf[written] = '&';
+                written += 1;
+
+                buf[written] = 'q';
+                written += 1;
+
+                buf[written] = 'u';
+                written += 1;
+
+                buf[written] = 'o';
+                written += 1;
+
+                buf[written] = 't';
+                written += 1;
+
+                buf[written] = ';';
+                written += 1;
+            },
+            '\'' => {
+                buf[written] = '&';
+                written += 1;
+
+                buf[written] = 'a';
+                written += 1;
+
+                buf[written] = 'p';
+                written += 1;
+
+                buf[written] = 'o';
+                written += 1;
+
+                buf[written] = 's';
+                written += 1;
+
+                buf[written] = ';';
+                written += 1;
+            },
+            else => {
+                @branchHint(.likely);
+                buf[written] = char;
+                written += 1;
+            },
+        }
+    }
+
+    return buf[0..written];
+}
+
 pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, object_keys: JSValue, extra_options: ?JSValue) !bun.BabyList(u8) {
     var delete_objects_request_body: bun.ByteList = .{};
     errdefer delete_objects_request_body.deinitWithAllocator(allocator);
@@ -275,7 +373,11 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
             if (str.tag != .Empty and str.tag != .Dead) {
                 const utfStr = str.toUTF8(allocator);
-                delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key></Object>", .{utfStr.slice()}) catch bun.outOfMemory();
+
+                const buf = allocator.alloc(u8, MAX_OBJECT_KEY_SIZE) catch bun.outOfMemory();
+                const encodedKey = xmlEncodeValue(utfStr.slice(), buf);
+                delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key></Object>", .{encodedKey}) catch bun.outOfMemory();
+                allocator.free(buf);
                 utfStr.deinit();
             }
         } else if (object_identifier_js.isObject()) {
@@ -288,7 +390,11 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
                 if (str.tag != .Empty and str.tag != .Dead) {
                     const utfStr = str.toUTF8(allocator);
-                    delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key>", .{utfStr.slice()}) catch bun.outOfMemory();
+
+                    const buf = allocator.alloc(u8, MAX_OBJECT_KEY_SIZE) catch bun.outOfMemory();
+                    const encodedKey = xmlEncodeValue(utfStr.slice(), buf);
+                    delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key>", .{encodedKey}) catch bun.outOfMemory();
+                    allocator.free(buf);
                     utfStr.deinit();
                 }
 

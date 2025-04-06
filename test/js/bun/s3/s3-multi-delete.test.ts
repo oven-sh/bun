@@ -316,6 +316,41 @@ describe("s3 - multi delete", () => {
     );
   });
 
+  it("Should xml encode object keys", async () => {
+    let body;
+    using server = createBunServer(async req => {
+      body = await collectRequstBody(req.body!);
+      return new Response("<>", {
+        headers: {
+          "Content-Type": "application/xml",
+        },
+        status: 200,
+      });
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    await client.deleteObjects([
+      "file<1",
+      "file>2",
+      "file'3",
+      'file"4',
+      "file&5",
+      { key: "file<6" },
+      { key: "file>7" },
+      { key: "file'8" },
+      { key: 'file"9' },
+      { key: "file&10" },
+    ]);
+
+    expect(body).toBe(
+      `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Delete xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Object><Key>file&lt;1</Key></Object><Object><Key>file&gt;2</Key></Object><Object><Key>file&apos;3</Key></Object><Object><Key>file&quot;4</Key></Object><Object><Key>file&amp;5</Key></Object><Object><Key>file&lt;6</Key></Object><Object><Key>file&gt;7</Key></Object><Object><Key>file&apos;8</Key></Object><Object><Key>file&quot;9</Key></Object><Object><Key>file&amp;10</Key></Object></Delete>`,
+    );
+  });
+
   it("Should return only successfully Deleted objects", async () => {
     using server = createBunServer(async req => {
       return new Response(

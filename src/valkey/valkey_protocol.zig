@@ -421,7 +421,7 @@ pub const ValkeyReader = struct {
             .BulkString => {
                 const len = try self.readInteger();
                 if (len < 0) return RESPValue{ .BulkString = null };
-                if (self.pos + @as(usize, @intCast(len)) > self.buffer.len) return error.InvalidBulkString;
+                if (self.pos + @as(usize, @intCast(len)) > self.buffer.len) return error.InvalidResponse;
                 const str = self.buffer[self.pos .. self.pos + @as(usize, @intCast(len))];
                 self.pos += @as(usize, @intCast(len));
                 const crlf = try self.readUntilCRLF();

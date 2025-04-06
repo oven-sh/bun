@@ -147,7 +147,6 @@ pub const ValkeyClient = struct {
     // Buffer management
     write_buffer: bun.OffsetByteList = .{},
     read_buffer: bun.OffsetByteList = .{},
-    last_message_start: u32 = 0,
 
     /// In-flight commands, after the data has been written to the network socket
     in_flight: Command.PromisePair.Queue,
@@ -527,84 +526,114 @@ pub const ValkeyClient = struct {
         _ = this.flushData();
     }
 
-    fn onDataStackAllocated(this: *ValkeyClient, data: []const u8) void {
-        var reader = protocol.ValkeyReader.init(data);
-        while (true) {
-            const before_read = reader.pos;
-            var value = reader.readValue(this.allocator) catch |err| {
-                if (err == error.InvalidResponse) {
-                    if (comptime bun.Environment.allow_assert) {
-                        debug("read_buffer: empty and received short read", .{});
-                    }
-
-                    this.read_buffer.head = 0;
-                    this.last_message_start = 0;
-                    this.read_buffer.byte_list.len = 0;
-                    this.read_buffer.write(this.allocator, data[before_read..]) catch @panic("failed to write to read buffer");
-                } else {
-                    this.fail("Failed to read data", err);
-                }
-                return;
-            };
-            defer value.deinit(this.allocator);
-
-            this.handleResponse(&value) catch |err| {
-                this.fail("Failed to handle response", err);
-                return;
-            };
-            if (this.status == .disconnected) {
-                return;
-            }
-            this.sendNextCommand();
-            if (reader.pos == data.len) {
-                break;
-            }
-        }
-    }
-
     /// Process data received from socket
     pub fn onData(this: *ValkeyClient, data: []const u8) void {
         // Caller refs / derefs.
 
-        this.read_buffer.head = this.last_message_start;
+        // Path 1: Buffer already has data, append and process from buffer
+        if (this.read_buffer.remaining().len > 0) {
+            this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
 
-        if (this.read_buffer.remaining().len == 0) {
-            this.onDataStackAllocated(data);
-            return;
-        }
+            // Process as many complete messages from the buffer as possible
+            while (true) {
+                const remaining_buffer = this.read_buffer.remaining();
+                if (remaining_buffer.len == 0) {
+                    break; // Buffer processed completely
+                }
 
-        this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
-        while (true) {
-            var reader = protocol.ValkeyReader.init(this.read_buffer.remaining());
-            var value = reader.readValue(this.allocator) catch |err| {
-                if (err != error.InvalidResponse) {
-                    this.fail("Failed to read data", err);
+                var reader = protocol.ValkeyReader.init(remaining_buffer);
+                const before_read_pos = reader.pos;
+
+                var value = reader.readValue(this.allocator) catch |err| {
+                    if (err == error.InvalidResponse) {
+                        // Need more data in the buffer, wait for next onData call
+                        if (comptime bun.Environment.allow_assert) {
+                            debug("read_buffer: needs more data ({d} bytes available)", .{remaining_buffer.len});
+                        }
+                        return;
+                    } else {
+                        this.fail("Failed to read data (buffer path)", err);
+                        return;
+                    }
+                };
+                defer value.deinit(this.allocator);
+
+                const bytes_consumed = reader.pos - before_read_pos;
+                if (bytes_consumed == 0 and remaining_buffer.len > 0) {
+                    this.fail("Parser consumed 0 bytes unexpectedly (buffer path)", error.InvalidResponse);
                     return;
                 }
 
-                if (comptime bun.Environment.allow_assert) {
-                    debug("read_buffer: not empty and received short read", .{});
+                this.read_buffer.consume(@truncate(bytes_consumed));
+
+                var value_to_handle = value; // Use temp var for defer
+                this.handleResponse(&value_to_handle) catch |err| {
+                    this.fail("Failed to handle response (buffer path)", err);
+                    return;
+                };
+
+                if (this.status == .disconnected or this.status == .failed) {
+                    return;
                 }
-                return;
+                this.sendNextCommand();
+            }
+            return; // Finished processing buffered data for now
+        }
+
+        // Path 2: Buffer is empty, try processing directly from stack 'data'
+        var current_data_slice = data; // Create a mutable view of the incoming data
+        while (current_data_slice.len > 0) {
+            var reader = protocol.ValkeyReader.init(current_data_slice);
+            const before_read_pos = reader.pos;
+
+            var value = reader.readValue(this.allocator) catch |err| {
+                if (err == error.InvalidResponse) {
+                    // Partial message encountered on the stack-allocated path.
+                    // Copy the *remaining* part of the stack data to the heap buffer
+                    // and wait for more data.
+                    if (comptime bun.Environment.allow_assert) {
+                        debug("read_buffer: partial message on stack ({d} bytes), switching to buffer", .{current_data_slice.len - before_read_pos});
+                    }
+                    this.read_buffer.write(this.allocator, current_data_slice[before_read_pos..]) catch @panic("failed to write remaining stack data to buffer");
+                    return; // Exit onData, next call will use the buffer path
+                } else {
+                    // Any other error is fatal
+                    this.fail("Failed to read data (stack path)", err);
+                    return;
+                }
             };
+            // Successfully read a full message from the stack data
             defer value.deinit(this.allocator);
-            this.read_buffer.consume(@truncate(reader.pos));
 
-            this.handleResponse(&value) catch |err| {
-                this.fail("Failed to handle response", err);
-                return;
-            };
-
-            if (this.status == .disconnected) {
+            const bytes_consumed = reader.pos - before_read_pos;
+            if (bytes_consumed == 0) {
+                // This case should ideally not happen if readValue succeeded and slice wasn't empty
+                this.fail("Parser consumed 0 bytes unexpectedly (stack path)", error.InvalidResponse);
                 return;
             }
 
+            // Advance the view into the stack data slice for the next iteration
+            current_data_slice = current_data_slice[bytes_consumed..];
+
+            // Handle the successfully parsed response
+            var value_to_handle = value; // Use temp var for defer
+            this.handleResponse(&value_to_handle) catch |err| {
+                this.fail("Failed to handle response (stack path)", err);
+                return;
+            };
+
+            // Check connection status after handling
+            if (this.status == .disconnected or this.status == .failed) {
+                return;
+            }
+
+            // After handling a response, try to send the next command
             this.sendNextCommand();
 
-            if (this.read_buffer.remaining().len == 0) {
-                break;
-            }
+            // Loop continues with the remainder of current_data_slice
         }
+
+        // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
@@ -697,7 +726,12 @@ pub const ValkeyClient = struct {
 
         loop.enter();
         defer loop.exit();
-        promise_ptr.resolve(globalThis, value);
+
+        if (value.* == .Error) {
+            promise_ptr.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
+        } else {
+            promise_ptr.resolve(globalThis, value);
+        }
     }
 
     /// Send authentication command to Valkey server

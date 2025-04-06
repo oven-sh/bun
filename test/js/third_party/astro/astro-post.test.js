@@ -6,7 +6,15 @@ import { nodeExe, bunEnv } from "harness";
 const fixtureDir = join(import.meta.dirname, "fixtures");
 function postNodeFormData(port) {
   const result = Bun.spawnSync({
-    cmd: [nodeExe(), join(fixtureDir, "node.fetch.fixture.js"), port?.toString()],
+    cmd: [nodeExe(), join(fixtureDir, "node-form-data.fetch.fixture.js"), port?.toString()],
+    env: bunEnv,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  expect(result.exitCode).toBe(0);
+}
+function postNodeAction(port) {
+  const result = Bun.spawnSync({
+    cmd: [nodeExe(), join(fixtureDir, "node-action.fetch.fixture.js"), port?.toString()],
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
   });
@@ -34,7 +42,7 @@ describe("astro", async () => {
     await previewServer.stop();
   });
 
-  test("is able todo a POST request to an astro action", async () => {
+  test("is able todo a POST request to an astro action using bun", async () => {
     const r = await fetch(`${origin}/_actions/getGreeting/`, {
       body: '{"name":"World"}',
       headers: {
@@ -55,6 +63,10 @@ describe("astro", async () => {
     expect(r.status).toBe(200);
     const text = await r.text();
     expect(text).toBe('["Hello, World!"]');
+  });
+
+  test("is able todo a POST request to an astro action using node", async () => {
+    postNodeAction(previewServer.port);
   });
 
   test("is able to post form data to an astro using bun", async () => {

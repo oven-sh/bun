@@ -352,9 +352,9 @@ The Redis client throws typed errors for different scenarios:
 try {
   await redis.get("non-existent-key");
 } catch (error) {
-  if (error.code === "ERR_VALKEY_CONNECTION_CLOSED") {
+  if (error.code === "ERR_REDIS_CONNECTION_CLOSED") {
     console.error("Connection to Redis server was closed");
-  } else if (error.code === "ERR_VALKEY_AUTHENTICATION_FAILED") {
+  } else if (error.code === "ERR_REDIS_AUTHENTICATION_FAILED") {
     console.error("Authentication failed");
   } else {
     console.error("Unexpected error:", error);
@@ -364,15 +364,15 @@ try {
 
 Common error codes:
 
-- `ERR_VALKEY_CONNECTION_CLOSED` - Connection to the server was closed
-- `ERR_VALKEY_AUTHENTICATION_FAILED` - Failed to authenticate with the server
-- `ERR_VALKEY_INVALID_RESPONSE` - Received an invalid response from the server
-- `ERR_VALKEY_INVALID_RESPONSE_TYPE` - Response type not recognized
-- `ERR_VALKEY_TLS_NOT_AVAILABLE` - TLS/SSL not available on this connection
-- `ERR_VALKEY_TLS_UPGRADE_FAILED` - Failed to upgrade connection to TLS/SSL
-- `ERR_VALKEY_INVALID_ARGUMENT` - Invalid argument passed to a command
-- `ERR_VALKEY_INVALID_PASSWORD` - Invalid password when authenticating
-- `ERR_VALKEY_INVALID_USERNAME` - Invalid username when authenticating
+- `ERR_REDIS_CONNECTION_CLOSED` - Connection to the server was closed
+- `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
+- `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
+- `ERR_REDIS_INVALID_RESPONSE_TYPE` - Response type not recognized
+- `ERR_REDIS_TLS_NOT_AVAILABLE` - TLS/SSL not available on this connection
+- `ERR_REDIS_TLS_UPGRADE_FAILED` - Failed to upgrade connection to TLS/SSL
+- `ERR_REDIS_INVALID_ARGUMENT` - Invalid argument passed to a command
+- `ERR_REDIS_INVALID_PASSWORD` - Invalid password when authenticating
+- `ERR_REDIS_INVALID_USERNAME` - Invalid username when authenticating
 
 ## Example Use Cases
 

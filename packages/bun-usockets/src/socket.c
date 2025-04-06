@@ -572,10 +572,12 @@ void us_socket_pause(int ssl, struct us_socket_t *s) {
     if(us_socket_is_closed(ssl, s)) return;
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+    s->flags.is_paused = 1;
 }
 
 void us_socket_resume(int ssl, struct us_socket_t *s) {
     if(!s->flags.is_paused) return;
+    s->flags.is_paused = 0;
     // closed cannot be resumed
     if(us_socket_is_closed(ssl, s)) return;
 

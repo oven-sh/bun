@@ -25,7 +25,7 @@ await redis.del("greeting");
 
 {% icon size=20 name="Bolt" /%} Fast native implementation using Zig and JavaScriptCore
 
-{% icon size=20 name="Lightning" /%} Command pipelining for better performance
+{% icon size=20 name="Lightning" /%} Automatic pipelining for better performance
 
 {% icon size=20 name="NetworkCheck" /%} Auto-reconnect with exponential backoff
 

@@ -503,7 +503,7 @@ pub const JSValkeyClient = struct {
         if (this.client.status == .connected or this.client.status == .connecting) {
             this.client.flags.is_manually_closed = true;
         }
-
+        this.client.flags.finalized = true;
         this.client.socket.close();
         this.deref();
     }

@@ -12,9 +12,8 @@ pub const ConnectionFlags = packed struct {
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
     is_reconnecting: bool = false,
-
-    // TODO: implement auto pipelining
     auto_pipelining: bool = true,
+    finalized: bool = false,
 };
 
 /// TLS connection status
@@ -272,13 +271,13 @@ pub const ValkeyClient = struct {
         if (this.in_flight.readableLength() == 0) {
             var command_entries = std.ArrayList(Command.Entry).init(this.allocator);
             defer command_entries.deinit();
-            
+
             // Collect commands to execute in a batch
             while (commands_processed < max_pipeline_commands) {
                 // Peek at the next command
                 const queue_slice = this.queue.readableSlice(0);
                 if (queue_slice.len == 0) break;
-                
+
                 // Check if the next command supports auto pipelining
                 const next_command = queue_slice[0];
                 if (!next_command.meta.supports_auto_pipelining) {
@@ -286,7 +285,7 @@ pub const ValkeyClient = struct {
                     // This command will be processed when there are no in-flight commands
                     break;
                 }
-                
+
                 // Process the command
                 const command = this.queue.readItem() orelse break;
                 command_entries.append(command) catch {
@@ -296,7 +295,7 @@ pub const ValkeyClient = struct {
                 };
                 commands_processed += 1;
             }
-            
+
             // Process all commands at once to minimize socket writes
             if (commands_processed > 0) {
                 // First add all promises to the in-flight queue
@@ -310,7 +309,7 @@ pub const ValkeyClient = struct {
                         break;
                     };
                 }
-                
+
                 // Now write all command data at once
                 for (command_entries.items) |command| {
                     this.write_buffer.write(this.allocator, command.serialized_data) catch {
@@ -320,12 +319,14 @@ pub const ValkeyClient = struct {
                     // Free the serialized data since we've copied it to the write buffer
                     this.allocator.free(command.serialized_data);
                 }
-                
+
                 // Flush the data if we processed any commands
                 _ = this.flushData();
                 have_more = this.queue.readableLength() > 0;
             }
         }
+
+        this.auto_flusher.registered = have_more;
 
         // Return true if we should schedule another flush
         return have_more;
@@ -368,13 +369,13 @@ pub const ValkeyClient = struct {
     }
 
     /// Reject all pending commands with an error
-    fn rejectAllPendingCommands(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
-        var pending = this.in_flight;
+    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: JSC.JSValue) void {
+        var pending = pending_ptr.*;
+        var entries = entries_ptr.*;
         defer pending.deinit();
-        var entries = this.queue;
         defer entries.deinit();
-        this.in_flight = .init(this.allocator);
-        this.queue = .init(this.allocator);
+        pending_ptr.* = .init(allocator);
+        entries_ptr.* = .init(allocator);
 
         // Reject commands in the command queue
         for (pending.readableSlice(0)) |item| {
@@ -386,7 +387,7 @@ pub const ValkeyClient = struct {
         for (entries.readableSlice(0)) |item| {
             var cmd = item;
             cmd.promise.reject(globalThis, jsvalue);
-            cmd.deinit(this.allocator);
+            cmd.deinit(allocator);
         }
     }
 
@@ -401,10 +402,56 @@ pub const ValkeyClient = struct {
         return this.write_buffer.len() > 0;
     }
 
+    const DeferredFailure = struct {
+        message: []const u8,
+        err: protocol.RedisError,
+        globalThis: *JSC.JSGlobalObject,
+        in_flight: Command.PromisePair.Queue,
+        queue: Command.Entry.Queue,
+
+        pub fn run(this: *DeferredFailure) void {
+            defer {
+                bun.default_allocator.free(this.message);
+                bun.destroy(this);
+            }
+            debug("running deferred failure", .{});
+            const err = protocol.valkeyErrorToJS(this.globalThis, this.message, this.err);
+            rejectAllPendingCommands(&this.in_flight, &this.queue, this.globalThis, bun.default_allocator, err);
+        }
+
+        pub fn enqueue(this: *DeferredFailure) void {
+            debug("enqueueing deferred failure", .{});
+            const managed_task = JSC.ManagedTask.New(DeferredFailure, run).init(this);
+            JSC.VirtualMachine.get().eventLoop().enqueueTask(managed_task);
+        }
+    };
+
     /// Mark the connection as failed with error message
     pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.RedisError) void {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
         if (this.status == .failed) return;
+
+        if (this.flags.finalized) {
+            // We can't run promises inside finalizers.
+            if (this.queue.count + this.in_flight.count > 0) {
+                const vm = JSC.VirtualMachine.get();
+                const deferred_failrue = bun.new(DeferredFailure, .{
+                    // This memory is not owned by us.
+                    .message = bun.default_allocator.dupe(u8, message) catch bun.outOfMemory(),
+
+                    .err = err,
+                    .globalThis = vm.global,
+                    .in_flight = this.in_flight,
+                    .queue = this.queue,
+                });
+                this.in_flight = .init(this.allocator);
+                this.queue = .init(this.allocator);
+                deferred_failrue.enqueue();
+            }
+
+            // Allow the finalizer to call .close()
+            return;
+        }
 
         const globalThis = this.globalObject();
         this.failWithJSValue(globalThis, protocol.valkeyErrorToJS(globalThis, message, err));
@@ -412,7 +459,7 @@ pub const ValkeyClient = struct {
 
     pub fn failWithJSValue(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
         this.status = .failed;
-        this.rejectAllPendingCommands(globalThis, jsvalue);
+        rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
         if (!this.flags.is_authenticated) {
             this.flags.is_manually_closed = true;
@@ -729,7 +776,7 @@ pub const ValkeyClient = struct {
                 return false;
             }
         }
-        
+
         const offline_cmd = this.queue.readItem() orelse return false;
 
         // Add the promise to the command queue first
@@ -770,7 +817,7 @@ pub const ValkeyClient = struct {
 
     fn enqueue(this: *ValkeyClient, command: *const Command, promise: *Command.Promise) !void {
         const can_pipeline = command.meta.supports_auto_pipelining and this.flags.auto_pipelining;
-        
+
         // For commands that don't support pipelining, we need to wait for the queue to drain completely
         // before sending the command. This ensures proper order of execution for state-changing commands.
         const must_wait_for_queue = !command.meta.supports_auto_pipelining and this.queue.readableLength() > 0;
@@ -823,12 +870,13 @@ pub const ValkeyClient = struct {
         switch (this.status) {
             .connecting, .connected => {
                 try this.enqueue(command, &promise);
-                
+
                 // Schedule auto-flushing to process this command if pipelining is enabled
-                if (this.flags.auto_pipelining and 
-                    command.meta.supports_auto_pipelining and 
-                    this.status == .connected and 
-                    this.queue.readableLength() > 0) {
+                if (this.flags.auto_pipelining and
+                    command.meta.supports_auto_pipelining and
+                    this.status == .connected and
+                    this.queue.readableLength() > 0)
+                {
                     this.registerAutoFlusher(JSC.VirtualMachine.get());
                 }
             },

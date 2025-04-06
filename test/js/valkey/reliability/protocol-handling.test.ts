@@ -51,6 +51,7 @@ describe("Valkey: Protocol Handling", () => {
         }
       } catch (error) {
         console.warn("RESP3 Map test failed:", error.message);
+        throw error;
       }
     });
 
@@ -77,6 +78,7 @@ describe("Valkey: Protocol Handling", () => {
         expect(setResult).toContain("special \r\n character");
       } catch (error) {
         console.warn("RESP3 Set test failed:", error.message);
+        throw error;
       }
     });
 
@@ -99,6 +101,7 @@ describe("Valkey: Protocol Handling", () => {
         expect(notExistsResult).toBe(false);
       } catch (error) {
         console.warn("RESP3 Boolean test failed:", error.message);
+        throw error;
       }
     });
 
@@ -126,6 +129,7 @@ describe("Valkey: Protocol Handling", () => {
         expect(hashDoubleResult === "10.5" || hashDoubleResult === 10.5).toBe(true);
       } catch (error) {
         console.warn("RESP3 Number test failed:", error.message);
+        throw error;
       }
     });
 
@@ -150,6 +154,7 @@ describe("Valkey: Protocol Handling", () => {
         expect(timeoutResult).toBeNull();
       } catch (error) {
         console.warn("RESP3 Null test failed:", error.message);
+        throw error;
       }
     });
 
@@ -218,6 +223,7 @@ describe("Valkey: Protocol Handling", () => {
       } catch (error) {
         // Some Redis implementations might not support streams
         console.warn("Nested array test failed:", error.message);
+        throw error;
       }
     });
 
@@ -246,6 +252,7 @@ describe("Valkey: Protocol Handling", () => {
         expect(emptyField).toBe("empty-field-name");
       } catch (error) {
         console.warn("Empty string test failed:", error.message);
+        throw error;
       }
     });
 
@@ -280,6 +287,7 @@ describe("Valkey: Protocol Handling", () => {
         }
       } catch (error) {
         console.warn("Large array test failed:", error.message);
+        throw error;
       }
     });
 
@@ -316,6 +324,7 @@ describe("Valkey: Protocol Handling", () => {
         }
       } catch (error) {
         console.warn("Large bulk string test failed:", error.message);
+        throw error;
       }
     });
 
@@ -350,6 +359,7 @@ describe("Valkey: Protocol Handling", () => {
         }
       } catch (error) {
         console.warn("Binary data test failed:", error.message);
+        throw error;
       }
     });
   });
@@ -375,6 +385,7 @@ describe("Valkey: Protocol Handling", () => {
         }
       } catch (error) {
         console.warn("RESP delimiter test failed:", error.message);
+        throw error;
       }
     });
 
@@ -399,6 +410,7 @@ describe("Valkey: Protocol Handling", () => {
         }
       } catch (error) {
         console.warn("RESP types in data test failed:", error.message);
+        throw error;
       }
     });
   });
@@ -413,6 +425,7 @@ describe("Valkey: Protocol Handling", () => {
         // Only test if client actually implements monitor callback
         if (typeof client.send !== "function") {
           console.warn("Client doesn't support sendCommand, skipping test");
+          throw error;
           return;
         }
 
@@ -438,9 +451,11 @@ describe("Valkey: Protocol Handling", () => {
         } catch (error) {
           // Some Redis configurations might disable MONITOR
           console.warn("MONITOR test got error:", error.message);
+          throw error;
         }
       } catch (error) {
         console.warn("RESP3 Push test failed:", error.message);
+        throw error;
       }
     });
   });
@@ -478,6 +493,7 @@ describe("Valkey: Protocol Handling", () => {
         // If we got here without protocol parse errors, test passes
       } catch (error) {
         console.warn("Rapid command switching test failed:", error.message);
+
         throw error;
       }
     });

@@ -199,13 +199,14 @@ pub const RedisClient = struct {
     }
 
     /// Flush pending data to the socket
-    pub fn flushData(this: *RedisClient) void {
+    pub fn flushData(this: *RedisClient) bool {
         const chunk = this.write_buffer.remaining();
-        if (chunk.len == 0) return;
+        if (chunk.len == 0) return true;
         const wrote = this.socket.write(chunk, false);
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
+        return this.write_buffer.len() == 0;
     }
 
     /// Mark the connection as failed with error message
@@ -258,10 +259,19 @@ pub const RedisClient = struct {
         this.onRedisReconnect();
     }
 
+    pub fn sendNextCommand(this: *RedisClient) void {
+        if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
+            _ = this.drain();
+        }
+
+        _ = this.flushData();
+    }
+
     /// Process data received from socket
     pub fn onData(this: *RedisClient, data: []const u8) void {
         // Caller refs / derefs.
         this.flags.is_processing_data = true;
+
         defer {
             this.flags.is_processing_data = false;
         }
@@ -291,6 +301,7 @@ pub const RedisClient = struct {
                 this.fail("Failed to handle response", err);
                 return;
             };
+            this.sendNextCommand();
             return;
         }
 
@@ -317,6 +328,8 @@ pub const RedisClient = struct {
         debug("clean read_buffer", .{});
         this.last_message_start = 0;
         this.read_buffer.head = 0;
+
+        this.sendNextCommand();
     }
 
     /// Handle Redis protocol response
@@ -476,7 +489,7 @@ pub const RedisClient = struct {
     /// Start the connection process
     fn start(this: *RedisClient) void {
         this.authenticate();
-        this.flushData();
+        _ = this.flushData();
     }
 
     /// Process queued commands in the offline queue
@@ -527,11 +540,8 @@ pub const RedisClient = struct {
         this.ref();
         defer this.deref();
 
-        if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
-            _ = this.drain();
-        }
-
-        this.flushData();
+        this.sendNextCommand();
+        _ = this.flushData();
     }
 
     fn enqueue(this: *RedisClient, command: *const Command, promise: *Command.Promise) !void {

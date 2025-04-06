@@ -390,7 +390,6 @@ pub const JSRedisClient = struct {
 
         if (this.this_value.tryGet()) |this_value| {
             // Call onConnect callback if defined by the user
-            // Call onConnect callback if defined by the user
             if (JSRedisClient.onconnectGetCached(this_value)) |on_connect| {
                 const js_value = this_value;
                 js_value.ensureStillAlive();

@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, expect } from "bun:test";
-import { RedisClient } from "bun";
+// These are correct. The folder is named 'valkey", but it's a Redis client and the name is redis.
+import { redis, RedisClient } from "bun";
 
 /**
  * Test utilities for Valkey/Redis tests
- * 
+ *
  * Available direct methods (avoid using .send() for these):
  * - get(key): Get value of a key
  * - set(key, value): Set value of a key
@@ -73,7 +74,7 @@ export async function initializeClient(client: RedisClient): Promise<boolean> {
  * Testing context with shared clients and utilities
  */
 export interface TestContext {
-  redis: RedisClient;
+  redis: ValkeyClient;
   initialized: boolean;
   keyPrefix: string;
   generateKey: (name: string) => string;
@@ -102,7 +103,7 @@ export function setupTestContext(): TestContext {
       // Clean up Redis keys created during tests
       const keys = await context.redis.send("KEYS", [`${TEST_KEY_PREFIX}*`]);
       if (Array.isArray(keys) && keys.length > 0) {
-        // Using del command directly when available 
+        // Using del command directly when available
         if (keys.length === 1) {
           await context.redis.del(keys[0]);
         } else {

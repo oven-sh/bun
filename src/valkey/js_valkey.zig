@@ -1,18 +1,18 @@
-/// Redis client wrapper for JavaScript
-pub const JSRedisClient = struct {
-    client: redis.RedisClient,
+/// Valkey client wrapper for JavaScript
+pub const JSValkeyClient = struct {
+    client: valkey.ValkeyClient,
     globalObject: *JSC.JSGlobalObject,
     this_value: JSC.JSRef = JSC.JSRef.empty(),
     poll_ref: bun.Async.KeepAlive = .{},
     timer: JSC.BunTimer.EventLoopTimer = .{
-        .tag = .RedisConnectionTimeout,
+        .tag = .ValkeyConnectionTimeout,
         .next = .{
             .sec = 0,
             .nsec = 0,
         },
     },
     reconnect_timer: JSC.BunTimer.EventLoopTimer = .{
-        .tag = .RedisConnectionReconnect,
+        .tag = .ValkeyConnectionReconnect,
         .next = .{
             .sec = 0,
             .nsec = 0,
@@ -22,17 +22,17 @@ pub const JSRedisClient = struct {
     ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSValkeyClient;
-    pub usingnamespace bun.NewRefCounted(JSRedisClient, deinit, null);
+    pub usingnamespace bun.NewRefCounted(JSValkeyClient, deinit, null);
 
-    // Factory function to create a new Redis client from JS
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSRedisClient {
+    // Factory function to create a new Valkey client from JS
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSValkeyClient {
         const arguments = callframe.arguments();
         const vm = globalObject.bunVM();
         const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
             if (vm.transpiler.env.get("REDIS_URL") orelse vm.transpiler.env.get("VALKEY_URL")) |url|
                 bun.String.init(url)
             else
-                bun.String.init("redis://localhost:6379")
+                bun.String.init("valkey://localhost:6379")
         else
             try arguments[0].toBunString(globalObject);
         defer url_str.deref();
@@ -41,8 +41,8 @@ pub const JSRedisClient = struct {
         defer url_utf8.deinit();
         const url = bun.URL.parse(url_utf8.slice());
 
-        const uri: redis.Protocol = if (url.protocol.len > 0)
-            redis.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of redis, rediss, redis+tls, redis+unix, redis+tls+unix", .{})
+        const uri: valkey.Protocol = if (url.protocol.len > 0)
+            valkey.Protocol.Map.get(url.protocol) orelse return globalObject.throw("Expected url protocol to be one of valkey, valkeys, valkey+tls, valkey+unix, valkey+tls+unix", .{})
         else
             .standalone;
 
@@ -52,15 +52,15 @@ pub const JSRedisClient = struct {
             .standalone_tls, .standalone => url.displayHostname(),
             .standalone_unix, .standalone_tls_unix => brk: {
                 const unix_socket_path = bun.strings.indexOf(url_utf8.slice(), "://") orelse {
-                    return globalObject.throwInvalidArguments("Expected unix socket path after redis+unix:// or redis+tls+unix://", .{});
+                    return globalObject.throwInvalidArguments("Expected unix socket path after valkey+unix:// or valkey+tls+unix://", .{});
                 };
                 const path = url_utf8.slice()[unix_socket_path + 3 ..];
                 if (bun.strings.indexOfChar(path, '?')) |query_index| {
                     break :brk path[0..query_index];
                 }
                 if (path.len == 0) {
-                    // "redis+unix://?abc=123"
-                    return globalObject.throwInvalidArguments("Expected unix socket path after redis+unix:// or redis+tls+unix://", .{});
+                    // "valkey+unix://?abc=123"
+                    return globalObject.throwInvalidArguments("Expected unix socket path after valkey+unix:// or valkey+tls+unix://", .{});
                 }
 
                 break :brk path;
@@ -75,7 +75,7 @@ pub const JSRedisClient = struct {
         const options = if (arguments.len >= 2 and !arguments[1].isUndefinedOrNull() and arguments[1].isObject())
             try Options.fromJS(globalObject, arguments[1])
         else
-            redis.Options{};
+            valkey.Options{};
 
         var connection_strings: []u8 = &.{};
 
@@ -93,10 +93,10 @@ pub const JSRedisClient = struct {
 
         const database = if (url.pathname.len > 0) std.fmt.parseInt(u32, url.pathname[1..], 10) catch 0 else 0;
 
-        bun.analytics.Features.redis_connections += 1;
+        bun.analytics.Features.valkey_connections += 1;
 
-        return JSRedisClient.new(.{
-            .client = redis.RedisClient{
+        return JSValkeyClient.new(.{
+            .client = valkey.ValkeyClient{
                 .address = switch (uri) {
                     .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
                     else => .{
@@ -135,18 +135,18 @@ pub const JSRedisClient = struct {
         });
     }
 
-    pub fn getConnected(this: *JSRedisClient, _: *JSC.JSGlobalObject) JSValue {
+    pub fn getConnected(this: *JSValkeyClient, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.client.status == .connected);
     }
 
-    pub fn getBufferedAmount(this: *JSRedisClient, _: *JSC.JSGlobalObject) JSValue {
+    pub fn getBufferedAmount(this: *JSValkeyClient, _: *JSC.JSGlobalObject) JSValue {
         const len =
             this.client.write_buffer.len() +
             this.client.read_buffer.len();
         return JSValue.jsNumber(len);
     }
 
-    pub fn jsConnect(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
 
@@ -157,13 +157,13 @@ pub const JSRedisClient = struct {
             return JSC.JSPromise.resolvedPromiseValue(globalObject, .undefined);
         }
 
-        if (JSRedisClient.connectionPromiseGetCached(this_value)) |promise| {
+        if (JSValkeyClient.connectionPromiseGetCached(this_value)) |promise| {
             return promise;
         }
 
         const promise_ptr = JSC.JSPromise.create(globalObject);
         const promise = promise_ptr.asValue(globalObject);
-        JSRedisClient.connectionPromiseSetCached(this_value, globalObject, promise);
+        JSValkeyClient.connectionPromiseSetCached(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
@@ -202,7 +202,7 @@ pub const JSRedisClient = struct {
         return promise;
     }
 
-    pub fn jsDisconnect(this: *JSRedisClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (this.client.status == .disconnected) {
             return .undefined;
         }
@@ -210,32 +210,32 @@ pub const JSRedisClient = struct {
         return .undefined;
     }
 
-    pub fn getOnConnect(_: *JSRedisClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
-        if (JSRedisClient.onconnectGetCached(thisValue)) |value| {
+    pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
+        if (JSValkeyClient.onconnectGetCached(thisValue)) |value| {
             return value;
         }
         return .undefined;
     }
 
-    pub fn setOnConnect(_: *JSRedisClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        JSRedisClient.onconnectSetCached(thisValue, globalObject, value);
+    pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+        JSValkeyClient.onconnectSetCached(thisValue, globalObject, value);
         return true;
     }
 
-    pub fn getOnClose(_: *JSRedisClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
-        if (JSRedisClient.oncloseGetCached(thisValue)) |value| {
+    pub fn getOnClose(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
+        if (JSValkeyClient.oncloseGetCached(thisValue)) |value| {
             return value;
         }
         return .undefined;
     }
 
-    pub fn setOnClose(_: *JSRedisClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        JSRedisClient.oncloseSetCached(thisValue, globalObject, value);
+    pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+        JSValkeyClient.oncloseSetCached(thisValue, globalObject, value);
         return true;
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive
-    fn addTimer(this: *JSRedisClient, timer: *JSC.BunTimer.EventLoopTimer, next_timeout_ms: u32) void {
+    fn addTimer(this: *JSValkeyClient, timer: *JSC.BunTimer.EventLoopTimer, next_timeout_ms: u32) void {
         this.ref();
         defer this.deref();
 
@@ -259,7 +259,7 @@ pub const JSRedisClient = struct {
     }
 
     /// Safely remove a timer with proper reference counting and event loop keepalive
-    fn removeTimer(this: *JSRedisClient, timer: *JSC.BunTimer.EventLoopTimer) void {
+    fn removeTimer(this: *JSValkeyClient, timer: *JSC.BunTimer.EventLoopTimer) void {
         if (timer.state == .ACTIVE) {
 
             // Store VM reference to use later
@@ -273,7 +273,7 @@ pub const JSRedisClient = struct {
         }
     }
 
-    fn resetConnectionTimeout(this: *JSRedisClient) void {
+    fn resetConnectionTimeout(this: *JSValkeyClient) void {
         const interval = this.client.getTimeoutInterval();
 
         // First remove existing timer if active
@@ -287,14 +287,14 @@ pub const JSRedisClient = struct {
         }
     }
 
-    pub fn disableConnectionTimeout(this: *JSRedisClient) void {
+    pub fn disableConnectionTimeout(this: *JSValkeyClient) void {
         if (this.timer.state == .ACTIVE) {
             this.removeTimer(&this.timer);
         }
         this.timer.state = .CANCELLED;
     }
 
-    pub fn onConnectionTimeout(this: *JSRedisClient) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onConnectionTimeout(this: *JSValkeyClient) JSC.BunTimer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
 
         // Mark timer as fired
@@ -312,11 +312,11 @@ pub const JSRedisClient = struct {
         switch (this.client.status) {
             .connected => {
                 debug("Idle timeout reached after {d}ms", .{this.client.idle_timeout_interval_ms});
-                this.clientFail("Idle timeout reached", protocol.RedisError.ConnectionClosed);
+                this.clientFail("Idle timeout reached", protocol.ValkeyError.ConnectionClosed);
             },
             .connecting => {
                 debug("Connection timeout after {d}ms", .{this.client.connection_timeout_ms});
-                this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
+                this.clientFail("Connection timeout", protocol.ValkeyError.ConnectionClosed);
             },
             else => {
                 // No timeout for other states
@@ -326,7 +326,7 @@ pub const JSRedisClient = struct {
         return .disarm;
     }
 
-    pub fn onReconnectTimer(this: *JSRedisClient) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onReconnectTimer(this: *JSValkeyClient) JSC.BunTimer.EventLoopTimer.Arm {
         debug("Reconnect timer fired, attempting to reconnect", .{});
 
         // Mark timer as fired and store important values before doing any derefs
@@ -342,7 +342,7 @@ pub const JSRedisClient = struct {
         return .disarm;
     }
 
-    pub fn reconnect(this: *JSRedisClient) void {
+    pub fn reconnect(this: *JSValkeyClient) void {
         if (!this.client.flags.is_reconnecting) {
             return;
         }
@@ -378,11 +378,11 @@ pub const JSRedisClient = struct {
         this.resetConnectionTimeout();
     }
 
-    // Callback for when Redis client connects
-    pub fn onRedisConnect(this: *JSRedisClient) void {
+    // Callback for when Valkey client connects
+    pub fn onValkeyConnect(this: *JSValkeyClient) void {
         // Safety check to ensure a valid connection state
         if (this.client.status != .connected) {
-            debug("onRedisConnect called but client status is not 'connected': {s}", .{@tagName(this.client.status)});
+            debug("onValkeyConnect called but client status is not 'connected': {s}", .{@tagName(this.client.status)});
             return;
         }
 
@@ -393,14 +393,14 @@ pub const JSRedisClient = struct {
 
         if (this.this_value.tryGet()) |this_value| {
             // Call onConnect callback if defined by the user
-            if (JSRedisClient.onconnectGetCached(this_value)) |on_connect| {
+            if (JSValkeyClient.onconnectGetCached(this_value)) |on_connect| {
                 const js_value = this_value;
                 js_value.ensureStillAlive();
                 globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
             }
 
-            if (JSRedisClient.connectionPromiseGetCached(this_value)) |promise| {
-                JSRedisClient.connectionPromiseSetCached(this_value, globalObject, .zero);
+            if (JSValkeyClient.connectionPromiseGetCached(this_value)) |promise| {
+                JSValkeyClient.connectionPromiseSetCached(this_value, globalObject, .zero);
                 promise.asPromise().?.resolve(globalObject, .undefined);
             }
         }
@@ -409,8 +409,8 @@ pub const JSRedisClient = struct {
         this.updatePollRef();
     }
 
-    // Callback for when Redis client needs to reconnect
-    pub fn onRedisReconnect(this: *JSRedisClient) void {
+    // Callback for when Valkey client needs to reconnect
+    pub fn onValkeyReconnect(this: *JSValkeyClient) void {
         // Schedule reconnection using our safe timer methods
         if (this.reconnect_timer.state == .ACTIVE) {
             this.removeTimer(&this.reconnect_timer);
@@ -422,8 +422,8 @@ pub const JSRedisClient = struct {
         }
     }
 
-    // Callback for when Redis client closes
-    pub fn onRedisClose(this: *JSRedisClient) void {
+    // Callback for when Valkey client closes
+    pub fn onValkeyClose(this: *JSValkeyClient) void {
         const globalObject = this.globalObject;
         this.poll_ref.disable();
         defer this.deref();
@@ -434,21 +434,21 @@ pub const JSRedisClient = struct {
         defer this.deref();
 
         // Create an error value
-        const error_value = protocol.redisErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
+        const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.ValkeyError.ConnectionClosed);
 
         const loop = globalObject.bunVM().eventLoop();
         loop.enter();
         defer loop.exit();
 
         if (this_jsvalue != .undefined) {
-            if (JSRedisClient.connectionPromiseGetCached(this_jsvalue)) |promise| {
-                JSRedisClient.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
+            if (JSValkeyClient.connectionPromiseGetCached(this_jsvalue)) |promise| {
+                JSValkeyClient.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
                 promise.asPromise().?.reject(globalObject, error_value);
             }
         }
 
         // Call onClose callback if it exists
-        if (JSRedisClient.oncloseGetCached(this_jsvalue)) |on_close| {
+        if (JSValkeyClient.oncloseGetCached(this_jsvalue)) |on_close| {
             _ = on_close.call(
                 globalObject,
                 this_jsvalue,
@@ -457,22 +457,22 @@ pub const JSRedisClient = struct {
         }
     }
 
-    // Callback for when Redis client times out
-    pub fn onRedisTimeout(this: *JSRedisClient) void {
-        this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
+    // Callback for when Valkey client times out
+    pub fn onValkeyTimeout(this: *JSValkeyClient) void {
+        this.clientFail("Connection timeout", protocol.ValkeyError.ConnectionClosed);
     }
 
-    pub fn clientFail(this: *JSRedisClient, message: []const u8, err: protocol.RedisError) void {
+    pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.ValkeyError) void {
         debug("clientFail: {s}: {s}", .{ message, @errorName(err) });
         const globalObject = this.globalObject;
-        const value = protocol.redisErrorToJS(globalObject, message, err);
+        const value = protocol.valkeyErrorToJS(globalObject, message, err);
         this.failWithJSValue(value);
     }
 
-    pub fn failWithJSValue(this: *JSRedisClient, value: JSValue) void {
+    pub fn failWithJSValue(this: *JSValkeyClient, value: JSValue) void {
         const this_value = this.this_value.tryGet() orelse return;
         const globalObject = this.globalObject;
-        if (JSRedisClient.oncloseGetCached(this_value)) |on_close| {
+        if (JSValkeyClient.oncloseGetCached(this_value)) |on_close| {
             const loop = globalObject.bunVM().eventLoop();
             loop.enter();
             defer loop.exit();
@@ -484,8 +484,8 @@ pub const JSRedisClient = struct {
         }
     }
 
-    pub fn finalize(this: *JSRedisClient) void {
-        debug("JSRedisClient finalize", .{});
+    pub fn finalize(this: *JSValkeyClient) void {
+        debug("JSValkeyClient finalize", .{});
         this.stopTimers();
         this.this_value.deinit();
         if (this.client.status == .connected or this.client.status == .connecting) {
@@ -496,7 +496,7 @@ pub const JSRedisClient = struct {
         this.deref();
     }
 
-    pub fn stopTimers(this: *JSRedisClient) void {
+    pub fn stopTimers(this: *JSValkeyClient) void {
         // Use safe timer removal methods to ensure proper reference counting
         if (this.timer.state == .ACTIVE) {
             this.removeTimer(&this.timer);
@@ -506,30 +506,30 @@ pub const JSRedisClient = struct {
         }
     }
 
-    fn connect(this: *JSRedisClient) !void {
+    fn connect(this: *JSValkeyClient) !void {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.globalObject.bunVM();
 
         const ctx: *uws.SocketContext, const deinit_context: bool =
             switch (this.client.tls) {
                 .none => .{
-                    vm.rareData().redis_context.tcp orelse brk_ctx: {
+                    vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
                         var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
-                        uws.NewSocketHandler(false).configure(ctx_, true, *JSRedisClient, SocketHandler(false));
-                        vm.rareData().redis_context.tcp = ctx_;
+                        const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
+                        vm.rareData().valkey_context.tcp = ctx_;
                         break :brk_ctx ctx_;
                     },
                     false,
                 },
                 .enabled => .{
-                    vm.rareData().redis_context.tls orelse brk_ctx: {
+                    vm.rareData().valkey_context.tls orelse brk_ctx: {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSRedisClient), uws.us_bun_socket_context_options_t{}, &err).?;
-                        uws.NewSocketHandler(true).configure(ctx_, true, *JSRedisClient, SocketHandler(true));
-                        vm.rareData().redis_context.tls = ctx_;
+                        const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
+                        vm.rareData().valkey_context.tls = ctx_;
                         break :brk_ctx ctx_;
                     },
                     false,
@@ -538,8 +538,8 @@ pub const JSRedisClient = struct {
                     // TLS socket, custom config
                     var err: uws.create_bun_socket_error_t = .none;
                     const options = custom.asUSockets();
-                    const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSRedisClient), options, &err).?;
-                    uws.NewSocketHandler(true).configure(ctx_, true, *JSRedisClient, SocketHandler(true));
+                    const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
+                    uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                     break :brk_ctx .{ ctx_, true };
                 },
             };
@@ -553,7 +553,7 @@ pub const JSRedisClient = struct {
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
-    fn send(this: *JSRedisClient, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*JSC.JSPromise {
+    fn send(this: *JSValkeyClient, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*JSC.JSPromise {
         if (this.client.flags.needs_to_open_socket) {
             @branchHint(.unlikely);
 
@@ -575,7 +575,7 @@ pub const JSRedisClient = struct {
         return try this.client.send(globalThis, command);
     }
 
-    pub fn jsSendCommand(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsSendCommand(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const command = try callframe.argument(0).toBunString(globalObject);
         defer command.deref();
 
@@ -611,12 +611,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn get(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn get(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -632,12 +632,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send GET command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send GET command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn set(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn set(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const value = try callframe.argument(1).toBunString(globalObject);
@@ -658,12 +658,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SET command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SET command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn del(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn del(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -680,12 +680,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send DEL command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send DEL command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn incr(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn incr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -701,12 +701,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send INCR command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send INCR command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn decr(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn decr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -722,12 +722,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send DECR command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send DECR command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn exists(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn exists(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -743,12 +743,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Exists,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send EXISTS command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send EXISTS command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn expire(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn expire(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const seconds = try globalObject.validateIntegerRange(callframe.argument(1), i32, 0, .{ .min = 0, .max = 2147483647 });
@@ -770,12 +770,12 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send EXPIRE command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send EXPIRE command", err);
         };
         return promise.asValue(globalObject);
     }
 
-    pub fn ttl(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn ttl(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -791,13 +791,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send TTL command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send TTL command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement srem (remove value from a set)
-    pub fn srem(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn srem(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const value = try callframe.argument(1).toBunString(globalObject);
@@ -818,13 +818,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SREM command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SREM command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement srandmember (get random member from set)
-    pub fn srandmember(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn srandmember(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -840,13 +840,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SRANDMEMBER command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SRANDMEMBER command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement smembers (get all members of a set)
-    pub fn smembers(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn smembers(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -862,13 +862,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SMEMBERS command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SMEMBERS command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement spop (pop a random member from a set)
-    pub fn spop(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn spop(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -885,13 +885,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SPOP command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SPOP command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement sadd (add member to a set)
-    pub fn sadd(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn sadd(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const value = try callframe.argument(1).toBunString(globalObject);
@@ -912,13 +912,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SADD command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SADD command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement sismember (check if value is member of a set)
-    pub fn sismember(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn sismember(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const value = try callframe.argument(1).toBunString(globalObject);
@@ -939,13 +939,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send SISMEMBER command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send SISMEMBER command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement hmget (get multiple values from hash)
-    pub fn hmget(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -989,13 +989,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send HMGET command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send HMGET command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement hincrby (increment hash field by integer value)
-    pub fn hincrby(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn hincrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const field = try callframe.argument(1).toBunString(globalObject);
@@ -1020,13 +1020,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send HINCRBY command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send HINCRBY command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement hincrbyfloat (increment hash field by float value)
-    pub fn hincrbyfloat(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
         const field = try callframe.argument(1).toBunString(globalObject);
@@ -1051,13 +1051,13 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send HINCRBYFLOAT command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send HINCRBYFLOAT command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Implement hmset (set multiple values in hash)
-    pub fn hmset(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const key = try callframe.argument(0).toBunString(globalObject);
         defer key.deref();
 
@@ -1114,29 +1114,29 @@ pub const JSRedisClient = struct {
                 .command_type = .Generic,
             },
         ) catch |err| {
-            return protocol.redisErrorToJS(globalObject, "Failed to send HMSET command", err);
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send HMSET command", err);
         };
         return promise.asValue(globalObject);
     }
 
     // Getter for memory cost - useful for diagnostics
-    pub fn memoryCost(this: *JSRedisClient) usize {
-        var memory_cost: usize = @sizeOf(JSRedisClient);
+    pub fn memoryCost(this: *JSValkeyClient) usize {
+        var memory_cost: usize = @sizeOf(JSValkeyClient);
 
         // Add size of all internal buffers
         memory_cost += this.client.write_buffer.byte_list.cap;
         memory_cost += this.client.read_buffer.byte_list.cap;
 
         // Add queue sizes
-        memory_cost += this.client.in_flight.count * @sizeOf(redis.Command.PromisePair);
+        memory_cost += this.client.in_flight.count * @sizeOf(valkey.Command.PromisePair);
         for (this.client.queue.readableSlice(0)) |*command| {
             memory_cost += command.serialized_data.len;
         }
-        memory_cost += this.client.queue.count * @sizeOf(redis.Command.Entry);
+        memory_cost += this.client.queue.count * @sizeOf(valkey.Command.Entry);
         return memory_cost;
     }
 
-    pub fn deinit(this: *JSRedisClient) void {
+    pub fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
 
         this.client.deinit(null);
@@ -1148,7 +1148,7 @@ pub const JSRedisClient = struct {
     }
 
     /// Keep the event loop alive, or don't keep it alive
-    pub fn updatePollRef(this: *JSRedisClient) void {
+    pub fn updatePollRef(this: *JSValkeyClient) void {
         if (!this.client.hasAnyPendingCommands() and this.client.status == .connected) {
             this.poll_ref.unref(this.globalObject.bunVM());
             // If we don't have any pending commands and we're connected, we don't need to keep the object alive.
@@ -1175,12 +1175,12 @@ pub const JSRedisClient = struct {
 
                 return Socket{ .SocketTCP = s };
             }
-            pub fn onOpen(this: *JSRedisClient, socket: SocketType) void {
+            pub fn onOpen(this: *JSValkeyClient, socket: SocketType) void {
                 this.client.socket = _socket(socket);
                 this.client.onOpen(_socket(socket));
             }
 
-            fn onHandshake_(this: *JSRedisClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
                 debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
                 const handshake_success = if (success == 1) true else false;
                 this.ref();
@@ -1212,14 +1212,14 @@ pub const JSRedisClient = struct {
 
             pub const onHandshake = if (ssl) onHandshake_ else null;
 
-            pub fn onClose(this: *JSRedisClient, socket: SocketType, _: i32, _: ?*anyopaque) void {
+            pub fn onClose(this: *JSValkeyClient, socket: SocketType, _: i32, _: ?*anyopaque) void {
                 // Ensure the socket pointer is updated.
                 this.client.socket = _socket(socket);
 
                 this.client.onClose();
             }
 
-            pub fn onEnd(this: *JSRedisClient, socket: SocketType) void {
+            pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
                 // Ensure the socket pointer is updated before closing
                 this.client.socket = _socket(socket);
 
@@ -1227,19 +1227,19 @@ pub const JSRedisClient = struct {
                 socket.close(.normal);
             }
 
-            pub fn onConnectError(this: *JSRedisClient, socket: SocketType, _: i32) void {
+            pub fn onConnectError(this: *JSValkeyClient, socket: SocketType, _: i32) void {
                 // Ensure the socket pointer is updated.
                 this.client.socket = _socket(socket);
 
                 this.client.onClose();
             }
 
-            pub fn onTimeout(this: *JSRedisClient, socket: SocketType) void {
+            pub fn onTimeout(this: *JSValkeyClient, socket: SocketType) void {
                 this.client.socket = _socket(socket);
                 // Handle socket timeout
             }
 
-            pub fn onData(this: *JSRedisClient, socket: SocketType, data: []const u8) void {
+            pub fn onData(this: *JSValkeyClient, socket: SocketType, data: []const u8) void {
                 // Ensure the socket pointer is updated.
                 this.client.socket = _socket(socket);
 
@@ -1249,7 +1249,7 @@ pub const JSRedisClient = struct {
                 this.updatePollRef();
             }
 
-            pub fn onWritable(this: *JSRedisClient, socket: SocketType) void {
+            pub fn onWritable(this: *JSValkeyClient, socket: SocketType) void {
                 this.client.socket = _socket(socket);
                 this.ref();
                 defer this.deref();
@@ -1260,10 +1260,10 @@ pub const JSRedisClient = struct {
     }
 };
 
-// Parse JavaScript options into Redis client options
+// Parse JavaScript options into Valkey client options
 const Options = struct {
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, options_obj: JSC.JSValue) !redis.Options {
-        var this = redis.Options{};
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, options_obj: JSC.JSValue) !valkey.Options {
+        var this = valkey.Options{};
         if (try options_obj.getIfPropertyExists(globalObject, "idleTimeout")) |idle_timeout| {
             this.idle_timeout_ms = try globalObject.validateIntegerRange(idle_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
         }
@@ -1308,15 +1308,15 @@ const Options = struct {
 
 const std = @import("std");
 const bun = @import("root").bun;
-const redis = @import("redis.zig");
-const protocol = @import("redis_protocol.zig");
+const valkey = @import("valkey.zig");
+const protocol = @import("valkey_protocol.zig");
 const JSC = bun.JSC;
 const String = bun.String;
-const debug = bun.Output.scoped(.RedisJS, false);
+const debug = bun.Output.scoped(.ValkeyJS, false);
 const uws = bun.uws;
 
 const JSValue = JSC.JSValue;
 const Socket = uws.AnySocket;
-const RedisError = protocol.RedisError;
-const Command = @import("RedisCommand.zig");
+const ValkeyError = protocol.ValkeyError;
+const Command = @import("ValkeyCommand.zig");
 const BoringSSL = bun.BoringSSL;

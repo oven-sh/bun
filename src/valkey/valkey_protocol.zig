@@ -2,9 +2,9 @@ const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const String = bun.String;
-const debug = bun.Output.scoped(.Redis, false);
+const debug = bun.Output.scoped(.Valkey, false);
 
-pub const RedisError = error{
+pub const ValkeyError = error{
     AuthenticationFailed,
     ConnectionClosed,
     InvalidArgument,
@@ -36,7 +36,7 @@ pub const RedisError = error{
     UnsupportedProtocol,
 };
 
-pub fn redisErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: RedisError) JSC.JSValue {
+pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: ValkeyError) JSC.JSValue {
     const error_code: JSC.Error = switch (err) {
         error.ConnectionClosed => JSC.Error.ERR_VALKEY_CONNECTION_CLOSED,
         error.InvalidResponse => JSC.Error.ERR_VALKEY_INVALID_RESPONSE,
@@ -68,7 +68,7 @@ pub fn redisErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, e
     if (message) |msg| {
         return error_code.fmt(globalObject, "{s}", .{msg});
     }
-    return error_code.fmt(globalObject, "Redis error: {s}", .{@errorName(err)});
+    return error_code.fmt(globalObject, "Valkey error: {s}", .{@errorName(err)});
 }
 
 // RESP protocol types
@@ -248,7 +248,7 @@ pub const RESPValue = union(RESPType) {
     pub fn toJS(self: *RESPValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         switch (self.*) {
             .SimpleString => |str| return bun.String.createUTF8ForJS(globalObject, str),
-            .Error => |str| return redisErrorToJS(globalObject, str, RedisError.InvalidResponse),
+            .Error => |str| return valkeyErrorToJS(globalObject, str, ValkeyError.InvalidResponse),
             .Integer => |int| return JSC.JSValue.jsNumber(int),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
@@ -268,7 +268,7 @@ pub const RESPValue = union(RESPType) {
             .Null => return JSC.JSValue.jsNull(),
             .Double => |d| return JSC.JSValue.jsNumber(d),
             .Boolean => |b| return JSC.JSValue.jsBoolean(b),
-            .BlobError => |str| return redisErrorToJS(globalObject, str, RedisError.InvalidBlobError),
+            .BlobError => |str| return valkeyErrorToJS(globalObject, str, ValkeyError.InvalidBlobError),
             .VerbatimString => |verbatim| return bun.String.createUTF8ForJS(globalObject, verbatim.content),
             .Map => |entries| {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
@@ -325,11 +325,11 @@ pub const RESPValue = union(RESPType) {
     }
 };
 
-pub const RedisCommand = struct {
+pub const ValkeyCommand = struct {
     command: []const u8,
     args: []const []const u8,
 
-    pub fn format(self: RedisCommand, writer: anytype) !void {
+    pub fn format(self: ValkeyCommand, writer: anytype) !void {
         // Format as RESP array
         try writer.print("*{d}\r\n", .{1 + self.args.len});
         try writer.print("${d}\r\n{s}\r\n", .{ self.command.len, self.command });
@@ -339,11 +339,11 @@ pub const RedisCommand = struct {
     }
 };
 
-pub const RedisCommandSlice = struct {
+pub const ValkeyCommandSlice = struct {
     command: []const u8,
     args: []const JSC.ZigString.Slice,
 
-    pub fn format(self: RedisCommandSlice, writer: anytype) !void {
+    pub fn format(self: ValkeyCommandSlice, writer: anytype) !void {
         // Format as RESP array
         try writer.print("*{d}\r\n", .{1 + self.args.len});
         try writer.print("${d}\r\n{s}\r\n", .{ self.command.len, self.command });
@@ -354,24 +354,24 @@ pub const RedisCommandSlice = struct {
     }
 };
 
-pub const RedisReader = struct {
+pub const ValkeyReader = struct {
     buffer: []const u8,
     pos: usize = 0,
 
-    pub fn init(buffer: []const u8) RedisReader {
+    pub fn init(buffer: []const u8) ValkeyReader {
         return .{
             .buffer = buffer,
         };
     }
 
-    pub fn readByte(self: *RedisReader) RedisError!u8 {
+    pub fn readByte(self: *ValkeyReader) ValkeyError!u8 {
         if (self.pos >= self.buffer.len) return error.InvalidResponse;
         const byte = self.buffer[self.pos];
         self.pos += 1;
         return byte;
     }
 
-    pub fn readUntilCRLF(self: *RedisReader) RedisError![]const u8 {
+    pub fn readUntilCRLF(self: *ValkeyReader) ValkeyError![]const u8 {
         const buffer = self.buffer[self.pos..];
         for (buffer, 0..) |byte, i| {
             if (byte == '\r' and buffer.len > i + 1 and buffer[i + 1] == '\n') {
@@ -384,12 +384,12 @@ pub const RedisReader = struct {
         return error.InvalidResponse;
     }
 
-    pub fn readInteger(self: *RedisReader) RedisError!i64 {
+    pub fn readInteger(self: *ValkeyReader) ValkeyError!i64 {
         const str = try self.readUntilCRLF();
         return std.fmt.parseInt(i64, str, 10) catch return error.InvalidInteger;
     }
 
-    pub fn readDouble(self: *RedisReader) RedisError!f64 {
+    pub fn readDouble(self: *ValkeyReader) ValkeyError!f64 {
         const str = try self.readUntilCRLF();
 
         // Handle special values
@@ -401,7 +401,7 @@ pub const RedisReader = struct {
         return std.fmt.parseFloat(f64, str) catch return error.InvalidDouble;
     }
 
-    pub fn readBoolean(self: *RedisReader) RedisError!bool {
+    pub fn readBoolean(self: *ValkeyReader) ValkeyError!bool {
         const str = try self.readUntilCRLF();
         if (str.len != 1) return error.InvalidBoolean;
 
@@ -412,7 +412,7 @@ pub const RedisReader = struct {
         };
     }
 
-    pub fn readVerbatimString(self: *RedisReader, allocator: std.mem.Allocator) RedisError!VerbatimString {
+    pub fn readVerbatimString(self: *ValkeyReader, allocator: std.mem.Allocator) ValkeyError!VerbatimString {
         const len = try self.readInteger();
         if (len < 0) return error.InvalidVerbatimString;
         if (self.pos + @as(usize, @intCast(len)) > self.buffer.len) return error.InvalidVerbatimString;
@@ -438,7 +438,7 @@ pub const RedisReader = struct {
         };
     }
 
-    pub fn readValue(self: *RedisReader, allocator: std.mem.Allocator) RedisError!RESPValue {
+    pub fn readValue(self: *ValkeyReader, allocator: std.mem.Allocator) ValkeyError!RESPValue {
         const type_byte = try self.readByte();
 
         return switch (RESPType.fromByte(type_byte) orelse return error.InvalidResponseType) {

@@ -26,7 +26,7 @@ export default [
       bufferedAmount: {
         getter: "getBufferedAmount",
       },
-      // Redis commands
+      // Valkey commands
       get: {
         fn: "get",
         length: 1,

@@ -1,10 +1,10 @@
-// Entry point for Redis client
+// Entry point for Valkey client
 //
-// This file contains the core Redis client implementation with protocol handling
+// This file contains the core Valkey client implementation with protocol handling
 
-pub const RedisContext = @import("RedisContext.zig");
+pub const ValkeyContext = @import("ValkeyContext.zig");
 
-/// Connection flags to track Redis client state
+/// Connection flags to track Valkey client state
 pub const ConnectionFlags = packed struct {
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
@@ -22,7 +22,7 @@ pub const TLSStatus = union(enum) {
     ssl_ok,
 };
 
-/// Redis connection status
+/// Valkey connection status
 pub const Status = enum {
     disconnected,
     connecting,
@@ -30,9 +30,9 @@ pub const Status = enum {
     failed,
 };
 
-pub const Command = @import("./RedisCommand.zig");
+pub const Command = @import("./ValkeyCommand.zig");
 
-/// Redis protocol types (standalone, TLS, Unix socket)
+/// Valkey protocol types (standalone, TLS, Unix socket)
 pub const Protocol = enum {
     standalone,
     standalone_unix,
@@ -40,11 +40,11 @@ pub const Protocol = enum {
     standalone_tls_unix,
 
     pub const Map = bun.ComptimeStringMap(Protocol, .{
-        .{ "redis", .standalone },
-        .{ "rediss", .standalone_tls },
-        .{ "redis+tls", .standalone_tls },
-        .{ "redis+unix", .standalone_unix },
-        .{ "redis+tls+unix", .standalone_tls_unix },
+        .{ "valkey", .standalone },
+        .{ "valkeys", .standalone_tls },
+        .{ "valkey+tls", .standalone_tls },
+        .{ "valkey+unix", .standalone_unix },
+        .{ "valkey+tls+unix", .standalone_tls_unix },
     });
 
     pub fn isTLS(self: Protocol) bool {
@@ -83,7 +83,7 @@ pub const TLS = union(enum) {
     }
 };
 
-/// Connection options for Redis client
+/// Connection options for Valkey client
 pub const Options = struct {
     idle_timeout_ms: u32 = 30000,
     connection_timeout_ms: u32 = 10000,
@@ -103,7 +103,7 @@ pub const Address = union(enum) {
         port: u16,
     },
 
-    pub fn connect(this: *const Address, client: *RedisClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
+    pub fn connect(this: *const Address, client: *ValkeyClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
         switch (is_tls) {
             inline else => |tls| {
                 const SocketType = if (tls) uws.SocketTLS else uws.SocketTCP;
@@ -132,8 +132,8 @@ pub const Address = union(enum) {
     }
 };
 
-/// Core Redis client implementation
-pub const RedisClient = struct {
+/// Core Valkey client implementation
+pub const ValkeyClient = struct {
     socket: uws.AnySocket,
     status: Status = Status.connecting,
 
@@ -169,7 +169,7 @@ pub const RedisClient = struct {
     flags: ConnectionFlags = .{},
     allocator: std.mem.Allocator,
 
-    /// Clean up resources used by the Redis client
+    /// Clean up resources used by the Valkey client
     pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*JSC.JSGlobalObject) void {
         var pending = this.in_flight;
         this.in_flight = .init(this.allocator);
@@ -179,7 +179,7 @@ pub const RedisClient = struct {
         defer commands.deinit();
 
         if (globalObjectOrFinalizing) |globalThis| {
-            const object = protocol.redisErrorToJS(globalThis, "Connection closed", protocol.RedisError.ConnectionClosed);
+            const object = protocol.valkeyErrorToJS(globalThis, "Connection closed", protocol.ValkeyError.ConnectionClosed);
             for (pending.readableSlice(0)) |pair| {
                 var pair_ = pair;
                 pair_.rejectCommand(globalThis, object);
@@ -210,7 +210,7 @@ pub const RedisClient = struct {
     }
 
     /// Get the appropriate timeout interval based on connection state
-    pub fn getTimeoutInterval(this: *const RedisClient) u32 {
+    pub fn getTimeoutInterval(this: *const ValkeyClient) u32 {
         return switch (this.status) {
             .connected => this.idle_timeout_interval_ms,
             .failed => 0,
@@ -218,12 +218,12 @@ pub const RedisClient = struct {
         };
     }
 
-    pub fn hasAnyPendingCommands(this: *const RedisClient) bool {
+    pub fn hasAnyPendingCommands(this: *const ValkeyClient) bool {
         return this.in_flight.readableLength() > 0 or this.queue.readableLength() > 0 or this.write_buffer.len() > 0;
     }
 
     /// Calculate reconnect delay with exponential backoff
-    pub fn getReconnectDelay(this: *const RedisClient) u32 {
+    pub fn getReconnectDelay(this: *const ValkeyClient) u32 {
         const base_delay: u32 = 50; // Base delay in ms
         const max_delay: u32 = 2000; // Max delay in ms
 
@@ -245,7 +245,7 @@ pub const RedisClient = struct {
     }
 
     /// Reject all pending commands with an error
-    fn rejectAllPendingCommands(this: *RedisClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+    fn rejectAllPendingCommands(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
         var pending = this.in_flight;
         defer pending.deinit();
         var entries = this.queue;
@@ -268,7 +268,7 @@ pub const RedisClient = struct {
     }
 
     /// Flush pending data to the socket
-    pub fn flushData(this: *RedisClient) bool {
+    pub fn flushData(this: *ValkeyClient) bool {
         const chunk = this.write_buffer.remaining();
         if (chunk.len == 0) return false;
         const wrote = this.socket.write(chunk, false);
@@ -279,15 +279,15 @@ pub const RedisClient = struct {
     }
 
     /// Mark the connection as failed with error message
-    pub fn fail(this: *RedisClient, message: []const u8, err: protocol.RedisError) void {
+    pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.ValkeyError) void {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
         if (this.status == .failed) return;
 
         const globalThis = this.globalObject();
-        this.failWithJSValue(globalThis, protocol.redisErrorToJS(globalThis, message, err));
+        this.failWithJSValue(globalThis, protocol.valkeyErrorToJS(globalThis, message, err));
     }
 
-    pub fn failWithJSValue(this: *RedisClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
         this.status = .failed;
         this.rejectAllPendingCommands(globalThis, jsvalue);
 
@@ -298,22 +298,22 @@ pub const RedisClient = struct {
     }
 
     /// Handle connection closed event
-    pub fn onClose(this: *RedisClient) void {
+    pub fn onClose(this: *ValkeyClient) void {
         this.write_buffer.deinit(this.allocator);
 
         // If manually closing, don't attempt to reconnect
         if (this.flags.is_manually_closed) {
             debug("skip reconnecting since the connection is manually closed", .{});
-            this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
-            this.onRedisClose();
+            this.fail("Connection closed", protocol.ValkeyError.ConnectionClosed);
+            this.onValkeyClose();
             return;
         }
 
         // If auto reconnect is disabled, just fail
         if (!this.flags.enable_auto_reconnect) {
             debug("skip reconnecting since auto reconnect is disabled", .{});
-            this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
-            this.onRedisClose();
+            this.fail("Connection closed", protocol.ValkeyError.ConnectionClosed);
+            this.onValkeyClose();
             return;
         }
 
@@ -323,8 +323,8 @@ pub const RedisClient = struct {
 
         if (delay_ms == 0 or this.retry_attempts > this.max_retries) {
             debug("Max retries reached or retry strategy returned 0, giving up reconnection", .{});
-            this.fail("Max reconnection attempts reached", protocol.RedisError.ConnectionClosed);
-            this.onRedisClose();
+            this.fail("Max reconnection attempts reached", protocol.ValkeyError.ConnectionClosed);
+            this.onValkeyClose();
             return;
         }
 
@@ -334,10 +334,10 @@ pub const RedisClient = struct {
         this.flags.is_reconnecting = true;
 
         // Signal reconnect timer should be started
-        this.onRedisReconnect();
+        this.onValkeyReconnect();
     }
 
-    pub fn sendNextCommand(this: *RedisClient) void {
+    pub fn sendNextCommand(this: *ValkeyClient) void {
         if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
             if (this.in_flight.readableLength() == 0) {
                 _ = this.drain();
@@ -347,8 +347,8 @@ pub const RedisClient = struct {
         _ = this.flushData();
     }
 
-    fn onDataStackAllocated(this: *RedisClient, data: []const u8) void {
-        var reader = protocol.RedisReader.init(data);
+    fn onDataStackAllocated(this: *ValkeyClient, data: []const u8) void {
+        var reader = protocol.ValkeyReader.init(data);
         while (true) {
             const before_read = reader.pos;
             var value = reader.readValue(this.allocator) catch |err| {
@@ -383,7 +383,7 @@ pub const RedisClient = struct {
     }
 
     /// Process data received from socket
-    pub fn onData(this: *RedisClient, data: []const u8) void {
+    pub fn onData(this: *ValkeyClient, data: []const u8) void {
         // Caller refs / derefs.
 
         this.read_buffer.head = this.last_message_start;
@@ -395,7 +395,7 @@ pub const RedisClient = struct {
 
         this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
         while (true) {
-            var reader = protocol.RedisReader.init(this.read_buffer.remaining());
+            var reader = protocol.ValkeyReader.init(this.read_buffer.remaining());
             var value = reader.readValue(this.allocator) catch |err| {
                 if (err != error.InvalidResponse) {
                     this.fail("Failed to read data", err);
@@ -427,22 +427,22 @@ pub const RedisClient = struct {
         }
     }
 
-    fn handleHelloResponse(this: *RedisClient, value: *protocol.RESPValue) void {
+    fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
         debug("Processing HELLO response", .{});
 
         switch (value.*) {
             .Error => |err| {
-                this.fail(err, protocol.RedisError.AuthenticationFailed);
+                this.fail(err, protocol.ValkeyError.AuthenticationFailed);
                 return;
             },
             .SimpleString => |str| {
                 if (std.mem.eql(u8, str, "OK")) {
                     this.status = .connected;
                     this.flags.is_authenticated = true;
-                    this.onRedisConnect();
+                    this.onValkeyConnect();
                     return;
                 }
-                this.fail("Authentication failed (unexpected response)", protocol.RedisError.AuthenticationFailed);
+                this.fail("Authentication failed (unexpected response)", protocol.ValkeyError.AuthenticationFailed);
 
                 return;
             },
@@ -459,7 +459,7 @@ pub const RedisClient = struct {
                                     const proto_version = entry.value.Integer;
                                     debug("Server protocol version: {d}", .{proto_version});
                                     if (proto_version != 3) {
-                                        this.fail("Server does not support RESP3", protocol.RedisError.UnsupportedProtocol);
+                                        this.fail("Server does not support RESP3", protocol.ValkeyError.UnsupportedProtocol);
                                         return;
                                     }
                                 }
@@ -473,18 +473,18 @@ pub const RedisClient = struct {
                 this.status = .connected;
                 this.flags.is_authenticated = true;
 
-                this.onRedisConnect();
+                this.onValkeyConnect();
                 return;
             },
             else => {
-                this.fail("Authentication failed with unexpected response", protocol.RedisError.AuthenticationFailed);
+                this.fail("Authentication failed with unexpected response", protocol.ValkeyError.AuthenticationFailed);
                 return;
             },
         }
     }
 
-    /// Handle Redis protocol response
-    fn handleResponse(this: *RedisClient, value: *protocol.RESPValue) !void {
+    /// Handle Valkey protocol response
+    fn handleResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
         debug("onData() {any}", .{value.*});
         // Special handling for the initial HELLO response
         if (!this.flags.is_authenticated) {
@@ -524,8 +524,8 @@ pub const RedisClient = struct {
         promise_ptr.resolve(globalThis, value);
     }
 
-    /// Send authentication command to Redis server
-    fn authenticate(this: *RedisClient) void {
+    /// Send authentication command to Valkey server
+    fn authenticate(this: *ValkeyClient) void {
         // First send HELLO command for RESP3 protocol
         debug("Sending HELLO 3 command", .{});
 
@@ -551,7 +551,7 @@ pub const RedisClient = struct {
 
         // Format and send the HELLO command without adding to command queue
         // We'll handle this response specially in handleResponse
-        var hello_cmd = protocol.RedisCommand{
+        var hello_cmd = protocol.ValkeyCommand{
             .command = "HELLO",
             .args = hello_args,
         };
@@ -565,10 +565,10 @@ pub const RedisClient = struct {
         if (this.database > 0) {
             var int_buf: [16]u8 = undefined;
             const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch {
-                this.fail("Failed to format database number", protocol.RedisError.InvalidDatabase);
+                this.fail("Failed to format database number", protocol.ValkeyError.InvalidDatabase);
                 return;
             };
-            var select_cmd = protocol.RedisCommand{
+            var select_cmd = protocol.ValkeyCommand{
                 .command = "SELECT",
                 .args = &[_][]const u8{db_str},
             };
@@ -580,7 +580,7 @@ pub const RedisClient = struct {
     }
 
     /// Handle socket open event
-    pub fn onOpen(this: *RedisClient, socket: uws.AnySocket) void {
+    pub fn onOpen(this: *ValkeyClient, socket: uws.AnySocket) void {
         this.socket = socket;
         this.write_buffer.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
@@ -588,13 +588,13 @@ pub const RedisClient = struct {
     }
 
     /// Start the connection process
-    fn start(this: *RedisClient) void {
+    fn start(this: *ValkeyClient) void {
         this.authenticate();
         _ = this.flushData();
     }
 
     /// Process queued commands in the offline queue
-    pub fn drain(this: *RedisClient) bool {
+    pub fn drain(this: *ValkeyClient) bool {
         const offline_cmd = this.queue.readItem() orelse return false;
 
         // Add the promise to the command queue first
@@ -626,14 +626,14 @@ pub const RedisClient = struct {
         return true;
     }
 
-    pub fn onWritable(this: *RedisClient) void {
+    pub fn onWritable(this: *ValkeyClient) void {
         this.ref();
         defer this.deref();
 
         this.sendNextCommand();
     }
 
-    fn enqueue(this: *RedisClient, command: *const Command, promise: *Command.Promise) !void {
+    fn enqueue(this: *ValkeyClient, command: *const Command, promise: *Command.Promise) !void {
         if (
         // If there are any pending commands, queue this one
         this.queue.readableLength() > 0 or
@@ -646,8 +646,8 @@ pub const RedisClient = struct {
 
         switch (command.args) {
             inline .slices, .raw => |args, tag| {
-                const RedisCommand = if (tag == .slices) protocol.RedisCommandSlice else protocol.RedisCommand;
-                var cmd = RedisCommand{
+                const ValkeyCommand = if (tag == .slices) protocol.ValkeyCommandSlice else protocol.ValkeyCommand;
+                var cmd = ValkeyCommand{
                     .command = command.command,
                     .args = args,
                 };
@@ -673,7 +673,7 @@ pub const RedisClient = struct {
         _ = this.flushData();
     }
 
-    pub fn send(this: *RedisClient, globalThis: *JSC.JSGlobalObject, command: *const Command) !*JSC.JSPromise {
+    pub fn send(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, command: *const Command) !*JSC.JSPromise {
         var promise = Command.Promise.create(globalThis, command.command_type);
 
         const js_promise = promise.promise.get();
@@ -698,8 +698,8 @@ pub const RedisClient = struct {
         return js_promise;
     }
 
-    /// Close the Redis connection
-    pub fn disconnect(this: *RedisClient) void {
+    /// Close the Valkey connection
+    pub fn disconnect(this: *ValkeyClient) void {
         this.flags.is_manually_closed = true;
 
         if (this.status == .connected or this.status == .connecting) {
@@ -709,57 +709,57 @@ pub const RedisClient = struct {
     }
 
     /// Get a writer for the connected socket
-    pub fn writer(this: *RedisClient) std.io.Writer(*RedisClient, protocol.RedisError, write) {
+    pub fn writer(this: *ValkeyClient) std.io.Writer(*ValkeyClient, protocol.ValkeyError, write) {
         return .{ .context = this };
     }
 
     /// Write data to the socket buffer
-    fn write(this: *RedisClient, data: []const u8) !usize {
+    fn write(this: *ValkeyClient, data: []const u8) !usize {
         try this.write_buffer.write(this.allocator, data);
         return data.len;
     }
 
     /// Increment reference count
-    pub fn ref(this: *RedisClient) void {
+    pub fn ref(this: *ValkeyClient) void {
         this.parent().ref();
     }
 
-    pub fn deref(this: *RedisClient) void {
+    pub fn deref(this: *ValkeyClient) void {
         this.parent().deref();
     }
 
-    inline fn parent(this: *RedisClient) *JSRedisClient {
+    inline fn parent(this: *ValkeyClient) *JSValkeyClient {
         return @fieldParentPtr("client", this);
     }
 
-    inline fn globalObject(this: *RedisClient) *JSC.JSGlobalObject {
+    inline fn globalObject(this: *ValkeyClient) *JSC.JSGlobalObject {
         return this.parent().globalObject;
     }
 
-    pub fn onRedisConnect(this: *RedisClient) void {
-        this.parent().onRedisConnect();
+    pub fn onValkeyConnect(this: *ValkeyClient) void {
+        this.parent().onValkeyConnect();
     }
 
-    pub fn onRedisReconnect(this: *RedisClient) void {
-        this.parent().onRedisReconnect();
+    pub fn onValkeyReconnect(this: *ValkeyClient) void {
+        this.parent().onValkeyReconnect();
     }
 
-    pub fn onRedisClose(this: *RedisClient) void {
-        this.parent().onRedisClose();
+    pub fn onValkeyClose(this: *ValkeyClient) void {
+        this.parent().onValkeyClose();
     }
 
-    pub fn onRedisTimeout(this: *RedisClient) void {
-        this.parent().onRedisTimeout();
+    pub fn onValkeyTimeout(this: *ValkeyClient) void {
+        this.parent().onValkeyTimeout();
     }
 };
 
-const JSRedisClient = JSC.API.Redis;
+const JSValkeyClient = JSC.API.Valkey;
 
 const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
-const protocol = @import("redis_protocol.zig");
-const js_redis = @import("js_redis.zig");
-const debug = bun.Output.scoped(.Redis, false);
+const protocol = @import("valkey_protocol.zig");
+const js_valkey = @import("js_valkey.zig");
+const debug = bun.Output.scoped(.Valkey, false);
 const uws = bun.uws;
 const Slice = JSC.ZigString.Slice;

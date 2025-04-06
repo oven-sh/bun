@@ -1237,7 +1237,7 @@ pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC
 }
 
 pub fn getValkeyClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.Redis.getConstructor(globalThis);
+    return JSC.API.Valkey.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {

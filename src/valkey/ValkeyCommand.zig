@@ -71,7 +71,7 @@ pub const Entry = struct {
         allocator.free(self.serialized_data);
     }
 
-    // Create an Offline by serializing the Redis command directly
+    // Create an Offline by serializing the Valkey command directly
     pub fn create(
         allocator: std.mem.Allocator,
         command: *const Command,
@@ -89,13 +89,13 @@ pub fn deinit(this: *Command) void {
     this.args.deinit();
 }
 
-/// Redis command types with special handling
+/// Valkey command types with special handling
 pub const Type = enum {
     Generic, // Default, no special handling
     Exists, // Returns boolean (true if key exists)
 };
 
-/// Promise for a Redis command
+/// Promise for a Valkey command
 pub const Promise = struct {
     command_type: Type,
     promise: JSC.JSPromise.Strong,
@@ -141,6 +141,6 @@ const Command = @This();
 
 const bun = @import("root").bun;
 const JSC = bun.JSC;
-const protocol = @import("redis_protocol.zig");
+const protocol = @import("valkey_protocol.zig");
 const std = @import("std");
 const Slice = JSC.ZigString.Slice;

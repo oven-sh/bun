@@ -1,4 +1,4 @@
-Bun provides native bindings for working with Redis databases with a modern, Promise-based API. The interface is designed to be simple and performant, with built-in connection management, fully typed responses, and TLS support. Redis is 100% Redis compatible, so you can use this client with both Redis and Redis servers.
+Bun provides native bindings for working with Redis databases with a modern, Promise-based API. The interface is designed to be simple and performant, with built-in connection management, fully typed responses, and TLS support.
 
 ```ts
 import { redis } from "bun";
@@ -51,6 +51,7 @@ To use the Redis client, you first need to create a connection:
 import { redis, RedisClient } from "bun";
 
 // Using the default client (reads connection info from environment)
+// process.env.REDIS_URL is used by default
 await redis.set("hello", "world");
 const result = await redis.get("hello");
 
@@ -62,7 +63,7 @@ await client.incr("counter");
 
 By default, the client reads connection information from the following environment variables (in order of precedence):
 
-- `VALKEY_URL` or `REDIS_URL`
+- `REDIS_URL`
 - If not set, defaults to `"redis://localhost:6379"`
 
 ### Connection Lifecycle
@@ -488,19 +489,6 @@ For optimal performance with Bun's Redis client:
 1. **Connection Reuse**: Create a single client and reuse it for all operations
 2. **Pipelining**: Use `Promise.all()` for multiple operations when possible
 3. **Command Batching**: For operations on multiple keys, prefer batch operations (like `hmset` for hashes)
-
-### Compatibility
-
-This client has been tested with:
-
-- Redis
-- Redis 6.x and above
-- Redis 7.x
-- AWS ElastiCache
-- Redis Stack
-- KeyDB
-- Dragonfly
-- Other Redis-compatible stores
 
 ## Limitations and Future Plans
 

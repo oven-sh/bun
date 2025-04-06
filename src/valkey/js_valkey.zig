@@ -157,7 +157,7 @@ pub const JSValkeyClient = struct {
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, .undefined);
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, JSValkeyClient.helloGetCached(this_value) orelse .undefined);
         }
 
         if (JSValkeyClient.connectionPromiseGetCached(this_value)) |promise| {
@@ -382,7 +382,7 @@ pub const JSValkeyClient = struct {
     }
 
     // Callback for when Valkey client connects
-    pub fn onValkeyConnect(this: *JSValkeyClient) void {
+    pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         // Safety check to ensure a valid connection state
         if (this.client.status != .connected) {
             debug("onValkeyConnect called but client status is not 'connected': {s}", .{@tagName(this.client.status)});
@@ -395,16 +395,18 @@ pub const JSValkeyClient = struct {
         defer event_loop.exit();
 
         if (this.this_value.tryGet()) |this_value| {
+            const hello_value = value.toJS(globalObject) catch .undefined;
+            JSValkeyClient.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
             if (JSValkeyClient.onconnectGetCached(this_value)) |on_connect| {
                 const js_value = this_value;
                 js_value.ensureStillAlive();
-                globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
+                globalObject.queueMicrotask(on_connect, &[_]JSValue{ js_value, hello_value });
             }
 
             if (JSValkeyClient.connectionPromiseGetCached(this_value)) |promise| {
                 JSValkeyClient.connectionPromiseSetCached(this_value, globalObject, .zero);
-                promise.asPromise().?.resolve(globalObject, .undefined);
+                promise.asPromise().?.resolve(globalObject, hello_value);
             }
         }
 

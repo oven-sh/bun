@@ -112,6 +112,6 @@ export default [
         length: 3,
       },
     },
-    values: ["onconnect", "onclose", "connectionPromise"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello"],
   }),
 ];

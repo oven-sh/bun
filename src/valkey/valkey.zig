@@ -445,7 +445,7 @@ pub const ValkeyClient = struct {
                 if (std.mem.eql(u8, str, "OK")) {
                     this.status = .connected;
                     this.flags.is_authenticated = true;
-                    this.onValkeyConnect();
+                    this.onValkeyConnect(value);
                     return;
                 }
                 this.fail("Authentication failed (unexpected response)", protocol.RedisError.AuthenticationFailed);
@@ -478,8 +478,7 @@ pub const ValkeyClient = struct {
                 // Authentication successful via HELLO
                 this.status = .connected;
                 this.flags.is_authenticated = true;
-
-                this.onValkeyConnect();
+                this.onValkeyConnect(value);
                 return;
             },
             else => {
@@ -569,11 +568,8 @@ pub const ValkeyClient = struct {
 
         // If using a specific database, send SELECT command
         if (this.database > 0) {
-            var int_buf: [16]u8 = undefined;
-            const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch {
-                this.fail("Failed to format database number", protocol.RedisError.InvalidDatabase);
-                return;
-            };
+            var int_buf: [64]u8 = undefined;
+            const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch unreachable;
             var select_cmd = protocol.ValkeyCommand{
                 .command = "SELECT",
                 .args = &[_][]const u8{db_str},
@@ -742,8 +738,8 @@ pub const ValkeyClient = struct {
         return this.parent().globalObject;
     }
 
-    pub fn onValkeyConnect(this: *ValkeyClient) void {
-        this.parent().onValkeyConnect();
+    pub fn onValkeyConnect(this: *ValkeyClient, value: *protocol.RESPValue) void {
+        this.parent().onValkeyConnect(value);
     }
 
     pub fn onValkeyReconnect(this: *ValkeyClient) void {

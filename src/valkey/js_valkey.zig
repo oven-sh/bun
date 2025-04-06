@@ -620,7 +620,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = cmd_str.slice(),
                 .args = .{ .args = args.items },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send command", err);
@@ -641,7 +640,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "GET",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send GET command", err);
@@ -667,7 +665,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SET",
                 .args = .{ .args = &.{ key, value } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SET command", err);
@@ -688,7 +685,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "DEL",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send DEL command", err);
@@ -709,7 +705,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "INCR",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send INCR command", err);
@@ -730,7 +725,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "DECR",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send DECR command", err);
@@ -751,7 +745,7 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "EXISTS",
                 .args = .{ .args = &.{key} },
-                .command_type = .Exists,
+                .meta = .{ .return_as_bool = true },
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send EXISTS command", err);
@@ -779,7 +773,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "EXPIRE",
                 .args = .{ .raw = &.{ key.slice(), seconds_slice } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send EXPIRE command", err);
@@ -800,7 +793,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "TTL",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send TTL command", err);
@@ -826,7 +818,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SREM",
                 .args = .{ .args = &.{ key, value } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SREM command", err);
@@ -848,7 +839,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SRANDMEMBER",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SRANDMEMBER command", err);
@@ -870,7 +860,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SMEMBERS",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SMEMBERS command", err);
@@ -892,7 +881,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SPOP",
                 .args = .{ .args = &.{key} },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SPOP command", err);
@@ -918,7 +906,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SADD",
                 .args = .{ .args = &.{ key, value } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SADD command", err);
@@ -944,7 +931,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "SISMEMBER",
                 .args = .{ .args = &.{ key, value } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send SISMEMBER command", err);
@@ -992,7 +978,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "HMGET",
                 .args = .{ .slices = args.items },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send HMGET command", err);
@@ -1023,7 +1008,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "HINCRBY",
                 .args = .{ .slices = &.{ key_slice, field_slice, value_slice } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send HINCRBY command", err);
@@ -1054,7 +1038,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "HINCRBYFLOAT",
                 .args = .{ .slices = &.{ key_slice, field_slice, value_slice } },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send HINCRBYFLOAT command", err);
@@ -1117,7 +1100,6 @@ pub const JSValkeyClient = struct {
             &.{
                 .command = "HMSET",
                 .args = .{ .slices = args.items },
-                .command_type = .Generic,
             },
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send HMSET command", err);

@@ -1,6 +1,6 @@
 command: []const u8,
 args: Args,
-command_type: Type,
+meta: Meta = .{},
 
 pub const Args = union(enum) {
     slices: []const Slice,
@@ -51,7 +51,7 @@ pub fn serialize(this: *const Command, allocator: std.mem.Allocator) ![]u8 {
 /// Command stored in offline queue when disconnected
 pub const Entry = struct {
     serialized_data: []u8, // Pre-serialized RESP protocol bytes
-    command_type: Type,
+    meta: Meta = .{},
     promise: Promise,
 
     pub const Queue = std.fifo.LinearFifo(Entry, .Dynamic);
@@ -68,7 +68,7 @@ pub const Entry = struct {
     ) !Entry {
         return Entry{
             .serialized_data = try command.serialize(allocator),
-            .command_type = command.command_type,
+            .meta = command.meta.check(command),
             .promise = promise,
         };
     }
@@ -78,21 +78,42 @@ pub fn deinit(_: *Command) void {
     // no-op
 }
 
-/// Valkey command types with special handling
-pub const Type = enum {
-    Generic, // Default, no special handling
-    Exists, // Returns boolean (true if key exists)
+pub const Meta = packed struct(u8) {
+    return_as_bool: bool = false,
+    supports_auto_pipelining: bool = true,
+    _padding: u6 = 0,
+
+    const not_allowed_autopipeline_commands = bun.ComptimeStringMap(void, .{
+        .{"AUTH"},
+        .{"INFO"},
+        .{"QUIT"},
+        .{"MULTI"},
+        .{"SCRIPT"},
+        .{"SELECT"},
+        .{"CLUSTER"},
+        .{"PIPELINE"},
+        .{"SUBSCRIBE"},
+        .{"PSUBSCRIBE"},
+        .{"UNSUBSCRIBE"},
+        .{"UNPSUBSCRIBE"},
+    });
+
+    pub fn check(self: @This(), command: *const Command) @This() {
+        var new = self;
+        new.supports_auto_pipelining = !not_allowed_autopipeline_commands.has(command.command);
+        return new;
+    }
 };
 
 /// Promise for a Valkey command
 pub const Promise = struct {
-    command_type: Type,
+    meta: Meta,
     promise: JSC.JSPromise.Strong,
 
-    pub fn create(globalObject: *JSC.JSGlobalObject, command_type: Type) Promise {
+    pub fn create(globalObject: *JSC.JSGlobalObject, meta: Meta) Promise {
         const promise = JSC.JSPromise.Strong.init(globalObject);
         return Promise{
-            .command_type = command_type,
+            .meta = meta,
             .promise = promise,
         };
     }
@@ -116,7 +137,7 @@ pub const Promise = struct {
 
 // Command+Promise pair for tracking which command corresponds to which promise
 pub const PromisePair = struct {
-    command_type: Type,
+    meta: Meta,
     promise: Promise,
 
     pub const Queue = std.fifo.LinearFifo(PromisePair, .Dynamic);

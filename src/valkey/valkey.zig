@@ -12,6 +12,9 @@ pub const ConnectionFlags = packed struct {
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
     is_reconnecting: bool = false,
+
+    // TODO: implement auto pipelining
+    auto_pipelining: bool = true,
 };
 
 /// TLS connection status
@@ -174,6 +177,9 @@ pub const ValkeyClient = struct {
     flags: ConnectionFlags = .{},
     allocator: std.mem.Allocator,
 
+    // Auto-pipelining
+    auto_flusher: AutoFlusher = .{},
+
     /// Clean up resources used by the Valkey client
     pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*JSC.JSGlobalObject) void {
         var pending = this.in_flight;
@@ -213,7 +219,33 @@ pub const ValkeyClient = struct {
         this.write_buffer.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
         this.tls.deinit();
+        this.unregisterAutoFlusher();
     }
+
+    // ** Auto-pipelining **
+    fn registerAutoFlusher(this: *ValkeyClient, vm: *JSC.VirtualMachine) void {
+        if (!this.auto_flusher.registered)
+            AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, vm);
+    }
+    fn unregisterAutoFlusher(this: *ValkeyClient) void {
+        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
+    }
+
+    // Drain auto-pipelined commands
+    pub fn onAutoFlush(this: *@This()) bool {
+        if (this.status != .connected) {
+            this.auto_flusher.registered = false;
+            return false;
+        }
+
+        this.ref();
+        defer this.deref();
+
+        // TODO: drain commands, write to socket, return if more was written in the buffer
+
+        return true;
+    }
+    // ** End of auto-pipelining **
 
     /// Get the appropriate timeout interval based on connection state
     pub fn getTimeoutInterval(this: *const ValkeyClient) u32 {
@@ -305,6 +337,7 @@ pub const ValkeyClient = struct {
 
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
+        this.unregisterAutoFlusher();
         this.write_buffer.deinit(this.allocator);
 
         // If manually closing, don't attempt to reconnect
@@ -344,6 +377,7 @@ pub const ValkeyClient = struct {
     }
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
+        // TODO: auto-pipelining
         if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
             if (this.in_flight.readableLength() == 0) {
                 _ = this.drain();
@@ -505,18 +539,15 @@ pub const ValkeyClient = struct {
             return;
         };
 
-        const command_type = pair.command_type;
+        const meta = pair.meta;
 
         // Handle the response based on command type
-        switch (command_type) {
-            .Exists => {
-                // EXISTS returns 1 if key exists, 0 if not - we convert to boolean
-                if (value.* == .Integer) {
-                    const int_value = value.Integer;
-                    value.* = .{ .Boolean = int_value > 0 };
-                }
-            },
-            .Generic => {}, // No special handling for generic commands
+        if (meta.return_as_bool) {
+            // EXISTS returns 1 if key exists, 0 if not - we convert to boolean
+            if (value.* == .Integer) {
+                const int_value = value.Integer;
+                value.* = .{ .Boolean = int_value > 0 };
+            }
         }
 
         // Resolve the promise with the potentially transformed value
@@ -558,7 +589,6 @@ pub const ValkeyClient = struct {
         // We'll handle this response specially in handleResponse
         var hello_cmd = Command{
             .command = "HELLO",
-            .command_type = .Generic,
             .args = .{ .raw = hello_args },
         };
 
@@ -573,7 +603,6 @@ pub const ValkeyClient = struct {
             const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch unreachable;
             var select_cmd = Command{
                 .command = "SELECT",
-                .command_type = .Generic,
                 .args = .{ .raw = &[_][]const u8{db_str} },
             };
             select_cmd.write(this.writer()) catch |err| {
@@ -603,7 +632,7 @@ pub const ValkeyClient = struct {
 
         // Add the promise to the command queue first
         this.in_flight.writeItem(.{
-            .command_type = offline_cmd.command_type,
+            .meta = offline_cmd.meta,
             .promise = offline_cmd.promise,
         }) catch bun.outOfMemory();
         const data = offline_cmd.serialized_data;
@@ -658,7 +687,7 @@ pub const ValkeyClient = struct {
         }
 
         const cmd_pair = Command.PromisePair{
-            .command_type = command.command_type,
+            .meta = command.meta,
             .promise = promise.*,
         };
 
@@ -669,7 +698,7 @@ pub const ValkeyClient = struct {
     }
 
     pub fn send(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, command: *const Command) !*JSC.JSPromise {
-        var promise = Command.Promise.create(globalThis, command.command_type);
+        var promise = Command.Promise.create(globalThis, command.meta);
 
         const js_promise = promise.promise.get();
         // Handle disconnected state with offline queue
@@ -696,7 +725,7 @@ pub const ValkeyClient = struct {
     /// Close the Valkey connection
     pub fn disconnect(this: *ValkeyClient) void {
         this.flags.is_manually_closed = true;
-
+        this.unregisterAutoFlusher();
         if (this.status == .connected or this.status == .connecting) {
             this.status = .disconnected;
             this.socket.close();
@@ -747,6 +776,9 @@ pub const ValkeyClient = struct {
         this.parent().onValkeyTimeout();
     }
 };
+
+// Auto-pipelining
+const AutoFlusher = JSC.WebCore.AutoFlusher;
 
 const JSValkeyClient = JSC.API.Valkey;
 

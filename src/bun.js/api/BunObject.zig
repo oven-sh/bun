@@ -1242,7 +1242,7 @@ pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC
 pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const valkey = JSC.API.Valkey.create(globalThis, &[_]JSValue{.undefined}) catch |err| {
         if (err != error.JSError) {
-            _ = globalThis.throwError(err, "Failed to create Valkey client");
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
         }
         return .zero;

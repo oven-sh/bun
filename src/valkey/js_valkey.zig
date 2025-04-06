@@ -315,11 +315,11 @@ pub const JSValkeyClient = struct {
         switch (this.client.status) {
             .connected => {
                 debug("Idle timeout reached after {d}ms", .{this.client.idle_timeout_interval_ms});
-                this.clientFail("Idle timeout reached", protocol.ValkeyError.ConnectionClosed);
+                this.clientFail("Idle timeout reached", protocol.RedisError.ConnectionClosed);
             },
             .connecting => {
                 debug("Connection timeout after {d}ms", .{this.client.connection_timeout_ms});
-                this.clientFail("Connection timeout", protocol.ValkeyError.ConnectionClosed);
+                this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
             },
             else => {
                 // No timeout for other states
@@ -437,7 +437,7 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         // Create an error value
-        const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.ValkeyError.ConnectionClosed);
+        const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
 
         const loop = globalObject.bunVM().eventLoop();
         loop.enter();
@@ -462,10 +462,10 @@ pub const JSValkeyClient = struct {
 
     // Callback for when Valkey client times out
     pub fn onValkeyTimeout(this: *JSValkeyClient) void {
-        this.clientFail("Connection timeout", protocol.ValkeyError.ConnectionClosed);
+        this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
     }
 
-    pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.ValkeyError) void {
+    pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.RedisError) void {
         debug("clientFail: {s}: {s}", .{ message, @errorName(err) });
         const globalObject = this.globalObject;
         const value = protocol.valkeyErrorToJS(globalObject, message, err);
@@ -1320,6 +1320,6 @@ const uws = bun.uws;
 
 const JSValue = JSC.JSValue;
 const Socket = uws.AnySocket;
-const ValkeyError = protocol.ValkeyError;
+const RedisError = protocol.RedisError;
 const Command = @import("ValkeyCommand.zig");
 const BoringSSL = bun.BoringSSL;

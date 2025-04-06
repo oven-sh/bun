@@ -4,7 +4,7 @@ const JSC = bun.JSC;
 const String = bun.String;
 const debug = bun.Output.scoped(.Valkey, false);
 
-pub const ValkeyError = error{
+pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,
     InvalidArgument,
@@ -36,26 +36,21 @@ pub const ValkeyError = error{
     UnsupportedProtocol,
 };
 
-pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: ValkeyError) JSC.JSValue {
+pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: RedisError) JSC.JSValue {
     const error_code: JSC.Error = switch (err) {
-        error.ConnectionClosed => JSC.Error.ERR_VALKEY_CONNECTION_CLOSED,
-        error.InvalidResponse => JSC.Error.ERR_VALKEY_INVALID_RESPONSE,
-        error.InvalidBulkString => JSC.Error.ERR_VALKEY_INVALID_BULK_STRING,
-        error.InvalidArray => JSC.Error.ERR_VALKEY_INVALID_ARRAY,
-        error.InvalidInteger => JSC.Error.ERR_VALKEY_INVALID_INTEGER,
-        error.InvalidSimpleString => JSC.Error.ERR_VALKEY_INVALID_SIMPLE_STRING,
-        error.InvalidErrorString => JSC.Error.ERR_VALKEY_INVALID_ERROR_STRING,
-        error.InvalidDouble, error.InvalidBoolean, error.InvalidNull, error.InvalidMap, error.InvalidSet, error.InvalidBigNumber, error.InvalidVerbatimString, error.InvalidBlobError, error.InvalidAttribute, error.InvalidPush => JSC.Error.ERR_VALKEY_INVALID_RESPONSE,
-        error.TLSNotAvailable => JSC.Error.ERR_VALKEY_TLS_NOT_AVAILABLE,
-        error.TLSUpgradeFailed => JSC.Error.ERR_VALKEY_TLS_UPGRADE_FAILED,
-        error.AuthenticationFailed => JSC.Error.ERR_VALKEY_AUTHENTICATION_FAILED,
-        error.InvalidPassword => JSC.Error.ERR_VALKEY_INVALID_PASSWORD,
-        error.InvalidUsername => JSC.Error.ERR_VALKEY_INVALID_USERNAME,
-        error.InvalidDatabase => JSC.Error.ERR_VALKEY_INVALID_DATABASE,
-        error.InvalidCommand => JSC.Error.ERR_VALKEY_INVALID_COMMAND,
-        error.InvalidArgument => JSC.Error.ERR_VALKEY_INVALID_ARGUMENT,
-        error.UnsupportedProtocol => JSC.Error.ERR_VALKEY_INVALID_RESPONSE,
-        error.InvalidResponseType => JSC.Error.ERR_VALKEY_INVALID_RESPONSE_TYPE,
+        error.ConnectionClosed => JSC.Error.ERR_REDIS_CONNECTION_CLOSED,
+        error.InvalidResponse => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
+        error.InvalidBulkString => JSC.Error.ERR_REDIS_INVALID_BULK_STRING,
+        error.InvalidArray => JSC.Error.ERR_REDIS_INVALID_ARRAY,
+        error.InvalidInteger => JSC.Error.ERR_REDIS_INVALID_INTEGER,
+        error.InvalidSimpleString => JSC.Error.ERR_REDIS_INVALID_SIMPLE_STRING,
+        error.InvalidErrorString => JSC.Error.ERR_REDIS_INVALID_ERROR_STRING,
+        error.InvalidDouble, error.InvalidBoolean, error.InvalidNull, error.InvalidMap, error.InvalidSet, error.InvalidBigNumber, error.InvalidVerbatimString, error.InvalidBlobError, error.InvalidAttribute, error.InvalidPush => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
+        error.AuthenticationFailed => JSC.Error.ERR_REDIS_AUTHENTICATION_FAILED,
+        error.InvalidCommand => JSC.Error.ERR_REDIS_INVALID_COMMAND,
+        error.InvalidArgument => JSC.Error.ERR_REDIS_INVALID_ARGUMENT,
+        error.UnsupportedProtocol => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
+        error.InvalidResponseType => JSC.Error.ERR_REDIS_INVALID_RESPONSE_TYPE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -248,7 +243,7 @@ pub const RESPValue = union(RESPType) {
     pub fn toJS(self: *RESPValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         switch (self.*) {
             .SimpleString => |str| return bun.String.createUTF8ForJS(globalObject, str),
-            .Error => |str| return valkeyErrorToJS(globalObject, str, ValkeyError.InvalidResponse),
+            .Error => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidResponse),
             .Integer => |int| return JSC.JSValue.jsNumber(int),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
@@ -268,7 +263,7 @@ pub const RESPValue = union(RESPType) {
             .Null => return JSC.JSValue.jsNull(),
             .Double => |d| return JSC.JSValue.jsNumber(d),
             .Boolean => |b| return JSC.JSValue.jsBoolean(b),
-            .BlobError => |str| return valkeyErrorToJS(globalObject, str, ValkeyError.InvalidBlobError),
+            .BlobError => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidBlobError),
             .VerbatimString => |verbatim| return bun.String.createUTF8ForJS(globalObject, verbatim.content),
             .Map => |entries| {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
@@ -364,14 +359,14 @@ pub const ValkeyReader = struct {
         };
     }
 
-    pub fn readByte(self: *ValkeyReader) ValkeyError!u8 {
+    pub fn readByte(self: *ValkeyReader) RedisError!u8 {
         if (self.pos >= self.buffer.len) return error.InvalidResponse;
         const byte = self.buffer[self.pos];
         self.pos += 1;
         return byte;
     }
 
-    pub fn readUntilCRLF(self: *ValkeyReader) ValkeyError![]const u8 {
+    pub fn readUntilCRLF(self: *ValkeyReader) RedisError![]const u8 {
         const buffer = self.buffer[self.pos..];
         for (buffer, 0..) |byte, i| {
             if (byte == '\r' and buffer.len > i + 1 and buffer[i + 1] == '\n') {
@@ -384,12 +379,12 @@ pub const ValkeyReader = struct {
         return error.InvalidResponse;
     }
 
-    pub fn readInteger(self: *ValkeyReader) ValkeyError!i64 {
+    pub fn readInteger(self: *ValkeyReader) RedisError!i64 {
         const str = try self.readUntilCRLF();
         return std.fmt.parseInt(i64, str, 10) catch return error.InvalidInteger;
     }
 
-    pub fn readDouble(self: *ValkeyReader) ValkeyError!f64 {
+    pub fn readDouble(self: *ValkeyReader) RedisError!f64 {
         const str = try self.readUntilCRLF();
 
         // Handle special values
@@ -401,7 +396,7 @@ pub const ValkeyReader = struct {
         return std.fmt.parseFloat(f64, str) catch return error.InvalidDouble;
     }
 
-    pub fn readBoolean(self: *ValkeyReader) ValkeyError!bool {
+    pub fn readBoolean(self: *ValkeyReader) RedisError!bool {
         const str = try self.readUntilCRLF();
         if (str.len != 1) return error.InvalidBoolean;
 
@@ -412,7 +407,7 @@ pub const ValkeyReader = struct {
         };
     }
 
-    pub fn readVerbatimString(self: *ValkeyReader, allocator: std.mem.Allocator) ValkeyError!VerbatimString {
+    pub fn readVerbatimString(self: *ValkeyReader, allocator: std.mem.Allocator) RedisError!VerbatimString {
         const len = try self.readInteger();
         if (len < 0) return error.InvalidVerbatimString;
         if (self.pos + @as(usize, @intCast(len)) > self.buffer.len) return error.InvalidVerbatimString;
@@ -438,7 +433,7 @@ pub const ValkeyReader = struct {
         };
     }
 
-    pub fn readValue(self: *ValkeyReader, allocator: std.mem.Allocator) ValkeyError!RESPValue {
+    pub fn readValue(self: *ValkeyReader, allocator: std.mem.Allocator) RedisError!RESPValue {
         const type_byte = try self.readByte();
 
         return switch (RESPType.fromByte(type_byte) orelse return error.InvalidResponseType) {

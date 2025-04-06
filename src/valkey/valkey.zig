@@ -184,7 +184,7 @@ pub const ValkeyClient = struct {
         defer commands.deinit();
 
         if (globalObjectOrFinalizing) |globalThis| {
-            const object = protocol.valkeyErrorToJS(globalThis, "Connection closed", protocol.ValkeyError.ConnectionClosed);
+            const object = protocol.valkeyErrorToJS(globalThis, "Connection closed", protocol.RedisError.ConnectionClosed);
             for (pending.readableSlice(0)) |pair| {
                 var pair_ = pair;
                 pair_.rejectCommand(globalThis, object);
@@ -285,7 +285,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Mark the connection as failed with error message
-    pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.ValkeyError) void {
+    pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.RedisError) void {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
         if (this.status == .failed) return;
 
@@ -310,7 +310,7 @@ pub const ValkeyClient = struct {
         // If manually closing, don't attempt to reconnect
         if (this.flags.is_manually_closed) {
             debug("skip reconnecting since the connection is manually closed", .{});
-            this.fail("Connection closed", protocol.ValkeyError.ConnectionClosed);
+            this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
             this.onValkeyClose();
             return;
         }
@@ -318,7 +318,7 @@ pub const ValkeyClient = struct {
         // If auto reconnect is disabled, just fail
         if (!this.flags.enable_auto_reconnect) {
             debug("skip reconnecting since auto reconnect is disabled", .{});
-            this.fail("Connection closed", protocol.ValkeyError.ConnectionClosed);
+            this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
             this.onValkeyClose();
             return;
         }
@@ -329,7 +329,7 @@ pub const ValkeyClient = struct {
 
         if (delay_ms == 0 or this.retry_attempts > this.max_retries) {
             debug("Max retries reached or retry strategy returned 0, giving up reconnection", .{});
-            this.fail("Max reconnection attempts reached", protocol.ValkeyError.ConnectionClosed);
+            this.fail("Max reconnection attempts reached", protocol.RedisError.ConnectionClosed);
             this.onValkeyClose();
             return;
         }
@@ -438,7 +438,7 @@ pub const ValkeyClient = struct {
 
         switch (value.*) {
             .Error => |err| {
-                this.fail(err, protocol.ValkeyError.AuthenticationFailed);
+                this.fail(err, protocol.RedisError.AuthenticationFailed);
                 return;
             },
             .SimpleString => |str| {
@@ -448,7 +448,7 @@ pub const ValkeyClient = struct {
                     this.onValkeyConnect();
                     return;
                 }
-                this.fail("Authentication failed (unexpected response)", protocol.ValkeyError.AuthenticationFailed);
+                this.fail("Authentication failed (unexpected response)", protocol.RedisError.AuthenticationFailed);
 
                 return;
             },
@@ -465,7 +465,7 @@ pub const ValkeyClient = struct {
                                     const proto_version = entry.value.Integer;
                                     debug("Server protocol version: {d}", .{proto_version});
                                     if (proto_version != 3) {
-                                        this.fail("Server does not support RESP3", protocol.ValkeyError.UnsupportedProtocol);
+                                        this.fail("Server does not support RESP3", protocol.RedisError.UnsupportedProtocol);
                                         return;
                                     }
                                 }
@@ -483,7 +483,7 @@ pub const ValkeyClient = struct {
                 return;
             },
             else => {
-                this.fail("Authentication failed with unexpected response", protocol.ValkeyError.AuthenticationFailed);
+                this.fail("Authentication failed with unexpected response", protocol.RedisError.AuthenticationFailed);
                 return;
             },
         }
@@ -571,7 +571,7 @@ pub const ValkeyClient = struct {
         if (this.database > 0) {
             var int_buf: [16]u8 = undefined;
             const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch {
-                this.fail("Failed to format database number", protocol.ValkeyError.InvalidDatabase);
+                this.fail("Failed to format database number", protocol.RedisError.InvalidDatabase);
                 return;
             };
             var select_cmd = protocol.ValkeyCommand{
@@ -693,11 +693,11 @@ pub const ValkeyClient = struct {
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
                 } else {
-                    promise.reject(globalThis, globalThis.ERR_VALKEY_CONNECTION_CLOSED("Connection is closed and offline queue is disabled", .{}).toJS());
+                    promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection is closed and offline queue is disabled", .{}).toJS());
                 }
             },
             .failed => {
-                promise.reject(globalThis, globalThis.ERR_VALKEY_CONNECTION_CLOSED("Connection has failed", .{}).toJS());
+                promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection has failed", .{}).toJS());
             },
         }
 
@@ -715,7 +715,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Get a writer for the connected socket
-    pub fn writer(this: *ValkeyClient) std.io.Writer(*ValkeyClient, protocol.ValkeyError, write) {
+    pub fn writer(this: *ValkeyClient) std.io.Writer(*ValkeyClient, protocol.RedisError, write) {
         return .{ .context = this };
     }
 

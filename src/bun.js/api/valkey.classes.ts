@@ -2,7 +2,7 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
-    name: "ValkeyClient",
+    name: "RedisClient",
     construct: true,
     call: false,
     finalize: true,

@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, expect } from "bun:test";
-import { valkey } from "bun";
-import type { ValkeySingleton } from "bun";
+import { ValkeyClient } from "bun";
 
 /**
  * Test utilities for Valkey/Redis tests
@@ -8,11 +7,10 @@ import type { ValkeySingleton } from "bun";
 
 // Default test options
 export const DEFAULT_REDIS_OPTIONS = {
-  idleTimeout: 30000,
-  connectionTimeout: 5000,
-  autoReconnect: true,
-  maxRetries: 10,
-  enableOfflineQueue: true,
+  username: "default",
+  password: "",
+  db: 0,
+  tls: false,
 };
 
 // Default test URL - can be overridden with environment variables
@@ -32,7 +30,7 @@ export function testKey(name: string): string {
  * Create a new client with optional custom options
  */
 export function createClient(options = {}) {
-  return valkey(DEFAULT_REDIS_URL, {
+  return new ValkeyClient(DEFAULT_REDIS_URL, {
     ...DEFAULT_REDIS_OPTIONS,
     ...options,
   });
@@ -41,7 +39,7 @@ export function createClient(options = {}) {
 /**
  * Wait for the client to initialize by sending a dummy command
  */
-export async function initializeClient(client: ReturnType<typeof valkey>): Promise<boolean> {
+export async function initializeClient(client: ValkeyClient): Promise<boolean> {
   try {
     await client.set(testKey("__init__"), "initializing");
     return true;
@@ -55,7 +53,7 @@ export async function initializeClient(client: ReturnType<typeof valkey>): Promi
  * Testing context with shared clients and utilities
  */
 export interface TestContext {
-  redis: ReturnType<typeof valkey>;
+  redis: ValkeyClient;
   initialized: boolean;
   keyPrefix: string;
   generateKey: (name: string) => string;
@@ -66,7 +64,7 @@ export interface TestContext {
  */
 export function setupTestContext(): TestContext {
   const context: TestContext = {
-    redis: valkey(DEFAULT_REDIS_URL, DEFAULT_REDIS_OPTIONS),
+    redis: createClient(DEFAULT_REDIS_OPTIONS),
     initialized: false,
     keyPrefix: TEST_KEY_PREFIX,
     generateKey: testKey,
@@ -86,7 +84,7 @@ export function setupTestContext(): TestContext {
       if (Array.isArray(keys) && keys.length > 0) {
         await context.redis.sendCommand("DEL", keys);
       }
-      
+
       // Disconnect the client
       await context.redis.disconnect();
     } catch (err) {
@@ -111,8 +109,11 @@ export function skipIfNotInitialized(initialized: boolean) {
 /**
  * Verify that a value is of a specific type
  */
-export function expectType<T>(value: any, type: string): asserts value is T {
-  expect(typeof value).toBe(type);
+export function expectType<T>(
+  value: any,
+  expectedType: "string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function",
+): asserts value is T {
+  expect(typeof value).toBe(expectedType);
 }
 
 /**
@@ -126,25 +127,20 @@ export function delay(ms: number): Promise<void> {
  * Retry a function until it succeeds or times out
  */
 export async function retry<T>(
-  fn: () => Promise<T>, 
-  options: { 
-    maxAttempts?: number; 
-    delay?: number; 
+  fn: () => Promise<T>,
+  options: {
+    maxAttempts?: number;
+    delay?: number;
     timeout?: number;
     predicate?: (result: T) => boolean;
-  } = {}
+  } = {},
 ): Promise<T> {
-  const { 
-    maxAttempts = 5, 
-    delay: delayMs = 100,
-    timeout = 5000,
-    predicate = (r) => !!r 
-  } = options;
-  
+  const { maxAttempts = 5, delay: delayMs = 100, timeout = 5000, predicate = r => !!r } = options;
+
   const startTime = Date.now();
   let attempts = 0;
-  
-  while (attempts < maxAttempts && (Date.now() - startTime) < timeout) {
+
+  while (attempts < maxAttempts && Date.now() - startTime < timeout) {
     attempts++;
     try {
       const result = await fn();
@@ -154,11 +150,11 @@ export async function retry<T>(
     } catch (e) {
       if (attempts >= maxAttempts) throw e;
     }
-    
+
     if (attempts < maxAttempts) {
       await delay(delayMs);
     }
   }
-  
+
   throw new Error(`Retry failed after ${attempts} attempts (${Date.now() - startTime}ms)`);
 }

@@ -1,9 +1,8 @@
 declare module "bun" {
-  export interface ValkeyOptions {
+  export interface RedisOptions {
     /**
-     * URL to connect to, defaults to "valkey://localhost:6379"
-     * Supported protocols: valkey://, redis://, valkeys://, rediss://,
-     * valkey+unix://, redis+unix://, valkey+tls://, redis+tls://
+     * URL to connect to, defaults to "redis://localhost:6379"
+     * Supported protocols: redis://, rediss://, redis+unix://, redis+tls://
      */
     url?: string;
 
@@ -57,25 +56,25 @@ declare module "bun" {
         };
   }
 
-  export class ValkeyClient {
+  export class RedisClient {
     /**
-     * Creates a new Valkey client
+     * Creates a new Redis client
      * @param url URL to connect to, defaults to process.env.VALKEY_URL, process.env.REDIS_URL, or "valkey://localhost:6379"
      * @param options Additional options
      *
      * @example
      * ```ts
-     * const valkey = new ValkeyClient();
+     * const valkey = new RedisClient();
      *
      * await valkey.set("hello", "world");
      *
      * console.log(await valkey.get("hello"));
      * ```
      */
-    constructor(url?: string, options?: ValkeyOptions);
+    constructor(url?: string, options?: RedisOptions);
 
     /**
-     * Whether the client is connected to the Valkey server
+     * Whether the client is connected to the Redis server
      */
     readonly connected: boolean;
 
@@ -85,29 +84,29 @@ declare module "bun" {
     readonly bufferedAmount: number;
 
     /**
-     * Callback fired when the client connects to the Valkey server
+     * Callback fired when the client connects to the Redis server
      */
-    onconnect: ((this: ValkeyClient) => void) | null;
+    onconnect: ((this: RedisClient) => void) | null;
 
     /**
-     * Callback fired when the client disconnects from the Valkey server
+     * Callback fired when the client disconnects from the Redis server
      * @param error The error that caused the disconnection
      */
-    onclose: ((this: ValkeyClient, error: Error) => void) | null;
+    onclose: ((this: RedisClient, error: Error) => void) | null;
 
     /**
-     * Connect to the Valkey server
+     * Connect to the Redis server
      * @returns A promise that resolves when connected
      */
     connect(): Promise<void>;
 
     /**
-     * Disconnect from the Valkey server
+     * Disconnect from the Redis server
      */
     disconnect(): void;
 
     /**
-     * Send a raw command to the Valkey server
+     * Send a raw command to the Redis server
      * @param command The command to send
      * @param args The arguments to the command
      * @returns A promise that resolves with the command result
@@ -253,7 +252,7 @@ declare module "bun" {
   }
 
   /**
-   * Default Valkey client
+   * Default Redis client
    *
    * Connection information populated from one of, in order of preference:
    * - `process.env.VALKEY_URL`
@@ -261,5 +260,5 @@ declare module "bun" {
    * - `"valkey://localhost:6379"`
    *
    */
-  export const valkey: ValkeyClient;
+  export const redis: RedisClient;
 }

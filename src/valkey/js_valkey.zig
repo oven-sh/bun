@@ -21,7 +21,7 @@ pub const JSValkeyClient = struct {
 
     ref_count: u32 = 1,
 
-    pub usingnamespace JSC.Codegen.JSValkeyClient;
+    pub usingnamespace JSC.Codegen.JSRedisClient;
     pub usingnamespace bun.NewRefCounted(JSValkeyClient, deinit, null);
 
     // Factory function to create a new Valkey client from JS

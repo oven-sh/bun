@@ -340,6 +340,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->timeout = 0;
     s->long_timeout = 0;
     s->flags.low_prio_state = 0;
+    s->flags.is_paused = 0;
+    s->flags.allow_half_open = 0;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);

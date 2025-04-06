@@ -312,7 +312,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
-
+                        s->flags.is_paused = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

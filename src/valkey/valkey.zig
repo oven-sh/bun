@@ -642,6 +642,7 @@ pub const ValkeyClient = struct {
             // TODO: pipelining. Unitl then, we need to wait for the previous command to finish.
             this.in_flight.readableLength() > 0 or !this.flags.is_authenticated)
         {
+            // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
             try this.queue.writeItem(try Command.Entry.create(this.allocator, command, promise.*));
             return;
         }

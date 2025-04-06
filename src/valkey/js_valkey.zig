@@ -81,6 +81,9 @@ pub const JSValkeyClient = struct {
             valkey.Options{};
 
         var connection_strings: []u8 = &.{};
+        errdefer {
+            bun.default_allocator.free(connection_strings);
+        }
 
         if (url.username.len > 0 or url.password.len > 0 or hostname.len > 0) {
             var b = bun.StringBuilder{};
@@ -490,7 +493,11 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn finalize(this: *JSValkeyClient) void {
-        debug("JSValkeyClient finalize", .{});
+        // Since this.stopTimers impacts the reference count potentially, we
+        // need to ref/unref here as well.
+        this.ref();
+        defer this.deref();
+
         this.stopTimers();
         this.this_value.deinit();
         if (this.client.status == .connected or this.client.status == .connecting) {
@@ -552,6 +559,7 @@ pub const JSValkeyClient = struct {
 
         defer {
             if (deinit_context) {
+                // This is actually unref(). uws.Context is reference counted.
                 ctx.deinit(true);
             }
         }

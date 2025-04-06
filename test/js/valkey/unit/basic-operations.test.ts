@@ -36,7 +36,7 @@ describe("Valkey: Basic String Operations", () => {
       const key = ctx.generateKey("expiry-set-test");
 
       // Set with expiry (EX option)
-      await ctx.redis.sendCommand("SET", [key, "expires-soon", "EX", "1"]);
+      await ctx.redis.send("SET", [key, "expires-soon", "EX", "1"]);
 
       // Key should exist immediately
       const existsNow = await ctx.redis.exists(key);
@@ -59,7 +59,7 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, initialValue);
 
       // Append additional content
-      const newLength = await ctx.redis.sendCommand("APPEND", [key, appendValue]);
+      const newLength = await ctx.redis.send("APPEND", [key, appendValue]);
       expectType<number>(newLength, "number");
       expect(newLength).toBe(initialValue.length + appendValue.length);
 
@@ -76,7 +76,7 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, value);
 
       // Get and delete in one operation
-      const result = await ctx.redis.sendCommand("GETDEL", [key]);
+      const result = await ctx.redis.send("GETDEL", [key]);
       expect(result).toBe(value);
 
       // Verify key is gone
@@ -92,7 +92,7 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, value);
 
       // Get substring using GETRANGE
-      const result = await ctx.redis.sendCommand("GETRANGE", [key, "6", "12"]);
+      const result = await ctx.redis.send("GETRANGE", [key, "6", "12"]);
       expect(result).toBe("Valkey");
     });
 
@@ -104,7 +104,7 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, value);
 
       // Replace "World" with "Valkey" starting at position 6
-      const newLength = await ctx.redis.sendCommand("SETRANGE", [key, "6", "Valkey"]);
+      const newLength = await ctx.redis.send("SETRANGE", [key, "6", "Valkey"]);
       expectType<number>(newLength, "number");
 
       // Expected length is the maximum of original length and (offset + replacement length)
@@ -124,7 +124,7 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, value);
 
       // Get string length
-      const length = await ctx.redis.sendCommand("STRLEN", [key]);
+      const length = await ctx.redis.send("STRLEN", [key]);
       expectType<number>(length, "number");
       expect(length).toBe(value.length);
     });
@@ -155,12 +155,12 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, "10");
 
       // INCRBY should add specified value and return result
-      const incremented = await ctx.redis.sendCommand("INCRBY", [key, "5"]);
+      const incremented = await ctx.redis.send("INCRBY", [key, "5"]);
       expectType<number>(incremented, "number");
       expect(incremented).toBe(15);
 
       // DECRBY should subtract specified value and return result
-      const decremented = await ctx.redis.sendCommand("DECRBY", [key, "7"]);
+      const decremented = await ctx.redis.send("DECRBY", [key, "7"]);
       expectType<number>(decremented, "number");
       expect(decremented).toBe(8);
     });
@@ -172,11 +172,11 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, "10.5");
 
       // INCRBYFLOAT should add specified float value and return result
-      const result = await ctx.redis.sendCommand("INCRBYFLOAT", [key, "0.7"]);
+      const result = await ctx.redis.send("INCRBYFLOAT", [key, "0.7"]);
       expect(result).toBe("11.2");
 
       // INCRBYFLOAT also works with negative values for subtraction
-      const subtracted = await ctx.redis.sendCommand("INCRBYFLOAT", [key, "-1.2"]);
+      const subtracted = await ctx.redis.send("INCRBYFLOAT", [key, "-1.2"]);
       expect(subtracted).toBe("10");
     });
   });
@@ -220,12 +220,12 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key, "expiring-value-ms");
 
       // Set expiration with millisecond precision (5000 ms = 5 seconds)
-      const expireResult = await ctx.redis.sendCommand("PEXPIRE", [key, "5000"]);
+      const expireResult = await ctx.redis.send("PEXPIRE", [key, "5000"]);
       expectType<number>(expireResult, "number");
       expect(expireResult).toBe(1); // 1 indicates success
 
       // Get TTL with millisecond precision
-      const pttl = await ctx.redis.sendCommand("PTTL", [key]);
+      const pttl = await ctx.redis.send("PTTL", [key]);
       expectType<number>(pttl, "number");
       expect(pttl).toBeGreaterThan(0); // Should be positive number of milliseconds
       expect(pttl).toBeLessThanOrEqual(5000);
@@ -270,7 +270,7 @@ describe("Valkey: Basic String Operations", () => {
       expect(exists2).toBe(true);
 
       // Delete multiple keys using sendCommand
-      const multipleDelCount = await ctx.redis.sendCommand("DEL", [key1, key2]);
+      const multipleDelCount = await ctx.redis.send("DEL", [key1, key2]);
       expectType<number>(multipleDelCount, "number");
       expect(multipleDelCount).toBe(1); // Only 1 key existed and was deleted
     });
@@ -284,7 +284,7 @@ describe("Valkey: Basic String Operations", () => {
       await ctx.redis.set(key2, "value2");
 
       // Unlink multiple keys
-      const unlinkCount = await ctx.redis.sendCommand("UNLINK", [key1, key2]);
+      const unlinkCount = await ctx.redis.send("UNLINK", [key1, key2]);
       expectType<number>(unlinkCount, "number");
       expect(unlinkCount).toBe(2); // 2 keys were unlinked
 

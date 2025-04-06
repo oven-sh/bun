@@ -22,7 +22,7 @@ describe("Valkey: Set Data Type Operations", () => {
       expect(singleAddResult).toBe(1); // 1 new member added
 
       // Add multiple members using sendCommand
-      const multiAddResult = await ctx.redis.sendCommand("SADD", [key, "member2", "member3", "member1"]);
+      const multiAddResult = await ctx.redis.send("SADD", [key, "member2", "member3", "member1"]);
       expectType<number>(multiAddResult, "number");
       expect(multiAddResult).toBe(2); // 2 new members added, 1 duplicate ignored
 
@@ -39,7 +39,7 @@ describe("Valkey: Set Data Type Operations", () => {
       const key = ctx.generateKey("srem-test");
 
       // Add multiple members
-      await ctx.redis.sendCommand("SADD", [key, "member1", "member2", "member3", "member4"]);
+      await ctx.redis.send("SADD", [key, "member1", "member2", "member3", "member4"]);
 
       // Remove a single member
       const singleRemResult = await ctx.redis.srem(key, "member1");
@@ -47,7 +47,7 @@ describe("Valkey: Set Data Type Operations", () => {
       expect(singleRemResult).toBe(1); // 1 member removed
 
       // Remove multiple members using sendCommand
-      const multiRemResult = await ctx.redis.sendCommand("SREM", [key, "member2", "member3", "nonexistent"]);
+      const multiRemResult = await ctx.redis.send("SREM", [key, "member2", "member3", "nonexistent"]);
       expectType<number>(multiRemResult, "number");
       expect(multiRemResult).toBe(2); // 2 members removed, non-existent member ignored
 
@@ -62,7 +62,7 @@ describe("Valkey: Set Data Type Operations", () => {
       const key = ctx.generateKey("smembers-test");
 
       // Add members
-      await ctx.redis.sendCommand("SADD", [key, "apple", "banana", "cherry"]);
+      await ctx.redis.send("SADD", [key, "apple", "banana", "cherry"]);
 
       // Get all members
       const members = await ctx.redis.smembers(key);
@@ -77,16 +77,16 @@ describe("Valkey: Set Data Type Operations", () => {
       const key = ctx.generateKey("scard-test");
 
       // Add members
-      await ctx.redis.sendCommand("SADD", [key, "item1", "item2", "item3", "item4"]);
+      await ctx.redis.send("SADD", [key, "item1", "item2", "item3", "item4"]);
 
       // Get set cardinality (size)
-      const size = await ctx.redis.sendCommand("SCARD", [key]);
+      const size = await ctx.redis.send("SCARD", [key]);
       expectType<number>(size, "number");
       expect(size).toBe(4);
 
       // Remove some members and check again
-      await ctx.redis.sendCommand("SREM", [key, "item1", "item2"]);
-      const updatedSize = await ctx.redis.sendCommand("SCARD", [key]);
+      await ctx.redis.send("SREM", [key, "item1", "item2"]);
+      const updatedSize = await ctx.redis.send("SCARD", [key]);
       expectType<number>(updatedSize, "number");
       expect(updatedSize).toBe(2);
     });
@@ -105,12 +105,12 @@ describe("Valkey: Set Data Type Operations", () => {
       expect(typeof popResult).toBe("string");
 
       // Pop multiple members
-      const multiPopResult = await ctx.redis.sendCommand("SPOP", [key, "2"]);
+      const multiPopResult = await ctx.redis.send("SPOP", [key, "2"]);
       expect(Array.isArray(multiPopResult)).toBe(true);
       expect(multiPopResult.length).toBe(2);
 
       // Verify remaining members
-      const remainingCount = await ctx.redis.sendCommand("SCARD", [key]);
+      const remainingCount = await ctx.redis.send("SCARD", [key]);
       expectType<number>(remainingCount, "number");
       expect(remainingCount).toBe(2); // 5 original - 1 - 2 = 2 remaining
     });
@@ -119,7 +119,7 @@ describe("Valkey: Set Data Type Operations", () => {
       const key = ctx.generateKey("srandmember-test");
 
       // Add members
-      await ctx.redis.sendCommand("SADD", [key, "one", "two", "three", "four", "five"]);
+      await ctx.redis.send("SADD", [key, "one", "two", "three", "four", "five"]);
 
       // Get a random member
       const randResult = await ctx.redis.srandmember(key);
@@ -127,12 +127,12 @@ describe("Valkey: Set Data Type Operations", () => {
       expect(typeof randResult).toBe("string");
 
       // Get multiple random members
-      const multiRandResult = await ctx.redis.sendCommand("SRANDMEMBER", [key, "3"]);
+      const multiRandResult = await ctx.redis.send("SRANDMEMBER", [key, "3"]);
       expect(Array.isArray(multiRandResult)).toBe(true);
       expect(multiRandResult.length).toBe(3);
 
       // Verify set is unchanged
-      const count = await ctx.redis.sendCommand("SCARD", [key]);
+      const count = await ctx.redis.send("SCARD", [key]);
       expectType<number>(count, "number");
       expect(count).toBe(5); // All members still present unlike SPOP
     });
@@ -142,16 +142,16 @@ describe("Valkey: Set Data Type Operations", () => {
       const destinationKey = ctx.generateKey("smove-dest");
 
       // Set up source and destination sets
-      await ctx.redis.sendCommand("SADD", [sourceKey, "a", "b", "c"]);
-      await ctx.redis.sendCommand("SADD", [destinationKey, "c", "d", "e"]);
+      await ctx.redis.send("SADD", [sourceKey, "a", "b", "c"]);
+      await ctx.redis.send("SADD", [destinationKey, "c", "d", "e"]);
 
       // Move a member from source to destination
-      const moveResult = await ctx.redis.sendCommand("SMOVE", [sourceKey, destinationKey, "b"]);
+      const moveResult = await ctx.redis.send("SMOVE", [sourceKey, destinationKey, "b"]);
       expectType<number>(moveResult, "number");
       expect(moveResult).toBe(1); // 1 indicates success
 
       // Try to move a non-existent member
-      const failedMoveResult = await ctx.redis.sendCommand("SMOVE", [sourceKey, destinationKey, "z"]);
+      const failedMoveResult = await ctx.redis.send("SMOVE", [sourceKey, destinationKey, "z"]);
       expectType<number>(failedMoveResult, "number");
       expect(failedMoveResult).toBe(0); // 0 indicates failure
 
@@ -182,12 +182,12 @@ describe("Valkey: Set Data Type Operations", () => {
       const destSet = ctx.generateKey("sunion-dest");
 
       // Set up test sets
-      await ctx.redis.sendCommand("SADD", [set1, "a", "b", "c"]);
-      await ctx.redis.sendCommand("SADD", [set2, "c", "d", "e"]);
-      await ctx.redis.sendCommand("SADD", [set3, "e", "f", "g"]);
+      await ctx.redis.send("SADD", [set1, "a", "b", "c"]);
+      await ctx.redis.send("SADD", [set2, "c", "d", "e"]);
+      await ctx.redis.send("SADD", [set3, "e", "f", "g"]);
 
       // Get union of two sets
-      const unionResult = await ctx.redis.sendCommand("SUNION", [set1, set2]);
+      const unionResult = await ctx.redis.send("SUNION", [set1, set2]);
       expect(Array.isArray(unionResult)).toBe(true);
       expect(unionResult.length).toBe(5);
       expect(unionResult).toContain("a");
@@ -197,7 +197,7 @@ describe("Valkey: Set Data Type Operations", () => {
       expect(unionResult).toContain("e");
 
       // Store union of three sets
-      const storeResult = await ctx.redis.sendCommand("SUNIONSTORE", [destSet, set1, set2, set3]);
+      const storeResult = await ctx.redis.send("SUNIONSTORE", [destSet, set1, set2, set3]);
       expectType<number>(storeResult, "number");
       expect(storeResult).toBe(7); // 7 unique members across all sets
 
@@ -221,19 +221,19 @@ describe("Valkey: Set Data Type Operations", () => {
       const destSet = ctx.generateKey("sinter-dest");
 
       // Set up test sets
-      await ctx.redis.sendCommand("SADD", [set1, "a", "b", "c", "d"]);
-      await ctx.redis.sendCommand("SADD", [set2, "c", "d", "e"]);
-      await ctx.redis.sendCommand("SADD", [set3, "a", "c", "e"]);
+      await ctx.redis.send("SADD", [set1, "a", "b", "c", "d"]);
+      await ctx.redis.send("SADD", [set2, "c", "d", "e"]);
+      await ctx.redis.send("SADD", [set3, "a", "c", "e"]);
 
       // Get intersection of two sets
-      const interResult = await ctx.redis.sendCommand("SINTER", [set1, set2]);
+      const interResult = await ctx.redis.send("SINTER", [set1, set2]);
       expect(Array.isArray(interResult)).toBe(true);
       expect(interResult.length).toBe(2);
       expect(interResult).toContain("c");
       expect(interResult).toContain("d");
 
       // Store intersection of three sets
-      const storeResult = await ctx.redis.sendCommand("SINTERSTORE", [destSet, set1, set2, set3]);
+      const storeResult = await ctx.redis.send("SINTERSTORE", [destSet, set1, set2, set3]);
       expectType<number>(storeResult, "number");
       expect(storeResult).toBe(1); // Only "c" is in all three sets
 
@@ -250,18 +250,18 @@ describe("Valkey: Set Data Type Operations", () => {
       const destSet = ctx.generateKey("sdiff-dest");
 
       // Set up test sets
-      await ctx.redis.sendCommand("SADD", [set1, "a", "b", "c", "d"]);
-      await ctx.redis.sendCommand("SADD", [set2, "c", "d", "e"]);
+      await ctx.redis.send("SADD", [set1, "a", "b", "c", "d"]);
+      await ctx.redis.send("SADD", [set2, "c", "d", "e"]);
 
       // Get difference (elements in set1 that aren't in set2)
-      const diffResult = await ctx.redis.sendCommand("SDIFF", [set1, set2]);
+      const diffResult = await ctx.redis.send("SDIFF", [set1, set2]);
       expect(Array.isArray(diffResult)).toBe(true);
       expect(diffResult.length).toBe(2);
       expect(diffResult).toContain("a");
       expect(diffResult).toContain("b");
 
       // Store difference
-      const storeResult = await ctx.redis.sendCommand("SDIFFSTORE", [destSet, set1, set2]);
+      const storeResult = await ctx.redis.send("SDIFFSTORE", [destSet, set1, set2]);
       expectType<number>(storeResult, "number");
       expect(storeResult).toBe(2); // "a" and "b" are only in set1
 
@@ -285,10 +285,10 @@ describe("Valkey: Set Data Type Operations", () => {
         members.push(`member:${i}`);
       }
 
-      await ctx.redis.sendCommand("SADD", [key, ...members]);
+      await ctx.redis.send("SADD", [key, ...members]);
 
       // Use SSCAN to iterate through members
-      const scanResult = await ctx.redis.sendCommand("SSCAN", [key, "0", "COUNT", "20"]);
+      const scanResult = await ctx.redis.send("SSCAN", [key, "0", "COUNT", "20"]);
       expect(Array.isArray(scanResult)).toBe(true);
       expect(scanResult.length).toBe(2);
 
@@ -307,7 +307,7 @@ describe("Valkey: Set Data Type Operations", () => {
       }
 
       // Verify MATCH pattern works
-      const patternResult = await ctx.redis.sendCommand("SSCAN", [key, "0", "MATCH", "member:1*", "COUNT", "1000"]);
+      const patternResult = await ctx.redis.send("SSCAN", [key, "0", "MATCH", "member:1*", "COUNT", "1000"]);
       expect(Array.isArray(patternResult)).toBe(true);
       expect(patternResult.length).toBe(2);
 

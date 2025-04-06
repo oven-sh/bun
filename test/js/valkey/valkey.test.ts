@@ -75,7 +75,7 @@ describe("Valkey Redis Client", () => {
       expect(result).toBeDefined();
 
       // Check TTL using the sendCommand API since ttl() doesn't exist yet
-      const ttl = await redis.sendCommand("TTL", [tempKey]);
+      const ttl = await redis.send("TTL", [tempKey]);
       expect(ttl).toBeDefined();
       expect(typeof ttl).toBe("number");
       expect(ttl).toBeGreaterThan(0); // Should be positive if expiration was set
@@ -88,18 +88,18 @@ describe("Valkey Redis Client", () => {
       await redis.expire(tempKey, 60);
 
       // Use sendCommand to access TTL functionality
-      const ttl = await redis.sendCommand("TTL", [tempKey]);
+      const ttl = await redis.send("TTL", [tempKey]);
       expect(ttl).toBeGreaterThan(0); // Should be positive if expiration was set
 
       // For keys with no expiration
       const permanentKey = "permanent-key";
       await redis.set(permanentKey, "no expiry");
-      const noExpiry = await redis.sendCommand("TTL", [permanentKey]);
+      const noExpiry = await redis.send("TTL", [permanentKey]);
       expect(noExpiry).toBe(-1); // -1 indicates no expiration
 
       // For non-existent keys
       const nonExistentKey = "non-existent-" + randomUUIDv7();
-      const noKey = await redis.sendCommand("TTL", [nonExistentKey]);
+      const noKey = await redis.send("TTL", [nonExistentKey]);
       expect(noKey).toBe(-2); // -2 indicates key doesn't exist
     });
   });
@@ -115,11 +115,11 @@ describe("Valkey Redis Client", () => {
     test("should handle hash maps (dictionaries) as command responses", async () => {
       // HSET multiple fields
       const userId = "user:" + randomUUIDv7().substring(0, 8);
-      const setResult = await redis.sendCommand("HSET", [userId, "name", "John", "age", "30", "active", "true"]);
+      const setResult = await redis.send("HSET", [userId, "name", "John", "age", "30", "active", "true"]);
       expect(setResult).toBeDefined();
 
       // HGETALL returns object with key-value pairs
-      const hash = await redis.sendCommand("HGETALL", [userId]);
+      const hash = await redis.send("HGETALL", [userId]);
       expect(hash).toBeDefined();
 
       // Proper structure checking when RESP3 maps are fixed
@@ -137,11 +137,11 @@ describe("Valkey Redis Client", () => {
     test("should handle sets as command responses", async () => {
       // Add items to a set
       const setKey = "colors:" + randomUUIDv7().substring(0, 8);
-      const addResult = await redis.sendCommand("SADD", [setKey, "red", "blue", "green"]);
+      const addResult = await redis.send("SADD", [setKey, "red", "blue", "green"]);
       expect(addResult).toBeDefined();
 
       // Get set members
-      const setMembers = await redis.sendCommand("SMEMBERS", [setKey]);
+      const setMembers = await redis.send("SMEMBERS", [setKey]);
       expect(setMembers).toBeDefined();
 
       // Check if the response is an array

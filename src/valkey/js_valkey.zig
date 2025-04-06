@@ -588,7 +588,7 @@ pub const JSValkeyClient = struct {
         return try this.client.send(globalThis, command);
     }
 
-    pub fn jsSendCommand(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const command = try callframe.argument(0).toBunString(globalObject);
         defer command.deref();
 
@@ -597,19 +597,18 @@ pub const JSValkeyClient = struct {
             return globalObject.throw("Arguments must be an array", .{});
         }
         var iter = args_array.arrayIterator(globalObject);
-        var args = try std.ArrayList(JSC.ZigString.Slice).initCapacity(bun.default_allocator, iter.len);
+        var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, iter.len);
         defer {
-            for (args.items) |item| {
+            for (args.items) |*item| {
                 item.deinit();
             }
             args.deinit();
         }
 
         while (iter.next()) |arg_js| {
-            const arg_str = try arg_js.toBunString(globalObject);
-            defer arg_str.deref();
-            const slice = arg_str.toUTF8WithoutRef(bun.default_allocator);
-            args.appendAssumeCapacity(slice);
+            args.appendAssumeCapacity(try fromJS(globalObject, arg_js) orelse {
+                return globalObject.throwInvalidArgumentType("sendCommand", "argument", "string or buffer");
+            });
         }
 
         const cmd_str = command.toUTF8WithoutRef(bun.default_allocator);
@@ -620,7 +619,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = cmd_str.slice(),
-                .args = .{ .slices = args.items },
+                .args = .{ .args = args.items },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -630,18 +629,18 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn get(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("get", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send GET command
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "GET",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -651,15 +650,15 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn set(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
-        const value = try callframe.argument(1).toBunString(globalObject);
-        defer value.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("set", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
-        const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
-        defer value_slice.deinit();
+        const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+            return globalObject.throwInvalidArgumentType("set", "value", "string or buffer");
+        };
+        defer value.deinit();
 
         // Send SET command
         const promise = this.send(
@@ -667,7 +666,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "SET",
-                .args = .{ .slices = &.{ key_slice, value_slice } },
+                .args = .{ .args = &.{ key, value } },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -677,11 +676,10 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn del(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
-
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("del", "key", "string or buffer");
+        };
+        defer key.deinit();
 
         // Send DEL command
         const promise = this.send(
@@ -689,7 +687,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "DEL",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -699,18 +697,18 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn incr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("incr", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send INCR command
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "INCR",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -720,18 +718,18 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn decr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("decr", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send DECR command
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "DECR",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -741,18 +739,18 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn exists(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("exists", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send EXISTS command with special Exists type for boolean conversion
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "EXISTS",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Exists,
             },
         ) catch |err| {
@@ -762,12 +760,13 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn expire(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("expire", "key", "string or buffer");
+        };
+        defer key.deinit();
+
         const seconds = try globalObject.validateIntegerRange(callframe.argument(1), i32, 0, .{ .min = 0, .max = 2147483647 });
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Convert seconds to a string
         var int_buf: [64]u8 = undefined;
         const seconds_len = std.fmt.formatIntBuf(&int_buf, seconds, 10, .lower, .{});
@@ -779,7 +778,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "EXPIRE",
-                .args = .{ .raw = &.{ key_slice.slice(), seconds_slice } },
+                .args = .{ .raw = &.{ key.slice(), seconds_slice } },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -789,18 +788,18 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn ttl(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("ttl", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send TTL command
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "TTL",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -811,15 +810,14 @@ pub const JSValkeyClient = struct {
 
     // Implement srem (remove value from a set)
     pub fn srem(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
-        const value = try callframe.argument(1).toBunString(globalObject);
-        defer value.deref();
-
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
-        const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
-        defer value_slice.deinit();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("srem", "key", "string or buffer");
+        };
+        defer key.deinit();
+        const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+            return globalObject.throwInvalidArgumentType("srem", "value", "string or buffer");
+        };
+        defer value.deinit();
 
         // Send SREM command
         const promise = this.send(
@@ -827,7 +825,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "SREM",
-                .args = .{ .slices = &.{ key_slice, value_slice } },
+                .args = .{ .args = &.{ key, value } },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -838,18 +836,18 @@ pub const JSValkeyClient = struct {
 
     // Implement srandmember (get random member from set)
     pub fn srandmember(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("srandmember", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send SRANDMEMBER command
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "SRANDMEMBER",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -860,18 +858,18 @@ pub const JSValkeyClient = struct {
 
     // Implement smembers (get all members of a set)
     pub fn smembers(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("smembers", "key", "string or buffer");
+        };
+        defer key.deinit();
 
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
         // Send SMEMBERS command
         const promise = this.send(
             globalObject,
             callframe.this(),
             &.{
                 .command = "SMEMBERS",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -882,11 +880,10 @@ pub const JSValkeyClient = struct {
 
     // Implement spop (pop a random member from a set)
     pub fn spop(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
-
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("spop", "key", "string or buffer");
+        };
+        defer key.deinit();
 
         // Send SPOP command
         const promise = this.send(
@@ -894,7 +891,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "SPOP",
-                .args = .{ .slices = &.{key_slice} },
+                .args = .{ .args = &.{key} },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -905,15 +902,14 @@ pub const JSValkeyClient = struct {
 
     // Implement sadd (add member to a set)
     pub fn sadd(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
-        const value = try callframe.argument(1).toBunString(globalObject);
-        defer value.deref();
-
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
-        const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
-        defer value_slice.deinit();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("sadd", "key", "string or buffer");
+        };
+        defer key.deinit();
+        const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+            return globalObject.throwInvalidArgumentType("sadd", "value", "string or buffer");
+        };
+        defer value.deinit();
 
         // Send SADD command
         const promise = this.send(
@@ -921,7 +917,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "SADD",
-                .args = .{ .slices = &.{ key_slice, value_slice } },
+                .args = .{ .args = &.{ key, value } },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -932,15 +928,14 @@ pub const JSValkeyClient = struct {
 
     // Implement sismember (check if value is member of a set)
     pub fn sismember(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
-        const value = try callframe.argument(1).toBunString(globalObject);
-        defer value.deref();
-
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
-        const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
-        defer value_slice.deinit();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("sismember", "key", "string or buffer");
+        };
+        defer key.deinit();
+        const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+            return globalObject.throwInvalidArgumentType("sismember", "value", "string or buffer");
+        };
+        defer value.deinit();
 
         // Send SISMEMBER command
         const promise = this.send(
@@ -948,7 +943,7 @@ pub const JSValkeyClient = struct {
             callframe.this(),
             &.{
                 .command = "SISMEMBER",
-                .args = .{ .slices = &.{ key_slice, value_slice } },
+                .args = .{ .args = &.{ key, value } },
                 .command_type = .Generic,
             },
         ) catch |err| {
@@ -959,8 +954,10 @@ pub const JSValkeyClient = struct {
 
     // Implement hmget (get multiple values from hash)
     pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const key = try callframe.argument(0).toBunString(globalObject);
-        defer key.deref();
+        const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("hmget", "key", "string or buffer");
+        };
+        defer key.deinit();
 
         // Get field array argument
         const fields_array = callframe.argument(1);
@@ -977,11 +974,7 @@ pub const JSValkeyClient = struct {
             args.deinit();
         }
 
-        // Add key as first argument
-        const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-        defer key_slice.deinit();
-
-        args.appendAssumeCapacity(key_slice);
+        args.appendAssumeCapacity(JSC.ZigString.Slice.fromUTF8NeverFree(key.slice()));
 
         // Add field names as arguments
         while (iter.next()) |field_js| {
@@ -1325,7 +1318,7 @@ const valkey = @import("valkey.zig");
 const protocol = @import("valkey_protocol.zig");
 const JSC = bun.JSC;
 const String = bun.String;
-const debug = bun.Output.scoped(.ValkeyJS, false);
+const debug = bun.Output.scoped(.RedisJS, false);
 const uws = bun.uws;
 
 const JSValue = JSC.JSValue;
@@ -1333,3 +1326,22 @@ const Socket = uws.AnySocket;
 const RedisError = protocol.RedisError;
 const Command = @import("ValkeyCommand.zig");
 const BoringSSL = bun.BoringSSL;
+const JSArgument = JSC.Node.BlobOrStringOrBuffer;
+fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
+    if (value == .undefined or value == .null) {
+        return null;
+    }
+
+    if (value.isNumber()) {
+        // Allow numbers to be passed as strings.
+        const str = value.toString(globalObject);
+        if (globalObject.hasException()) {
+            @branchHint(.unlikely);
+            return error.JSError;
+        }
+
+        return try JSArgument.fromJSMaybeFile(globalObject, bun.default_allocator, str.toJS(), true);
+    }
+
+    return try JSArgument.fromJSMaybeFile(globalObject, bun.default_allocator, value, false);
+}

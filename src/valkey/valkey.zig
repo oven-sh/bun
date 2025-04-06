@@ -556,12 +556,13 @@ pub const ValkeyClient = struct {
 
         // Format and send the HELLO command without adding to command queue
         // We'll handle this response specially in handleResponse
-        var hello_cmd = protocol.ValkeyCommand{
+        var hello_cmd = Command{
             .command = "HELLO",
-            .args = hello_args,
+            .command_type = .Generic,
+            .args = .{ .raw = hello_args },
         };
 
-        hello_cmd.format(this.writer()) catch |err| {
+        hello_cmd.write(this.writer()) catch |err| {
             this.fail("Failed to write HELLO command", err);
             return;
         };
@@ -570,11 +571,12 @@ pub const ValkeyClient = struct {
         if (this.database > 0) {
             var int_buf: [64]u8 = undefined;
             const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch unreachable;
-            var select_cmd = protocol.ValkeyCommand{
+            var select_cmd = Command{
                 .command = "SELECT",
-                .args = &[_][]const u8{db_str},
+                .command_type = .Generic,
+                .args = .{ .raw = &[_][]const u8{db_str} },
             };
-            select_cmd.format(this.writer()) catch |err| {
+            select_cmd.write(this.writer()) catch |err| {
                 this.fail("Failed to write SELECT command", err);
                 return;
             };
@@ -647,22 +649,12 @@ pub const ValkeyClient = struct {
             return;
         }
 
-        switch (command.args) {
-            inline .slices, .raw => |args, tag| {
-                const ValkeyCommand = if (tag == .slices) protocol.ValkeyCommandSlice else protocol.ValkeyCommand;
-                var cmd = ValkeyCommand{
-                    .command = command.command,
-                    .args = args,
-                };
-
-                switch (this.status) {
-                    .connecting, .connected => cmd.format(this.writer()) catch {
-                        promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
-                        return;
-                    },
-                    else => unreachable,
-                }
+        switch (this.status) {
+            .connecting, .connected => command.write(this.writer()) catch {
+                promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
+                return;
             },
+            else => unreachable,
         }
 
         const cmd_pair = Command.PromisePair{
@@ -763,6 +755,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 const protocol = @import("valkey_protocol.zig");
 const js_valkey = @import("js_valkey.zig");
-const debug = bun.Output.scoped(.Valkey, false);
+const debug = bun.Output.scoped(.Redis, false);
 const uws = bun.uws;
 const Slice = JSC.ZigString.Slice;

@@ -4,24 +4,13 @@ command_type: Type,
 
 pub const Args = union(enum) {
     slices: []const Slice,
+    args: []const JSC.Node.BlobOrStringOrBuffer,
     raw: []const []const u8,
 
     pub fn len(this: *const @This()) usize {
         return switch (this.*) {
-            .slices => |args| args.len,
-            .raw => |args| args.len,
+            inline .slices, .args, .raw => |args| args.len,
         };
-    }
-
-    pub fn deinit(this: *@This()) void {
-        switch (this.*) {
-            .slices => |args| {
-                for (args) |*arg| {
-                    arg.deinit();
-                }
-            },
-            .raw => {}, // lifetime is not owned by this command.
-        }
     }
 };
 
@@ -31,9 +20,9 @@ pub fn write(this: *const Command, writer: anytype) !void {
     try writer.print("${d}\r\n{s}\r\n", .{ this.command.len, this.command });
 
     switch (this.args) {
-        .slices => |args| {
-            for (args) |arg| {
-                try writer.print("${d}\r\n{s}\r\n", .{ arg.len, arg.slice() });
+        inline .slices, .args => |args| {
+            for (args) |*arg| {
+                try writer.print("${d}\r\n{s}\r\n", .{ arg.byteLength(), arg.slice() });
             }
         },
         .raw => |args| {
@@ -85,8 +74,8 @@ pub const Entry = struct {
     }
 };
 
-pub fn deinit(this: *Command) void {
-    this.args.deinit();
+pub fn deinit(_: *Command) void {
+    // no-op
 }
 
 /// Valkey command types with special handling

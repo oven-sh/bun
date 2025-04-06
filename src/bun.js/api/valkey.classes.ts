@@ -63,8 +63,8 @@ export default [
         fn: "jsDisconnect",
         length: 0,
       },
-      sendCommand: {
-        fn: "jsSendCommand",
+      send: {
+        fn: "jsSend",
         length: 2,
       },
       ttl: {

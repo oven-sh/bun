@@ -2,7 +2,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const String = bun.String;
-const debug = bun.Output.scoped(.Valkey, false);
+const debug = bun.Output.scoped(.Redis, false);
 
 pub const RedisError = error{
     AuthenticationFailed,
@@ -311,35 +311,6 @@ pub const RESPValue = union(RESPType) {
                     return bun.String.createUTF8ForJS(globalObject, str);
                 }
             },
-        }
-    }
-};
-
-pub const ValkeyCommand = struct {
-    command: []const u8,
-    args: []const []const u8,
-
-    pub fn format(self: ValkeyCommand, writer: anytype) !void {
-        // Format as RESP array
-        try writer.print("*{d}\r\n", .{1 + self.args.len});
-        try writer.print("${d}\r\n{s}\r\n", .{ self.command.len, self.command });
-        for (self.args) |arg| {
-            try writer.print("${d}\r\n{s}\r\n", .{ arg.len, arg });
-        }
-    }
-};
-
-pub const ValkeyCommandSlice = struct {
-    command: []const u8,
-    args: []const JSC.ZigString.Slice,
-
-    pub fn format(self: ValkeyCommandSlice, writer: anytype) !void {
-        // Format as RESP array
-        try writer.print("*{d}\r\n", .{1 + self.args.len});
-        try writer.print("${d}\r\n{s}\r\n", .{ self.command.len, self.command });
-        for (self.args) |arg| {
-            const slice = arg.slice();
-            try writer.print("${d}\r\n{s}\r\n", .{ slice.len, slice });
         }
     }
 };

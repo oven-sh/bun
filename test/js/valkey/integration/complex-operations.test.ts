@@ -20,7 +20,7 @@ describe("Valkey: Complex Operations", () => {
       const key3 = `${prefix}-3`;
 
       // Start transaction
-      await ctx.redis.sendCommand("MULTI", []);
+      await ctx.redis.send("MULTI", []);
 
       // Queue commands in transaction
       const queueResults = await Promise.all([
@@ -36,7 +36,7 @@ describe("Valkey: Complex Operations", () => {
       }
 
       // Execute transaction
-      const execResult = await ctx.redis.sendCommand("EXEC", []);
+      const execResult = await ctx.redis.send("EXEC", []);
 
       // Should get an array of results
       expect(Array.isArray(execResult)).toBe(true);
@@ -67,14 +67,14 @@ describe("Valkey: Complex Operations", () => {
       await ctx.redis.set(key, "initial");
 
       // Start transaction
-      await ctx.redis.sendCommand("MULTI", []);
+      await ctx.redis.send("MULTI", []);
 
       // Queue some commands
       await ctx.redis.set(key, "changed");
       await ctx.redis.incr(`${prefix}-counter`);
 
       // Discard the transaction
-      const discardResult = await ctx.redis.sendCommand("DISCARD", []);
+      const discardResult = await ctx.redis.send("DISCARD", []);
       expect(discardResult).toBe("OK");
 
       // Verify the key was not changed
@@ -94,7 +94,7 @@ describe("Valkey: Complex Operations", () => {
       await ctx.redis.set(key, "string-value");
 
       // Start transaction
-      await ctx.redis.sendCommand("MULTI", []);
+      await ctx.redis.send("MULTI", []);
 
       // Queue valid command
       await ctx.redis.set(`${prefix}-valid`, "valid");
@@ -106,7 +106,7 @@ describe("Valkey: Complex Operations", () => {
       await ctx.redis.set(`${prefix}-after`, "after");
 
       // Execute transaction
-      const execResult = await ctx.redis.sendCommand("EXEC", []);
+      const execResult = await ctx.redis.send("EXEC", []);
 
       // Should get an array of results, with error for the failing command
       expect(Array.isArray(execResult)).toBe(true);
@@ -137,16 +137,16 @@ describe("Valkey: Complex Operations", () => {
       const setKey = `${prefix}-set`;
 
       // Start transaction
-      await ctx.redis.sendCommand("MULTI", []);
+      await ctx.redis.send("MULTI", []);
 
       // Queue complex data type commands
-      await ctx.redis.sendCommand("HSET", [hashKey, "field1", "value1", "field2", "value2"]);
-      await ctx.redis.sendCommand("SADD", [setKey, "member1", "member2", "member3"]);
-      await ctx.redis.sendCommand("HGETALL", [hashKey]);
-      await ctx.redis.sendCommand("SMEMBERS", [setKey]);
+      await ctx.redis.send("HSET", [hashKey, "field1", "value1", "field2", "value2"]);
+      await ctx.redis.send("SADD", [setKey, "member1", "member2", "member3"]);
+      await ctx.redis.send("HGETALL", [hashKey]);
+      await ctx.redis.send("SMEMBERS", [setKey]);
 
       // Execute transaction
-      const execResult = await ctx.redis.sendCommand("EXEC", []);
+      const execResult = await ctx.redis.send("EXEC", []);
 
       // Should get an array of results
       expect(Array.isArray(execResult)).toBe(true);
@@ -198,7 +198,7 @@ describe("Valkey: Complex Operations", () => {
       await ctx.redis.incr(`${baseKey}:visits`);
 
       // Get all keys matching the pattern
-      const patternResult = await ctx.redis.sendCommand("KEYS", [`${baseKey}:*`]);
+      const patternResult = await ctx.redis.send("KEYS", [`${baseKey}:*`]);
 
       // Should find all our keys
       expect(Array.isArray(patternResult)).toBe(true);
@@ -355,60 +355,53 @@ describe("Valkey: Complex Operations", () => {
       const leaderboardKey = ctx.generateKey("leaderboard");
 
       // Add scores
-      await ctx.redis.sendCommand("ZADD", [leaderboardKey, "100", "player1"]);
-      await ctx.redis.sendCommand("ZADD", [leaderboardKey, "200", "player2"]);
-      await ctx.redis.sendCommand("ZADD", [leaderboardKey, "150", "player3"]);
-      await ctx.redis.sendCommand("ZADD", [leaderboardKey, "300", "player4"]);
-      await ctx.redis.sendCommand("ZADD", [leaderboardKey, "50", "player5"]);
+      await ctx.redis.send("ZADD", [leaderboardKey, "100", "player1"]);
+      await ctx.redis.send("ZADD", [leaderboardKey, "200", "player2"]);
+      await ctx.redis.send("ZADD", [leaderboardKey, "150", "player3"]);
+      await ctx.redis.send("ZADD", [leaderboardKey, "300", "player4"]);
+      await ctx.redis.send("ZADD", [leaderboardKey, "50", "player5"]);
 
       // Get top 3 players (highest scores)
-      const topPlayers = await ctx.redis.sendCommand("ZREVRANGE", [leaderboardKey, "0", "2", "WITHSCORES"]);
-      console.log(topPlayers);
+      const topPlayers = await ctx.redis.send("ZREVRANGE", [leaderboardKey, "0", "2", "WITHSCORES"]);
 
-      // Format depends on RESP version
-      if (Array.isArray(topPlayers)) {
-        // RESP2 returns flat array [player, score, player, score, ...]
-        expect(topPlayers.length).toBe(6);
-
-        // Check top player
-        expect(topPlayers[0]).toBe("player4");
-        expect(topPlayers[1]).toBe("300");
-
-        // Check second player
-        expect(topPlayers[2]).toBe("player2");
-        expect(topPlayers[3]).toBe("200");
-
-        // Check third player
-        expect(topPlayers[4]).toBe("player3");
-        expect(topPlayers[5]).toBe("150");
-      } else if (typeof topPlayers === "object" && topPlayers !== null) {
-        // RESP3 might return as object
-        expect(topPlayers.player4).toBe("300");
-        expect(topPlayers.player2).toBe("200");
-        expect(topPlayers.player3).toBe("150");
-      }
+      expect(topPlayers).toMatchInlineSnapshot(`
+        [
+          [
+            "player4",
+            300,
+          ],
+          [
+            "player2",
+            200,
+          ],
+          [
+            "player3",
+            150,
+          ],
+        ]
+      `);
 
       // Get player rank (0-based)
-      const player3Rank = await ctx.redis.sendCommand("ZREVRANK", [leaderboardKey, "player3"]);
+      const player3Rank = await ctx.redis.send("ZREVRANK", [leaderboardKey, "player3"]);
       expect(player3Rank).toBe(2); // 0-based index, so 3rd place is 2
 
       // Get player score
-      const player3Score = await ctx.redis.sendCommand("ZSCORE", [leaderboardKey, "player3"]);
-      expect(player3Score).toBe("150");
+      const player3Score = await ctx.redis.send("ZSCORE", [leaderboardKey, "player3"]);
+      expect(player3Score).toBe(150);
 
       // Increment a score
-      await ctx.redis.sendCommand("ZINCRBY", [leaderboardKey, "25", "player3"]);
+      await ctx.redis.send("ZINCRBY", [leaderboardKey, "25", "player3"]);
 
       // Verify score was updated
-      const updatedScore = await ctx.redis.sendCommand("ZSCORE", [leaderboardKey, "player3"]);
-      expect(updatedScore).toBe("175");
+      const updatedScore = await ctx.redis.send("ZSCORE", [leaderboardKey, "player3"]);
+      expect(updatedScore).toBe(175);
 
       // Get updated rank
-      const updatedRank = await ctx.redis.sendCommand("ZREVRANK", [leaderboardKey, "player3"]);
+      const updatedRank = await ctx.redis.send("ZREVRANK", [leaderboardKey, "player3"]);
       expect(updatedRank).toBe(2); // Still in third place
 
       // Get count of players with scores between 100 and 200
-      const countInRange = await ctx.redis.sendCommand("ZCOUNT", [leaderboardKey, "100", "200"]);
+      const countInRange = await ctx.redis.send("ZCOUNT", [leaderboardKey, "100", "200"]);
       expect(countInRange).toBe(3); // player1, player3, player2
     });
   });
@@ -420,7 +413,7 @@ describe("Valkey: Complex Operations", () => {
       const lockTimeout = 10; // seconds
 
       // Acquire the lock
-      const acquireResult = await ctx.redis.sendCommand("SET", [
+      const acquireResult = await ctx.redis.send("SET", [
         lockName,
         lockValue,
         "NX", // Only set if key doesn't exist
@@ -432,13 +425,7 @@ describe("Valkey: Complex Operations", () => {
       expect(acquireResult).toBe("OK");
 
       // Try to acquire again (should fail as it's already locked)
-      const retryResult = await ctx.redis.sendCommand("SET", [
-        lockName,
-        "other-value",
-        "NX",
-        "EX",
-        lockTimeout.toString(),
-      ]);
+      const retryResult = await ctx.redis.send("SET", [lockName, "other-value", "NX", "EX", lockTimeout.toString()]);
 
       // Should return null (lock not acquired)
       expect(retryResult).toBeNull();
@@ -453,7 +440,7 @@ describe("Valkey: Complex Operations", () => {
       `;
 
       // Release the lock
-      const releaseResult = await ctx.redis.sendCommand("EVAL", [
+      const releaseResult = await ctx.redis.send("EVAL", [
         releaseLockScript,
         "1", // Number of keys
         lockName, // KEYS[1]
@@ -464,7 +451,7 @@ describe("Valkey: Complex Operations", () => {
       expect(releaseResult).toBe(1);
 
       // Try to release again (should fail as lock is gone)
-      const reReleaseResult = await ctx.redis.sendCommand("EVAL", [releaseLockScript, "1", lockName, lockValue]);
+      const reReleaseResult = await ctx.redis.send("EVAL", [releaseLockScript, "1", lockName, lockValue]);
 
       // Should return 0 (no lock to release)
       expect(reReleaseResult).toBe(0);

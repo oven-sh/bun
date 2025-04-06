@@ -17,16 +17,16 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hash-test");
 
       // HSET a single field
-      const setResult = await ctx.redis.sendCommand("HSET", [key, "name", "John"]);
+      const setResult = await ctx.redis.send("HSET", [key, "name", "John"]);
       expectType<number>(setResult, "number");
       expect(setResult).toBe(1); // 1 new field was set
 
       // HGET the field
-      const getResult = await ctx.redis.sendCommand("HGET", [key, "name"]);
+      const getResult = await ctx.redis.send("HGET", [key, "name"]);
       expect(getResult).toBe("John");
 
       // HGET non-existent field should return null
-      const nonExistentField = await ctx.redis.sendCommand("HGET", [key, "nonexistent"]);
+      const nonExistentField = await ctx.redis.send("HGET", [key, "nonexistent"]);
       expect(nonExistentField).toBeNull();
     });
 
@@ -56,10 +56,10 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hmset-object-test");
 
       // We'll use sendCommand for this test since the native hmset doesn't support this syntax yet
-      await ctx.redis.sendCommand("HMSET", [key, "name", "Bob", "age", "25", "email", "bob@example.com"]);
+      await ctx.redis.send("HMSET", [key, "name", "Bob", "age", "25", "email", "bob@example.com"]);
 
       // Verify all fields were set
-      const allFields = await ctx.redis.sendCommand("HGETALL", [key]);
+      const allFields = await ctx.redis.send("HGETALL", [key]);
       expect(allFields).toBeDefined();
 
       if (typeof allFields === "object" && allFields !== null) {
@@ -73,20 +73,20 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hdel-test");
 
       // Set multiple fields
-      await ctx.redis.sendCommand("HSET", [key, "field1", "value1", "field2", "value2", "field3", "value3"]);
+      await ctx.redis.send("HSET", [key, "field1", "value1", "field2", "value2", "field3", "value3"]);
 
       // Delete a single field
-      const singleDelResult = await ctx.redis.sendCommand("HDEL", [key, "field1"]);
+      const singleDelResult = await ctx.redis.send("HDEL", [key, "field1"]);
       expectType<number>(singleDelResult, "number");
       expect(singleDelResult).toBe(1); // 1 field deleted
 
       // Delete multiple fields
-      const multiDelResult = await ctx.redis.sendCommand("HDEL", [key, "field2", "field3", "nonexistent"]);
+      const multiDelResult = await ctx.redis.send("HDEL", [key, "field2", "field3", "nonexistent"]);
       expectType<number>(multiDelResult, "number");
       expect(multiDelResult).toBe(2); // 2 fields deleted, non-existent field ignored
 
       // Verify all fields are gone
-      const allFields = await ctx.redis.sendCommand("HKEYS", [key]);
+      const allFields = await ctx.redis.send("HKEYS", [key]);
       expect(Array.isArray(allFields)).toBe(true);
       expect(allFields.length).toBe(0);
     });
@@ -95,15 +95,15 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hexists-test");
 
       // Set a field
-      await ctx.redis.sendCommand("HSET", [key, "field1", "value1"]);
+      await ctx.redis.send("HSET", [key, "field1", "value1"]);
 
       // Check if field exists
-      const existsResult = await ctx.redis.sendCommand("HEXISTS", [key, "field1"]);
+      const existsResult = await ctx.redis.send("HEXISTS", [key, "field1"]);
       expectType<number>(existsResult, "number");
       expect(existsResult).toBe(1); // 1 indicates field exists
 
       // Check non-existent field
-      const nonExistsResult = await ctx.redis.sendCommand("HEXISTS", [key, "nonexistent"]);
+      const nonExistsResult = await ctx.redis.send("HEXISTS", [key, "nonexistent"]);
       expectType<number>(nonExistsResult, "number");
       expect(nonExistsResult).toBe(0); // 0 indicates field does not exist
     });
@@ -114,7 +114,7 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hincrby-test");
 
       // Set initial value
-      await ctx.redis.sendCommand("HSET", [key, "counter", "10"]);
+      await ctx.redis.send("HSET", [key, "counter", "10"]);
 
       // Increment by a value
       const incrResult = await ctx.redis.hincrby(key, "counter", 5);
@@ -136,7 +136,7 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hincrbyfloat-test");
 
       // Set initial value
-      await ctx.redis.sendCommand("HSET", [key, "counter", "10.5"]);
+      await ctx.redis.send("HSET", [key, "counter", "10.5"]);
 
       // Increment by float value
       const incrResult = await ctx.redis.hincrbyfloat(key, "counter", 1.5);
@@ -157,7 +157,7 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hgetall-test");
 
       // Set multiple fields
-      await ctx.redis.sendCommand("HSET", [
+      await ctx.redis.send("HSET", [
         key,
         "name",
         "Charlie",
@@ -170,7 +170,7 @@ describe("Valkey: Hash Data Type Operations", () => {
       ]);
 
       // Get all fields and values
-      const result = await ctx.redis.sendCommand("HGETALL", [key]);
+      const result = await ctx.redis.send("HGETALL", [key]);
       expect(result).toBeDefined();
 
       // When using RESP3, HGETALL returns a map/object
@@ -186,10 +186,10 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hkeys-test");
 
       // Set multiple fields
-      await ctx.redis.sendCommand("HSET", [key, "name", "Dave", "age", "35", "email", "dave@example.com"]);
+      await ctx.redis.send("HSET", [key, "name", "Dave", "age", "35", "email", "dave@example.com"]);
 
       // Get all field names
-      const result = await ctx.redis.sendCommand("HKEYS", [key]);
+      const result = await ctx.redis.send("HKEYS", [key]);
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(3);
       expect(result).toContain("name");
@@ -201,10 +201,10 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hvals-test");
 
       // Set multiple fields
-      await ctx.redis.sendCommand("HSET", [key, "name", "Eve", "age", "28", "email", "eve@example.com"]);
+      await ctx.redis.send("HSET", [key, "name", "Eve", "age", "28", "email", "eve@example.com"]);
 
       // Get all field values
-      const result = await ctx.redis.sendCommand("HVALS", [key]);
+      const result = await ctx.redis.send("HVALS", [key]);
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(3);
       expect(result).toContain("Eve");
@@ -216,16 +216,16 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hlen-test");
 
       // Set multiple fields
-      await ctx.redis.sendCommand("HSET", [key, "field1", "value1", "field2", "value2", "field3", "value3"]);
+      await ctx.redis.send("HSET", [key, "field1", "value1", "field2", "value2", "field3", "value3"]);
 
       // Get number of fields
-      const result = await ctx.redis.sendCommand("HLEN", [key]);
+      const result = await ctx.redis.send("HLEN", [key]);
       expectType<number>(result, "number");
       expect(result).toBe(3);
 
       // Delete a field and check again
-      await ctx.redis.sendCommand("HDEL", [key, "field1"]);
-      const updatedResult = await ctx.redis.sendCommand("HLEN", [key]);
+      await ctx.redis.send("HDEL", [key, "field1"]);
+      const updatedResult = await ctx.redis.send("HLEN", [key]);
       expectType<number>(updatedResult, "number");
       expect(updatedResult).toBe(2);
     });
@@ -240,10 +240,10 @@ describe("Valkey: Hash Data Type Operations", () => {
         fieldArgs.push(`field:${i}`, `value:${i}`);
       }
 
-      await ctx.redis.sendCommand("HSET", [key, ...fieldArgs]);
+      await ctx.redis.send("HSET", [key, ...fieldArgs]);
 
       // Use HSCAN to iterate through keys
-      const scanResult = await ctx.redis.sendCommand("HSCAN", [key, "0", "COUNT", "20"]);
+      const scanResult = await ctx.redis.send("HSCAN", [key, "0", "COUNT", "20"]);
       expect(Array.isArray(scanResult)).toBe(true);
       expect(scanResult.length).toBe(2);
 

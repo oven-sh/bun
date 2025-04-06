@@ -17,7 +17,7 @@ describe("Valkey: Error Handling", () => {
 
       // Wrong number of arguments
       try {
-        await client.sendCommand("SET", ["key"]); // Missing value argument
+        await client.send("SET", ["key"]); // Missing value argument
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         expect(error.message).toMatch(/wrong number of arguments|WRONGNUMBER/i);
@@ -25,9 +25,9 @@ describe("Valkey: Error Handling", () => {
 
       // Invalid argument type
       try {
-        await client.sendCommand("INCR", ["non-numeric-value"]);
-        await client.sendCommand("GET", ["test-key"]);
-        expect(client.sendCommand("INCR", ["non-numeric-value"])).rejects.toThrow();
+        await client.send("INCR", ["non-numeric-value"]);
+        await client.send("GET", ["test-key"]);
+        expect(client.send("INCR", ["non-numeric-value"])).rejects.toThrow();
       } catch (error) {
         // This should raise a numeric error
         expect(error.message).toMatch(/not an integer|not a valid integer/i);
@@ -35,7 +35,7 @@ describe("Valkey: Error Handling", () => {
 
       // Invalid command
       try {
-        await client.sendCommand("INVALID_COMMAND", []);
+        await client.send("INVALID_COMMAND", []);
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         expect(error.message).toMatch(/unknown command|ERR unknown/i);
@@ -169,7 +169,7 @@ describe("Valkey: Error Handling", () => {
       // Undefined command
       try {
         // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.sendCommand(undefined, []);
+        await client.send(undefined, []);
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should be a type error or invalid argument
@@ -179,7 +179,7 @@ describe("Valkey: Error Handling", () => {
       // Invalid args type
       try {
         // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.sendCommand("GET", "not-an-array");
+        await client.send("GET", "not-an-array");
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should be a type error or invalid argument
@@ -189,7 +189,7 @@ describe("Valkey: Error Handling", () => {
       // Non-string command
       try {
         // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.sendCommand(123, []);
+        await client.send(123, []);
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should be a type error or invalid argument
@@ -199,7 +199,7 @@ describe("Valkey: Error Handling", () => {
       // Non-string arguments
       try {
         // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.sendCommand("SET", ["key", 123]);
+        await client.send("SET", ["key", 123]);
 
         // This might succeed with type coercion
         const result = await client.get("key");
@@ -248,9 +248,9 @@ describe("Valkey: Error Handling", () => {
 
       // HGETALL returns object in RESP3
       const hashKey = `hash-${randomUUIDv7()}`;
-      await client.sendCommand("HSET", [hashKey, "field1", "value1", "field2", "value2"]);
+      await client.send("HSET", [hashKey, "field1", "value1", "field2", "value2"]);
 
-      const hashResult = await client.sendCommand("HGETALL", [hashKey]);
+      const hashResult = await client.send("HGETALL", [hashKey]);
 
       // Hash results should be objects in RESP3
       expect(typeof hashResult).toBe("object");
@@ -263,7 +263,7 @@ describe("Valkey: Error Handling", () => {
 
       // Error type handling
       try {
-        await client.sendCommand("HGET", []); // Missing key and field
+        await client.send("HGET", []); // Missing key and field
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Redis error should be properly parsed and thrown
@@ -272,7 +272,7 @@ describe("Valkey: Error Handling", () => {
       }
 
       // NULL handling from various commands
-      const nullResult = await client.sendCommand("HGET", [hashKey, "nonexistent"]);
+      const nullResult = await client.send("HGET", [hashKey, "nonexistent"]);
       expect(nullResult).toBeNull();
     });
 
@@ -283,11 +283,11 @@ describe("Valkey: Error Handling", () => {
       const commands = [
         client.set("key1", "value1"),
         client.get("key1"),
-        client.sendCommand("PING", []),
+        client.send("PING", []),
         client.incr("counter"),
         client.exists("key1"),
-        client.sendCommand("HSET", ["hash", "field", "value"]),
-        client.sendCommand("HGETALL", ["hash"]),
+        client.send("HSET", ["hash", "field", "value"]),
+        client.send("HGETALL", ["hash"]),
         client.set("key2", "x".repeat(1000)), // Larger value
         client.get("key2"),
       ];
@@ -300,7 +300,7 @@ describe("Valkey: Error Handling", () => {
         expect(await client.get("key1")).toBe("value1"),
         expect(await client.exists("key1")).toBe(true),
         expect(await client.get("key2")).toBe("x".repeat(1000)),
-        expect(await client.sendCommand("HGET", ["hash", "field"])).toBe("value"),
+        expect(await client.send("HGET", ["hash", "field"])).toBe("value"),
       ];
     });
   });
@@ -442,7 +442,7 @@ describe("Valkey: Error Handling", () => {
 
       try {
         // Try a potentially long-running command
-        const result = await client.sendCommand("KEYS", ["*"]);
+        const result = await client.send("KEYS", ["*"]);
 
         // Should return result even if it's large
         expect(Array.isArray(result)).toBe(true);

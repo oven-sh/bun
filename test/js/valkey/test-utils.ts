@@ -80,9 +80,9 @@ export function setupTestContext(): TestContext {
   afterAll(async () => {
     try {
       // Clean up Redis keys created during tests
-      const keys = await context.redis.sendCommand("KEYS", [`${TEST_KEY_PREFIX}*`]);
+      const keys = await context.redis.send("KEYS", [`${TEST_KEY_PREFIX}*`]);
       if (Array.isArray(keys) && keys.length > 0) {
-        await context.redis.sendCommand("DEL", keys);
+        await context.redis.send("DEL", keys);
       }
 
       // Disconnect the client

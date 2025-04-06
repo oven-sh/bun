@@ -111,14 +111,14 @@ declare module "bun" {
      * @param args The arguments to the command
      * @returns A promise that resolves with the command result
      */
-    sendCommand(command: string, args: string[]): Promise<any>;
+    send(command: string, args: string[]): Promise<any>;
 
     /**
      * Get the value of a key
      * @param key The key to get
      * @returns Promise that resolves with the key's value, or null if the key doesn't exist
      */
-    get(key: string): Promise<string | null>;
+    get(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
 
     /**
      * Set the value of a key
@@ -126,35 +126,35 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: string, value: string): Promise<"OK">;
+    set(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<"OK">;
 
     /**
      * Delete a key
      * @param key The key to delete
      * @returns Promise that resolves with the number of keys removed
      */
-    del(key: string): Promise<number>;
+    del(key: string | NodeJS.TypedArray | Blob): Promise<number>;
 
     /**
      * Increment the integer value of a key by one
      * @param key The key to increment
      * @returns Promise that resolves with the new value
      */
-    incr(key: string): Promise<number>;
+    incr(key: string | NodeJS.TypedArray | Blob): Promise<number>;
 
     /**
      * Decrement the integer value of a key by one
      * @param key The key to decrement
      * @returns Promise that resolves with the new value
      */
-    decr(key: string): Promise<number>;
+    decr(key: string | NodeJS.TypedArray | Blob): Promise<number>;
 
     /**
      * Determine if a key exists
      * @param key The key to check
      * @returns Promise that resolves with true if the key exists, false otherwise
      */
-    exists(key: string): Promise<boolean>;
+    exists(key: string | NodeJS.TypedArray | Blob): Promise<boolean>;
 
     /**
      * Set a key's time to live in seconds
@@ -162,14 +162,14 @@ declare module "bun" {
      * @param seconds The number of seconds until expiration
      * @returns Promise that resolves with 1 if the timeout was set, 0 if not
      */
-    expire(key: string, seconds: number): Promise<number>;
+    expire(key: string | NodeJS.TypedArray | Blob, seconds: number): Promise<number>;
 
     /**
      * Get the time to live for a key in seconds
      * @param key The key to get the TTL for
      * @returns Promise that resolves with the TTL, -1 if no expiry, or -2 if key doesn't exist
      */
-    ttl(key: string): Promise<number>;
+    ttl(key: string | NodeJS.TypedArray | Blob): Promise<number>;
 
     /**
      * Set multiple hash fields to multiple values
@@ -177,7 +177,7 @@ declare module "bun" {
      * @param fieldValues An array of alternating field names and values
      * @returns Promise that resolves with "OK" on success
      */
-    hmset(key: string, fieldValues: string[]): Promise<"OK">;
+    hmset(key: string | NodeJS.TypedArray | Blob, fieldValues: string[]): Promise<"OK">;
 
     /**
      * Get the values of all the given hash fields
@@ -185,7 +185,7 @@ declare module "bun" {
      * @param fields The fields to get
      * @returns Promise that resolves with an array of values
      */
-    hmget(key: string, fields: string[]): Promise<Array<string | null>>;
+    hmget(key: string | NodeJS.TypedArray | Blob, fields: string[]): Promise<Array<string | null>>;
 
     /**
      * Check if a value is a member of a set
@@ -193,7 +193,7 @@ declare module "bun" {
      * @param member The member to check
      * @returns Promise that resolves with true if the member exists, false otherwise
      */
-    sismember(key: string, member: string): Promise<boolean>;
+    sismember(key: string | NodeJS.TypedArray | Blob, member: string): Promise<boolean>;
 
     /**
      * Add a member to a set
@@ -201,7 +201,7 @@ declare module "bun" {
      * @param member The member to add
      * @returns Promise that resolves with 1 if the member was added, 0 if it already existed
      */
-    sadd(key: string, member: string): Promise<number>;
+    sadd(key: string | NodeJS.TypedArray | Blob, member: string): Promise<number>;
 
     /**
      * Remove a member from a set
@@ -209,28 +209,28 @@ declare module "bun" {
      * @param member The member to remove
      * @returns Promise that resolves with 1 if the member was removed, 0 if it didn't exist
      */
-    srem(key: string, member: string): Promise<number>;
+    srem(key: string | NodeJS.TypedArray | Blob, member: string): Promise<number>;
 
     /**
      * Get all the members in a set
      * @param key The set key
      * @returns Promise that resolves with an array of all members
      */
-    smembers(key: string): Promise<string[]>;
+    smembers(key: string | NodeJS.TypedArray | Blob): Promise<string[]>;
 
     /**
      * Get a random member from a set
      * @param key The set key
      * @returns Promise that resolves with a random member, or null if the set is empty
      */
-    srandmember(key: string): Promise<string | null>;
+    srandmember(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
 
     /**
      * Remove and return a random member from a set
      * @param key The set key
      * @returns Promise that resolves with the removed member, or null if the set is empty
      */
-    spop(key: string): Promise<string | null>;
+    spop(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
 
     /**
      * Increment the integer value of a hash field by the given number
@@ -239,7 +239,7 @@ declare module "bun" {
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value
      */
-    hincrby(key: string, field: string, increment: string | number): Promise<number>;
+    hincrby(key: string | NodeJS.TypedArray | Blob, field: string, increment: string | number): Promise<number>;
 
     /**
      * Increment the float value of a hash field by the given amount
@@ -248,7 +248,7 @@ declare module "bun" {
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value as a string
      */
-    hincrbyfloat(key: string, field: string, increment: string | number): Promise<string>;
+    hincrbyfloat(key: string | NodeJS.TypedArray | Blob, field: string, increment: string | number): Promise<string>;
   }
 
   /**

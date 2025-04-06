@@ -1379,10 +1379,13 @@ const IncomingMessagePrototype = {
     }
   },
   _read(size) {
-    this.resume();
     if (!this._consuming) {
       this._readableState.readingMore = false;
       this._consuming = true;
+    }
+    const socket = this.socket;
+    if (socket) {
+      socket.resume();
     }
 
     if (this[eofInProgress]) {

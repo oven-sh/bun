@@ -504,7 +504,7 @@ pub const JSValkeyClient = struct {
             this.client.flags.is_manually_closed = true;
         }
         this.client.flags.finalized = true;
-        this.client.socket.close();
+        this.client.close();
         this.deref();
     }
 
@@ -1191,7 +1191,7 @@ pub const JSValkeyClient = struct {
                                     this.client.status = .failed;
                                     this.client.flags.is_manually_closed = true;
                                     this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
-                                    this.client.socket.close();
+                                    this.client.close();
                                 }
                             }
                         }
@@ -1201,9 +1201,9 @@ pub const JSValkeyClient = struct {
 
             pub const onHandshake = if (ssl) onHandshake_ else null;
 
-            pub fn onClose(this: *JSValkeyClient, socket: SocketType, _: i32, _: ?*anyopaque) void {
+            pub fn onClose(this: *JSValkeyClient, _: SocketType, _: i32, _: ?*anyopaque) void {
                 // Ensure the socket pointer is updated.
-                this.client.socket = _socket(socket);
+                this.client.socket = .{ .SocketTCP = .detached };
 
                 this.client.onClose();
             }
@@ -1216,9 +1216,9 @@ pub const JSValkeyClient = struct {
                 socket.close(.normal);
             }
 
-            pub fn onConnectError(this: *JSValkeyClient, socket: SocketType, _: i32) void {
+            pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) void {
                 // Ensure the socket pointer is updated.
-                this.client.socket = _socket(socket);
+                this.client.socket = .{ .SocketTCP = .detached };
 
                 this.client.onClose();
             }

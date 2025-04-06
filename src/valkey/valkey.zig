@@ -462,8 +462,14 @@ pub const ValkeyClient = struct {
 
         if (!this.flags.is_authenticated) {
             this.flags.is_manually_closed = true;
-            this.socket.close();
+            this.close();
         }
+    }
+
+    pub fn close(this: *ValkeyClient) void {
+        const socket = this.socket;
+        this.socket = .{ .SocketTCP = .detached };
+        socket.close();
     }
 
     /// Handle connection closed event
@@ -936,7 +942,7 @@ pub const ValkeyClient = struct {
         this.unregisterAutoFlusher();
         if (this.status == .connected or this.status == .connecting) {
             this.status = .disconnected;
-            this.socket.close();
+            this.close();
         }
     }
 

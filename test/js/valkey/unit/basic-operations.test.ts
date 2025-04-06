@@ -93,7 +93,7 @@ describe("Valkey: Basic String Operations", () => {
 
       // Get substring using GETRANGE
       const result = await ctx.redis.send("GETRANGE", [key, "6", "12"]);
-      expect(result).toBe("Valkey");
+      expect(result).toBe("Valkey ");
     });
 
     test("SETRANGE command", async () => {
@@ -173,7 +173,8 @@ describe("Valkey: Basic String Operations", () => {
 
       // INCRBYFLOAT should add specified float value and return result
       const result = await ctx.redis.send("INCRBYFLOAT", [key, "0.7"]);
-      expect(result).toBe("11.2");
+      expectType<number>(result, "number");
+      expect(result).toBe(11.2);
 
       // INCRBYFLOAT also works with negative values for subtraction
       const subtracted = await ctx.redis.send("INCRBYFLOAT", [key, "-1.2"]);

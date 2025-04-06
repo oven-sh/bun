@@ -70,6 +70,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #endif
+#include <stdbool.h>
 /* Poll type and what it polls for */
 enum {
   /* Three first bits */

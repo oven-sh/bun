@@ -434,7 +434,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _read(size) {
-    this.resume();
+    // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+    const handle = this[kHandle];
+    const response = handle?.response;
+    if (response) {
+      response.resume();
+    }
   }
 
   get readyState() {
@@ -1385,6 +1390,7 @@ const IncomingMessagePrototype = {
     }
     const socket = this.socket;
     if (socket) {
+      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
       socket.resume();
     }
 

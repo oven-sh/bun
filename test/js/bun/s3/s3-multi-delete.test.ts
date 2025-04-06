@@ -81,9 +81,7 @@ describe("s3 - multi delete", () => {
     }
   });
 
-  // Thrown error is not TypeError, instead we receive number
-  // see blob.zig around 3700 where err is returned
-  it.skip("Should fail when no Key is provided in Objectidentifier object", async () => {
+  it("Should fail when no Key is provided in Objectidentifier object", async () => {
     using server = createBunServer(async () => {
       return new Response(`<>`, {
         headers: {
@@ -100,12 +98,26 @@ describe("s3 - multi delete", () => {
 
     try {
       await client.deleteObjects([
-        // @ts-expect-error not allowed
         {
-          VersionId: "ok",
-          // key: "wrong prop name"   // NOTE Bun issue ? When uncommented 'key' must not be returned with getTruthyComptime("Key")
+          versionId: "ok",
+          // @ts-expect-error must be key
+          Key: "wrong prop name",
         },
       ]);
+
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(TypeError);
+    }
+
+    try {
+      await client.deleteObjects([
+        // @ts-expect-error must include key
+        {
+          versionId: "ok",
+        },
+      ]);
+
       expect.unreachable();
     } catch (err) {
       expect(err).toBeInstanceOf(TypeError);
@@ -113,7 +125,7 @@ describe("s3 - multi delete", () => {
   });
 
   // same above
-  it.skip("Should fail when provided Key is not a string", async () => {
+  it("Should fail when provided Key is not a string", async () => {
     using server = createBunServer(async () => {
       return new Response(`<>`, {
         headers: {
@@ -266,7 +278,7 @@ describe("s3 - multi delete", () => {
     let body;
     using server = createBunServer(async req => {
       body = await collectRequstBody(req.body!);
-      return new Response(`<>`, {
+      return new Response("<>", {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -282,19 +294,19 @@ describe("s3 - multi delete", () => {
     await client.deleteObjects([
       "file_1",
       "file_2",
-      { Key: "file_3" },
+      { key: "file_3" },
       "files/4",
-      { Key: "Deleted/Errors/file_5", VersionId: "good version" },
-      { Key: "file_6", ETag: "good etag" },
+      { key: "Deleted/Errors/file_5", versionId: "good version" },
+      { key: "file_6", eTag: "good etag" },
       "file_7",
-      { Key: "sub/file_8.png", LastModifiedTime: "2928292" },
-      { Key: "sub/file_9.png", Size: 344 },
+      { key: "sub/file_8.png", lastModifiedTime: "2928292" },
+      { key: "sub/file_9.png", size: 344 },
       {
-        Key: "files/full_file_10.txt",
-        LastModifiedTime: "2928292",
-        Size: 344,
-        VersionId: "good version",
-        ETag: "good etag",
+        key: "files/full_file_10.txt",
+        lastModifiedTime: "2928292",
+        size: 344,
+        versionId: "good version",
+        eTag: "good etag",
       },
     ]);
 
@@ -339,18 +351,18 @@ describe("s3 - multi delete", () => {
     const res = await client.deleteObjects(["dont care"]);
 
     expect(res).toEqual({
-      Deleted: [
+      deleted: [
         {
-          Key: "sample1.txt",
+          key: "sample1.txt",
         },
         {
-          Key: "sample2.png",
-          VersionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
+          key: "sample2.png",
+          versionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
         },
         {
-          Key: "sample3.pdf",
-          DeleteMarker: true,
-          DeleteMarkerVersionId: "some good id",
+          key: "sample3.pdf",
+          deleteMarker: true,
+          deleteMarkerVersionId: "some good id",
         },
       ],
     });
@@ -393,23 +405,23 @@ describe("s3 - multi delete", () => {
     const res = await client.deleteObjects(["dont care"]);
 
     expect(res).toEqual({
-      Errors: [
+      errors: [
         {
-          Key: "sample4.txt",
-          Code: "AccessDenied",
-          Message: "Access Denied",
+          key: "sample4.txt",
+          code: "AccessDenied",
+          message: "Access Denied",
         },
         {
-          Key: "sample/file4.txt",
-          Message: "Access Denied",
+          key: "sample/file4.txt",
+          message: "Access Denied",
         },
         {
-          Key: "sample/Errors/file4.void",
-          Message: "Access Denied",
+          key: "sample/Errors/file4.void",
+          message: "Access Denied",
         },
         {
-          Key: "sample/Errors/file4.void",
-          VersionId: "version77",
+          key: "sample/Errors/file4.void",
+          versionId: "version77",
         },
       ],
     });
@@ -454,25 +466,25 @@ describe("s3 - multi delete", () => {
     const res = await client.deleteObjects(["dont care"]);
 
     expect(res).toEqual({
-      Deleted: [
+      deleted: [
         {
-          Key: "sample1.txt",
+          key: "sample1.txt",
         },
         {
-          Key: "sample2.png",
-          VersionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
+          key: "sample2.png",
+          versionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
         },
         {
-          Key: "sample3.pdf",
-          DeleteMarker: true,
-          DeleteMarkerVersionId: "some good id",
+          key: "sample3.pdf",
+          deleteMarker: true,
+          deleteMarkerVersionId: "some good id",
         },
       ],
-      Errors: [
+      errors: [
         {
-          Key: "sample4.txt",
-          Code: "AccessDenied",
-          Message: "Access Denied",
+          key: "sample4.txt",
+          code: "AccessDenied",
+          message: "Access Denied",
         },
       ],
     });
@@ -499,25 +511,25 @@ describe("s3 - multi delete", () => {
     const res = await client.deleteObjects(["dont care"]);
 
     expect(res).toEqual({
-      Deleted: [
+      deleted: [
         {
-          Key: "sample1.txt",
+          key: "sample1.txt",
         },
         {
-          Key: "sample2.png",
-          VersionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
+          key: "sample2.png",
+          versionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
         },
         {
-          Key: "sample3.pdf",
-          DeleteMarker: true,
-          DeleteMarkerVersionId: "somegoodid",
+          key: "sample3.pdf",
+          deleteMarker: true,
+          deleteMarkerVersionId: "somegoodid",
         },
       ],
-      Errors: [
+      errors: [
         {
-          Key: "sample4.txt",
-          Code: "AccessDenied",
-          Message: "AccessDenied",
+          key: "sample4.txt",
+          code: "AccessDenied",
+          message: "AccessDenied",
         },
       ],
     });
@@ -595,28 +607,28 @@ describe("s3 - multi delete", () => {
     const res = await client.deleteObjects(["dont care"]);
 
     expect(res).toEqual({
-      Deleted: [
+      deleted: [
         {
-          Key: "sample1.txt",
+          key: "sample1.txt",
         },
         {
-          Key: "sample2.png",
-          VersionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>\n    ",
+          key: "sample2.png",
+          versionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>\n    ",
         },
         {
-          Key: "sample3.pdf",
-          DeleteMarker: true,
-          DeleteMarkerVersionId: "some good id",
+          key: "sample3.pdf",
+          deleteMarker: true,
+          deleteMarkerVersionId: "some good id",
         },
       ],
-      Errors: [
+      errors: [
         {
-          Key: "sample4.txt",
-          Code: "AccessDenied",
-          Message: "Access Denied",
+          key: "sample4.txt",
+          code: "AccessDenied",
+          message: "Access Denied",
         },
         {
-          Key: "/Deleted/sub/dir/with/Key/sample5.pdf",
+          key: "/Deleted/sub/dir/with/Key/sample5.pdf",
         },
       ],
     });
@@ -668,25 +680,25 @@ describe("s3 - multi delete", () => {
     const res = await client.deleteObjects(["dont care"]);
 
     expect(res).toEqual({
-      Deleted: [
+      deleted: [
         {
-          Key: "sample1.txt",
+          key: "sample1.txt",
         },
         {
-          Key: "sample2.png",
-          VersionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>\n    ",
+          key: "sample2.png",
+          versionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>\n    ",
         },
         {
-          Key: "/Deleted/sub/dir/with/Key/sample5.pdf",
-          DeleteMarker: true,
-          DeleteMarkerVersionId: "some good id",
+          key: "/Deleted/sub/dir/with/Key/sample5.pdf",
+          deleteMarker: true,
+          deleteMarkerVersionId: "some good id",
         },
       ],
-      Errors: [
+      errors: [
         {
-          Key: "sample4.txt",
-          Code: "AccessDenied",
-          Message: "Access Denied",
+          key: "sample4.txt",
+          code: "AccessDenied",
+          message: "Access Denied",
         },
       ],
     });
@@ -756,25 +768,25 @@ describe("s3 - multi delete", () => {
     const res = await S3Client.deleteObjects(["one", "two"], { ...options, endpoint: server.url.href });
 
     expect(res).toEqual({
-      Deleted: [
+      deleted: [
         {
-          Key: "sample1.txt",
+          key: "sample1.txt",
         },
         {
-          Key: "sample2.png",
-          VersionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
+          key: "sample2.png",
+          versionId: "Very=Cool'Version<Id>*We=Accept\"<Id/>",
         },
         {
-          Key: "sample3.pdf",
-          DeleteMarker: true,
-          DeleteMarkerVersionId: "some good id",
+          key: "sample3.pdf",
+          deleteMarker: true,
+          deleteMarkerVersionId: "some good id",
         },
       ],
-      Errors: [
+      errors: [
         {
-          Key: "sample4.txt",
-          Code: "AccessDenied",
-          Message: "Access Denied",
+          key: "sample4.txt",
+          code: "AccessDenied",
+          message: "Access Denied",
         },
       ],
     });

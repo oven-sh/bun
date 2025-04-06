@@ -384,10 +384,6 @@ pub const S3Credentials = struct {
             if (this.content_md5.len > 0) {
                 bun.default_allocator.free(this.content_md5);
             }
-
-            if (this.content_md5.len > 0) {
-                bun.default_allocator.free(this.content_md5);
-            }
         }
     };
 

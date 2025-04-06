@@ -740,6 +740,65 @@ declare module "bun" {
    *
    * @category Cloud Storage
    */
+
+  interface S3DeleteObjectsObjectIdentifier {
+    /**
+     * An entity tag (ETag) is an identifier assigned by a web server to a specific version of a resource found at a URL.
+     *
+     * This header field makes the request method conditional on ETags.
+     *
+     * Entity tags (ETags) for S3 Express One Zone are random alphanumeric strings unique to the object.
+     */
+    eTag?: string;
+    /**
+     * Key name of the object.
+     *
+     * Replacement must be made for object keys containing special characters (such as carriage returns).
+     *
+     * For more information
+     * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html#object-key-xml-related-constraints
+     */
+    key: string;
+    /**
+     * If present, the objects are deleted only if its modification times matches the provided Timestamp.
+     *
+     * This functionality is only supported for directory buckets.
+     */
+    lastModifiedTime?: string;
+    /**
+     * If present, the objects are deleted only if its size matches the provided size in bytes.
+     *
+     * This functionality is only supported for directory buckets.
+     */
+    size?: number;
+    /**
+     * Version ID for the specific version of the object to delete.
+     *
+     * This functionality is not supported for directory buckets.
+     */
+    versionId?: string;
+  }
+
+  type S3DeleteObjectsInput = string | S3DeleteObjectsObjectIdentifier;
+
+  type S3DeleteObjectsOptions = {
+    /**
+     * DeleteObjects operation supports two modes for the response: verbose and quiet.
+     *
+     * By default, the operation uses verbose mode in which the response includes the result of deletion of each key in your request.
+     *
+     * In quiet mode the response includes only keys where the delete operation encountered an error.
+     *
+     * For a successful deletion in a quiet mode, the operation does not return any information about the delete in the response body.
+     */
+    quiet?: true;
+  } & Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "bucket" | "endpoint">;
+
+  interface S3DeleteObjectsResponse {
+    deleted?: { key: string; versionId?: string; deleteMarker?: boolean; deleteMarkerVersionId?: string }[];
+    errors?: { code?: string; key: string; message?: string; versionId?: string }[];
+  }
+
   class S3Client {
     prototype: S3Client;
     /**
@@ -873,7 +932,8 @@ declare module "bun" {
      */
     unlink(path: string, options?: S3Options): Promise<void>;
     delete: S3Client["unlink"];
-
+    deleteObjects(keys: S3DeleteObjectsInput[], options?: S3DeleteObjectsOptions): Promise<S3DeleteObjectsResponse>;
+    static deleteObjects: S3Client["deleteObjects"];
     /**
      * Get the size of a file in bytes.
      * Uses HEAD request to efficiently get size.

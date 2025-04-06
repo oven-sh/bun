@@ -20,6 +20,10 @@ export default [
         fn: "staticUnlink",
         length: 2,
       },
+      deleteObjects: {
+        fn: "staticDeleteObjects",
+        length: 2,
+      },
       list: {
         fn: "staticListObjects",
         length: 2,
@@ -58,6 +62,10 @@ export default [
       delete: {
         /// just an alias for unlink
         fn: "unlink",
+        length: 2,
+      },
+      deleteObjects: {
+        fn: "deleteObjects",
         length: 2,
       },
       list: {

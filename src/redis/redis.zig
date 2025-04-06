@@ -142,7 +142,10 @@ pub const RedisClient = struct {
     read_buffer: bun.OffsetByteList = .{},
     last_message_start: u32 = 0,
 
+    /// In-flight commands, after the data has been written to the network socket
     in_flight: Command.PromisePair.Queue,
+
+    /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.
     queue: Command.Entry.Queue,
 
     // Connection parameters
@@ -150,7 +153,6 @@ pub const RedisClient = struct {
     username: []const u8 = "",
     database: u32 = 0,
     address: Address,
-    protocol: Protocol = .standalone,
 
     connection_strings: []u8 = &.{},
 

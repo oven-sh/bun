@@ -5,33 +5,34 @@ const String = bun.String;
 const debug = bun.Output.scoped(.Redis, false);
 
 pub const RedisError = error{
+    AuthenticationFailed,
     ConnectionClosed,
-    InvalidResponse,
-    InvalidBulkString,
+    InvalidArgument,
     InvalidArray,
-    InvalidInteger,
-    InvalidSimpleString,
-    InvalidErrorString,
-    InvalidDouble,
-    InvalidBoolean,
-    InvalidNull,
-    InvalidMap,
-    InvalidSet,
-    InvalidBigNumber,
-    InvalidVerbatimString,
-    InvalidBlobError,
     InvalidAttribute,
+    InvalidBigNumber,
+    InvalidBlobError,
+    InvalidBoolean,
+    InvalidBulkString,
+    InvalidCommand,
+    InvalidDatabase,
+    InvalidDouble,
+    InvalidErrorString,
+    InvalidInteger,
+    InvalidMap,
+    InvalidNull,
+    InvalidPassword,
     InvalidPush,
-    OutOfMemory,
+    InvalidResponse,
+    InvalidResponseType,
+    InvalidSet,
+    InvalidSimpleString,
+    InvalidUsername,
+    InvalidVerbatimString,
     JSError,
+    OutOfMemory,
     TLSNotAvailable,
     TLSUpgradeFailed,
-    AuthenticationFailed,
-    InvalidPassword,
-    InvalidUsername,
-    InvalidDatabase,
-    InvalidCommand,
-    InvalidArgument,
     UnsupportedProtocol,
 };
 
@@ -54,6 +55,7 @@ pub fn redisErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, e
         error.InvalidCommand => JSC.Error.ERR_REDIS_INVALID_COMMAND,
         error.InvalidArgument => JSC.Error.ERR_REDIS_INVALID_ARGUMENT,
         error.UnsupportedProtocol => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
+        error.InvalidResponseType => JSC.Error.ERR_REDIS_INVALID_RESPONSE_TYPE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -89,6 +91,27 @@ pub const RESPType = enum(u8) {
     Attribute = '|',
     Push = '>',
     BigNumber = '(',
+
+    pub fn fromByte(byte: u8) ?RESPType {
+        switch (byte) {
+            @intFromEnum(RESPType.SimpleString) => .SimpleString,
+            @intFromEnum(RESPType.Error) => .Error,
+            @intFromEnum(RESPType.Integer) => .Integer,
+            @intFromEnum(RESPType.BulkString) => .BulkString,
+            @intFromEnum(RESPType.Array) => .Array,
+            @intFromEnum(RESPType.Null) => .Null,
+            @intFromEnum(RESPType.Double) => .Double,
+            @intFromEnum(RESPType.Boolean) => .Boolean,
+            @intFromEnum(RESPType.BlobError) => .BlobError,
+            @intFromEnum(RESPType.VerbatimString) => .VerbatimString,
+            @intFromEnum(RESPType.Map) => .Map,
+            @intFromEnum(RESPType.Set) => .Set,
+            @intFromEnum(RESPType.Attribute) => .Attribute,
+            @intFromEnum(RESPType.Push) => .Push,
+            @intFromEnum(RESPType.BigNumber) => .BigNumber,
+            else => null,
+        }
+    }
 };
 
 pub const RESPValue = union(RESPType) {
@@ -351,7 +374,7 @@ pub const RedisReader = struct {
     pub fn readUntilCRLF(self: *RedisReader) RedisError![]const u8 {
         const buffer = self.buffer[self.pos..];
         for (buffer, 0..) |byte, i| {
-            if (byte == '\r' and buffer[i + 1] == '\n') {
+            if (byte == '\r' and buffer.len > i + 1 and buffer[i + 1] == '\n') {
                 const result = buffer[0..i];
                 self.pos += i + 2;
                 return result;
@@ -418,7 +441,7 @@ pub const RedisReader = struct {
     pub fn readValue(self: *RedisReader, allocator: std.mem.Allocator) RedisError!RESPValue {
         const type_byte = try self.readByte();
 
-        return switch (@as(RESPType, @enumFromInt(type_byte))) {
+        return switch (RESPType.fromByte(type_byte) orelse return error.InvalidResponseType) {
             // RESP2 types
             .SimpleString => {
                 const str = try self.readUntilCRLF();

@@ -97,7 +97,6 @@ pub const JSRedisClient = struct {
 
         return JSRedisClient.new(.{
             .client = redis.RedisClient{
-                .protocol = uri,
                 .address = switch (uri) {
                     .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
                     else => .{

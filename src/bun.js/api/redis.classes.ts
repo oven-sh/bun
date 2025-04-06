@@ -23,6 +23,9 @@ export default [
         setter: "setOnClose",
         this: true,
       },
+      bufferedAmount: {
+        getter: "getBufferedAmount",
+      },
       // Redis commands
       get: {
         fn: "get",

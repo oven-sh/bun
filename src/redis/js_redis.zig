@@ -15,7 +15,7 @@ const Command = @import("RedisCommand.zig");
 pub const JSRedisClient = struct {
     client: redis.RedisClient,
     globalObject: *JSC.JSGlobalObject,
-    this_value: JSC.Strong = .empty,
+    this_value: JSC.JSRef = JSC.JSRef.empty(),
     poll_ref: bun.Async.KeepAlive = .{},
     timer: JSC.BunTimer.EventLoopTimer = .{
         .tag = .RedisConnectionTimeout,
@@ -123,6 +123,13 @@ pub const JSRedisClient = struct {
         return JSValue.jsBoolean(this.client.status == .connected);
     }
 
+    pub fn getBufferedAmount(this: *JSRedisClient, _: *JSC.JSGlobalObject) JSValue {
+        const len =
+            this.client.write_buffer.len() +
+            this.client.read_buffer.len();
+        return JSValue.jsNumber(len);
+    }
+
     pub fn jsConnect(this: *JSRedisClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
@@ -144,7 +151,7 @@ pub const JSRedisClient = struct {
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
-        this.this_value.set(globalObject, this_value);
+        this.this_value.setStrong(this_value, globalObject);
 
         if (this.client.flags.needs_to_open_socket) {
             this.poll_ref.ref(globalObject.bunVM());
@@ -184,22 +191,6 @@ pub const JSRedisClient = struct {
         }
         this.client.disconnect();
         return .undefined;
-    }
-
-    pub fn consumeOnConnectCallback(globalObject: *JSC.JSGlobalObject, js_this: JSValue) ?JSValue {
-        const on_connect = JSRedisClient.onconnectGetCached(js_this) orelse return null;
-        debug("consumeOnConnectCallback exists", .{});
-
-        JSRedisClient.onconnectSetCached(js_this, globalObject, .zero);
-        return on_connect;
-    }
-
-    pub fn consumeOnCloseCallback(globalObject: *JSC.JSGlobalObject, js_this: JSValue) ?JSValue {
-        debug("consumeOnCloseCallback", .{});
-        const on_close = JSRedisClient.oncloseGetCached(js_this) orelse return null;
-        debug("consumeOnCloseCallback exists", .{});
-        JSRedisClient.oncloseSetCached(js_this, globalObject, .zero);
-        return on_close;
     }
 
     pub fn getOnConnect(_: *JSRedisClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
@@ -253,9 +244,6 @@ pub const JSRedisClient = struct {
     /// Safely remove a timer with proper reference counting and event loop keepalive
     fn removeTimer(this: *JSRedisClient, timer: *JSC.BunTimer.EventLoopTimer) void {
         if (timer.state == .ACTIVE) {
-            // Increment ref to ensure 'this' stays alive throughout the function
-            this.ref();
-            defer this.deref();
 
             // Store VM reference to use later
             const vm = this.globalObject.bunVM();
@@ -400,10 +388,10 @@ pub const JSRedisClient = struct {
         event_loop.enter();
         defer event_loop.exit();
 
-        if (this.this_value.trySwap()) |this_value| {
+        if (this.this_value.tryGet()) |this_value| {
             // Call onConnect callback if defined by the user
             // Call onConnect callback if defined by the user
-            if (consumeOnConnectCallback(globalObject, this_value)) |on_connect| {
+            if (JSRedisClient.onconnectGetCached(this_value)) |on_connect| {
                 const js_value = this_value;
                 js_value.ensureStillAlive();
                 globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
@@ -436,16 +424,12 @@ pub const JSRedisClient = struct {
     pub fn onRedisClose(this: *JSRedisClient) void {
         const globalObject = this.globalObject;
         this.poll_ref.disable();
+        defer this.deref();
+
+        const this_jsvalue = this.this_value.tryGet() orelse return;
+        this.this_value.setWeak(this_jsvalue);
         this.ref();
         defer this.deref();
-        defer {
-            // If we're still disconnected, then clear it so we can finalize
-            if (this.client.status == .disconnected) {
-                this.deref();
-            }
-        }
-
-        const this_jsvalue = this.this_value.trySwap() orelse .undefined;
 
         // Create an error value
         const error_value = protocol.redisErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
@@ -462,13 +446,13 @@ pub const JSRedisClient = struct {
         }
 
         // Call onClose callback if it exists
-        const on_close = this.consumeOnCloseCallback(globalObject) orelse return;
-
-        _ = on_close.call(
-            globalObject,
-            this_jsvalue,
-            &[_]JSValue{error_value},
-        ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+        if (JSRedisClient.oncloseGetCached(this_jsvalue)) |on_close| {
+            _ = on_close.call(
+                globalObject,
+                this_jsvalue,
+                &[_]JSValue{error_value},
+            ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+        }
     }
 
     // Callback for when Redis client times out
@@ -484,23 +468,28 @@ pub const JSRedisClient = struct {
     }
 
     pub fn failWithJSValue(this: *JSRedisClient, value: JSValue) void {
-        const this_value = this.this_value.trySwap() orelse return;
+        const this_value = this.this_value.tryGet() orelse return;
         const globalObject = this.globalObject;
-        const on_close = consumeOnCloseCallback(globalObject, this_value) orelse return;
-        const loop = globalObject.bunVM().eventLoop();
-        loop.enter();
-        defer loop.exit();
-        _ = on_close.call(
-            globalObject,
-            this_value,
-            &[_]JSValue{value},
-        ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+        if (JSRedisClient.oncloseGetCached(this_value)) |on_close| {
+            const loop = globalObject.bunVM().eventLoop();
+            loop.enter();
+            defer loop.exit();
+            _ = on_close.call(
+                globalObject,
+                this_value,
+                &[_]JSValue{value},
+            ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+        }
     }
 
     pub fn finalize(this: *JSRedisClient) void {
         debug("JSRedisClient finalize", .{});
         this.stopTimers();
-        this.this_value.clearWithoutDeallocation();
+        this.this_value.deinit();
+        if (this.client.status == .connected or this.client.status == .connecting) {
+            this.client.flags.is_manually_closed = true;
+        }
+
         this.client.socket.close();
         this.deref();
     }
@@ -526,6 +515,7 @@ pub const JSRedisClient = struct {
             vm.rareData().redis_context.tcp = ctx_;
             break :brk ctx_;
         };
+        this.ref();
 
         this.client.socket = uws.AnySocket{
             .SocketTCP = try uws.SocketTCP.connectAnon(
@@ -542,9 +532,8 @@ pub const JSRedisClient = struct {
         if (this.client.flags.needs_to_open_socket) {
             @branchHint(.unlikely);
 
-            if (!this.this_value.has()) {
-                this.this_value.set(globalThis, this_jsvalue);
-            }
+            if (this.this_value != .strong)
+                this.this_value.setStrong(this_jsvalue, globalThis);
 
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;
@@ -1111,7 +1100,6 @@ pub const JSRedisClient = struct {
 
         // Add size of all internal buffers
         memory_cost += this.client.write_buffer.byte_list.cap;
-        memory_cost += this.client.write_buffer_before_connection.byte_list.cap;
         memory_cost += this.client.read_buffer.byte_list.cap;
 
         // Add queue sizes
@@ -1138,9 +1126,14 @@ pub const JSRedisClient = struct {
     pub fn updatePollRef(this: *JSRedisClient) void {
         if (!this.client.hasAnyPendingCommands() and this.client.status == .connected) {
             this.poll_ref.unref(this.globalObject.bunVM());
-            this.this_value.deinit();
+            this.this_value.upgrade(this.globalObject);
         } else if (this.client.hasAnyPendingCommands()) {
             this.poll_ref.ref(this.globalObject.bunVM());
+            if (this.this_value == .strong) {
+                if (this.this_value.strong.trySwap()) |value| {
+                    this.this_value.setWeak(value);
+                }
+            }
         }
     }
 

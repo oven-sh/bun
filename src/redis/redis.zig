@@ -81,7 +81,6 @@ pub const RedisClient = struct {
     status: Status = Status.connecting,
 
     // Buffer management
-    write_buffer_before_connection: bun.OffsetByteList = .{},
     write_buffer: bun.OffsetByteList = .{},
     read_buffer: bun.OffsetByteList = .{},
     last_message_start: u32 = 0,
@@ -137,7 +136,6 @@ pub const RedisClient = struct {
 
         this.allocator.free(this.connection_strings);
         this.write_buffer.deinit(this.allocator);
-        this.write_buffer_before_connection.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
     }
 
@@ -222,10 +220,13 @@ pub const RedisClient = struct {
 
     /// Handle connection closed event
     pub fn onClose(this: *RedisClient) void {
+        this.write_buffer.deinit(this.allocator);
+
         // If manually closing, don't attempt to reconnect
         if (this.flags.is_manually_closed) {
             debug("skip reconnecting since the connection is manually closed", .{});
             this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
+            this.onRedisClose();
             return;
         }
 
@@ -233,6 +234,7 @@ pub const RedisClient = struct {
         if (!this.enable_auto_reconnect) {
             debug("skip reconnecting since auto reconnect is disabled", .{});
             this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
+            this.onRedisClose();
             return;
         }
 
@@ -243,6 +245,7 @@ pub const RedisClient = struct {
         if (delay_ms == 0 or this.retry_attempts > this.max_retries) {
             debug("Max retries reached or retry strategy returned 0, giving up reconnection", .{});
             this.fail("Max reconnection attempts reached", protocol.RedisError.ConnectionClosed);
+            this.onRedisClose();
             return;
         }
 
@@ -257,12 +260,10 @@ pub const RedisClient = struct {
 
     /// Process data received from socket
     pub fn onData(this: *RedisClient, data: []const u8) void {
-        this.ref();
+        // Caller refs / derefs.
         this.flags.is_processing_data = true;
-
         defer {
             this.flags.is_processing_data = false;
-            this.deref();
         }
 
         this.read_buffer.head = this.last_message_start;
@@ -467,6 +468,8 @@ pub const RedisClient = struct {
     /// Handle socket open event
     pub fn onOpen(this: *RedisClient, socket: uws.AnySocket) void {
         this.socket = socket;
+        this.write_buffer.deinit(this.allocator);
+        this.read_buffer.deinit(this.allocator);
         this.start();
     }
 
@@ -599,9 +602,7 @@ pub const RedisClient = struct {
 
         if (this.status == .connected or this.status == .connecting) {
             this.status = .disconnected;
-            if (!this.socket.isClosed()) {
-                this.socket.close();
-            }
+            this.socket.close();
         }
     }
 

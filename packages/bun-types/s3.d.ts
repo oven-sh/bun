@@ -779,7 +779,7 @@ declare module "bun" {
     versionId?: string;
   }
 
-  type S3DeleteObjectsInput = string | S3DeleteObjectsObjectIdentifier;
+  type S3DeleteObjectsInput = string | S3DeleteObjectsObjectIdentifier | S3File;
 
   type S3DeleteObjectsOptions = {
     /**
@@ -916,7 +916,7 @@ declare module "bun" {
     presign(path: string, options?: S3FilePresignOptions): string;
 
     /**
-     * Delete a file from the bucket.
+     * Delete a file(s) from the bucket.
      *
      * @example
      *     // Simple delete
@@ -929,11 +929,16 @@ declare module "bun" {
      *     } catch (err) {
      *       console.error("Delete failed:", err);
      *     }
+     *
+     *     // Multi delete
+     *     const { deleted, errors } = await bucket.unlink(["old-file_1.txt", "old-file_2.txt", { key: "old-file_3.txt", eTag: "someValidEtag" }])
      */
-    unlink(path: string, options?: S3Options): Promise<void>;
+    unlink<T extends string | S3DeleteObjectsInput[] = S3DeleteObjectsInput[]>(
+      path: T,
+      options?: T extends string ? S3Options : S3DeleteObjectsOptions,
+    ): Promise<T extends string ? void : S3DeleteObjectsResponse>;
     delete: S3Client["unlink"];
-    deleteObjects(keys: S3DeleteObjectsInput[], options?: S3DeleteObjectsOptions): Promise<S3DeleteObjectsResponse>;
-    static deleteObjects: S3Client["deleteObjects"];
+    static delete: S3Client["unlink"];
     /**
      * Get the size of a file in bytes.
      * Uses HEAD request to efficiently get size.

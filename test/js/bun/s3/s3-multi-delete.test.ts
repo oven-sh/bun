@@ -34,30 +34,6 @@ function createBunServer(fetch: Parameters<typeof Bun.serve>[0]["fetch"]) {
   return server;
 }
 describe("s3 - multi delete", () => {
-  it("Should fail when input is not an array", async () => {
-    using server = createBunServer(async () => {
-      return new Response(`<>`, {
-        headers: {
-          "Content-Type": "application/xml",
-        },
-        status: 200,
-      });
-    });
-
-    const client = new S3Client({
-      ...options,
-      endpoint: server.url.href,
-    });
-
-    try {
-      // @ts-expect-error not allowed
-      await client.deleteObjects("bad");
-      expect.unreachable();
-    } catch (err) {
-      expect(err).toBeInstanceOf(TypeError);
-    }
-  });
-
   it("Should fail when Objectidentifier is not a string or object", async () => {
     using server = createBunServer(async () => {
       return new Response(`<>`, {
@@ -75,7 +51,7 @@ describe("s3 - multi delete", () => {
 
     try {
       // @ts-expect-error not allowed
-      await client.deleteObjects([234]);
+      await client.delete([234]);
       expect.unreachable();
     } catch (err) {
       expect(err).toBeInstanceOf(TypeError);
@@ -98,7 +74,7 @@ describe("s3 - multi delete", () => {
     });
 
     try {
-      await client.deleteObjects([
+      await client.delete([
         {
           versionId: "ok",
           // @ts-expect-error must be key
@@ -112,7 +88,7 @@ describe("s3 - multi delete", () => {
     }
 
     try {
-      await client.deleteObjects([
+      await client.delete([
         // @ts-expect-error must include key
         {
           versionId: "ok",
@@ -142,7 +118,7 @@ describe("s3 - multi delete", () => {
     });
 
     try {
-      await client.deleteObjects([
+      await client.delete([
         {
           // @ts-expect-error not allowed
           Key: { supposedNotToWork: true },
@@ -169,7 +145,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const result = await client.deleteObjects(["file_1"]);
+    const result = await client.delete(["file_1"]);
 
     expect(result).toBeDefined();
     expect(Object.keys(result).length).toBe(0);
@@ -193,7 +169,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const result = await client.deleteObjects(["file_1"], { quiet: true });
+    const result = await client.delete(["file_1"], { quiet: true });
 
     expect(result).toBeDefined();
     expect(Object.keys(result).length).toBe(0);
@@ -218,7 +194,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const result = await client.deleteObjects(["file_1"], {
+    const result = await client.delete(["file_1"], {
       // @ts-expect-error only true is allowed
       quiet: false,
     });
@@ -245,7 +221,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    await client.deleteObjects(["file_1"]);
+    await client.delete(["file_1"]);
 
     expect(reqHeaders!.get("content-md5")).toBe("xOwdj1J6B54UezIWYiVcyw==");
   });
@@ -268,7 +244,7 @@ describe("s3 - multi delete", () => {
       sessionToken: "dummyToken",
     });
 
-    await client.deleteObjects(["file_1", "file_2", "file_3"]);
+    await client.delete(["file_1", "file_2", "file_3"]);
 
     expect(reqHeaders!.get("authorization")).toInclude(
       "SignedHeaders=content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token,",
@@ -292,7 +268,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    await client.deleteObjects([
+    await client.delete([
       "file_1",
       "file_2",
       { key: "file_3" },
@@ -309,11 +285,38 @@ describe("s3 - multi delete", () => {
         versionId: "good version",
         eTag: "good etag",
       },
+      client.file("some_bun_s3_file"),
     ]);
 
     expect(body).toBe(
-      '<?xml version="1.0" encoding="UTF-8"?><Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Object><Key>file_1</Key></Object><Object><Key>file_2</Key></Object><Object><Key>file_3</Key></Object><Object><Key>files/4</Key></Object><Object><Key>Deleted/Errors/file_5</Key><VersionId>good version</VersionId></Object><Object><Key>file_6</Key><ETag>good etag</ETag></Object><Object><Key>file_7</Key></Object><Object><Key>sub/file_8.png</Key><LastModifiedTime>2928292</LastModifiedTime></Object><Object><Key>sub/file_9.png</Key><Size>344</Size></Object><Object><Key>files/full_file_10.txt</Key><VersionId>good version</VersionId><ETag>good etag</ETag><LastModifiedTime>2928292</LastModifiedTime><Size>344</Size></Object></Delete>',
+      '<?xml version="1.0" encoding="UTF-8"?><Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Object><Key>file_1</Key></Object><Object><Key>file_2</Key></Object><Object><Key>file_3</Key></Object><Object><Key>files/4</Key></Object><Object><Key>Deleted/Errors/file_5</Key><VersionId>good version</VersionId></Object><Object><Key>file_6</Key><ETag>good etag</ETag></Object><Object><Key>file_7</Key></Object><Object><Key>sub/file_8.png</Key><LastModifiedTime>2928292</LastModifiedTime></Object><Object><Key>sub/file_9.png</Key><Size>344</Size></Object><Object><Key>files/full_file_10.txt</Key><VersionId>good version</VersionId><ETag>good etag</ETag><LastModifiedTime>2928292</LastModifiedTime><Size>344</Size></Object><Object><Key>some_bun_s3_file</Key></Object></Delete>',
     );
+  });
+
+  it("Should throw error when provided Blob is not S3File", async () => {
+    using server = createBunServer(async req => {
+      return new Response("<>", {
+        headers: {
+          "Content-Type": "application/xml",
+        },
+        status: 200,
+      });
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    try {
+      await client.delete([
+        // @ts-expect-error must be s3 blob
+        new Blob(),
+      ]);
+      expect.unreachable();
+    } catch (error: any) {
+      expect(error.message).toMatch(/Blob .* not a S3File/);
+    }
   });
 
   it("Should xml encode object keys", async () => {
@@ -333,7 +336,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    await client.deleteObjects([
+    await client.unlink([
       "file<1",
       "file>2",
       "file'3",
@@ -344,10 +347,11 @@ describe("s3 - multi delete", () => {
       { key: "file'8" },
       { key: 'file"9' },
       { key: "file&10" },
+      client.file("s3File>11"),
     ]);
 
     expect(body).toBe(
-      `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Delete xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Object><Key>file&lt;1</Key></Object><Object><Key>file&gt;2</Key></Object><Object><Key>file&apos;3</Key></Object><Object><Key>file&quot;4</Key></Object><Object><Key>file&amp;5</Key></Object><Object><Key>file&lt;6</Key></Object><Object><Key>file&gt;7</Key></Object><Object><Key>file&apos;8</Key></Object><Object><Key>file&quot;9</Key></Object><Object><Key>file&amp;10</Key></Object></Delete>`,
+      `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Delete xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Object><Key>file&lt;1</Key></Object><Object><Key>file&gt;2</Key></Object><Object><Key>file&apos;3</Key></Object><Object><Key>file&quot;4</Key></Object><Object><Key>file&amp;5</Key></Object><Object><Key>file&lt;6</Key></Object><Object><Key>file&gt;7</Key></Object><Object><Key>file&apos;8</Key></Object><Object><Key>file&quot;9</Key></Object><Object><Key>file&amp;10</Key></Object><Object><Key>s3File&gt;11</Key></Object></Delete>`,
     );
   });
 
@@ -384,7 +388,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       deleted: [
@@ -438,7 +442,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       errors: [
@@ -499,7 +503,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       deleted: [
@@ -544,7 +548,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       deleted: [
@@ -592,7 +596,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({});
   });
@@ -640,7 +644,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       deleted: [
@@ -713,7 +717,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       deleted: [
@@ -758,7 +762,7 @@ describe("s3 - multi delete", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.deleteObjects(["dont care"]);
+    const res = await client.delete(["dont care"]);
 
     expect(res).toEqual({
       deleted: [
@@ -806,7 +810,7 @@ describe("s3 - multi delete", () => {
     });
 
     try {
-      await client.deleteObjects(["dont care"]);
+      await client.delete(["dont care"]);
       expect.unreachable();
     } catch (err: any) {
       expect(err.message).toBe("This is an error from AWS");
@@ -847,7 +851,7 @@ describe("s3 - multi delete", () => {
       );
     });
 
-    const res = await S3Client.deleteObjects(["one", "two"], { ...options, endpoint: server.url.href });
+    const res = await S3Client.delete(["one", "two"], { ...options, endpoint: server.url.href });
 
     expect(res).toEqual({
       deleted: [
@@ -900,7 +904,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - Delete Objects", () => {
   it("Should delete multiple objects", async () => {
     await Promise.all(allFiles.map(async key => await bucket.write(key, "a")));
 
-    const res = await bucket.deleteObjects(allFiles);
+    const res = await bucket.delete(allFiles);
 
     expect(res.errors).toBeUndefined();
     expect(res.deleted).toBeArrayOfSize(6);

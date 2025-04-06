@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const Blob = JSC.WebCore.Blob;
 const strings = bun.strings;
 
 const S3SuccessfullyDeleted = struct {
@@ -380,10 +381,19 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
                 allocator.free(buf);
                 utfStr.deinit();
             }
+        } else if (object_identifier_js.as(Blob)) |blob| {
+            if (!blob.*.isS3()) {
+                return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Blob at index {d} is not a S3File.", .{length_iter.i - 1});
+            }
+
+            const buf = allocator.alloc(u8, MAX_OBJECT_KEY_SIZE) catch bun.outOfMemory();
+            const encodedKey = xmlEncodeValue(blob.*.store.?.data.s3.path(), buf);
+            delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key></Object>", .{encodedKey}) catch bun.outOfMemory();
+            allocator.free(buf);
         } else if (object_identifier_js.isObject()) {
             if (try object_identifier_js.getTruthyComptime(globalThis, "key")) |object_key_js| {
                 if (!object_key_js.isString()) {
-                    return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. 'key' at index {d} is not a string.", .{length_iter.i - 1});
+                    return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. 'key' at index {d} is not a string.", .{length_iter.i - 1});
                 }
 
                 const str = try bun.String.fromJS(object_key_js, globalThis);
@@ -400,7 +410,7 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
                 if (try object_identifier_js.getTruthyComptime(globalThis, "versionId")) |version_id_js| {
                     if (!version_id_js.isEmptyOrUndefinedOrNull() and !version_id_js.isString()) {
-                        return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'versionId' at index {d} is not a string.", .{length_iter.i - 1});
+                        return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'versionId' at index {d} is not a string.", .{length_iter.i - 1});
                     }
 
                     const _str = try bun.String.fromJS(version_id_js, globalThis);
@@ -414,7 +424,7 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
                 if (try object_identifier_js.getTruthyComptime(globalThis, "eTag")) |etag_js| {
                     if (!etag_js.isEmptyOrUndefinedOrNull() and !etag_js.isString()) {
-                        return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'eTag' at index {d} is not a string.", .{length_iter.i - 1});
+                        return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'eTag' at index {d} is not a string.", .{length_iter.i - 1});
                     }
 
                     const _str = try bun.String.fromJS(etag_js, globalThis);
@@ -428,7 +438,7 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
                 if (try object_identifier_js.getTruthyComptime(globalThis, "lastModifiedTime")) |last_modified_time_js| {
                     if (!last_modified_time_js.isEmptyOrUndefinedOrNull() and !last_modified_time_js.isString()) {
-                        return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'lastModifiedTime' at index {d} is not a string.", .{length_iter.i - 1});
+                        return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'lastModifiedTime' at index {d} is not a string.", .{length_iter.i - 1});
                     }
 
                     const _str = try bun.String.fromJS(last_modified_time_js, globalThis);
@@ -442,7 +452,7 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
                 if (try object_identifier_js.getTruthyComptime(globalThis, "size")) |size_js| {
                     if (!size_js.isEmptyOrUndefinedOrNull() and !size_js.isNumber()) {
-                        return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'size' at index {d} is not a number.", .{length_iter.i - 1});
+                        return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'size' at index {d} is not a number.", .{length_iter.i - 1});
                     }
 
                     const _str = try bun.String.fromJS(size_js, globalThis);
@@ -456,10 +466,10 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
 
                 delete_objects_request_body.append(allocator, "</Object>") catch bun.outOfMemory();
             } else {
-                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Field 'key' at index {d} is required.", .{length_iter.i - 1});
+                return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Field 'key' at index {d} is required.", .{length_iter.i - 1});
             }
         } else {
-            return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Element at index {d} is not a string.", .{length_iter.i - 1});
+            return globalThis.throwInvalidArguments("S3Client.unlink() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Element at index {d} is not a string.", .{length_iter.i - 1});
         }
     }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { S3Client, S3Options } from "bun";
+import { randomUUIDv7, S3Client, S3Options } from "bun";
+import { getSecret } from "harness";
 
 const options: S3Options = {
   accessKeyId: "test",
@@ -836,5 +837,48 @@ describe("s3 - multi delete", () => {
         },
       ],
     });
+  });
+});
+
+const optionsFromEnv: S3Options = {
+  accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
+  secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
+  endpoint: getSecret("S3_R2_ENDPOINT"),
+  bucket: getSecret("S3_R2_BUCKET"),
+};
+
+describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - Delete Objects", () => {
+  const bucket = new S3Client(optionsFromEnv);
+
+  const keyPrefix = `${randomUUIDv7()}/`;
+
+  const file_1 = `${keyPrefix}file_1.txt`;
+  const file_2 = `${keyPrefix}file_2.txt`;
+  const file_3 = `${keyPrefix}file_3.txt`;
+
+  const file_4 = `${keyPrefix}file_4.txt`;
+  const file_5 = `${keyPrefix}file_5.txt`;
+  const file_6 = `${keyPrefix}file_6.txt`;
+
+  const allFiles = [file_1, file_2, file_3, file_4, file_5, file_6];
+
+  it("Should delete multiple objects", async () => {
+    await Promise.all(allFiles.map(async key => await bucket.write(key, "a")));
+
+    const res = await bucket.deleteObjects(allFiles);
+
+    expect(res.errors).toBeUndefined();
+    expect(res.deleted).toBeArrayOfSize(6);
+
+    // deleted result is unordered
+    expect(
+      res.deleted!.every(
+        x =>
+          allFiles.includes(x.key) &&
+          typeof x.versionId == "undefined" &&
+          typeof x.deleteMarker == "undefined" &&
+          typeof x.deleteMarkerVersionId == "undefined",
+      ),
+    );
   });
 });

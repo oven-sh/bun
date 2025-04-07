@@ -7,28 +7,21 @@ pub const Task = ThreadPool.Task;
 
 pub const WorkPool = struct {
     var pool: ThreadPool = undefined;
-    var loaded: bool = false;
 
-    const once = bun.once(ThreadPool.init);
+    var createOnce = bun.once(create);
 
-    fn create() *ThreadPool {
+    fn create() void {
         @branchHint(.cold);
 
-        pool = once.call(.{
+        pool = ThreadPool.init(.{
             .max_threads = bun.getThreadCount(),
             .stack_size = ThreadPool.default_thread_stack_size,
         });
-        return &pool;
     }
 
-    /// Initialization of WorkPool is not thread-safe, as it is
-    /// assumed a single main thread sets everything up. Calling
-    /// this afterwards is thread-safe.
     pub inline fn get() *ThreadPool {
-        if (loaded) return &pool;
-        loaded = true;
-
-        return create();
+        createOnce.call(.{});
+        return &pool;
     }
 
     pub fn scheduleBatch(batch: ThreadPool.Batch) void {

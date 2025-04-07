@@ -1388,12 +1388,11 @@ const IncomingMessagePrototype = {
     }
     // TODO: resume() works but socket.resume() does not and internalRequest.resume() does not work
     // check how node:http handles this
-    if (this.readable) {
-      this.resume();
-    }
+    this.resume();
+
     // this[kHandle]?.resume();
     // const socket = this.socket;
-    // if (socket) {
+    // if (socket && socket.readable) {
     //   //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
     //   socket.resume();
     // }

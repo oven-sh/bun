@@ -370,10 +370,11 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
     ls->s.flags.low_prio_state = 0;
+        ls->s.flags.is_paused = 0;
+
     ls->s.next = 0;
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
-    ls->s.flags.is_paused = 0;
 
     ls->socket_ext_size = socket_ext_size;
 

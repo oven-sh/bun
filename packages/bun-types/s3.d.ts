@@ -780,15 +780,30 @@ declare module "bun" {
      * Creates an S3File instance for the given path.
      *
      * @example
-     * const file = bucket.file("image.jpg");
-     * await file.write(imageData);
-     * const configFile = bucket.file("config.json", {
-     *   type: "application/json",
-     *   acl: "private"
-     * });
+     *     const file = bucket.file("image.jpg");
+     *     await file.write(imageData);
+     *
+     *     const configFile = bucket.file("config.json", {
+     *       type: "application/json",
+     *       acl: "private"
+     *     });
      */
     file(path: string, options?: S3Options): S3File;
-    static file: S3Client["file"];
+
+    /**
+     * Creates an S3File instance for the given path.
+     *
+     * @example
+     *     const file = S3Client.file("image.jpg", credentials);
+     *     await file.write(imageData);
+     *
+     *     const configFile = S3Client.file("config.json", {
+     *       ...credentials,
+     *       type: "application/json",
+     *       acl: "private"
+     *     });
+     */
+    static file(path: string, options?: S3Options): S3File;
 
     /**
      * Writes data directly to a path in the bucket.
@@ -830,7 +845,51 @@ declare module "bun" {
         | File,
       options?: S3Options,
     ): Promise<number>;
-    static write: S3Client["write"];
+
+    /**
+     * Writes data directly to a path in the bucket.
+     * Supports strings, buffers, streams, and web API types.
+     *
+     * @example
+     *     // Write string
+     *     await S3Client.write("hello.txt", "Hello World", credentials);
+     *
+     *     // Write JSON with type
+     *     await S3Client.write(
+     *       "data.json",
+     *       JSON.stringify({hello: "world"}),
+     *       {
+     *         ...credentials,
+     *         type: "application/json"
+     *       }
+     *     );
+     *
+     *     // Write from fetch
+     *     const res = await fetch("https://example.com/data");
+     *     await S3Client.write("data.bin", res, credentials);
+     *
+     *     // Write with ACL
+     *     await S3Client.write("public.html", html, {
+     *       ...credentials,
+     *       acl: "public-read",
+     *       type: "text/html"
+     *     });
+     */
+    static write(
+      path: string,
+      data:
+        | string
+        | ArrayBufferView
+        | ArrayBuffer
+        | SharedArrayBuffer
+        | Request
+        | Response
+        | BunFile
+        | S3File
+        | Blob
+        | File,
+      options?: S3Options,
+    ): Promise<number>;
 
     /**
      * Generate a presigned URL for temporary access to a file.
@@ -857,7 +916,35 @@ declare module "bun" {
      *     });
      */
     presign(path: string, options?: S3FilePresignOptions): string;
-    static presign: S3Client["presign"];
+
+    /**
+     * Generate a presigned URL for temporary access to a file.
+     * Useful for generating upload/download URLs without exposing credentials.
+     *
+     * @example
+     *     // Download URL
+     *     const downloadUrl = S3Client.presign("file.pdf", {
+     *       ...credentials,
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     *     // Upload URL
+     *     const uploadUrl = S3Client.presign("uploads/image.jpg", {
+     *       ...credentials,
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "image/jpeg",
+     *       acl: "public-read"
+     *     });
+     *
+     *     // Long-lived public URL
+     *     const publicUrl = S3Client.presign("public/doc.pdf", {
+     *       ...credentials,
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
+     */
+    static presign(path: string, options?: S3FilePresignOptions): string;
 
     /**
      * Delete a file from the bucket.
@@ -875,9 +962,59 @@ declare module "bun" {
      *     }
      */
     unlink(path: string, options?: S3Options): Promise<void>;
-    static unlink: S3Client["unlink"];
-    delete: S3Client["unlink"];
-    static delete: S3Client["delete"];
+
+    /**
+     * Delete a file from the bucket.
+     *
+     * @example
+     *     // Simple delete
+     *     await S3Client.unlink("old-file.txt", credentials);
+     *
+     *     // With error handling
+     *     try {
+     *       await S3Client.unlink("file.dat", credentials);
+     *       console.log("File deleted");
+     *     } catch (err) {
+     *       console.error("Delete failed:", err);
+     *     }
+     */
+    static unlink(path: string, options?: S3Options): Promise<void>;
+
+    /**
+     * Delete a file from the bucket.
+     * Alias for {@link S3Client.unlink}.
+     *
+     * @example
+     *     // Simple delete
+     *     await bucket.delete("old-file.txt");
+     *
+     *     // With error handling
+     *     try {
+     *       await bucket.delete("file.dat");
+     *       console.log("File deleted");
+     *     } catch (err) {
+     *       console.error("Delete failed:", err);
+     *     }
+     */
+    delete(path: string, options?: S3Options): Promise<void>;
+
+    /**
+     * Delete a file from the bucket.
+     * Alias for {@link S3Client.unlink}.
+     *
+     * @example
+     *     // Simple delete
+     *     await S3Client.delete("old-file.txt", credentials);
+     *
+     *     // With error handling
+     *     try {
+     *       await S3Client.delete("file.dat", credentials);
+     *       console.log("File deleted");
+     *     } catch (err) {
+     *       console.error("Delete failed:", err);
+     *     }
+     */
+    static delete(path: string, options?: S3Options): Promise<void>;
 
     /**
      * Get the size of a file in bytes.
@@ -894,6 +1031,21 @@ declare module "bun" {
      *     }
      */
     size(path: string, options?: S3Options): Promise<number>;
+
+    /**
+     * Get the size of a file in bytes.
+     * Uses HEAD request to efficiently get size.
+     *
+     * @example
+     *     // Get size
+     *     const bytes = await S3Client.size("video.mp4", credentials);
+     *     console.log(`Size: ${bytes} bytes`);
+     *
+     *     // Check if file is large
+     *     if (await S3Client.size("data.zip", credentials) > 100 * 1024 * 1024) {
+     *       console.log("File is larger than 100MB");
+     *     }
+     */
     static size: S3Client["size"];
 
     /**
@@ -917,27 +1069,108 @@ declare module "bun" {
      *     }
      */
     exists(path: string, options?: S3Options): Promise<boolean>;
+
+    /**
+     * Check if a file exists in the bucket.
+     * Uses HEAD request to check existence.
+     *
+     * @example
+     *     // Check existence
+     *     if (await S3Client.exists("config.json", credentials)) {
+     *       const file = bucket.file("config.json");
+     *       const config = await file.json();
+     *     }
+     *
+     *     // With error handling
+     *     try {
+     *       if (!await S3Client.exists("required.txt", credentials)) {
+     *         throw new Error("Required file missing");
+     *       }
+     *     } catch (err) {
+     *       console.error("Check failed:", err);
+     *     }
+     */
     static exists: S3Client["exists"];
-    
+
     /**
      * Get the stat of a file in an S3-compatible storage service.
      *
-     * @param path The path to the file.
-     * @param options The options to use for the S3 client.
+     * @example
+     *     const stat = await bucket.stat("my-file.txt");
      */
     stat(path: string, options?: S3Options): Promise<S3Stats>;
-    static stat: S3Client["stat"];
+
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @example
+     *     const stat = await S3Client.stat("my-file.txt", credentials);
+     */
+    static stat(path: string, options?: S3Options): Promise<S3Stats>;
 
     /**
      * Returns some or all (up to 1,000) of the objects in a bucket with each request.
      *
-     * You can  use the request parameters as selection criteria to return a subset of the objects in a bucket.
+     * You can use the request parameters as selection criteria to return a subset of the objects in a bucket.
+     *
+     * @example
+     *     // List (up to) 1000 objects in the bucket
+     *     const allObjects = await bucket.list();
+     *
+     *     // List (up to) 500 objects under `uploads/` prefix, with owner field for each object
+     *     const uploads = await bucket.list({
+     *       prefix: 'uploads/',
+     *       maxKeys: 500,
+     *       fetchOwner: true,
+     *     });
+     *
+     *     // Check if more results are available
+     *     if (uploads.isTruncated) {
+     *       // List next batch of objects under `uploads/` prefix
+     *       const moreUploads = await bucket.list({
+     *         prefix: 'uploads/',
+     *         maxKeys: 500,
+     *         startAfter: uploads.contents!.at(-1).key
+     *         fetchOwner: true,
+     *       });
+     *     }
      */
     list(
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
     ): Promise<S3ListObjectsResponse>;
-    static list: S3Client["list"];
+
+    /**
+     * Returns some or all (up to 1,000) of the objects in a bucket with each request.
+     *
+     * You can use the request parameters as selection criteria to return a subset of the objects in a bucket.
+     *
+     * @example
+     *     // List (up to) 1000 objects in the bucket
+     *     const allObjects = await S3Client.list(null, credentials);
+     *
+     *     // List (up to) 500 objects under `uploads/` prefix, with owner field for each object
+     *     const uploads = await S3Client.list({
+     *       prefix: 'uploads/',
+     *       maxKeys: 500,
+     *       fetchOwner: true,
+     *     }, credentials);
+     *
+     *     // Check if more results are available
+     *     if (uploads.isTruncated) {
+     *       // List next batch of objects under `uploads/` prefix
+     *       const moreUploads = await S3Client.list({
+     *         prefix: 'uploads/',
+     *         maxKeys: 500,
+     *         startAfter: uploads.contents!.at(-1).key
+     *         fetchOwner: true,
+     *       }, credentials);
+     *     }
+     */
+    static list(
+      input?: S3ListObjectsOptions | null,
+      options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
+    ): Promise<S3ListObjectsResponse>;
   }
 
   /**

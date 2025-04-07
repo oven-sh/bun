@@ -1,7 +1,6 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
-const Subprocess = @This();
-const MaxBuf = @import("../../MaxBuf.zig");
+
 pub usingnamespace JSC.Codegen.JSSubprocess;
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
@@ -1851,7 +1850,7 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
     if (PATH_to_use.len == 0) {
         actual_argv0 = try allocator.dupeZ(u8, argv0_to_use);
     } else {
-        const resolved = Which.which(path_buf, PATH_to_use, cwd, argv0_to_use) orelse {
+        const resolved = which(path_buf, PATH_to_use, cwd, argv0_to_use) orelse {
             return throwCommandNotFound(globalThis, argv0_to_use);
         };
         actual_argv0 = try allocator.dupeZ(u8, resolved);
@@ -2678,7 +2677,7 @@ const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Which = @import("../../../which.zig");
+const which = bun.which;
 const Async = bun.Async;
 const IPC = @import("../../ipc.zig");
 const uws = bun.uws;
@@ -2694,3 +2693,6 @@ const Process = bun.posix.spawn.Process;
 const WaiterThread = bun.posix.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+
+const Subprocess = @This();
+pub const MaxBuf = bun.io.MaxBuf;

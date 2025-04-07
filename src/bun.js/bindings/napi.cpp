@@ -2748,6 +2748,14 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
     NAPI_CHECK_ARG(env, func);
     JSValue funcValue = toJS(func);
+    // Ideally, funcValue is never of type AsyncContextFrame, as that type
+    // should never be exposed to user-code. To preserve async local storage
+    // contexts across napi_threadsafe_callback, AsyncContextFrame is created.
+    // An alternative here would be to unwrap the frame in napi.zig
+    // ThreadSafeCallback.call, but doing the work assigning and restoring the
+    // global state is not trivial since there are no Zig bindings for that.
+    // Most, if not all, threadsafe callbacks will not pass the callback to JS,
+    // they will just call it with this function.
     NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isCallable() || jsDynamicCast<AsyncContextFrame*>(funcValue), napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);

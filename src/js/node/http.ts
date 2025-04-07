@@ -431,13 +431,34 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {
-    // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+  #resumeSocket() {
     const handle = this[kHandle];
     const response = handle?.response;
     if (response) {
-      response.resume();
+      const resumed = response.resume();
+      if (resumed && resumed !== true) {
+        const bodyReadState = handle.hasBody;
+
+        const message = this._httpMessage;
+        const req = message?.req;
+
+        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+          if (req) {
+            emitEOFIncomingMessage(req);
+          }
+          emitServerSocketEOFNT(this);
+        }
+        if (req) {
+          req.push(resumed);
+        }
+        this.push(resumed);
+      }
     }
+  }
+
+  _read(size) {
+    // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+    this.#resumeSocket();
   }
 
   get readyState() {
@@ -508,11 +529,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   resume() {
-    const handle = this[kHandle];
-    const response = handle?.response;
-    if (response) {
-      response.resume();
-    }
+    this.#resumeSocket();
     return super.resume();
   }
 
@@ -1209,6 +1226,14 @@ function emitEOFIncomingMessageOuter(self) {
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
+}
+
+function emitServerSocketEOF(self) {
+  self.push(null);
+}
+
+function emitServerSocketEOFNT(self) {
+  process.nextTick(emitServerSocketEOF, self);
 }
 
 function hasServerResponseFinished(self, chunk, callback) {

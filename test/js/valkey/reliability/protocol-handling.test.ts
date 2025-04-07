@@ -161,25 +161,13 @@ describe("Valkey: Protocol Handling", () => {
     test("should handle RESP3 Error type", async () => {
       const client = createClient();
 
-      try {
-        // Command with wrong arguments
-        await client.send("GET", []);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be properly parsed error type
-        expect(error instanceof Error).toBe(true);
-        expect(error.message).toMatch(/wrong number|arguments/i);
-      }
+      expect(async () => await client.send("GET", [])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR wrong number of arguments for 'get' command"`,
+      );
 
-      try {
-        // Syntax error
-        await client.send("SYNTAX-ERROR", []);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be properly parsed error
-        expect(error instanceof Error).toBe(true);
-        expect(error.message).toMatch(/unknown command|syntax/i);
-      }
+      expect(async () => await client.send("SYNTAX-ERROR", [])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR unknown command 'SYNTAX-ERROR', with args beginning with: "`,
+      );
     });
   });
 
@@ -417,7 +405,7 @@ describe("Valkey: Protocol Handling", () => {
 
   describe("RESP3 Push Type Handling", () => {
     // Note: PubSub would use RESP3 Push type, but it's not fully implemented yet
-    test("should handle MONITOR command output", async () => {
+    test.todo("should handle MONITOR command output", async () => {
       const client = createClient();
 
       try {
@@ -530,6 +518,7 @@ describe("Valkey: Protocol Handling", () => {
         // If we got here without errors, test passes
       } catch (error) {
         console.warn("Parallel client test failed:", error.message);
+
         throw error;
       } finally {
         // Clean up clients

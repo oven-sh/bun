@@ -169,7 +169,7 @@ pub const ValkeyClient = struct {
     allocator: std.mem.Allocator,
 
     // Auto-pipelining
-    auto_flusher: AutoPipelineState = .{},
+    auto_flusher: AutoFlusher = .{},
 
     vm: *JSC.VirtualMachine,
 
@@ -220,9 +220,6 @@ pub const ValkeyClient = struct {
         if (!this.auto_flusher.registered) {
             AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, vm);
             this.auto_flusher.registered = true;
-            this.auto_flusher.scheduled = true;
-        } else if (!this.auto_flusher.scheduled) {
-            this.auto_flusher.scheduled = true;
         }
     }
 
@@ -230,31 +227,19 @@ pub const ValkeyClient = struct {
         if (this.auto_flusher.registered) {
             AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, this.vm);
             this.auto_flusher.registered = false;
-            this.auto_flusher.scheduled = false;
         }
     }
 
     // Drain auto-pipelined commands
     pub fn onAutoFlush(this: *@This()) bool {
-        // Mark that we've handled the scheduled flush
-        this.auto_flusher.scheduled = false;
-
         // Don't process if not connected or already processing
         if (this.status != .connected) {
             this.auto_flusher.registered = false;
             return false;
         }
 
-        if (this.auto_flusher.processing) {
-            return false;
-        }
-
-        // Mark that we're processing the flush
-        this.auto_flusher.processing = true;
-
         this.ref();
         defer this.deref();
-        defer this.auto_flusher.processing = false;
 
         // Start draining the command queue
         var have_more = false;
@@ -977,13 +962,6 @@ pub const ValkeyClient = struct {
 
 // Auto-pipelining
 const AutoFlusher = JSC.WebCore.AutoFlusher;
-
-// Auto-pipeline state tracking
-pub const AutoPipelineState = struct {
-    registered: bool = false,
-    scheduled: bool = false,
-    processing: bool = false,
-};
 
 const JSValkeyClient = JSC.API.Valkey;
 

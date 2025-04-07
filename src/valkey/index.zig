@@ -18,3 +18,4 @@ pub const ValkeyClient = valkey.ValkeyClient;
 pub const Protocol = valkey.Protocol;
 pub const Status = valkey.Status;
 pub const Options = valkey.Options;
+pub const Command = @import("ValkeyCommand.zig");

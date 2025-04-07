@@ -11,7 +11,7 @@ const greeting = await redis.get("greeting");
 console.log(greeting); // "Hello from Bun!"
 
 // Increment a counter
-await redis.set("counter", "0");
+await redis.set("counter", 0);
 await redis.incr("counter");
 
 // Check if a key exists

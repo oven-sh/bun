@@ -110,18 +110,13 @@ describe("Valkey: Complex Operations", () => {
 
       // Should get an array of results, with error for the failing command
       expect(Array.isArray(execResult)).toBe(true);
-      expect(execResult.length).toBe(3);
-
-      // First command should succeed
-      expect(execResult[0]).toBe("OK");
-
-      // Second command should fail, but the failure is returned as a value
-      // rather than throwing (transactions return errors as values)
-      expect(typeof execResult[1]).toBe("object");
-      expect(execResult[1]).not.toBeNull();
-
-      // Third command should still succeed
-      expect(execResult[2]).toBe("OK");
+      expect(execResult).toMatchInlineSnapshot(`
+        [
+          "OK",
+          [Error: ERR value is not an integer or out of range],
+          "OK",
+        ]
+      `);
 
       // Verify the valid commands were executed
       const validValue = await ctx.redis.get(`${prefix}-valid`);
@@ -203,7 +198,7 @@ describe("Valkey: Complex Operations", () => {
       // Should find all our keys
       expect(Array.isArray(patternResult)).toBe(true);
       expect(patternResult.length).toBe(4);
-      
+
       // Sort for consistent snapshot
       const sortedKeys = [...patternResult].sort();
       expect(sortedKeys).toMatchInlineSnapshot(`
@@ -298,7 +293,6 @@ describe("Valkey: Complex Operations", () => {
           true,
         ]
       `);
-
 
       const finalCount = await ctx.redis.get(rateLimitKey);
       expect(finalCount).toBe("7");

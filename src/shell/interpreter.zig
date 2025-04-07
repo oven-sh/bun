@@ -4377,7 +4377,6 @@ pub const Interpreter = struct {
                         &this.base.shell.cmd_local_env,
                         cwd,
                         &this.io,
-                        false,
                     );
                     if (coro_result == .yield) return;
 

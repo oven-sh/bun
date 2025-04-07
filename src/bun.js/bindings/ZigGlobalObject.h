@@ -30,6 +30,7 @@ class Performance;
 namespace Bun {
 class InternalModuleRegistry;
 class NapiHandleScopeImpl;
+class JSNextTickQueue;
 } // namespace Bun
 
 namespace v8 {
@@ -413,7 +414,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
                                                                                                              \
-    V(public, WriteBarrier<Unknown>, m_nextTickQueue)                                                        \
+    V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
                                                                                                              \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(public, ThenablesArray, m_thenables)                                                                   \
@@ -430,11 +431,10 @@ public:
     V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
-                                                                                                             \
+    /* */                                                                                                    \
     /* We set a default value for this to mimic Node.js behavior It is a */                                  \
     /* separate from the user-facing value so that we can tell if the user */                                \
     /* really set it or if it's just the default value. */                                                   \
-                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<JSC::JSFunction>, m_errorConstructorPrepareStackTraceInternalValue) \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeErrorCache)                                        \

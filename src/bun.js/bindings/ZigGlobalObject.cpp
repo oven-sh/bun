@@ -817,8 +817,7 @@ static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>&
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    if (auto nextTickQueueValue = globalObject->m_nextTickQueue.get()) {
-        auto* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueueValue);
+    if (auto queue = globalObject->m_nextTickQueue.get()) {
         globalObject->resetOnEachMicrotaskTick();
         queue->drain(vm, globalObject);
     }
@@ -977,9 +976,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         auto* globalObject = defaultGlobalObject();
-        if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
+        if (auto queue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();
-            Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
             queue->drain(vm, globalObject);
             return;
         }

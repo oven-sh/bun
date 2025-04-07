@@ -98,6 +98,7 @@ pub const Options = struct {
     enable_auto_reconnect: bool = true,
     max_retries: u32 = 20,
     enable_offline_queue: bool = true,
+    enable_auto_pipelining: bool = true,
     enable_debug_logging: bool = false,
 
     tls: TLS = .none,

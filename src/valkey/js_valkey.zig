@@ -131,6 +131,7 @@ pub const JSValkeyClient = struct {
                 .flags = .{
                     .enable_auto_reconnect = options.enable_auto_reconnect,
                     .enable_offline_queue = options.enable_offline_queue,
+                    .auto_pipelining = options.enable_auto_pipelining,
                 },
                 .max_retries = options.max_retries,
                 .connection_timeout_ms = options.connection_timeout_ms,
@@ -1153,107 +1154,110 @@ pub const JSValkeyClient = struct {
             }
         }
     }
+};
 
-    // Socket handler for the uWebSockets library
-    fn SocketHandler(comptime ssl: bool) type {
-        return struct {
-            const SocketType = uws.NewSocketHandler(ssl);
-            fn _socket(s: SocketType) Socket {
-                if (comptime ssl) {
-                    return Socket{ .SocketTLS = s };
-                }
-
-                return Socket{ .SocketTCP = s };
-            }
-            pub fn onOpen(this: *JSValkeyClient, socket: SocketType) void {
-                this.client.socket = _socket(socket);
-                this.client.onOpen(_socket(socket));
+// Socket handler for the uWebSockets library
+fn SocketHandler(comptime ssl: bool) type {
+    return struct {
+        const SocketType = uws.NewSocketHandler(ssl);
+        fn _socket(s: SocketType) Socket {
+            if (comptime ssl) {
+                return Socket{ .SocketTLS = s };
             }
 
-            fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-                debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
-                const handshake_success = if (success == 1) true else false;
-                this.ref();
-                defer this.deref();
-                if (handshake_success) {
-                    const vm = this.client.vm;
-                    if (this.client.tls.rejectUnauthorized(vm)) {
-                        if (ssl_error.error_no != 0) {
-                            // only reject the connection if reject_unauthorized == true
+            return Socket{ .SocketTCP = s };
+        }
+        pub fn onOpen(this: *JSValkeyClient, socket: SocketType) void {
+            this.client.socket = _socket(socket);
+            this.client.onOpen(_socket(socket));
+        }
 
-                            const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
-                            if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                                const hostname = servername[0..bun.len(servername)];
-                                if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                                    this.client.flags.is_authenticated = false;
-                                    const loop = vm.eventLoop();
-                                    loop.enter();
-                                    defer loop.exit();
-                                    this.client.status = .failed;
-                                    this.client.flags.is_manually_closed = true;
-                                    this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
-                                    this.client.close();
-                                }
+        fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+            const handshake_success = if (success == 1) true else false;
+            this.ref();
+            defer this.deref();
+            if (handshake_success) {
+                const vm = this.client.vm;
+                if (this.client.tls.rejectUnauthorized(vm)) {
+                    if (ssl_error.error_no != 0) {
+                        // only reject the connection if reject_unauthorized == true
+
+                        const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.client.socket.getNativeHandle());
+                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                            const hostname = servername[0..bun.len(servername)];
+                            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                                this.client.flags.is_authenticated = false;
+                                const loop = vm.eventLoop();
+                                loop.enter();
+                                defer loop.exit();
+                                this.client.status = .failed;
+                                this.client.flags.is_manually_closed = true;
+                                this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
+                                this.client.close();
                             }
                         }
                     }
                 }
             }
+        }
 
-            pub const onHandshake = if (ssl) onHandshake_ else null;
+        pub const onHandshake = if (ssl) onHandshake_ else null;
 
-            pub fn onClose(this: *JSValkeyClient, _: SocketType, _: i32, _: ?*anyopaque) void {
-                // Ensure the socket pointer is updated.
-                this.client.socket = .{ .SocketTCP = .detached };
+        pub fn onClose(this: *JSValkeyClient, _: SocketType, _: i32, _: ?*anyopaque) void {
+            // Ensure the socket pointer is updated.
+            this.client.socket = .{ .SocketTCP = .detached };
 
-                this.client.onClose();
-            }
+            this.client.onClose();
+        }
 
-            pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
-                // Ensure the socket pointer is updated before closing
-                this.client.socket = _socket(socket);
+        pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
+            // Ensure the socket pointer is updated before closing
+            this.client.socket = _socket(socket);
 
-                // Do not allow half-open connections
-                socket.close(.normal);
-            }
+            // Do not allow half-open connections
+            socket.close(.normal);
+        }
 
-            pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) void {
-                // Ensure the socket pointer is updated.
-                this.client.socket = .{ .SocketTCP = .detached };
+        pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) void {
+            // Ensure the socket pointer is updated.
+            this.client.socket = .{ .SocketTCP = .detached };
 
-                this.client.onClose();
-            }
+            this.client.onClose();
+        }
 
-            pub fn onTimeout(this: *JSValkeyClient, socket: SocketType) void {
-                this.client.socket = _socket(socket);
-                // Handle socket timeout
-            }
+        pub fn onTimeout(this: *JSValkeyClient, socket: SocketType) void {
+            this.client.socket = _socket(socket);
+            // Handle socket timeout
+        }
 
-            pub fn onData(this: *JSValkeyClient, socket: SocketType, data: []const u8) void {
-                // Ensure the socket pointer is updated.
-                this.client.socket = _socket(socket);
+        pub fn onData(this: *JSValkeyClient, socket: SocketType, data: []const u8) void {
+            // Ensure the socket pointer is updated.
+            this.client.socket = _socket(socket);
 
-                this.ref();
-                defer this.deref();
-                this.client.onData(data);
-                this.updatePollRef();
-            }
+            this.ref();
+            defer this.deref();
+            this.client.onData(data);
+            this.updatePollRef();
+        }
 
-            pub fn onWritable(this: *JSValkeyClient, socket: SocketType) void {
-                this.client.socket = _socket(socket);
-                this.ref();
-                defer this.deref();
-                this.client.onWritable();
-                this.updatePollRef();
-            }
-        };
-    }
-};
+        pub fn onWritable(this: *JSValkeyClient, socket: SocketType) void {
+            this.client.socket = _socket(socket);
+            this.ref();
+            defer this.deref();
+            this.client.onWritable();
+            this.updatePollRef();
+        }
+    };
+}
 
 // Parse JavaScript options into Valkey client options
 const Options = struct {
     pub fn fromJS(globalObject: *JSC.JSGlobalObject, options_obj: JSC.JSValue) !valkey.Options {
-        var this = valkey.Options{};
+        var this = valkey.Options{
+            .enable_auto_pipelining = !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING"),
+        };
+
         if (try options_obj.getIfPropertyExists(globalObject, "idleTimeout")) |idle_timeout| {
             this.idle_timeout_ms = try globalObject.validateIntegerRange(idle_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
         }
@@ -1276,6 +1280,10 @@ const Options = struct {
 
         if (try options_obj.getIfPropertyExists(globalObject, "enableOfflineQueue")) |enable_offline_queue| {
             this.enable_offline_queue = enable_offline_queue.toBoolean();
+        }
+
+        if (try options_obj.getIfPropertyExists(globalObject, "enableAutoPipelining")) |enable_auto_pipelining| {
+            this.enable_auto_pipelining = enable_auto_pipelining.toBoolean();
         }
 
         if (try options_obj.getIfPropertyExists(globalObject, "tls")) |tls| {
@@ -1311,6 +1319,7 @@ const RedisError = protocol.RedisError;
 const Command = @import("ValkeyCommand.zig");
 const BoringSSL = bun.BoringSSL;
 const JSArgument = JSC.Node.BlobOrStringOrBuffer;
+
 fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
     if (value == .undefined or value == .null) {
         return null;

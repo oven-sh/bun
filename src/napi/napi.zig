@@ -1114,9 +1114,9 @@ pub const napi_async_work = struct {
         // likely `complete` will call `napi_delete_async_work`, so take a copy
         // of `ref` beforehand
         var ref = this.ref;
-        const vm = this.global.bunVM();
+        const global = this.global;
         defer {
-            ref.unref(vm);
+            ref.unref(global.bunVM());
         }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
@@ -1137,7 +1137,8 @@ pub const napi_async_work = struct {
             @intFromEnum(status),
             this.data,
         );
-        if (this.global.hasException()) {
+
+        if (global.hasException()) {
             return error.JSError;
         }
     }

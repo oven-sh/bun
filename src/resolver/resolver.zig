@@ -660,7 +660,7 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
-        const tracer = bun.tracy.traceNamed(@src(), "ModuleResolver.resolve");
+        const tracer = bun.perf.trace("ModuleResolver.resolve");
         defer tracer.end();
 
         // Only setting 'current_action' in debug mode because module resolution

@@ -1190,6 +1190,11 @@ pub const VirtualMachine = struct {
             }
         }
 
+        // Node.js checks if this are set to "1" and no other value
+        if (map.get("NODE_PRESERVE_SYMLINKS")) |value| {
+            this.transpiler.resolver.opts.preserve_symlinks = bun.strings.eqlComptime(value, "1");
+        }
+
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
@@ -2090,6 +2095,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
         vm.transpiler.resolver.prefer_module_field = false;
+        vm.transpiler.resolver.opts.preserve_symlinks = opts.args.preserve_symlinks orelse false;
 
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -2399,7 +2405,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+    fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
         bun.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
@@ -2418,7 +2424,7 @@ pub const VirtualMachine = struct {
                 .allocator = this.allocator,
                 .ptr = input.ptr,
                 .len = input.len,
-                .impl = bun.String.createExternal(input, true, ref, &JSC.RefString.RefString__free).value.WTFStringImpl,
+                .impl = bun.String.createExternal(*JSC.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
                 .hash = hash,
                 .ctx = this,
                 .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -2427,6 +2433,10 @@ pub const VirtualMachine = struct {
         }
         new.* = !entry.found_existing;
         return entry.value_ptr.*;
+    }
+
+    fn freeRefString(str: *JSC.RefString, _: *anyopaque, _: u32) callconv(.C) void {
+        str.deinit();
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {

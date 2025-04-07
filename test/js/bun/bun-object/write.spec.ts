@@ -1,6 +1,7 @@
 import { promises as fs, constants } from "node:fs";
 import path from "node:path";
 import { tmpdirSync } from "harness";
+import type { BunFile } from "bun";
 
 // 0o644
 const default_mode = constants.S_IWUSR | constants.S_IRUSR | constants.S_IRGRP | constants.S_IROTH;
@@ -26,6 +27,18 @@ describe("Bun.write()", () => {
     // @ts-expect-error
     await expect(() => Bun.write(-10, "foo -10")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
   });
+
+  // NOTE: if/when we ban fds, this will become ERR_INVALID_ARG_TYPE. When that
+  // happens, delete or update this test
+  it("Throws when given a negative number", () => {
+    // @ts-expect-error
+    expect(() => Bun.write(-1, "foo")).toThrow(RangeError);
+  });
+
+  it.each(["foo", ""])("Cannot write to readonly Blobs", async input => {
+    var blob = new Blob([new Uint8Array([0, 0, 0, 0])]);
+    await expect(() => Bun.write(blob as Bun.BunFile, input)).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
+  });
 });
 
 describe("Bun.write() on file paths", () => {
@@ -34,8 +47,9 @@ describe("Bun.write() on file paths", () => {
   beforeAll(() => {
     dir = tmpdirSync("bun-write");
   });
-  afterAll(() => {
-    fs.rmdir(dir, { recursive: true });
+
+  afterAll(async () => {
+    await fs.rmdir(dir, { recursive: true });
   });
 
   describe("Given a path to a file in an existing directory", () => {
@@ -140,3 +154,39 @@ describe("Bun.write() on file paths", () => {
     }); // </When options.createPath is false>
   });
 }); // </Bun.write() on files>
+
+describe("Bun.write() on BunFiles", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = tmpdirSync("bun-write-bunfile");
+  });
+
+  afterAll(async () => {
+    await fs.rmdir(dir, { recursive: true });
+  });
+
+  describe("Given a text file that exists", () => {
+    let file: BunFile;
+    let textFilePath: string;
+
+    beforeEach(async () => {
+      textFilePath = path.join(dir, "test-file.txt");
+      await fs.writeFile(textFilePath, "Hello, world!");
+      file = Bun.file(textFilePath);
+    });
+
+    afterEach(async () => {
+      await fs.rm(textFilePath).catch(() => {});
+    });
+
+    it.each(["", "foo"])("Writing %s to the file overwrites the existing content", async text => {
+      await Bun.write(file, text);
+      const content = await file.text();
+      // Ensure the content matches what was written
+      expect(content).toEqual(text);
+      // Ensure content was saved to disk, not just `file`'s in-memory cache
+      expect(await fs.readFile(textFilePath, "utf8")).toEqual(text);
+    });
+  }); // Given a text file that exists
+}); // </Bun.write() on BunFiles>

@@ -540,11 +540,7 @@ pub const Listener = struct {
         return this.strong_data.get() orelse JSValue.jsUndefined();
     }
 
-    pub fn setData(
-        this: *Listener,
-        globalObject: *JSC.JSGlobalObject,
-        value: JSC.JSValue,
-    ) callconv(.C) bool {
+    pub fn setData(this: *Listener, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
         log("setData()", .{});
         this.strong_data.set(globalObject, value);
         return true;
@@ -847,15 +843,11 @@ pub const Listener = struct {
         return this_value;
     }
 
-    pub fn onCreateTLS(
-        socket: uws.NewSocketHandler(true),
-    ) void {
+    pub fn onCreateTLS(socket: uws.NewSocketHandler(true)) void {
         onCreate(true, socket);
     }
 
-    pub fn onCreateTCP(
-        socket: uws.NewSocketHandler(false),
-    ) void {
+    pub fn onCreateTCP(socket: uws.NewSocketHandler(false)) void {
         onCreate(false, socket);
     }
 
@@ -1262,6 +1254,36 @@ pub const Listener = struct {
                 return promise_value;
             },
         }
+    }
+
+    pub fn getsockname(this: *Listener, globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+        if (this.listener != .uws) {
+            return .jsUndefined();
+        }
+
+        const out = callFrame.argumentsAsArray(1)[0];
+        const socket = this.listener.uws;
+
+        var buf: [64]u8 = [_]u8{0} ** 64;
+        var text_buf: [512]u8 = undefined;
+        const address_bytes: []const u8 = socket.getLocalAddress(this.ssl, &buf) catch return .jsUndefined();
+        const address_zig: std.net.Address = switch (address_bytes.len) {
+            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+            else => return .jsUndefined(),
+        };
+        const family_js = switch (address_bytes.len) {
+            4 => bun.String.static("IPv4").toJS(globalThis),
+            16 => bun.String.static("IPv6").toJS(globalThis),
+            else => return .jsUndefined(),
+        };
+        const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);
+        const port_js: JSValue = .jsNumber(socket.getLocalPort(this.ssl));
+
+        out.put(globalThis, bun.String.static("family"), family_js);
+        out.put(globalThis, bun.String.static("address"), address_js);
+        out.put(globalThis, bun.String.static("port"), port_js);
+        return .jsUndefined();
     }
 };
 
@@ -2088,10 +2110,40 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getLocalPort(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getLocalFamily(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            const address_bytes: []const u8 = this.socket.localAddress(&buf) orelse return JSValue.jsUndefined();
+            return switch (address_bytes.len) {
+                4 => bun.String.static("IPv4").toJS(globalThis),
+                16 => bun.String.static("IPv6").toJS(globalThis),
+                else => return JSValue.jsUndefined(),
+            };
+        }
+
+        pub fn getLocalAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            var text_buf: [512]u8 = undefined;
+
+            const address_bytes: []const u8 = this.socket.localAddress(&buf) orelse return JSValue.jsUndefined();
+            const address: std.net.Address = switch (address_bytes.len) {
+                4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+                16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+                else => return JSValue.jsUndefined(),
+            };
+
+            const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
+            return ZigString.init(text).toJS(globalThis);
+        }
+
+        pub fn getLocalPort(this: *This, _: *JSC.JSGlobalObject) JSValue {
             if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
@@ -2099,10 +2151,21 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.localPort());
         }
 
-        pub fn getRemoteAddress(
-            this: *This,
-            globalThis: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getRemoteFamily(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return JSValue.jsUndefined();
+            return switch (address_bytes.len) {
+                4 => bun.String.static("IPv4").toJS(globalThis),
+                16 => bun.String.static("IPv6").toJS(globalThis),
+                else => return JSValue.jsUndefined(),
+            };
+        }
+
+        pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
             if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
@@ -2119,6 +2182,14 @@ fn NewSocket(comptime ssl: bool) type {
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
             return ZigString.init(text).toJS(globalThis);
+        }
+
+        pub fn getRemotePort(this: *This, _: *JSC.JSGlobalObject) JSValue {
+            if (this.socket.isDetached()) {
+                return JSValue.jsUndefined();
+            }
+
+            return JSValue.jsNumber(this.socket.remotePort());
         }
 
         pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {

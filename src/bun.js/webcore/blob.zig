@@ -1020,6 +1020,13 @@ pub const Blob = struct {
         const destination_store = destination_blob.store orelse Output.panic("Destination blob is detached", .{});
         const destination_type = std.meta.activeTag(destination_store.data);
 
+        // TODO: make sure this invariant isn't being broken elsewhere (outside
+        // its usage from `Blob.writeFileInternal`), then upgrade this to
+        // Environment.allow_assert
+        if (Environment.isDebug) {
+            bun.assertf(destination_type != .bytes, "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller. Please report it to the Bun team.", .{});
+        }
+
         const source_store = source_blob.store orelse return writeFileWithEmptySourceToDestination(ctx, destination_blob, options);
         const source_type = std.meta.activeTag(source_store.data);
 
@@ -1223,21 +1230,26 @@ pub const Blob = struct {
         mkdirp_if_not_exists: ?bool = null,
         extra_options: ?JSValue = null,
     };
+
+    /// ## Errors
+    /// - If `path_or_blob` is a detached blob
+    /// ## Panics
+    /// - If `path_or_blob` is a `Blob` backed by a byte store
     pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOrBlob, data: JSC.JSValue, options: WriteFileOptions) bun.JSError!JSC.JSValue {
         if (data.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         }
         var path_or_blob = path_or_blob_.*;
         if (path_or_blob == .blob) {
-            if (path_or_blob.blob.store == null) {
+            const blob_store = path_or_blob.blob.store orelse {
                 return globalThis.throwInvalidArguments("Blob is detached", .{});
-            } else {
-                // TODO only reset last_modified on success paths instead of
-                // resetting last_modified at the beginning for better performance.
-                if (path_or_blob.blob.store.?.data == .file) {
-                    // reset last_modified to force getLastModified() to reload after writing.
-                    path_or_blob.blob.store.?.data.file.last_modified = JSC.init_timestamp;
-                }
+            };
+            bun.assertWithLocation(blob_store.data != .bytes, @src());
+            // TODO only reset last_modified on success paths instead of
+            // resetting last_modified at the beginning for better performance.
+            if (blob_store.data == .file) {
+                // reset last_modified to force getLastModified() to reload after writing.
+                blob_store.data.file.last_modified = JSC.init_timestamp;
             }
         }
 
@@ -1347,11 +1359,18 @@ pub const Blob = struct {
 
         // if path_or_blob is a path, convert it into a file blob
         var destination_blob: Blob = if (path_or_blob == .path) brk: {
-            break :brk Blob.findOrCreateFileFromPath(&path_or_blob_.path, globalThis, true);
+            const new_blob = Blob.findOrCreateFileFromPath(&path_or_blob_.path, globalThis, true);
+            if (new_blob.store == null) {
+                return globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
+            }
+            break :brk new_blob;
         } else path_or_blob.blob.dupe();
 
-        if (destination_blob.store == null) {
-            return globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
+        if (bun.Environment.allow_assert and path_or_blob == .blob) {
+            // sanity check. Should never happen because
+            // 1. destination blobs passed via path_or_blob are null checked at the very start
+            // 2. newly created blobs from paths get null checked immediately after creation.
+            bun.unsafeAssert(path_or_blob.blob.store != null);
         }
 
         // TODO: implement a writeev() fast path
@@ -1505,8 +1524,10 @@ pub const Blob = struct {
 
         return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
     }
+
+    /// `Bun.write(destination, input, options?)`
     pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(3).slice();
+        const arguments = callframe.arguments();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
@@ -1515,6 +1536,15 @@ pub const Blob = struct {
         defer {
             if (path_or_blob == .path) {
                 path_or_blob.path.deinit();
+            }
+        }
+        // "Blob" must actually be a BunFile, not a webcore blob.
+        if (path_or_blob == .blob) {
+            const store = path_or_blob.blob.store orelse {
+                return globalThis.throw("Cannot write to a detached Blob", .{});
+            };
+            if (store.data == .bytes) {
+                return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
             }
         }
 
@@ -3680,6 +3710,67 @@ pub const Blob = struct {
 
             return value;
         }
+
+        pub fn listObjects(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, listOptions: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
+            if (!listOptions.isEmptyOrUndefinedOrNull() and !listOptions.isObject()) {
+                return globalThis.throwInvalidArguments("S3Client.listObjects() needs a S3ListObjectsOption as it's first argument", .{});
+            }
+
+            const Wrapper = struct {
+                promise: JSC.JSPromise.Strong,
+                store: *Store,
+                resolvedlistOptions: S3.S3ListObjectsOptions,
+                global: *JSC.JSGlobalObject,
+
+                pub fn resolve(result: S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+                    const self: *@This() = @ptrCast(@alignCast(opaque_self));
+                    defer self.deinit();
+                    const globalObject = self.global;
+
+                    switch (result) {
+                        .success => |list_result| {
+                            defer list_result.deinit();
+                            self.promise.resolve(globalObject, list_result.toJS(globalObject));
+                        },
+
+                        inline .not_found, .failure => |err| {
+                            self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        },
+                    }
+                }
+
+                fn deinit(self: *@This()) void {
+                    self.store.deref();
+                    self.promise.deinit();
+                    self.resolvedlistOptions.deinit();
+                    self.destroy();
+                }
+
+                pub inline fn destroy(self: *@This()) void {
+                    bun.destroy(self);
+                }
+            };
+
+            const promise = JSC.JSPromise.Strong.init(globalThis);
+            const value = promise.value();
+            const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = if (proxy_url) |url| url.href else null;
+            var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
+            defer aws_options.deinit();
+
+            const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+            store.ref();
+
+            S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
+                .promise = promise,
+                .store = store, // store is needed in case of not found error
+                .resolvedlistOptions = options,
+                .global = globalThis,
+            }), proxy);
+
+            return value;
+        }
+
         pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3Store {
             credentials.ref();
             return .{

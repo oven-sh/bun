@@ -649,6 +649,14 @@ pub const Loader = enum(u8) {
     sqlite_embedded,
     html,
 
+    pub const Optional = enum(u8) {
+        none = 254,
+        _,
+        pub fn unwrap(opt: Optional) ?Loader {
+            return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+    };
+
     pub fn isCSS(this: Loader) bool {
         return this == .css;
     }

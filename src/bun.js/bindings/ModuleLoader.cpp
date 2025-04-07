@@ -581,7 +581,7 @@ void evaluateCommonJSCustomExtension(
     Bun::JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
     JSValue extension = extensions->m_registeredFunctions[extensionIndex].get();
 
-    if (!extension || !extension.isCallable()) {
+    if (!extension) {
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
     }
@@ -720,10 +720,31 @@ JSValue fetchCommonJSModule(
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice()) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
+    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
+}
 
-    Bun__transpileFile(bunVM, globalObject, &specifier, referrer, typeAttribute, res, false, true);
+template<bool isExtension>
+JSValue fetchCommonJSModuleNonBuiltin(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope)
+{
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
-        target->evaluate(globalObject, specifierWtfString, res->result.value);
+        if constexpr (isExtension) {
+            target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
+        } else {
+            target->evaluate(globalObject, specifierWtfString, res->result.value);
+        }
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }
@@ -766,6 +787,11 @@ JSValue fetchCommonJSModule(
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
     } else if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
+        if constexpr (isExtension) {
+            ASSERT_NOT_REACHED();
+            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
+            RELEASE_AND_RETURN(scope, {});
+        }
         evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, res->result.value.cjsCustomExtensionIndex);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
@@ -776,6 +802,34 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
+
+// Explicit instantiations of fetchCommonJSModuleNonBuiltin
+template JSValue fetchCommonJSModuleNonBuiltin<true>(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope);
+template JSValue fetchCommonJSModuleNonBuiltin<false>(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope);
 
 extern "C" bool isBunTest;
 
@@ -896,12 +950,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false);
+        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone);
         if (pendingCtx) {
             return pendingCtx;
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone);
     }
 
     if (res->success && res->result.value.isCommonJSModule) {

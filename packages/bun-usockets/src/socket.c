@@ -37,6 +37,15 @@ int us_socket_local_port(int ssl, struct us_socket_t *s) {
     }
 }
 
+int us_socket_remote_port(int ssl, struct us_socket_t *s) {
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+        return -1;
+    } else {
+        return bsd_addr_get_port(&addr);
+    }
+}
+
 void us_socket_shutdown_read(int ssl, struct us_socket_t *s) {
     /* This syscall is idempotent so no extra check is needed */
     bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
@@ -558,11 +567,6 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 void us_socket_pause(int ssl, struct us_socket_t *s) {
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
-    if(us_socket_is_shut_down(ssl, s)) {
-        // we already sent FIN so we pause all events because we are read-only
-        us_poll_change(&s->p, s->context->loop, 0);
-        return;
-    }
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 }

@@ -1230,6 +1230,9 @@ pub const PackageManifest = struct {
                 pub usingnamespace bun.New(@This());
 
                 pub fn run(task: *bun.ThreadPool.Task) void {
+                    const tracer = bun.perf.trace("PackageManifest.Serializer.save");
+                    defer tracer.end();
+
                     const save_task: *@This() = @fieldParentPtr("task", task);
                     defer {
                         save_task.destroy();
@@ -1295,6 +1298,8 @@ pub const PackageManifest = struct {
         }
 
         pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: File) !?PackageManifest {
+            const tracer = bun.perf.trace("PackageManifest.Serializer.loadByFile");
+            defer tracer.end();
             const bytes = try manifest_file.readToEnd(allocator).unwrap();
             errdefer allocator.free(bytes);
 
@@ -2164,7 +2169,7 @@ pub const PackageManifest = struct {
 
                                 if (count > 0 and
                                     ((comptime !is_peer) or
-                                    optional_peer_dep_names.items.len == 0))
+                                        optional_peer_dep_names.items.len == 0))
                                 {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();

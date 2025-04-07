@@ -633,7 +633,7 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  set(GIT_EFFECTIVE_OUTPUTS)
+  set(GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/.ref)
   foreach(output ${GIT_OUTPUTS})
     list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
   endforeach()
@@ -751,11 +751,17 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
   endif()
 
+  set(MAKE_SOURCES)
+  if(TARGET clone-${MAKE_TARGET})
+    list(APPEND MAKE_SOURCES ${MAKE_CWD}/.ref)
+  endif()
+
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
   )
 
@@ -807,6 +813,7 @@ function(register_cmake_command)
     TARGETS configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     ARTIFACTS ${MAKE_ARTIFACTS}
   )
 

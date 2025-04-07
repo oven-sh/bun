@@ -79,9 +79,7 @@ pub const ShellErr = union(enum) {
                 return globalThis.throwValue(err);
             },
             .custom => {
-                var str = JSC.ZigString.init(this.custom);
-                str.markUTF8();
-                const err_value = str.toErrorInstance(globalThis);
+                const err_value = bun.String.createUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
@@ -113,10 +111,10 @@ pub const ShellErr = union(enum) {
         bun.Global.exit(1);
     }
 
-    pub fn deinit(this: @This(), allocator: Allocator) void {
-        switch (this) {
+    pub fn deinit(this: *const @This(), allocator: Allocator) void {
+        switch (this.*) {
             .sys => {
-                // this.sys.
+                this.sys.deref();
             },
             .custom => allocator.free(this.custom),
             .invalid_arguments => {},
@@ -308,8 +306,7 @@ pub const GlobalMini = struct {
         };
     }
 
-    pub inline fn actuallyThrow(this: @This(), shellerr: ShellErr) void {
-        _ = this; // autofix
+    pub inline fn actuallyThrow(_: @This(), shellerr: ShellErr) void {
         shellerr.throwMini();
     }
 
@@ -2381,9 +2378,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             const whitespace_preceding =
                                 if (self.chars.prev) |prev|
-                                Chars.isWhitespace(prev)
-                            else
-                                true;
+                                    Chars.isWhitespace(prev)
+                                else
+                                    true;
                             if (!whitespace_preceding) break :escaped;
                             try self.break_word(true);
                             self.eatComment();
@@ -2744,10 +2741,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             ) {
                 const tok: Token =
                     switch (self.chars.state) {
-                    .Normal => @unionInit(Token, "Text", .{ .start = start, .end = end }),
-                    .Single => @unionInit(Token, "SingleQuotedText", .{ .start = start, .end = end }),
-                    .Double => @unionInit(Token, "DoubleQuotedText", .{ .start = start, .end = end }),
-                };
+                        .Normal => @unionInit(Token, "Text", .{ .start = start, .end = end }),
+                        .Single => @unionInit(Token, "SingleQuotedText", .{ .start = start, .end = end }),
+                        .Double => @unionInit(Token, "DoubleQuotedText", .{ .start = start, .end = end }),
+                    };
                 try self.tokens.append(tok);
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);
@@ -2755,39 +2752,40 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             } else if ((in_normal_space or in_operator) and self.tokens.items.len > 0 and
                 // whether or not to add a delimiter token
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var,
-                .VarArgv,
-                .Text,
-                .SingleQuotedText,
-                .DoubleQuotedText,
-                .BraceBegin,
-                .Comma,
-                .BraceEnd,
-                .CmdSubstEnd,
-                .Asterisk,
-                => true,
+                    .Var,
+                    .VarArgv,
+                    .Text,
+                    .SingleQuotedText,
+                    .DoubleQuotedText,
+                    .BraceBegin,
+                    .Comma,
+                    .BraceEnd,
+                    .CmdSubstEnd,
+                    .Asterisk,
+                    => true,
 
-                .Pipe,
-                .DoublePipe,
-                .Ampersand,
-                .DoubleAmpersand,
-                .Redirect,
-                .Dollar,
-                .DoubleAsterisk,
-                .Eq,
-                .Semicolon,
-                .Newline,
-                .CmdSubstBegin,
-                .CmdSubstQuoted,
-                .OpenParen,
-                .CloseParen,
-                .JSObjRef,
-                .DoubleBracketOpen,
-                .DoubleBracketClose,
-                .Delimit,
-                .Eof,
-                => false,
-            }) {
+                    .Pipe,
+                    .DoublePipe,
+                    .Ampersand,
+                    .DoubleAmpersand,
+                    .Redirect,
+                    .Dollar,
+                    .DoubleAsterisk,
+                    .Eq,
+                    .Semicolon,
+                    .Newline,
+                    .CmdSubstBegin,
+                    .CmdSubstQuoted,
+                    .OpenParen,
+                    .CloseParen,
+                    .JSObjRef,
+                    .DoubleBracketOpen,
+                    .DoubleBracketClose,
+                    .Delimit,
+                    .Eof,
+                    => false,
+                })
+            {
                 try self.tokens.append(.Delimit);
                 self.delimit_quote = false;
             }

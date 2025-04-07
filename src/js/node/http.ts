@@ -70,6 +70,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -1114,6 +1115,13 @@ const ServerPrototype = {
         this.once("listening", onListen);
       }
 
+      if (this[kDeferredTimeouts]) {
+        for (const { msecs, callback } of this[kDeferredTimeouts]) {
+          this.setTimeout(msecs, callback);
+        }
+        delete this[kDeferredTimeouts];
+      }
+
       setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
     }
   },
@@ -1123,6 +1131,8 @@ const ServerPrototype = {
     if (server) {
       setServerIdleTimeout(server, Math.ceil(msecs / 1000));
       typeof callback === "function" && this.once("timeout", callback);
+    } else {
+      (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
     }
     return this;
   },

@@ -103,6 +103,7 @@ pub const JSValkeyClient = struct {
 
         return JSValkeyClient.new(.{
             .client = valkey.ValkeyClient{
+                .vm = vm,
                 .address = switch (uri) {
                     .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
                     else => .{
@@ -176,10 +177,10 @@ pub const JSValkeyClient = struct {
         this.this_value.setStrong(this_value, globalObject);
 
         if (this.client.flags.needs_to_open_socket) {
-            this.poll_ref.ref(globalObject.bunVM());
+            this.poll_ref.ref(this.client.vm);
 
             this.connect() catch |err| {
-                this.poll_ref.unref(globalObject.bunVM());
+                this.poll_ref.unref(this.client.vm);
                 this.client.flags.needs_to_open_socket = true;
                 const err_value = globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
                 promise_ptr.reject(globalObject, err_value);
@@ -256,7 +257,7 @@ pub const JSValkeyClient = struct {
         }
 
         // Store VM reference to use later
-        const vm = this.globalObject.bunVM();
+        const vm = this.client.vm;
 
         // Set up timer and add to event loop
         timer.next = bun.timespec.msFromNow(@intCast(next_timeout_ms));
@@ -269,7 +270,7 @@ pub const JSValkeyClient = struct {
         if (timer.state == .ACTIVE) {
 
             // Store VM reference to use later
-            const vm = this.globalObject.bunVM();
+            const vm = this.client.vm;
 
             // Remove the timer from the event loop
             vm.timer.remove(timer);
@@ -353,7 +354,7 @@ pub const JSValkeyClient = struct {
             return;
         }
 
-        const vm = this.globalObject.bunVM();
+        const vm = this.client.vm;
 
         if (vm.isShuttingDown()) {
             @branchHint(.unlikely);
@@ -393,7 +394,7 @@ pub const JSValkeyClient = struct {
         }
 
         const globalObject = this.globalObject;
-        const event_loop = globalObject.bunVM().eventLoop();
+        const event_loop = this.client.vm.eventLoop();
         event_loop.enter();
         defer event_loop.exit();
 
@@ -444,7 +445,7 @@ pub const JSValkeyClient = struct {
         // Create an error value
         const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
 
-        const loop = globalObject.bunVM().eventLoop();
+        const loop = this.client.vm.eventLoop();
         loop.enter();
         defer loop.exit();
 
@@ -481,7 +482,7 @@ pub const JSValkeyClient = struct {
         const this_value = this.this_value.tryGet() orelse return;
         const globalObject = this.globalObject;
         if (JSValkeyClient.oncloseGetCached(this_value)) |on_close| {
-            const loop = globalObject.bunVM().eventLoop();
+            const loop = this.client.vm.eventLoop();
             loop.enter();
             defer loop.exit();
             _ = on_close.call(
@@ -520,7 +521,7 @@ pub const JSValkeyClient = struct {
 
     fn connect(this: *JSValkeyClient) !void {
         this.client.flags.needs_to_open_socket = false;
-        const vm = this.globalObject.bunVM();
+        const vm = this.client.vm;
 
         const ctx: *uws.SocketContext, const deinit_context: bool =
             switch (this.client.tls) {
@@ -1139,13 +1140,13 @@ pub const JSValkeyClient = struct {
     /// Keep the event loop alive, or don't keep it alive
     pub fn updatePollRef(this: *JSValkeyClient) void {
         if (!this.client.hasAnyPendingCommands() and this.client.status == .connected) {
-            this.poll_ref.unref(this.globalObject.bunVM());
+            this.poll_ref.unref(this.client.vm);
             // If we don't have any pending commands and we're connected, we don't need to keep the object alive.
             if (this.this_value.tryGet()) |value| {
                 this.this_value.setWeak(value);
             }
         } else if (this.client.hasAnyPendingCommands()) {
-            this.poll_ref.ref(this.globalObject.bunVM());
+            this.poll_ref.ref(this.client.vm);
             // If we have pending commands, we need to keep the object alive.
             if (this.this_value == .weak) {
                 this.this_value.upgrade(this.globalObject);
@@ -1175,7 +1176,7 @@ pub const JSValkeyClient = struct {
                 this.ref();
                 defer this.deref();
                 if (handshake_success) {
-                    const vm = this.globalObject.bunVM();
+                    const vm = this.client.vm;
                     if (this.client.tls.rejectUnauthorized(vm)) {
                         if (ssl_error.error_no != 0) {
                             // only reject the connection if reject_unauthorized == true

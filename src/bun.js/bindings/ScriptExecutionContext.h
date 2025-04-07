@@ -22,7 +22,6 @@ struct WebSocketContext;
 struct us_socket_t;
 struct us_socket_context_t;
 struct us_loop_t;
-struct napi_env__;
 
 namespace WebCore {
 
@@ -158,8 +157,6 @@ public:
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
-    Vector<std::unique_ptr<napi_env__>>& napiEnvs() { return m_napiEnvs; }
-
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
@@ -183,8 +180,6 @@ private:
 
     us_socket_context_t* m_connected_ssl_client_websockets_ctx = nullptr;
     us_socket_context_t* m_connected_client_websockets_ctx = nullptr;
-
-    Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
 
 public:
     template<bool isSSL, bool isServer>

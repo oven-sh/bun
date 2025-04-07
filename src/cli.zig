@@ -203,6 +203,8 @@ pub const Arguments = struct {
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--preserve-symlinks               Preserve symlinks when resolving files") catch unreachable,
+        clap.parseParam("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
@@ -661,6 +663,13 @@ pub const Arguments = struct {
         // opts.inject = args.options("--inject");
         opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
+
+        if (args.flag("--preserve-symlinks")) {
+            opts.preserve_symlinks = true;
+        }
+        if (args.flag("--preserve-symlinks-main")) {
+            ctx.runtime_options.preserve_symlinks_main = true;
+        }
 
         ctx.passthrough = args.remaining();
 
@@ -1529,6 +1538,7 @@ pub const Command = struct {
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.
         expose_gc: bool = false,
+        preserve_symlinks_main: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;

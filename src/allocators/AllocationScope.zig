@@ -73,8 +73,8 @@ pub fn allocator(scope: *AllocationScope) Allocator {
 
 const vtable: Allocator.VTable = .{
     .alloc = alloc,
-    .resize = resize,
-    .remap = remap,
+    .resize = &std.mem.Allocator.noResize,
+    .remap = &std.mem.Allocator.noRemap,
     .free = free,
 };
 
@@ -93,16 +93,6 @@ fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: us
     });
     scope.state.total_memory_allocated += len;
     return result;
-}
-
-fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-    const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
-    return scope.parent.vtable.resize(scope.parent.ptr, buf, alignment, new_len, ret_addr);
-}
-
-fn remap(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-    const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
-    return scope.parent.vtable.remap(scope.parent.ptr, buf, alignment, new_len, ret_addr);
 }
 
 fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {

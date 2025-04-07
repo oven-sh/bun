@@ -942,7 +942,7 @@ pub const PathLike = union(enum) {
             const s = this.slice();
             const b = bun.PathBufferPool.get();
             defer bun.PathBufferPool.put(b);
-            if (bun.strings.hasPrefixComptime(s, "/")) {
+            if (s.len > 0 and bun.path.isSepAny(s[0])) {
                 const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);

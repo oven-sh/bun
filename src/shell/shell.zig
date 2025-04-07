@@ -79,7 +79,7 @@ pub const ShellErr = union(enum) {
                     // sys.toErrorInstance handles decrementing the ref count
                 },
                 .custom, .invalid_arguments, .todo => {
-                    this.deinit2(bun.default_allocator);
+                    this.deinit(bun.default_allocator);
                 },
             }
         }

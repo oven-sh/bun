@@ -788,6 +788,7 @@ declare module "bun" {
      * });
      */
     file(path: string, options?: S3Options): S3File;
+    static file: S3Client["file"];
 
     /**
      * Writes data directly to a path in the bucket.
@@ -829,6 +830,7 @@ declare module "bun" {
         | File,
       options?: S3Options,
     ): Promise<number>;
+    static write: S3Client["write"];
 
     /**
      * Generate a presigned URL for temporary access to a file.
@@ -855,7 +857,7 @@ declare module "bun" {
      *     });
      */
     presign(path: string, options?: S3FilePresignOptions): string;
-    static presign(path: string, options?: S3FilePresignOptions): string;
+    static presign: S3Client["presign"];
 
     /**
      * Delete a file from the bucket.
@@ -873,9 +875,9 @@ declare module "bun" {
      *     }
      */
     unlink(path: string, options?: S3Options): Promise<void>;
+    static unlink: S3Client["unlink"];
     delete: S3Client["unlink"];
-    static unlink(path: string, options?: S3Options): Promise<void>;
-    static delete: S3Client["unlink"];
+    static delete: S3Client["delete"];
 
     /**
      * Get the size of a file in bytes.
@@ -892,6 +894,7 @@ declare module "bun" {
      *     }
      */
     size(path: string, options?: S3Options): Promise<number>;
+    static size: S3Client["size"];
 
     /**
      * Check if a file exists in the bucket.
@@ -914,7 +917,7 @@ declare module "bun" {
      *     }
      */
     exists(path: string, options?: S3Options): Promise<boolean>;
-    static exists(path: string, options?: S3Options): Promise<boolean>;
+    static exists: S3Client["exists"];
     
     /**
      * Get the stat of a file in an S3-compatible storage service.
@@ -923,9 +926,10 @@ declare module "bun" {
      * @param options The options to use for the S3 client.
      */
     stat(path: string, options?: S3Options): Promise<S3Stats>;
-    static stat(path: string, options?: S3Options): Promise<S3Stats>;
+    static stat: S3Client["stat"];
 
-    /** Returns some or all (up to 1,000) of the objects in a bucket with each request.
+    /**
+     * Returns some or all (up to 1,000) of the objects in a bucket with each request.
      *
      * You can  use the request parameters as selection criteria to return a subset of the objects in a bucket.
      */
@@ -933,10 +937,7 @@ declare module "bun" {
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
     ): Promise<S3ListObjectsResponse>;
-    static list(
-      input?: S3ListObjectsOptions | null,
-      options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
-    ): Promise<S3ListObjectsResponse>;
+    static list: S3Client["list"];
   }
 
   /**

@@ -6587,7 +6587,8 @@ declare module "bun" {
       timeout?: number;
 
       /**
-       * The signal to use when killing the process after a timeout or when the AbortSignal is aborted.
+       * The signal to use when killing the process after a timeout, when the AbortSignal is aborted,
+       * or when the process goes over the `maxBuffer` limit.
        *
        * @default "SIGTERM" (signal 15)
        *
@@ -6602,6 +6603,14 @@ declare module "bun" {
        * ```
        */
       killSignal?: string | number;
+
+      /**
+       * The maximum number of bytes the process may output. If the process goes over this limit,
+       * it is killed with signal `killSignal` (defaults to SIGTERM).
+       *
+       * @default undefined (no limit)
+       */
+      maxBuffer?: number;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -6847,7 +6856,8 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
-    exitedDueToTimeout?: true;
+    exitedDueToTimeout?: boolean;
+    exitedDueToMaxBuffer?: boolean;
     pid: number;
   }
 

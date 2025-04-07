@@ -6801,6 +6801,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 if (req_len > this.config.max_request_body_size) {
                     resp.writeStatus("413 Request Entity Too Large");
                     resp.endWithoutBody(true);
+                    this.pending_requests -= 1;
                     this.finalize();
                     return null;
                 }

@@ -443,10 +443,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         const req = message?.req;
 
         if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-          if (req) {
-            emitEOFIncomingMessage(req);
-          }
-          emitServerSocketEOFNT(this);
+          emitServerSocketEOFNT(this, req);
         }
         if (req) {
           req.push(resumed);
@@ -1228,11 +1225,18 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
-function emitServerSocketEOF(self) {
+function emitServerSocketEOF(self, req) {
   self.push(null);
+  if (req) {
+    req.push(null);
+    req.complete = true;
+  }
 }
 
-function emitServerSocketEOFNT(self) {
+function emitServerSocketEOFNT(self, req) {
+  if (req) {
+    req[eofInProgress] = true;
+  }
   process.nextTick(emitServerSocketEOF, self);
 }
 
@@ -1409,17 +1413,12 @@ const IncomingMessagePrototype = {
       this._readableState.readingMore = false;
       this._consuming = true;
     }
-    // TODO: resume() works but socket.resume() does not and internalRequest.resume() does not work
-    // check how node:http handles this
-    this.resume();
 
-    // this[kHandle]?.resume();
-    // const socket = this.socket;
-    // if (socket) {
-    //   //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
-    //   socket.resume();
-    // }
-    // onIncomingMessageResumeNodeHTTPResponse(this);
+    const socket = this.socket;
+    if (socket && socket.readable) {
+      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+      socket.resume();
+    }
 
     if (this[eofInProgress]) {
       // There is a nextTick pending that will emit EOF

@@ -74,6 +74,7 @@
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "AsyncContextFrame.h"
 
 using namespace JSC;
 using namespace Zig;
@@ -2738,17 +2739,17 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
     return napi_set_last_error(env, napi_ok);
 }
 
-extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
-    napi_value func_napi, size_t argc,
+extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
+    napi_value func, size_t argc,
     const napi_value* argv,
-    napi_value* result_ptr)
+    napi_value* result)
 {
     NAPI_PREAMBLE(env);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
-    JSValue funcValue = toJS(func_napi);
-    NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isObject(), napi_function_expected);
-    JSC::CallData callData = getCallData(funcValue);
-    NAPI_RETURN_EARLY_IF_FALSE(env, callData.type != JSC::CallData::Type::None, napi_function_expected);
+    JSValue funcValue = toJS(func);
+    if (!funcValue.isCallable() && !jsDynamicCast<AsyncContextFrame*>(funcValue)) {
+        return napi_invalid_arg;
+    }
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2758,17 +2759,18 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
         gcSafeMemcpy<JSValue>(buffer, reinterpret_cast<const JSValue*>(argv), sizeof(JSValue) * argc);
     });
 
-    JSValue thisValue = toJS(recv_napi);
+    JSValue thisValue = toJS(recv);
     if (thisValue.isEmpty()) {
         thisValue = JSC::jsUndefined();
     }
-    JSValue result = call(globalObject, funcValue, callData, thisValue, args);
 
-    if (result_ptr) {
-        if (result.isEmpty()) {
-            *result_ptr = toNapi(JSC::jsUndefined(), globalObject);
+    JSValue res = AsyncContextFrame::call(globalObject, funcValue, thisValue, args);
+
+    if (result) {
+        if (res.isEmpty()) {
+            *result = toNapi(JSC::jsUndefined(), globalObject);
         } else {
-            *result_ptr = toNapi(result, globalObject);
+            *result = toNapi(res, globalObject);
         }
     }
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);

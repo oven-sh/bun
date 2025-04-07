@@ -253,6 +253,22 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_async_work", () => {
+    it("null checks execute callbacks", () => {
+      const output = checkSameOutput("test_napi_async_work_execute_null_check", []);
+      expect(output).toContain("success!");
+      expect(output).not.toContain("failure!");
+    });
+    it("null checks complete callbacks after scheduling", () => {
+      checkSameOutput("test_napi_async_work_complete_null_check", []);
+    });
+    it("works with cancelation", () => {
+      const output = checkSameOutput("test_napi_async_work_cancel", []);
+      expect(output).toContain("success!");
+      expect(output).not.toContain("failure!");
+    });
+  });
+
   describe("napi_threadsafe_function", () => {
     it("keeps the event loop alive without async_work", () => {
       const result = checkSameOutput("test_promise_with_threadsafe_function", []);

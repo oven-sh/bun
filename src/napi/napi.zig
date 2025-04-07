@@ -1037,7 +1037,6 @@ pub extern fn napi_get_instance_data(env: napi_env, data: [*]*anyopaque) napi_st
 pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) napi_status;
 pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 
-pub const struct_napi_async_work__ = opaque {};
 const WorkPool = @import("../work_pool.zig").WorkPool;
 const WorkPoolTask = @import("../work_pool.zig").Task;
 
@@ -1089,6 +1088,7 @@ pub const napi_async_work = struct {
     pub fn run(this: *napi_async_work) void {
         if (this.status.cmpxchgStrong(.pending, .started, .seq_cst, .seq_cst)) |state| {
             if (state == .cancelled) {
+                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
                 return;
             }
         }
@@ -1106,7 +1106,7 @@ pub const napi_async_work = struct {
     }
 
     pub fn cancel(this: *napi_async_work) bool {
-        return this.status.cmpxchgStrong(.cancelled, .pending, .seq_cst, .seq_cst) != null;
+        return this.status.cmpxchgStrong(.pending, .cancelled, .seq_cst, .seq_cst) == null;
     }
 
     fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
@@ -1119,6 +1119,7 @@ pub const napi_async_work = struct {
             ref.unref(vm);
         }
 
+        // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         const complete = this.complete orelse {
             return;
         };
@@ -1291,6 +1292,7 @@ pub export fn napi_create_async_work(
     const result = result_ orelse {
         return env.invalidArg();
     };
+    // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1245
     const execute = execute_ orelse {
         return env.invalidArg();
     };

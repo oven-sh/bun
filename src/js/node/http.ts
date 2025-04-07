@@ -2937,53 +2937,59 @@ function ClientRequest(input, options, cb) {
       return true;
     }
 
-    options.lookup(host, { all: true }, (err, results) => {
-      if (err) {
-        if (!!$debug) globalReportError(err);
-        this.emit("error", err);
-        return;
-      }
-
-      let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
-
-      const fail = (message, name, code, syscall) => {
-        const error = new Error(message);
-        error.name = name;
-        error.code = code;
-        error.syscall = syscall;
-        if (!!$debug) globalReportError(error);
-        this.emit("error", error);
-      };
-
-      if (candidates.length === 0) {
-        fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
-        return;
-      }
-
-      if (!this.hasHeader("Host")) {
-        this.setHeader("Host", `${host}:${port}`);
-      }
-
-      // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.
-      // All addresses except for the last are allowed to "soft fail" -- instead of reporting
-      // an error to the user, we'll just skip to the next address.
-      // The last address is required to work, and if it fails we'll throw an error.
-
-      const iterate = () => {
-        if (candidates.length === 0) {
-          // If we get to this point, it means that none of the addresses could be connected to.
-          fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+    try {
+      options.lookup(host, { all: true }, (err, results) => {
+        if (err) {
+          if (!!$debug) globalReportError(err);
+          process.nextTick((self, err) => self.emit("error", err), this, err);
           return;
         }
 
-        const [url, proxy] = getURL(candidates.shift().address);
-        go(url, proxy, candidates.length > 0).catch(iterate);
-      };
+        let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
-      iterate();
-    });
+        const fail = (message, name, code, syscall) => {
+          const error = new Error(message);
+          error.name = name;
+          error.code = code;
+          error.syscall = syscall;
+          if (!!$debug) globalReportError(error);
+          process.nextTick((self, err) => self.emit("error", err), this, error);
+        };
 
-    return true;
+        if (candidates.length === 0) {
+          fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+          return;
+        }
+
+        if (!this.hasHeader("Host")) {
+          this.setHeader("Host", `${host}:${port}`);
+        }
+
+        // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.
+        // All addresses except for the last are allowed to "soft fail" -- instead of reporting
+        // an error to the user, we'll just skip to the next address.
+        // The last address is required to work, and if it fails we'll throw an error.
+
+        const iterate = () => {
+          if (candidates.length === 0) {
+            // If we get to this point, it means that none of the addresses could be connected to.
+            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+            return;
+          }
+
+          const [url, proxy] = getURL(candidates.shift().address);
+          go(url, proxy, candidates.length > 0).catch(iterate);
+        };
+
+        iterate();
+      });
+
+      return true;
+    } catch (err) {
+      if (!!$debug) globalReportError(err);
+      process.nextTick((self, err) => self.emit("error", err), this, err);
+      return false;
+    }
   };
 
   let onEnd = () => {};

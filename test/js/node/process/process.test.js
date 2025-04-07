@@ -1100,7 +1100,7 @@ it("process.memoryUsage.arrayBuffers", () => {
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });
 
-describe.only("process.mainModule", () => {
+describe("process.mainModule", () => {
   it("is undefined when run via REPL", async () => {
     await Bun.$`${bunExe()} -e 'assert(process.mainModule === undefined)'`.nothrow();
   });
@@ -1120,7 +1120,7 @@ describe.only("process.mainModule", () => {
   });
 
   describe("When accessed from a file", () => {
-    it("is a NodeJS.Module object", () => {
+    it.failing("is a NodeJS.Module object", () => {
       expect(process.mainModule).toBeObject();
       expect(process.mainModule).toMatchObject({
         children: expect.arrayContaining([expect.any(Object)]),

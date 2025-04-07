@@ -91,6 +91,7 @@ const {
 const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
+const { format } = require("internal/util/inspect");
 
 const {
   getHeader,
@@ -3581,9 +3582,10 @@ function _normalizeArgs(args) {
 }
 
 function _writeHead(statusCode, reason, obj, response) {
+  const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
-    throw $ERR_HTTP_INVALID_STATUS_CODE(statusCode);
+    throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
   }
 
   if (typeof reason === "string") {

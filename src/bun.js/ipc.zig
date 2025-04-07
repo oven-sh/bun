@@ -337,6 +337,7 @@ const SocketIPCData = struct {
 
         bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
+        _ = ipc_data.socket.writeFd("\x00", @enumFromInt(0));
         if (start_offset == 0) {
             bun.assert(ipc_data.outgoing.cursor == 0);
             const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);

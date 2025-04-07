@@ -9,10 +9,12 @@ pub const WorkPool = struct {
     var pool: ThreadPool = undefined;
     var loaded: bool = false;
 
+    const once = bun.once(ThreadPool.init);
+
     fn create() *ThreadPool {
         @branchHint(.cold);
 
-        pool = ThreadPool.init(.{
+        pool = once.call(.{
             .max_threads = bun.getThreadCount(),
             .stack_size = ThreadPool.default_thread_stack_size,
         });

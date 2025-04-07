@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://bun.sh"><img src="https://github.com/user-attachments/assets/438e74e0-cbb0-4c11-ba3d-a2c0347f70f0" alt="Logo" height=170></a>
+  <a href="https://bun.sh"><img src="https://github.com/user-attachments/assets/7b8513ef-6ae9-47ef-9d18-1f2c958fbd3e" alt="Logo" height=170></a>
 </p>
 <h1 align="center">Bun</h1>
 

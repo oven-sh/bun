@@ -431,7 +431,14 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {}
+  _read(size) {
+    // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+    const handle = this[kHandle];
+    const response = handle?.response;
+    if (response) {
+      response.resume();
+    }
+  }
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -951,7 +958,9 @@ const ServerPrototype = {
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
           // start buffering data if any, the user will need to resume() or .on("data") to read it
-          handle.pause();
+          if (hasBody) {
+            handle.pause();
+          }
           drainMicrotasks();
 
           let capturedError;
@@ -983,7 +992,6 @@ const ServerPrototype = {
 
           socket[kRequest] = http_req;
           const is_upgrade = http_req.headers.upgrade;
-
           if (!is_upgrade) {
             if (canUseInternalAssignSocket) {
               // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -992,7 +1000,6 @@ const ServerPrototype = {
               http_res.assignSocket(socket);
             }
           }
-
           function onClose() {
             didFinish = true;
             resolveFunction && resolveFunction();
@@ -1377,6 +1384,17 @@ const IncomingMessagePrototype = {
       this._readableState.readingMore = false;
       this._consuming = true;
     }
+    // TODO: resume() works but socket.resume() does not and internalRequest.resume() does not work
+    // check how node:http handles this
+    this.resume();
+
+    // this[kHandle]?.resume();
+    // const socket = this.socket;
+    // if (socket) {
+    //   //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+    //   socket.resume();
+    // }
+    // onIncomingMessageResumeNodeHTTPResponse(this);
 
     if (this[eofInProgress]) {
       // There is a nextTick pending that will emit EOF
@@ -2213,6 +2231,7 @@ const ServerResponsePrototype = {
       socket.removeListener("close", onServerResponseClose);
       socket._httpMessage = null;
     }
+
     this.socket = null;
   },
 

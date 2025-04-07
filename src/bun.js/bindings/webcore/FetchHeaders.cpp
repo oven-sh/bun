@@ -47,7 +47,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { InvalidHttpCharacterError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -55,11 +55,11 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
-    if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    if (!isValidHTTPHeaderName(name))
+        return Exception { InvalidHTTPTokenError, makeString("header name be a valid HTTP token [\""_s, name, "\"]"_s) };
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { InvalidHttpCharacterError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -216,8 +216,8 @@ ExceptionOr<void> FetchHeaders::remove(const StringView name)
         return {};
     }
 
-    if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    if (!isValidHTTPHeaderName(name))
+        return Exception { InvalidHTTPTokenError, makeString("header name be a valid HTTP token [\""_s, name, "\"]"_s) };
 
     ++m_updateCounter;
     m_headers.removeUncommonHeader(name);
@@ -234,8 +234,8 @@ ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
     auto result = m_headers.get(name);
     if (result.isEmpty()) {
-        if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        if (!isValidHTTPHeaderName(name))
+            return Exception { InvalidHTTPTokenError, makeString("header name be a valid HTTP token [\""_s, name, "\"]"_s) };
     }
 
     return result;
@@ -245,8 +245,8 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 {
     bool has = m_headers.contains(name);
     if (!has) {
-        if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
+        if (!isValidHTTPHeaderName(name))
+            return Exception { InvalidHTTPTokenError, makeString("header name be a valid HTTP token [\""_s, name, "\"]"_s) };
     }
     return has;
 }
@@ -280,6 +280,24 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 
     ++m_updateCounter;
     m_headers.set(name, normalizedValue);
+
+    if (m_guard == FetchHeaders::Guard::RequestNoCors)
+        removePrivilegedNoCORSRequestHeaders(m_headers);
+
+    return {};
+}
+
+ExceptionOr<void> FetchHeaders::setUncommonName(const String& name, const String& value)
+{
+    String normalizedValue = value.trim(isHTTPSpace);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    if (canWriteResult.hasException())
+        return canWriteResult.releaseException();
+    if (!canWriteResult.releaseReturnValue())
+        return {};
+
+    ++m_updateCounter;
+    m_headers.setUncommonHeader(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);

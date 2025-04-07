@@ -316,7 +316,10 @@ pub const ValkeyClient = struct {
     }
 
     pub fn hasAnyPendingCommands(this: *const ValkeyClient) bool {
-        return this.in_flight.readableLength() > 0 or this.queue.readableLength() > 0 or this.write_buffer.len() > 0;
+        return this.in_flight.readableLength() > 0 or
+            this.queue.readableLength() > 0 or
+            this.write_buffer.len() > 0 or
+            this.read_buffer.len() > 0;
     }
 
     /// Calculate reconnect delay with exponential backoff

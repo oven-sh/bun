@@ -855,6 +855,7 @@ declare module "bun" {
      *     });
      */
     presign(path: string, options?: S3FilePresignOptions): string;
+    static presign(path: string, options?: S3FilePresignOptions): string;
 
     /**
      * Delete a file from the bucket.
@@ -873,6 +874,8 @@ declare module "bun" {
      */
     unlink(path: string, options?: S3Options): Promise<void>;
     delete: S3Client["unlink"];
+    static unlink(path: string, options?: S3Options): Promise<void>;
+    static delete: S3Client["unlink"];
 
     /**
      * Get the size of a file in bytes.
@@ -911,6 +914,8 @@ declare module "bun" {
      *     }
      */
     exists(path: string, options?: S3Options): Promise<boolean>;
+    static exists(path: string, options?: S3Options): Promise<boolean>;
+    
     /**
      * Get the stat of a file in an S3-compatible storage service.
      *
@@ -918,6 +923,7 @@ declare module "bun" {
      * @param options The options to use for the S3 client.
      */
     stat(path: string, options?: S3Options): Promise<S3Stats>;
+    static stat(path: string, options?: S3Options): Promise<S3Stats>;
 
     /** Returns some or all (up to 1,000) of the objects in a bucket with each request.
      *
@@ -927,7 +933,6 @@ declare module "bun" {
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
     ): Promise<S3ListObjectsResponse>;
-
     static list(
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,

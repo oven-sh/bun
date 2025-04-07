@@ -1114,8 +1114,9 @@ pub const napi_async_work = struct {
         // likely `complete` will call `napi_delete_async_work`, so take a copy
         // of `ref` beforehand
         var ref = this.ref;
-        const global = this.global;
+        const env = this.env;
         defer {
+            const global = env.toJS();
             ref.unref(global.bunVM());
         }
 
@@ -1125,7 +1126,7 @@ pub const napi_async_work = struct {
         };
 
         const handle_scope = NapiHandleScope.open(this.env, false);
-        defer if (handle_scope) |scope| scope.close(this.env);
+        defer if (handle_scope) |scope| scope.close(env);
 
         const status: NapiStatus = if (this.status.load(.seq_cst) == .cancelled)
             .cancelled
@@ -1138,6 +1139,7 @@ pub const napi_async_work = struct {
             this.data,
         );
 
+        const global = env.toJS();
         if (global.hasException()) {
             return error.JSError;
         }

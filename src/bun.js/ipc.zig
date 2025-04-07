@@ -293,6 +293,46 @@ pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, v
 
 pub const Socket = uws.NewSocketHandler(false);
 
+pub const Handle = struct {
+    fd: bun.FileDescriptor,
+    fn deinit(self: *Handle) void {
+        _ = self;
+    }
+};
+pub const HandleQueue = struct {
+    // sending handles:
+    // - when a handle is sent:
+    //   - add it to the queue
+    //   - maybe send it immediately
+    // - when more data is to be added:
+    //   - if there are queued handles, we can't send the data yet
+    //   - we have to queue the data to send after the handles have all been sent and acknowledged
+    // - when sending a handle:
+    //   - close and deref it after it's sent
+    //   - ie a server should stop listening
+    //   - node does handle.close() from closePendingHandle
+    //   - if we get NACK, retry. if we try 3 times:
+    //     process.emitWarning('Handle did not reach the receiving process ' +
+    //     'correctly', 'SentHandleNotReceivedWarning')
+    // how to implement:
+    // - don't add to the outgoing queue once a handle is queued
+
+    // It is possible that recvmsg\(\) may return an error on ancillary data
+    // reception when receiving a NODE\_HANDLE message (for example
+    // MSG\_CTRUNC). This would end up, if the handle type was net\.Socket,
+    // on a message event with a non null but invalid sendHandle. To
+    // improve the situation, send a NODE\_HANDLE\_NACK that'll cause the
+    // sending process to retransmit the message again. In case the same
+    // message is retransmitted 3 times without success, close the handle and
+    // print a warning.
+
+    handles: std.ArrayListUnmanaged(Handle) = .{},
+    remaining: std.ArrayListUnmanaged(u8) = .empty,
+
+    // implementation:
+    // - NewIPCHandler onWritable drains the outgoing buffer
+};
+
 /// Used on POSIX
 const SocketIPCData = struct {
     socket: Socket,

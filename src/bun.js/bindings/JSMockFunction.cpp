@@ -764,10 +764,10 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
 
 template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
 {
-#define VISIT_JSMOCKMODULE_GC_PROPERTY(T, name) \
+#define VISIT_JSMOCKMODULE_GC_MEMBER(T, name) \
     name.visit(visitor);
-    FOR_EACH_JSMOCKMODULE_GC_PROPERTY(VISIT_JSMOCKMODULE_GC_PROPERTY)
-#undef VISIT_JSMOCKMODULE_GC_PROPERTY
+    FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
+#undef VISIT_JSMOCKMODULE_GC_MEMBER
 }
 
 template void JSMockModule::visit(JSC::AbstractSlotVisitor&);

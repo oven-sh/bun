@@ -20,7 +20,7 @@ public:
     static uint64_t s_nextInvocationId;
     static uint64_t nextInvocationId() { return ++s_nextInvocationId; }
 
-#define FOR_EACH_JSMOCKMODULE_GC_PROPERTY(V)         \
+#define FOR_EACH_JSMOCKMODULE_GC_MEMBER(V)           \
     V(Structure, mockFunctionStructure)              \
     V(Structure, mockResultStructure)                \
     V(Structure, mockImplementationStructure)        \
@@ -30,10 +30,10 @@ public:
     V(JSFunction, withImplementationCleanupFunction) \
     V(JSC::Structure, mockWithImplementationCleanupDataStructure)
 
-#define DECLARE_JSMOCKMODULE_GC_PROPERTY(T, name) \
+#define DECLARE_JSMOCKMODULE_GC_MEMBER(T, name) \
     LazyProperty<JSGlobalObject, T> name;
-    FOR_EACH_JSMOCKMODULE_GC_PROPERTY(DECLARE_JSMOCKMODULE_GC_PROPERTY)
-#undef DECLARE_JSMOCKMODULE_GC_PROPERTY
+    FOR_EACH_JSMOCKMODULE_GC_MEMBER(DECLARE_JSMOCKMODULE_GC_MEMBER)
+#undef DECLARE_JSMOCKMODULE_GC_MEMBER
 
     static JSMockModule create(JSC::JSGlobalObject*);
 

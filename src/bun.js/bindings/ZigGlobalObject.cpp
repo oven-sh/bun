@@ -3972,22 +3972,22 @@ IMPL_GET_COMMON_STRING(IN6Any)
 
 #undef IMPL_GET_COMMON_STRING
 
-template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, T& anything)
+template<class Visitor, class T> void visitGlobalObjectMember(Visitor& visitor, T& anything)
 {
     anything.visit(visitor);
 }
 
-template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, WriteBarrier<T>& barrier)
+template<class Visitor, class T> void visitGlobalObjectMember(Visitor& visitor, WriteBarrier<T>& barrier)
 {
     visitor.append(barrier);
 }
 
-template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, std::unique_ptr<T>& ptr)
+template<class Visitor, class T> void visitGlobalObjectMember(Visitor& visitor, std::unique_ptr<T>& ptr)
 {
     ptr->visit(visitor);
 }
 
-template<class Visitor, class T, size_t n> void visitGlobalObjectProperty(Visitor& visitor, std::array<WriteBarrier<T>, n>& barriers)
+template<class Visitor, class T, size_t n> void visitGlobalObjectMember(Visitor& visitor, std::array<WriteBarrier<T>, n>& barriers)
 {
     visitor.append(barriers.begin(), barriers.end());
 }
@@ -4010,10 +4010,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             guarded->visitAggregate(visitor);
     }
 
-#define VISIT_GLOBALOBJECT_GC_PROPERTY(visibility, T, name) \
-    visitGlobalObjectProperty(visitor, thisObject->name);
-    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(VISIT_GLOBALOBJECT_GC_PROPERTY)
-#undef VISIT_GLOBALOBJECT_GC_PROPERTY
+#define VISIT_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
+    visitGlobalObjectMember(visitor, thisObject->name);
+    FOR_EACH_GLOBALOBJECT_GC_MEMBER(VISIT_GLOBALOBJECT_GC_MEMBER)
+#undef VISIT_GLOBALOBJECT_GC_MEMBER
 
     WebCore::clientData(thisObject->vm())->httpHeaderIdentifiers().visit<Visitor>(visitor);
 

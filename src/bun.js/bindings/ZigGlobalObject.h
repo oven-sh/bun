@@ -393,10 +393,10 @@ public:
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
     using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
 
-// #define DO_SOMETHING_WITH_EACH_PROPERTY(visibility, T, name) ...
-// FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DO_SOMETHING_WITH_EACH_PROPERTY)
-// #undef DO_SOMETHING_WITH_EACH_PROPERTY
-#define FOR_EACH_GLOBALOBJECT_GC_PROPERTY(V)                                                                 \
+// #define DO_SOMETHING_WITH_EACH_MEMBER(visibility, T, name) ...
+// FOR_EACH_GLOBALOBJECT_GC_MEMBER(DO_SOMETHING_WITH_EACH_MEMBER)
+// #undef DO_SOMETHING_WITH_EACH_MEMBER
+#define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     /* TODO: these should use LazyProperty */                                                                \
     V(public, WriteBarrier<JSFunction>, m_assignToStream)                                                    \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
@@ -551,11 +551,11 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)
 
-#define DECLARE_GLOBALOBJECT_GC_PROPERTY(visibility, T, name) \
-    visibility:                                               \
+#define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
+    visibility:                                             \
     T name;
-    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DECLARE_GLOBALOBJECT_GC_PROPERTY)
-#undef DECLARE_GLOBALOBJECT_GC_PROPERTY
+    FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
+#undef DECLARE_GLOBALOBJECT_GC_MEMBER
 
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;

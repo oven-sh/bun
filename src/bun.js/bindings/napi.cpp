@@ -1237,9 +1237,9 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
-        vm.heap.addFinalizer(object, [env, finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
+        vm.heap.addFinalizer(object, [weak_env = ThreadSafeWeakPtr(*env), finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
             NAPI_LOG("finalizer %p", finalize_hint);
-            env->doFinalizer(finalize_cb, native_object, finalize_hint);
+            napi_env__::doFinalizer(weak_env.get(), finalize_cb, native_object, finalize_hint);
         });
     }
 
@@ -2024,9 +2024,9 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([weak_env = ThreadSafeWeakPtr(*env), finalize_hint, finalize_cb](void* p) {
         NAPI_LOG("external buffer finalizer");
-        env->doFinalizer(finalize_cb, p, finalize_hint);
+        napi_env__::doFinalizer(weak_env.get(), finalize_cb, p, finalize_hint);
     }));
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
@@ -2045,9 +2045,9 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([weak_env = ThreadSafeWeakPtr(*env), finalize_hint, finalize_cb](void* p) {
         NAPI_LOG("external ArrayBuffer finalizer");
-        env->doFinalizer(finalize_cb, p, finalize_hint);
+        napi_env__::doFinalizer(weak_env.get(), finalize_cb, p, finalize_hint);
     }));
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTFMove(arrayBuffer));

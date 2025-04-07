@@ -61,13 +61,11 @@ struct napi_async_cleanup_hook_handle__ {
     } while (0)
 
 // Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
-struct napi_env__ {
+struct napi_env__ : public WTF::ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<napi_env__> {
 public:
-    napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
-        : m_globalObject(globalObject)
-        , m_napiModule(napiModule)
+    static Ref<napi_env__> create(Zig::GlobalObject* globalObject, const napi_module& napiModule)
     {
-        napi_internal_register_cleanup_zig(this);
+        return adoptRef(*new napi_env__(globalObject, napiModule));
     }
 
     ~napi_env__()
@@ -192,20 +190,28 @@ public:
         return JSC::getVM(m_globalObject).hasTerminationRequest();
     }
 
-    void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
+    static void doFinalizer(RefPtr<napi_env__>&& env, napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
             return;
         }
 
-        if (mustDeferFinalizers() && inGC()) {
-            napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
+        if (env) {
+            if (env->mustDeferFinalizers() && env->inGC()) {
+                napi_internal_enqueue_finalizer(env.get(), finalize_cb, data, finalize_hint);
+            } else {
+                finalize_cb(env.get(), data, finalize_hint);
+            }
         } else {
-            finalize_cb(this, data, finalize_hint);
+            NAPI_LOG("skipping finalizer as env is already freed");
         }
     }
 
-    inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    inline Zig::GlobalObject*
+    globalObject() const
+    {
+        return m_globalObject;
+    }
     inline const napi_module& napiModule() const { return m_napiModule; }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
@@ -291,6 +297,13 @@ public:
     };
 
 private:
+    napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+        : m_globalObject(globalObject)
+        , m_napiModule(napiModule)
+    {
+        napi_internal_register_cleanup_zig(this);
+    }
+
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
     // TODO(@heimskr): Use WTF::HashSet

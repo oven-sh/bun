@@ -2746,10 +2746,9 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
 {
     NAPI_PREAMBLE(env);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
+    NAPI_CHECK_ARG(env, func);
     JSValue funcValue = toJS(func);
-    if (!funcValue.isCallable() && !jsDynamicCast<AsyncContextFrame*>(funcValue)) {
-        return napi_invalid_arg;
-    }
+    NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isCallable() || jsDynamicCast<AsyncContextFrame*>(funcValue), napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);

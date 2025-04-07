@@ -263,5 +263,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_INVALID_COMMAND", Error, "RedisError"],
   ["ERR_REDIS_INVALID_ARGUMENT", Error, "RedisError"],
   ["ERR_REDIS_INVALID_RESPONSE_TYPE", Error, "RedisError"],
+  ["ERR_REDIS_CONNECTION_TIMEOUT", Error, "RedisError"],
+  ["ERR_REDIS_IDLE_TIMEOUT", Error, "RedisError"],
 ];
 export default errors;

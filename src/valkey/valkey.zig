@@ -86,7 +86,6 @@ pub const TLS = union(enum) {
 pub const Options = struct {
     idle_timeout_ms: u32 = 30000,
     connection_timeout_ms: u32 = 10000,
-    socket_timeout_ms: u32 = 0,
     enable_auto_reconnect: bool = true,
     max_retries: u32 = 20,
     enable_offline_queue: bool = true,
@@ -161,7 +160,6 @@ pub const ValkeyClient = struct {
     // Timeout and reconnection management
     idle_timeout_interval_ms: u32 = 0,
     connection_timeout_ms: u32 = 0,
-    socket_timeout_ms: u32 = 0,
     retry_attempts: u32 = 0,
     max_retries: u32 = 20, // Maximum retry attempts
 

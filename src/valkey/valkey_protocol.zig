@@ -29,6 +29,8 @@ pub const RedisError = error{
     JSError,
     OutOfMemory,
     UnsupportedProtocol,
+    ConnectionTimeout,
+    IdleTimeout,
 };
 
 pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: RedisError) JSC.JSValue {
@@ -46,6 +48,8 @@ pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, 
         error.InvalidArgument => JSC.Error.ERR_REDIS_INVALID_ARGUMENT,
         error.UnsupportedProtocol => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
         error.InvalidResponseType => JSC.Error.ERR_REDIS_INVALID_RESPONSE_TYPE,
+        error.ConnectionTimeout => JSC.Error.ERR_REDIS_CONNECTION_TIMEOUT,
+        error.IdleTimeout => JSC.Error.ERR_REDIS_IDLE_TIMEOUT,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },

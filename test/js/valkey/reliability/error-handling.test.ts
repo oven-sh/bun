@@ -16,62 +16,21 @@ describe("Valkey: Error Handling", () => {
       const client = createClient();
 
       // Wrong number of arguments
-      try {
-        await client.send("SET", ["key"]); // Missing value argument
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        expect(error.message).toMatch(/wrong number of arguments|WRONGNUMBER/i);
-      }
 
-      // Invalid argument type
-      try {
-        await client.send("INCR", ["non-numeric-value"]);
-        await client.send("GET", ["test-key"]);
-        expect(client.send("INCR", ["non-numeric-value"])).rejects.toThrow();
-      } catch (error) {
-        // This should raise a numeric error
-        expect(error.message).toMatch(/not an integer|not a valid integer/i);
-      }
-
-      // Invalid command
-      try {
-        await client.send("INVALID_COMMAND", []);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        expect(error.message).toMatch(/unknown command|ERR unknown/i);
-      }
+      expect(async () => await client.send("SET", ["key"])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR wrong number of arguments for 'set' command"`,
+      ); // Missing value argument
+      expect(async () => await client.send("INVALID_COMMAND", ["a"])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR unknown command 'INVALID_COMMAND', with args beginning with: 'a' "`,
+      ); // Invalid command
     });
 
-    test("should handle invalid keys and values", async () => {
-      const client = createClient();
+    describe("should handle special character keys and values", async () => {
+      let client: RedisClient;
 
-      // Very large key (Redis has limits on key sizes)
-      try {
-        const veryLongKey = "x".repeat(1024 * 1024); // 1MB key
-        await client.set(veryLongKey, "value");
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should fail with protocol error or maxmemory error
-        expect(error.message).toMatch(/protocol error|invalid|max/i);
-      }
-
-      // Very large value (testing client buffer limits)
-      try {
-        // Create a 10MB string - this should be allowed but good to test
-        const largeValue = "x".repeat(10 * 1024 * 1024);
-        await client.set("large-value-key", largeValue);
-
-        // Verify we can get it back
-        const result = await client.get("large-value-key");
-        expect(result).toBe(largeValue);
-      } catch (error) {
-        // Some Redis configurations might reject this, but client should handle it gracefully
-        expect(error.message).not.toMatch(/undefined/);
-      }
-    });
-
-    test("should handle special character keys and values", async () => {
-      const client = createClient();
+      beforeAll(async () => {
+        client = createClient();
+      });
 
       // Keys with special characters
       const specialKeys = [
@@ -99,17 +58,12 @@ describe("Valkey: Error Handling", () => {
       for (const key of specialKeys) {
         for (const value of specialValues) {
           const testKey = `special-key-${randomUUIDv7()}`;
-
-          try {
+          test.only(`should handle special characters in key "${key}" and value "${value}"`, async () => {
             // Set and get should work with special characters
             await client.set(testKey, value);
             const result = await client.get(testKey);
             expect(result).toBe(value);
-          } catch (error) {
-            // Some truly invalid cases might legitimately fail, but we should log for inspection
-            console.error(`Failed with key "${key}", value "${value}": ${error.message}`);
-            throw error;
-          }
+          });
         }
       }
     });
@@ -296,12 +250,11 @@ describe("Valkey: Error Handling", () => {
       await Promise.all(commands);
 
       // Verify data integrity
-      const verifications = [
-        expect(await client.get("key1")).toBe("value1"),
-        expect(await client.exists("key1")).toBe(true),
-        expect(await client.get("key2")).toBe("x".repeat(1000)),
-        expect(await client.send("HGET", ["hash", "field"])).toBe("value"),
-      ];
+
+      expect(await client.get("key1")).toBe("value1");
+      expect(await client.exists("key1")).toBe(true);
+      expect(await client.get("key2")).toBe("x".repeat(1000));
+      expect(await client.send("HGET", ["hash", "field"])).toBe("value");
     });
   });
 

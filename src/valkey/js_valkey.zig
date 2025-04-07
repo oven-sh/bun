@@ -135,7 +135,6 @@ pub const JSValkeyClient = struct {
                 },
                 .max_retries = options.max_retries,
                 .connection_timeout_ms = options.connection_timeout_ms,
-                .socket_timeout_ms = options.socket_timeout_ms,
                 .idle_timeout_interval_ms = options.idle_timeout_ms,
             },
             .globalObject = globalObject,
@@ -317,14 +316,15 @@ pub const JSValkeyClient = struct {
             return .disarm;
         }
 
+        var buf: [128]u8 = undefined;
         switch (this.client.status) {
             .connected => {
-                debug("Idle timeout reached after {d}ms", .{this.client.idle_timeout_interval_ms});
-                this.clientFail("Idle timeout reached", protocol.RedisError.ConnectionClosed);
+                const msg = std.fmt.bufPrintZ(&buf, "Idle timeout reached after {d}ms", .{this.client.idle_timeout_interval_ms}) catch unreachable;
+                this.clientFail(msg, protocol.RedisError.IdleTimeout);
             },
-            .connecting => {
-                debug("Connection timeout after {d}ms", .{this.client.connection_timeout_ms});
-                this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
+            .disconnected, .connecting => {
+                const msg = std.fmt.bufPrintZ(&buf, "Connection timeout reached after {d}ms", .{this.client.connection_timeout_ms}) catch unreachable;
+                this.clientFail(msg, protocol.RedisError.ConnectionTimeout);
             },
             else => {
                 // No timeout for other states
@@ -473,10 +473,7 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.RedisError) void {
-        debug("clientFail: {s}: {s}", .{ message, @errorName(err) });
-        const globalObject = this.globalObject;
-        const value = protocol.valkeyErrorToJS(globalObject, message, err);
-        this.failWithJSValue(value);
+        this.client.fail(message, err);
     }
 
     pub fn failWithJSValue(this: *JSValkeyClient, value: JSValue) void {
@@ -761,15 +758,13 @@ const Options = struct {
         };
 
         if (try options_obj.getIfPropertyExists(globalObject, "idleTimeout")) |idle_timeout| {
-            this.idle_timeout_ms = try globalObject.validateIntegerRange(idle_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
+            if (!idle_timeout.isEmptyOrUndefinedOrNull())
+                this.idle_timeout_ms = try globalObject.validateIntegerRange(idle_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
         }
 
         if (try options_obj.getIfPropertyExists(globalObject, "connectionTimeout")) |connection_timeout| {
-            this.connection_timeout_ms = try globalObject.validateIntegerRange(connection_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
-        }
-
-        if (try options_obj.getIfPropertyExists(globalObject, "socketTimeout")) |socket_timeout| {
-            this.socket_timeout_ms = try globalObject.validateIntegerRange(socket_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
+            if (!connection_timeout.isEmptyOrUndefinedOrNull())
+                this.connection_timeout_ms = try globalObject.validateIntegerRange(connection_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
         }
 
         if (try options_obj.getIfPropertyExists(globalObject, "autoReconnect")) |auto_reconnect| {

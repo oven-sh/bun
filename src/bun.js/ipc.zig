@@ -145,7 +145,7 @@ const advanced = struct {
         return comptime std.mem.asBytes(&VersionPacket{});
     }
 
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+    pub fn serialize(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         const serialized = value.serialize(global) orelse
             return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
@@ -240,7 +240,7 @@ const json = struct {
         return IPCDecodeError.NotEnoughBytes;
     }
 
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+    pub fn serialize(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
         value.jsonStringify(global, 0, &out);
         defer out.deref();
@@ -284,7 +284,7 @@ pub fn getVersionPacket(mode: Mode) []const u8 {
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+pub fn serialize(data: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
     return switch (data.mode) {
         .advanced => advanced.serialize(data, writer, global, value, is_internal),
         .json => json.serialize(data, writer, global, value, is_internal),

@@ -1,12 +1,3 @@
-const Subprocess = @import("api/bun/subprocess.zig");
-const MaxBuf = @This();
-const bun = @import("root").bun;
-const std = @import("std");
-
-pub const Kind = enum {
-    stdout,
-    stderr,
-};
 // null after subprocess finalize
 owned_by_subprocess: ?*Subprocess,
 // null after pipereader finalize
@@ -82,3 +73,13 @@ pub fn onReadBytes(this: *MaxBuf, bytes: u64) void {
         }
     }
 }
+
+pub const Kind = enum {
+    stdout,
+    stderr,
+};
+
+const bun = @import("root").bun;
+const std = @import("std");
+const Subprocess = bun.JSC.Subprocess;
+const MaxBuf = @This();

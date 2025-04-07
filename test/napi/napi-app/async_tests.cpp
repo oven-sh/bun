@@ -186,10 +186,123 @@ create_promise_with_threadsafe_function(const Napi::CallbackInfo &info) {
   return promise;
 }
 
+napi_value create_async_work_with_null_execute(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  int32_t *data = new int32_t;
+  *data = 0;
+
+  napi_status status;
+  napi_async_work work;
+  napi_value result;
+
+  status = napi_create_async_work(env, nullptr, nullptr, nullptr, nullptr, data,
+                                  &work);
+
+  // status must be napi_invalid_arg
+  if (status != napi_invalid_arg) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  status = napi_get_boolean(env, true, &result);
+
+  return result;
+}
+
+void execute_for_null_complete(napi_env env, void *data) {
+  fprintf(stdout, "execute called!\n");
+}
+
+napi_value
+create_async_work_with_null_complete(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  int32_t *data = new int32_t;
+  *data = 0;
+
+  // napi_status status;
+  napi_async_work work;
+  napi_value result;
+
+  napi_value resource_name =
+      Napi::String::New(env, "napitests__create_async_work_with_null_complete");
+
+  napi_create_async_work(env, nullptr, resource_name,
+                         &execute_for_null_complete, nullptr, data, &work);
+
+  napi_queue_async_work(env, work);
+
+  napi_get_undefined(env, &result);
+
+  return result;
+}
+
+struct CancelData {
+  napi_ref callback;
+  napi_async_work work;
+};
+
+void execute_for_cancel(napi_env env, void *data) {
+  // nothing
+}
+
+void complete_for_cancel(napi_env env, napi_status status, void *data) {
+  CancelData *cancel_data = reinterpret_cast<CancelData *>(data);
+  napi_value callback;
+  napi_get_reference_value(env, cancel_data->callback, &callback);
+
+  napi_value global;
+  napi_get_global(env, &global);
+
+  // should be cancelled
+  bool result = status == napi_cancelled ? true : false;
+
+  napi_value argv[1];
+  napi_get_boolean(env, result, &argv[0]);
+
+  napi_call_function(env, global, callback, 1, argv, nullptr);
+
+  napi_delete_reference(env, cancel_data->callback);
+  napi_delete_async_work(env, cancel_data->work);
+}
+
+napi_value test_cancel_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_ref callback;
+  napi_create_reference(env, info[0], 1, &callback);
+
+  napi_value resource_name =
+      Napi::String::New(env, "napitests__test_cancel_async_work");
+
+  napi_status status;
+  napi_value result;
+
+  struct CancelData *data = new CancelData;
+  data->callback = callback;
+
+  napi_create_async_work(env, nullptr, resource_name, &execute_for_cancel,
+                         &complete_for_cancel, data, &data->work);
+  napi_queue_async_work(env, data->work);
+
+  status = napi_cancel_async_work(env, data->work);
+  if (status != napi_ok) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  napi_get_boolean(env, true, &result);
+  return result;
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
   REGISTER_FUNCTION(env, exports, create_promise_with_threadsafe_function);
+  REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
+  REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
+  REGISTER_FUNCTION(env, exports, test_cancel_async_work);
 }
 
 } // namespace napitests

@@ -8,16 +8,17 @@ pub const Task = ThreadPool.Task;
 pub const WorkPool = struct {
     var pool: ThreadPool = undefined;
 
-    var createOnce = bun.once(create);
-
-    fn create() void {
-        @branchHint(.cold);
-
-        pool = ThreadPool.init(.{
-            .max_threads = bun.getThreadCount(),
-            .stack_size = ThreadPool.default_thread_stack_size,
-        });
-    }
+    var createOnce = bun.once(
+        struct {
+            pub fn create() void {
+                @branchHint(.cold);
+                pool = ThreadPool.init(.{
+                    .max_threads = bun.getThreadCount(),
+                    .stack_size = ThreadPool.default_thread_stack_size,
+                });
+            }
+        }.create,
+    );
 
     pub inline fn get() *ThreadPool {
         createOnce.call(.{});

@@ -1046,7 +1046,7 @@ declare module "bun" {
      *       console.log("File is larger than 100MB");
      *     }
      */
-    static size: S3Client["size"];
+    static size(path: string, options?: S3Options): Promise<number>;
 
     /**
      * Check if a file exists in the bucket.
@@ -1090,7 +1090,7 @@ declare module "bun" {
      *       console.error("Check failed:", err);
      *     }
      */
-    static exists: S3Client["exists"];
+    static exists(path: string, options?: S3Options): Promise<boolean>;
 
     /**
      * Get the stat of a file in an S3-compatible storage service.

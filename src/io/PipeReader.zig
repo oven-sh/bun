@@ -1,16 +1,3 @@
-const bun = @import("root").bun;
-const std = @import("std");
-const uv = bun.windows.libuv;
-const Source = @import("./source.zig").Source;
-
-const ReadState = @import("./pipes.zig").ReadState;
-const FileType = @import("./pipes.zig").FileType;
-const MaxBuf = @import("../bun.js/MaxBuf.zig");
-
-const PollOrFd = @import("./pipes.zig").PollOrFd;
-
-const Async = bun.Async;
-
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
 const BufferedReaderVTable = struct {
@@ -1139,3 +1126,16 @@ else if (bun.Environment.isWindows)
     WindowsBufferedReader
 else
     @compileError("Unsupported platform");
+
+const bun = @import("root").bun;
+const std = @import("std");
+const uv = bun.windows.libuv;
+const Source = @import("./source.zig").Source;
+
+const ReadState = @import("./pipes.zig").ReadState;
+const FileType = @import("./pipes.zig").FileType;
+const MaxBuf = @import("./MaxBuf.zig");
+
+const PollOrFd = @import("./pipes.zig").PollOrFd;
+
+const Async = bun.Async;

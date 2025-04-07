@@ -697,7 +697,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
         }
 
-        pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *void) void {
+        pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) void {
             this.runFromJSThread();
         }
 

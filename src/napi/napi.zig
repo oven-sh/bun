@@ -423,7 +423,7 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
     const slice: []const u8 = brk: {
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
-                break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
+                break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(ptr)), 0);
             } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
@@ -459,7 +459,7 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
     const slice: []const u16 = brk: {
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
-                break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
+                break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(ptr)), 0);
             } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
@@ -1037,7 +1037,6 @@ pub extern fn napi_get_instance_data(env: napi_env, data: [*]*anyopaque) napi_st
 pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) napi_status;
 pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 
-pub const struct_napi_async_work__ = opaque {};
 const WorkPool = @import("../work_pool.zig").WorkPool;
 const WorkPoolTask = @import("../work_pool.zig").Task;
 
@@ -1045,18 +1044,17 @@ const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const napi_async_work = struct {
     task: WorkPoolTask = .{ .callback = &runFromThreadPool },
     concurrent_task: JSC.ConcurrentTask = .{},
-    completion_task: ?*anyopaque = null,
     event_loop: *JSC.EventLoop,
     global: *JSC.JSGlobalObject,
     env: *NapiEnv,
-    execute: napi_async_execute_callback = null,
-    complete: napi_async_complete_callback = null,
+    execute: napi_async_execute_callback,
+    complete: ?napi_async_complete_callback,
     data: ?*anyopaque = null,
-    status: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    can_deinit: bool = false,
+    status: std.atomic.Value(Status) = .init(.pending),
     wait_for_deinit: bool = false,
     scheduled: bool = false,
     ref: Async.KeepAlive = .{},
+
     pub const Status = enum(u32) {
         pending = 0,
         started = 1,
@@ -1064,7 +1062,7 @@ pub const napi_async_work = struct {
         cancelled = 3,
     };
 
-    pub fn create(env: *NapiEnv, execute: napi_async_execute_callback, complete: napi_async_complete_callback, data: ?*anyopaque) !*napi_async_work {
+    pub fn new(env: *NapiEnv, execute: napi_async_execute_callback, complete: ?napi_async_complete_callback, data: ?*anyopaque) !*napi_async_work {
         const work = try bun.default_allocator.create(napi_async_work);
         const global = env.toJS();
         work.* = .{
@@ -1078,23 +1076,24 @@ pub const napi_async_work = struct {
         return work;
     }
 
+    pub fn destroy(this: *napi_async_work) void {
+        bun.default_allocator.destroy(this);
+    }
+
     pub fn runFromThreadPool(task: *WorkPoolTask) void {
         var this: *napi_async_work = @fieldParentPtr("task", task);
 
         this.run();
     }
     pub fn run(this: *napi_async_work) void {
-        if (this.status.cmpxchgStrong(@intFromEnum(Status.pending), @intFromEnum(Status.started), .seq_cst, .seq_cst)) |state| {
-            if (state == @intFromEnum(Status.cancelled)) {
-                if (this.wait_for_deinit) {
-                    // this might cause a segfault due to Task using a linked list!
-                    bun.default_allocator.destroy(this);
-                }
+        if (this.status.cmpxchgStrong(.pending, .started, .seq_cst, .seq_cst)) |state| {
+            if (state == .cancelled) {
+                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+                return;
             }
-            return;
         }
-        this.execute.?(this.env, this.data);
-        this.status.store(@intFromEnum(Status.completed), .seq_cst);
+        this.execute(this.env, this.data);
+        this.status.store(.completed, .seq_cst);
 
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
     }
@@ -1107,29 +1106,35 @@ pub const napi_async_work = struct {
     }
 
     pub fn cancel(this: *napi_async_work) bool {
-        this.ref.unref(this.global.bunVM());
-        return this.status.cmpxchgStrong(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .seq_cst, .seq_cst) != null;
-    }
-
-    pub fn deinit(this: *napi_async_work) void {
-        this.ref.unref(this.global.bunVM());
-
-        if (this.can_deinit) {
-            bun.default_allocator.destroy(this);
-            return;
-        }
-        this.wait_for_deinit = true;
+        return this.status.cmpxchgStrong(.pending, .cancelled, .seq_cst, .seq_cst) == null;
     }
 
     fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
+
+        // likely `complete` will call `napi_delete_async_work`, so take a copy
+        // of `ref` beforehand
+        var ref = this.ref;
+        const vm = this.global.bunVM();
+        defer {
+            ref.unref(vm);
+        }
+
+        // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
+        const complete = this.complete orelse {
+            return;
+        };
+
         const handle_scope = NapiHandleScope.open(this.env, false);
         defer if (handle_scope) |scope| scope.close(this.env);
-        this.complete.?(
+
+        const status: NapiStatus = if (this.status.load(.seq_cst) == .cancelled)
+            .cancelled
+        else
+            .ok;
+
+        complete(
             this.env,
-            @intFromEnum(if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
-                NapiStatus.cancelled
-            else
-                NapiStatus.ok),
+            @intFromEnum(status),
             this.data,
         );
         if (this.global.hasException()) {
@@ -1151,8 +1156,8 @@ pub const napi_threadsafe_function_release_mode = enum(c_uint) {
 pub const napi_tsfn_nonblocking = 0;
 pub const napi_tsfn_blocking = 1;
 pub const napi_threadsafe_function_call_mode = c_uint;
-pub const napi_async_execute_callback = ?*const fn (napi_env, ?*anyopaque) callconv(.C) void;
-pub const napi_async_complete_callback = ?*const fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void;
+pub const napi_async_execute_callback = *const fn (napi_env, ?*anyopaque) callconv(.C) void;
+pub const napi_async_complete_callback = *const fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void;
 pub const napi_threadsafe_function_call_js = *const fn (napi_env, napi_value, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_node_version = extern struct {
     major: u32,
@@ -1275,8 +1280,8 @@ pub export fn napi_create_async_work(
     env_: napi_env,
     _: napi_value,
     _: [*:0]const u8,
-    execute: napi_async_execute_callback,
-    complete: napi_async_complete_callback,
+    execute_: ?napi_async_execute_callback,
+    complete: ?napi_async_complete_callback,
     data: ?*anyopaque,
     result_: ?**napi_async_work,
 ) napi_status {
@@ -1287,7 +1292,11 @@ pub export fn napi_create_async_work(
     const result = result_ orelse {
         return env.invalidArg();
     };
-    result.* = napi_async_work.create(env, execute, complete, data) catch {
+    // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1245
+    const execute = execute_ orelse {
+        return env.invalidArg();
+    };
+    result.* = napi_async_work.new(env, execute, complete, data) catch {
         return env.genericFailure();
     };
     return env.ok();
@@ -1301,7 +1310,7 @@ pub export fn napi_delete_async_work(env_: napi_env, work_: ?*napi_async_work) n
         return env.invalidArg();
     };
     bun.assert(env.toJS() == work.global);
-    work.deinit();
+    work.destroy();
     return env.ok();
 }
 pub export fn napi_queue_async_work(env_: napi_env, work_: ?*napi_async_work) napi_status {

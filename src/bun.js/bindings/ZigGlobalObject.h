@@ -387,11 +387,13 @@ public:
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
-#define COMMA ,
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
-// #define DO_SOMETHING_WITH_EACH_PROPERTY(visibility, type, name) ...
+    using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
+    using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
+
+// #define DO_SOMETHING_WITH_EACH_PROPERTY(visibility, T, name) ...
 // FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DO_SOMETHING_WITH_EACH_PROPERTY)
 // #undef DO_SOMETHING_WITH_EACH_PROPERTY
 #define FOR_EACH_GLOBALOBJECT_GC_PROPERTY(V)                                                                 \
@@ -414,13 +416,13 @@ public:
     V(public, WriteBarrier<Unknown>, m_nextTickQueue)                                                        \
                                                                                                              \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
-    V(public, std::array<WriteBarrier<JSFunction> COMMA promiseFunctionsSize + 1>, m_thenables)              \
+    V(public, ThenablesArray, m_thenables)                                                                   \
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
-    V(public, std::array<JSC::WriteBarrier<Unknown> COMMA 2>, m_pendingNapiModuleAndExports)                 \
+    V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
     /* The handle scope where all new NAPI values will be created. You must not pass any napi_values */      \
     /* back to a NAPI function without putting them in the handle scope, as the NAPI function may */         \
@@ -441,6 +443,8 @@ public:
     /* Should only use JSCell* keys and NapiTypeTag values. */                                               \
     V(public, LazyPropertyOfGlobalObject<JSC::JSWeakMap>, m_napiTypeTags)                                    \
                                                                                                              \
+    V(public, Bun::JSMockModule, mockModule)                                                                 \
+                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
@@ -451,6 +455,11 @@ public:
     V(public, JSC::LazyClassStructure, m_JSStatFSClassStructure)                                             \
     V(public, JSC::LazyClassStructure, m_JSStatFSBigIntClassStructure)                                       \
     V(public, JSC::LazyClassStructure, m_JSDirentClassStructure)                                             \
+                                                                                                             \
+    V(private, WebCore::JSBuiltinInternalFunctions, m_builtinInternalFunctions)                              \
+    V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
+    V(private, Bun::CommonStrings, m_commonStrings)                                                          \
+    V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
@@ -542,11 +551,11 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)
 
-#define DECLARE_GLOBALOBJECT_PROPERTY(visibility, type, name) \
+#define DECLARE_GLOBALOBJECT_GC_PROPERTY(visibility, T, name) \
     visibility:                                               \
-    type name;
-    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DECLARE_GLOBALOBJECT_PROPERTY)
-#undef DECLARE_GLOBALOBJECT_PROPERTY
+    T name;
+    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(DECLARE_GLOBALOBJECT_GC_PROPERTY)
+#undef DECLARE_GLOBALOBJECT_GC_PROPERTY
 
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
@@ -603,13 +612,11 @@ public:
 
     JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
 
-    Bun::JSMockModule mockModule;
-
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
-    Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
+    Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
@@ -618,14 +625,10 @@ private:
     void addBuiltinGlobals(JSC::VM&);
 
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
-    WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
-    std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
-    Bun::CommonStrings m_commonStrings;
-    Bun::Http2CommonStrings m_http2_commongStrings;
     RefPtr<WebCore::Performance> m_performance { nullptr };
 
 public:

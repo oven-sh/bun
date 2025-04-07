@@ -66,6 +66,7 @@
 #include "CallSite.h"
 #include "CallSitePrototype.h"
 #include "JSCommonJSModule.h"
+#include "JSCommonJSExtensions.h"
 #include "ConsoleObject.h"
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
@@ -2858,7 +2859,7 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();
-    m_http2_commongStrings.initialize();
+    m_http2CommonStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(
@@ -3971,19 +3972,19 @@ IMPL_GET_COMMON_STRING(IN6Any)
 
 #undef IMPL_GET_COMMON_STRING
 
-template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, const WriteBarrier<T>& barrier)
+template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, T& anything)
+{
+    anything.visit(visitor);
+}
+
+template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, WriteBarrier<T>& barrier)
 {
     visitor.append(barrier);
 }
 
-template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, LazyProperty<JSC::JSGlobalObject, T>& lazyProp)
+template<class Visitor, class T> void visitGlobalObjectProperty(Visitor& visitor, std::unique_ptr<T>& ptr)
 {
-    lazyProp.visit(visitor);
-}
-
-template<class Visitor> void visitGlobalObjectProperty(Visitor& visitor, LazyClassStructure& lazyStructure)
-{
-    lazyStructure.visit(visitor);
+    ptr->visit(visitor);
 }
 
 template<class Visitor, class T, size_t n> void visitGlobalObjectProperty(Visitor& visitor, std::array<WriteBarrier<T>, n>& barriers)
@@ -4009,27 +4010,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             guarded->visitAggregate(visitor);
     }
 
-    for (auto& constructor : thisObject->constructors().array())
-        visitor.append(constructor);
-
-#define VISIT_GC_PROPERTY(visibility, type, name) \
+#define VISIT_GLOBALOBJECT_GC_PROPERTY(visibility, T, name) \
     visitGlobalObjectProperty(visitor, thisObject->name);
-    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(VISIT_GC_PROPERTY)
-#undef VISIT_GC_PROPERTY
+    FOR_EACH_GLOBALOBJECT_GC_PROPERTY(VISIT_GLOBALOBJECT_GC_PROPERTY)
+#undef VISIT_GLOBALOBJECT_GC_PROPERTY
 
-    thisObject->m_builtinInternalFunctions.visit(visitor);
-    thisObject->m_commonStrings.visit<Visitor>(visitor);
     WebCore::clientData(thisObject->vm())->httpHeaderIdentifiers().visit<Visitor>(visitor);
-    thisObject->m_http2_commongStrings.visit<Visitor>(visitor);
-
-    thisObject->mockModule.activeSpySetStructure.visit(visitor);
-    thisObject->mockModule.mockFunctionStructure.visit(visitor);
-    thisObject->mockModule.mockImplementationStructure.visit(visitor);
-    thisObject->mockModule.mockModuleStructure.visit(visitor);
-    thisObject->mockModule.mockObjectStructure.visit(visitor);
-    thisObject->mockModule.mockResultStructure.visit(visitor);
-    thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
-    thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildren<Visitor>(visitor);

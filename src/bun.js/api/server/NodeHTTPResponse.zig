@@ -236,8 +236,7 @@ pub fn shouldRequestBePending(this: *const NodeHTTPResponse) bool {
     return true;
 }
 
-pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
-    _ = callframe; // autofix
+pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
     if (this.buffered_request_body_data_during_pause.len > 0) {
         this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
     }
@@ -477,9 +476,7 @@ fn writeHeadInternal(response: uws.AnyResponse, globalObject: *JSC.JSGlobalObjec
     }
 }
 
-pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
-    _ = arguments; // autofix
+pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (this.isDone()) {
         return .undefined;
     }
@@ -542,9 +539,7 @@ pub fn onTimeout(this: *NodeHTTPResponse, _: uws.AnyResponse) void {
     this.handleAbortOrTimeout(.timeout, .zero);
 }
 
-pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
-    _ = globalObject; // autofix
-    _ = callframe; // autofix
+pub fn doPause(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
     log("doPause", .{});
     if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended) {
         return .false;
@@ -658,9 +653,7 @@ pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *JSC.JSGlobalObject, 
     return .undefined;
 }
 
-pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = globalObject; // autofix
-    _ = callframe; // autofix
+pub fn abort(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (this.isDone()) {
         return .undefined;
     }

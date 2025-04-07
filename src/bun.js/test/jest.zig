@@ -7,6 +7,7 @@ const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const Environment = bun.Environment;
+const Allocator = std.mem.Allocator;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
@@ -67,7 +68,7 @@ pub const TestRunner = struct {
     last_file: u64 = 0,
     bail: u32 = 0,
 
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     callback: *Callback = undefined,
 
     drainer: JSC.AnyTask = undefined,
@@ -891,6 +892,24 @@ pub const DescribeScope = struct {
         }.run;
     }
 
+    fn enqueueNewTask(
+        this: *DescribeScope,
+        globalObject: *JSGlobalObject,
+        test_id: TestRunner.Test.ID,
+        source: *const logger.Source,
+        test_id_for_debugger: ?TestRunner.Test.ID,
+    ) void {
+        var task = bun.new(TestRunnerTask, .{
+            .test_id = test_id,
+            .describe = this.refPtr(),
+            .globalThis = globalObject,
+            .source_file_path = source.path.text,
+            .test_id_for_debugger = test_id_for_debugger orelse 0,
+        });
+        task.ref.ref(globalObject.bunVM());
+        Jest.runner.?.enqueue(task);
+    }
+
     pub fn onDone(
         ctx: js.JSContextRef,
         callframe: *CallFrame,
@@ -1143,16 +1162,12 @@ pub const DescribeScope = struct {
                 return;
             }
             if (end == 0) {
-                var task = bun.new(TestRunnerTask, .{
-                    .test_id = std.math.maxInt(TestRunner.Test.ID),
-                    .describe = this.refPtr(),
-                    .globalThis = globalObject,
-                    .source_file_path = source.path.text,
-                    .test_id_for_debugger = 0,
-                });
-                task.ref.ref(globalObject.bunVM());
-
-                Jest.runner.?.enqueue(task);
+                this.enqueueNewTask(
+                    globalObject,
+                    std.math.maxInt(TestRunner.Test.ID),
+                    &source,
+                    null,
+                );
                 return;
             }
         }
@@ -1160,16 +1175,12 @@ pub const DescribeScope = struct {
         const maybe_report_debugger = max_test_id_for_debugger > 0;
 
         while (i < end) : (i += 1) {
-            var task = bun.new(TestRunnerTask, .{
-                .test_id = i,
-                .describe = this.refPtr(),
-                .globalThis = globalObject,
-                .source_file_path = source.path.text,
-                .test_id_for_debugger = if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
-            });
-            task.ref.ref(globalObject.bunVM());
-
-            Jest.runner.?.enqueue(task);
+            this.enqueueNewTask(
+                globalObject,
+                i,
+                &source,
+                if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
+            );
         }
     }
 
@@ -1644,7 +1655,6 @@ pub const TestRunnerTask = struct {
 
     fn deinit(this: *TestRunnerTask) void {
         const vm = JSC.VirtualMachine.get();
-        this.describe.deinit();
         if (vm.onUnhandledRejectionCtx) |ctx| {
             if (ctx == @as(*anyopaque, @ptrCast(this))) {
                 vm.onUnhandledRejectionCtx = null;
@@ -1662,6 +1672,7 @@ pub const TestRunnerTask = struct {
         //
         // TODO: fix this bug
         // default_allocator.destroy(this);
+        // this.describe.deinit();
     }
 };
 

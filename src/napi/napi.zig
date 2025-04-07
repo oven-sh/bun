@@ -1051,7 +1051,6 @@ pub const napi_async_work = struct {
     complete: ?napi_async_complete_callback,
     data: ?*anyopaque = null,
     status: std.atomic.Value(Status) = .init(.pending),
-    wait_for_deinit: bool = false,
     scheduled: bool = false,
     ref: Async.KeepAlive = .{},
 

@@ -241,7 +241,6 @@ function execFile(file, args, options, callback) {
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
     signal: options.signal,
-    maxBuffer: options.maxBuffer,
   });
 
   let encoding;
@@ -1314,7 +1313,6 @@ class ChildProcess extends EventEmitter {
         argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
-        maxBuffer: options.maxBuffer,
       });
       this.pid = this.#handle.pid;
 

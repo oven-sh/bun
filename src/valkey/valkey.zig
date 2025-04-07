@@ -16,14 +16,6 @@ pub const ConnectionFlags = packed struct {
     finalized: bool = false,
 };
 
-/// TLS connection status
-pub const TLSStatus = union(enum) {
-    none,
-    pending,
-    ssl_not_available,
-    ssl_ok,
-};
-
 /// Valkey connection status
 pub const Status = enum {
     disconnected,
@@ -492,10 +484,25 @@ pub const ValkeyClient = struct {
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
         if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
-            if (this.flags.auto_pipelining) {
-                // When auto pipelining is enabled, register for a flush
-                // regardless of in-flight commands status
-                if (this.queue.readableLength() > 0) {
+            if (this.queue.readableLength() > 0) {
+                // Check the command at the head of the queue
+                const flags = &this.queue.peekItem(0).meta;
+
+                if (!flags.supports_auto_pipelining) {
+                    // Head is non-pipelineable. Try to drain it serially if nothing is in-flight.
+                    if (this.in_flight.readableLength() == 0) {
+                        _ = this.drain(); // Send the single non-pipelineable command
+
+                        // After draining, check if the *new* head is pipelineable and schedule flush if needed.
+                        // This covers sequences like NON_PIPE -> PIPE -> PIPE ...
+                        if (this.queue.readableLength() > 0 and this.queue.peekItem(0).meta.supports_auto_pipelining) {
+                            this.registerAutoFlusher(this.vm);
+                        }
+                    } else {
+                        // Non-pipelineable command is blocked by in-flight commands. Do nothing, wait for in-flight to finish.
+                    }
+                } else {
+                    // Head is pipelineable. Register the flusher to batch it with others.
                     this.registerAutoFlusher(this.vm);
                 }
             } else if (this.in_flight.readableLength() == 0) {

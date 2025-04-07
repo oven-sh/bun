@@ -615,14 +615,17 @@ pub const JSValkeyClient = struct {
 
         const cmd_str = command.toUTF8WithoutRef(bun.default_allocator);
         defer cmd_str.deinit();
+        var cmd: Command = .{
+            .command = cmd_str.slice(),
+            .args = .{ .args = args.items },
+            .meta = .{},
+        };
+        cmd.meta = cmd.meta.check(&cmd);
         // Send command with slices directly
         const promise = this.send(
             globalObject,
             callframe.this(),
-            &.{
-                .command = cmd_str.slice(),
-                .args = .{ .args = args.items },
-            },
+            &cmd,
         ) catch |err| {
             return protocol.valkeyErrorToJS(globalObject, "Failed to send command", err);
         };

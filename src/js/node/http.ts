@@ -1308,7 +1308,8 @@ function IncomingMessage(req, defaultIncomingOpts) {
     this[webRequestOrResponse] = req;
     this[typeSymbol] = type;
     this[bodyStreamSymbol] = undefined;
-    this[statusMessageSymbol] = (req as Response)?.statusText || null;
+    const statusText = (req as Response)?.statusText;
+    this[statusMessageSymbol] = statusText !== "" ? statusText || null : "";
     this[statusCodeSymbol] = (req as Response)?.status || 200;
 
     if (type === NodeHTTPIncomingRequestType.FetchRequest || type === NodeHTTPIncomingRequestType.FetchResponse) {

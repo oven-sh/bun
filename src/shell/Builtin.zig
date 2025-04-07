@@ -301,7 +301,6 @@ pub fn init(
     cmd_local_env: *EnvMap,
     cwd: bun.FileDescriptor,
     io: *IO,
-    comptime in_cmd_subst: bool,
 ) CoroutineResult {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
         .fd => |fd| .{ .fd = fd.refSelf() },
@@ -354,23 +353,7 @@ pub fn init(
         },
     }
 
-    if (node.redirect_file) |file| brk: {
-        if (comptime in_cmd_subst) {
-            if (node.redirect.stdin) {
-                stdin = .ignore;
-            }
-
-            if (node.redirect.stdout) {
-                stdout = .ignore;
-            }
-
-            if (node.redirect.stderr) {
-                stdout = .ignore;
-            }
-
-            break :brk;
-        }
-
+    if (node.redirect_file) |file| {
         switch (file) {
             .atom => {
                 if (cmd.redirection_file.items.len == 0) {

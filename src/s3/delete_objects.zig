@@ -263,12 +263,16 @@ pub fn parseS3DeleteObjectsSuccessResult(xml: []u8) !S3DeleteObjectsSuccessResul
 
 const MAX_OBJECT_KEY_SIZE: usize = 1024;
 
-fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
+fn xmlEncodeValue(input: []const u8, buf: []u8) ![]const u8 {
     var written: usize = 0;
 
     for (input) |char| {
         switch (char) {
             '&' => {
+                if (written + 5 > buf.len) {
+                    return error.BufferTooSmall;
+                }
+
                 buf[written] = '&';
                 written += 1;
 
@@ -285,6 +289,10 @@ fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
                 written += 1;
             },
             '<' => {
+                if (written + 4 > buf.len) {
+                    return error.BufferTooSmall;
+                }
+
                 buf[written] = '&';
                 written += 1;
 
@@ -298,6 +306,10 @@ fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
                 written += 1;
             },
             '>' => {
+                if (written + 4 > buf.len) {
+                    return error.BufferTooSmall;
+                }
+
                 buf[written] = '&';
                 written += 1;
 
@@ -311,6 +323,10 @@ fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
                 written += 1;
             },
             '"' => {
+                if (written + 6 > buf.len) {
+                    return error.BufferTooSmall;
+                }
+
                 buf[written] = '&';
                 written += 1;
 
@@ -330,6 +346,10 @@ fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
                 written += 1;
             },
             '\'' => {
+                if (written + 6 > buf.len) {
+                    return error.BufferTooSmall;
+                }
+
                 buf[written] = '&';
                 written += 1;
 
@@ -350,6 +370,10 @@ fn xmlEncodeValue(input: []const u8, buf: []u8) []const u8 {
             },
             else => {
                 @branchHint(.likely);
+
+                if (written >= buf.len) {
+                    return error.BufferTooSmall;
+                }
                 buf[written] = char;
                 written += 1;
             },
@@ -376,7 +400,12 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
                 const utfStr = str.toUTF8(allocator);
 
                 const buf = allocator.alloc(u8, MAX_OBJECT_KEY_SIZE) catch bun.outOfMemory();
-                const encodedKey = xmlEncodeValue(utfStr.slice(), buf);
+                const encodedKey = xmlEncodeValue(utfStr.slice(), buf) catch {
+                    allocator.free(buf);
+                    utfStr.deinit();
+                    return globalThis.ERR_S3_INVALID_PATH("Object Key cannot be longer than 1024 characters.", .{}).throw();
+                };
+
                 delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key></Object>", .{encodedKey}) catch bun.outOfMemory();
                 allocator.free(buf);
                 utfStr.deinit();
@@ -387,7 +416,11 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
             }
 
             const buf = allocator.alloc(u8, MAX_OBJECT_KEY_SIZE) catch bun.outOfMemory();
-            const encodedKey = xmlEncodeValue(blob.*.store.?.data.s3.path(), buf);
+            const encodedKey = xmlEncodeValue(blob.*.store.?.data.s3.path(), buf) catch {
+                allocator.free(buf);
+                return globalThis.ERR_S3_INVALID_PATH("Object Key cannot be longer than 1024 characters.", .{}).throw();
+            };
+
             delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key></Object>", .{encodedKey}) catch bun.outOfMemory();
             allocator.free(buf);
         } else if (object_identifier_js.isObject()) {
@@ -402,7 +435,12 @@ pub fn getS3DeleteObjectsOptionsFromJs(allocator: std.mem.Allocator, globalThis:
                     const utfStr = str.toUTF8(allocator);
 
                     const buf = allocator.alloc(u8, MAX_OBJECT_KEY_SIZE) catch bun.outOfMemory();
-                    const encodedKey = xmlEncodeValue(utfStr.slice(), buf);
+                    const encodedKey = xmlEncodeValue(utfStr.slice(), buf) catch {
+                        allocator.free(buf);
+                        utfStr.deinit();
+                        return globalThis.ERR_S3_INVALID_PATH("Object Key cannot be longer than 1024 characters.", .{}).throw();
+                    };
+
                     delete_objects_request_body.appendFmt(allocator, "<Object><Key>{s}</Key>", .{encodedKey}) catch bun.outOfMemory();
                     allocator.free(buf);
                     utfStr.deinit();

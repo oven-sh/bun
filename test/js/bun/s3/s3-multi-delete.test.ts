@@ -817,6 +817,158 @@ describe("s3 - multi delete", () => {
     }
   });
 
+  it("Should throw invalid object key error when xml encoded Key is longer than 1024", async () => {
+    using server = createBunServer(async => {
+      return new Response("", {
+        headers: {
+          "Content-Type": "application/xml",
+        },
+        status: 500,
+      });
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    try {
+      await client.delete(["a".padEnd(1025, "a")]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete(["&".padStart(1024, "a")]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete(["<".padStart(1024, "a")]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([">".padStart(1024, "a")]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete(["'".padStart(1024, "a")]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete(['"'.padStart(1024, "a")]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([{ key: "a".padEnd(1025, "a") }]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([{ key: "&".padStart(1024, "a") }]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([{ key: "<".padStart(1024, "a") }]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([{ key: ">".padStart(1024, "a") }]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([{ key: "'".padStart(1024, "a") }]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([{ key: '"'.padStart(1024, "a") }]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([client.file("&".padStart(1024, "a"))]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([client.file("<".padStart(1024, "a"))]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([client.file(">".padStart(1024, "a"))]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([client.file("'".padStart(1024, "a"))]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+
+    try {
+      await client.delete([client.file('"'.padStart(1024, "a"))]);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ERR_S3_INVALID_PATH");
+      expect(err.message).toBe("Object Key cannot be longer than 1024 characters.");
+    }
+  });
+
   it("Shoulw work from static method", async () => {
     using server = createBunServer(async => {
       return new Response(

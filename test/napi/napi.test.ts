@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isBroken, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -469,18 +469,27 @@ describe("napi", () => {
   it("works when the module register function throws", () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
+
+  describe("napi_add_finalizer", () => {
+    it.todoIf(isBroken)("does not crash if the finalizer is called during VM shutdown", () => {
+      checkSameOutput("test_finalizer_called_during_destruction", [], {
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        BUN_JSC_useGC: "0",
+      });
+    });
+  });
 });
 
-function checkSameOutput(test: string, args: any[] | string) {
-  const nodeResult = runOn("node", test, args).trim();
-  let bunResult = runOn(bunExe(), test, args);
+function checkSameOutput(test: string, args: any[] | string, env: object = {}) {
+  const nodeResult = runOn("node", test, args, env).trim();
+  let bunResult = runOn(bunExe(), test, args, env);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
   expect(bunResult).toEqual(nodeResult);
   return nodeResult;
 }
 
-function runOn(executable: string, test: string, args: any[] | string) {
+function runOn(executable: string, test: string, args: any[] | string, env: object) {
   // when the inspector runs (can be due to VSCode extension), there is
   // a bug that in debug modes the console logs extra stuff
   const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
@@ -492,7 +501,8 @@ function runOn(executable: string, test: string, args: any[] | string) {
       test,
       typeof args == "string" ? args : JSON.stringify(args),
     ],
-    env: rest,
+    env: { ...rest, ...env },
+    cwd: join(__dirname, "napi-app"),
   });
   const errs = exec.stderr.toString();
   if (errs !== "") {

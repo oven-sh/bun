@@ -4142,7 +4142,7 @@ pub const File = struct {
     /// 2. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([:0]u8) {
+    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         var buf: bun.PathBuffer = undefined;
         const normalized = bun.path.joinAbsStringBufZ(
             bun.fs.FileSystem.instance.top_level_dir,
@@ -4156,7 +4156,7 @@ pub const File = struct {
     /// 1. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, [:0]u8 }) {
+    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
         const ElementType = std.meta.Elem(@TypeOf(path));
 
         const rc = brk: {
@@ -4190,16 +4190,14 @@ pub const File = struct {
             return .{ .result = .{ this, @ptrCast(@constCast("")) } };
         }
 
-        result.bytes.append(0) catch bun.outOfMemory();
-
-        return .{ .result = .{ this, result.bytes.items[0 .. result.bytes.items.len - 1 :0] } };
+        return .{ .result = .{ this, result.bytes.items } };
     }
 
     /// 1. Open a file for reading relative to a directory
     /// 2. Read the file to a buffer
     /// 3. Close the file
     /// 4. Return the buffer
-    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([:0]u8) {
+    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
             .err => |err| return .{ .err = err },
             .result => |result| result,

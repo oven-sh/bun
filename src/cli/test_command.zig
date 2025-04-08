@@ -1151,42 +1151,36 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
-        defer results.deinit();
-
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
         //
         try vm.ensureDebugger(false);
 
-        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, &results);
+        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch bun.outOfMemory();
         defer scanner.deinit();
-        const test_files, const search_count = scan: {
-            if (for (ctx.positionals) |arg| {
-                if (std.fs.path.isAbsolute(arg) or
-                    strings.startsWith(arg, "./") or
-                    strings.startsWith(arg, "../") or
-                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                        strings.startsWith(arg, "..\\")))) break true;
-            } else false) {
-                // One of the files is a filepath. Instead of treating the
-                // arguments as filters, treat them as filepaths
-                const file_or_dirnames = ctx.positionals[1..];
-                for (file_or_dirnames) |arg| {
-                    scanner.scan(arg) catch |err| switch (err) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                        // don't error if multiple are passed; one might fail
-                        // but the others may not
-                        error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                            Output.prettyErrorln("<red>The following filter did not match any test files:<r> {s}", .{arg});
-                            Output.flush();
-                            Global.exit(1);
-                        },
-                    };
-                }
-                break :scan .{ results.items, scanner.search_count };
+        const has_relative_path = for (ctx.positionals) |arg| {
+            if (std.fs.path.isAbsolute(arg) or
+                strings.startsWith(arg, "./") or
+                strings.startsWith(arg, "../") or
+                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                    strings.startsWith(arg, "..\\")))) break true;
+        } else false;
+        if (has_relative_path) {
+            // One of the files is a filepath. Instead of treating the
+            // arguments as filters, treat them as filepaths
+            const file_or_dirnames = ctx.positionals[1..];
+            for (file_or_dirnames) |arg| {
+                scanner.scan(arg) catch |err| switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    // don't error if multiple are passed; one might fail
+                    // but the others may not
+                    error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        Global.exit(1);
+                    },
+                };
             }
-
+        } else {
             // Treat arguments as filters and scan the codebase
             const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
 
@@ -1220,13 +1214,14 @@ pub const TestCommand = struct {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.DoesNotExist => {
                     Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {s}", .{dir_to_scan});
-                    Output.flush();
                     Global.exit(1);
                 },
             };
+        }
 
-            break :scan .{ scanner.results.items, scanner.search_count };
-        };
+        const test_files = scanner.takeFoundTestFiles() catch bun.outOfMemory();
+        defer ctx.allocator.free(test_files);
+        const search_count = scanner.search_count;
 
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;

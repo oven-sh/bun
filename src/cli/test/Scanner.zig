@@ -14,11 +14,12 @@ const jest = JSC.Jest;
 
 /// Memory is borrowed.
 exclusion_names: []const []const u8 = &.{},
-/// When no filters exist, none are applied. Memory is borrowed.
+/// When this list is empty, no filters are applied.
+/// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
 filter_names: []const []const u8 = &.{},
 dirs_to_scan: Fifo,
-/// Scanner mutably borrows this results list
-results: *std.ArrayList(bun.PathString),
+/// Paths to test files found while scanning.
+test_files: std.ArrayListUnmanaged(bun.PathString),
 fs: *FileSystem,
 open_dir_buf: bun.PathBuffer = undefined,
 scan_dir_buf: bun.PathBuffer = undefined,
@@ -26,6 +27,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 
+const log = bun.Output.scoped(.jest, true);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
     relative_dir: bun.StoredFileDescriptorType,
@@ -39,26 +41,32 @@ const Error = error{
 } || Allocator.Error;
 
 pub fn init(
-    allocator: Allocator,
+    alloc: Allocator,
     transpiler: *Transpiler,
-    results: *std.ArrayList(bun.PathString),
-) Scanner {
+    initial_results_capacity: usize,
+) Allocator.Error!Scanner {
+    const results = try std.ArrayListUnmanaged(bun.PathString).initCapacity(
+        alloc,
+        initial_results_capacity,
+    );
     return Scanner{
-        .dirs_to_scan = Fifo.init(allocator),
+        .dirs_to_scan = Fifo.init(alloc),
         .options = &transpiler.options,
         .fs = transpiler.fs,
-        .results = results,
+        .test_files = results,
     };
 }
 
 pub fn deinit(this: *Scanner) void {
+    this.test_files.deinit(this.allocator());
     this.dirs_to_scan.deinit();
-    // NOTE: results is borrowed
     this.* = undefined;
 }
 
-fn readDirWithName(this: *Scanner, name: []const u8, handle: ?std.fs.Dir) !*FileSystem.RealFS.EntriesOption {
-    return try this.fs.fs.readDirectoryWithIterator(name, handle, 0, true, *Scanner, this);
+/// Take the list of test files out of this scanner. Caller owns the returned
+/// allocation.
+pub fn takeFoundTestFiles(this: *Scanner) Allocator.Error![]bun.PathString {
+    return this.test_files.toOwnedSlice(this.allocator());
 }
 
 pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
@@ -69,12 +77,13 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
         switch (err) {
             error.NotDir, error.ENOTDIR => {
                 if (this.isTestFile(path)) {
-                    this.results.append(bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch bun.outOfMemory())) catch bun.outOfMemory();
+                    const rel_path = bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch bun.outOfMemory());
+                    this.test_files.append(this.allocator(), rel_path) catch bun.outOfMemory();
                 }
             },
             error.ENOENT => return error.DoesNotExist,
             error.OutOfMemory => return error.OutOfMemory,
-            else => std.debug.print("error: {s}\n", .{@errorName(err)}),
+            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(err) }),
         }
 
         return;
@@ -118,6 +127,10 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
             ) catch return error.OutOfMemory;
         }
     }
+}
+
+fn readDirWithName(this: *Scanner, name: []const u8, handle: ?std.fs.Dir) !*FileSystem.RealFS.EntriesOption {
+    return try this.fs.fs.readDirectoryWithIterator(name, handle, 0, true, *Scanner, this);
 }
 
 pub const test_name_suffixes = [_][]const u8{
@@ -203,7 +216,11 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
             }
 
             entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
-            this.results.append(entry.abs_path) catch unreachable;
+            this.test_files.append(this.allocator(), entry.abs_path) catch unreachable;
         },
     }
+}
+
+inline fn allocator(self: *const Scanner) Allocator {
+    return self.dirs_to_scan.allocator;
 }

@@ -21,7 +21,7 @@ pub const SmolStr = packed struct {
         __len: u7,
         _tag: u1,
 
-        const max_len: comptime_int = @sizeOf(@FieldType(Inlined, "data")) - 1;
+        const max_len: comptime_int = @bitSizeOf(@FieldType(Inlined, "data")) / 8;
         const empty: Inlined = .{
             .data = 0,
             .__len = 0,

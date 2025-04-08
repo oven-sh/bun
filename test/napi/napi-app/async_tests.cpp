@@ -218,9 +218,6 @@ napi_value
 create_async_work_with_null_complete(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
-  int32_t *data = new int32_t;
-  *data = 0;
-
   // napi_status status;
   napi_async_work work;
   napi_value result;
@@ -229,7 +226,7 @@ create_async_work_with_null_complete(const Napi::CallbackInfo &info) {
       Napi::String::New(env, "napitests__create_async_work_with_null_complete");
 
   napi_create_async_work(env, nullptr, resource_name,
-                         &execute_for_null_complete, nullptr, data, &work);
+                         &execute_for_null_complete, nullptr, nullptr, &work);
 
   napi_queue_async_work(env, work);
 
@@ -267,20 +264,46 @@ void complete_for_cancel(napi_env env, napi_status status, void *data) {
   napi_delete_async_work(env, cancel_data->work);
 }
 
+std::atomic<bool> cancel_flag(false);
+
+void blocking_execute_for_cancel(napi_env env, void *data) {
+  while (!cancel_flag) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
 napi_value test_cancel_async_work(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
   napi_ref callback;
   napi_create_reference(env, info[0], 1, &callback);
 
-  napi_value resource_name =
-      Napi::String::New(env, "napitests__test_cancel_async_work");
-
   napi_status status;
   napi_value result;
 
+  napi_value blocking_resource_name_1 =
+      Napi::String::New(env, "napitests__test_cancel_async_work_blocking_1");
+  napi_value blocking_resource_name_2 =
+      Napi::String::New(env, "napitests__test_cancel_async_work_blocking_2");
+
+  napi_async_work blocking_work_1;
+  napi_async_work blocking_work_2;
+
+  napi_create_async_work(env, nullptr, blocking_resource_name_1,
+                         &blocking_execute_for_cancel, nullptr, nullptr,
+                         &blocking_work_1);
+  napi_queue_async_work(env, blocking_work_1);
+
+  napi_create_async_work(env, nullptr, blocking_resource_name_2,
+                         &blocking_execute_for_cancel, nullptr, nullptr,
+                         &blocking_work_2);
+  napi_queue_async_work(env, blocking_work_2);
+
   struct CancelData *data = new CancelData;
   data->callback = callback;
+
+  napi_value resource_name =
+      Napi::String::New(env, "napitests__test_cancel_async_work");
 
   napi_create_async_work(env, nullptr, resource_name, &execute_for_cancel,
                          &complete_for_cancel, data, &data->work);
@@ -291,6 +314,9 @@ napi_value test_cancel_async_work(const Napi::CallbackInfo &info) {
     napi_get_boolean(env, false, &result);
     return result;
   }
+
+  // cancel the blocking work
+  cancel_flag = true;
 
   napi_get_boolean(env, true, &result);
   return result;

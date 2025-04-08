@@ -278,7 +278,9 @@ pub fn create(
     node_response_ptr: *?*NodeHTTPResponse,
 ) callconv(.C) JSC.JSValue {
     const vm = globalObject.bunVM();
-    if ((HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
+    const method = HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS;
+    // GET in node.js can have a body
+    if (method.hasRequestBody() or method == HTTP.Method.GET) {
         const req_len: usize = brk: {
             if (request.header("content-length")) |content_length| {
                 break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;

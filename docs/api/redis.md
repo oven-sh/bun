@@ -373,12 +373,6 @@ Common error codes:
 - `ERR_REDIS_CONNECTION_CLOSED` - Connection to the server was closed
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
-- `ERR_REDIS_INVALID_RESPONSE_TYPE` - Response type not recognized
-- `ERR_REDIS_TLS_NOT_AVAILABLE` - TLS/SSL not available on this connection
-- `ERR_REDIS_TLS_UPGRADE_FAILED` - Failed to upgrade connection to TLS/SSL
-- `ERR_REDIS_INVALID_ARGUMENT` - Invalid argument passed to a command
-- `ERR_REDIS_INVALID_PASSWORD` - Invalid password when authenticating
-- `ERR_REDIS_INVALID_USERNAME` - Invalid username when authenticating
 
 ## Example Use Cases
 

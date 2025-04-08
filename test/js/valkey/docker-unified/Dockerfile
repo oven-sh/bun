@@ -1,6 +1,9 @@
 # Unified Dockerfile for Valkey/Redis with TCP, TLS, Unix socket, and authentication support
 FROM redis:7-alpine
 
+# Set user to root
+USER root
+
 # Install bash for initialization scripts
 RUN apk add --no-cache bash
 
@@ -22,7 +25,6 @@ RUN chmod +x /docker-entrypoint-initdb.d/init-redis.sh
 
 # Expose ports
 EXPOSE 6379 6380
-VOLUME /tmp
 WORKDIR /docker-entrypoint-initdb.d
 
 # Use custom entrypoint to run initialization script

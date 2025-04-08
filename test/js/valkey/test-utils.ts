@@ -278,8 +278,9 @@ async function startContainer(): Promise<ContainerConfiguration> {
         `${port}:6379`,
         "-p",
         `${tlsPort}:6380`,
-        "-v",
-        `${REDIS_TEMP_DIR}:/tmp`,
+        // TODO: unix domain socket has permission errors in CI.
+        // "-v",
+        // `${REDIS_TEMP_DIR}:/tmp`,
         "--health-cmd",
         "redis-cli ping || exit 1",
         "--health-interval",

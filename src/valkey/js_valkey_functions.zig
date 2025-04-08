@@ -524,6 +524,8 @@ pub const zcard = compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call;
 pub const zpopmax = compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call;
 pub const zpopmin = compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call;
 pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call;
+pub const ping = compile.@"(key: RedisKey)"("ping", "PING", "message").call;
+
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
 pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call;
@@ -536,6 +538,21 @@ pub const zscore = compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCO
 
 pub const del = compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key").call;
 pub const mget = compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key").call;
+
+pub const publish = compile.@"(...strings: string[])"("publish", "PUBLISH").call;
+pub const script = compile.@"(...strings: string[])"("script", "SCRIPT").call;
+pub const select = compile.@"(...strings: string[])"("select", "SELECT").call;
+pub const spublish = compile.@"(...strings: string[])"("spublish", "SPUBLISH").call;
+pub const smove = compile.@"(...strings: string[])"("smove", "SMOVE").call;
+pub const substr = compile.@"(...strings: string[])"("substr", "SUBSTR").call;
+pub const hstrlen = compile.@"(...strings: string[])"("hstrlen", "HSTRLEN").call;
+pub const zrank = compile.@"(...strings: string[])"("zrank", "ZRANK").call;
+pub const zrevrank = compile.@"(...strings: string[])"("zrevrank", "ZREVRANK").call;
+pub const subscribe = compile.@"(...strings: string[])"("subscribe", "SUBSCRIBE").call;
+pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRIBE").call;
+pub const unsubscribe = compile.@"(...strings: string[])"("unsubscribe", "UNSUBSCRIBE").call;
+pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE").call;
+pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB").call;
 
 // publish(channel: RedisValue, message: RedisValue)
 // script(subcommand: "LOAD", script: RedisValue)
@@ -647,6 +664,42 @@ const compile = struct {
                     &.{
                         .command = command,
                         .args = .{ .args = &.{ key, value } },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.asValue(globalObject);
+            }
+        };
+    }
+
+    pub fn @"(...strings: string[])"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+                var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, callframe.arguments().len);
+                defer {
+                    for (args.items) |*item| {
+                        item.deinit();
+                    }
+                    args.deinit();
+                }
+
+                for (callframe.arguments()) |arg| {
+                    const another = (try fromJS(globalObject, arg)) orelse {
+                        return globalObject.throwInvalidArgumentType(name, "additional arguments", "string or buffer");
+                    };
+                    try args.append(another);
+                }
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = args.items },
                     },
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);

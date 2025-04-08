@@ -11,7 +11,12 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
+const {
+  0: _workerData,
+  1: _threadId,
+  2: _receiveMessageOnPort,
+  3: kNodeWorkerObject,
+} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [unknown, number, (port: unknown) => unknown, symbol];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -234,7 +239,16 @@ class Worker extends EventEmitter {
       }
     }
     try {
-      this.#worker = new WebWorker(filename, options);
+      // The native WebWorker constructor fires the 'worker' event on the process when the worker is
+      // successfully created. For worker_threads, we want to fire that event with the
+      // worker_threads object instead of the Web Worker object.
+      //
+      // This is implemented by accepting two extra arguments in the native constructor: a symbol to
+      // prove we are the real worker_threads constructor, and if so, the worker_threads object as
+      // the last parameter.
+      this.#worker = new (WebWorker as new (
+        ...args: [...ConstructorParameters<typeof WebWorker>, nodeWorkerObjectSymbol: symbol, nodeWorker: Worker]
+      ) => WebWorker)(filename, options as Bun.WorkerOptions, kNodeWorkerObject, this);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);

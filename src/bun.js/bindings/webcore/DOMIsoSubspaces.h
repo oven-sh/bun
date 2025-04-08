@@ -63,6 +63,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
+    std::unique_ptr<IsoSubspace> m_subspaceForBoundEmitFunction;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -920,7 +921,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
-    
+
     std::unique_ptr<IsoSubspace> m_subspaceForCookie;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;

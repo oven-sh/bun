@@ -58,6 +58,7 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
+#include "BunProcess.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -118,6 +119,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWorkerDOMConstructor*>(callFrame->jsCallee());
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     ASSERT(castedThis);
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -135,6 +137,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
+    JSValue nodeWorkerObject {};
+    if (JSValue::strictEqual(lexicalGlobalObject, callFrame->argument(2), globalObject->nodeWorkerObjectSymbol())) {
+        nodeWorkerObject = callFrame->argument(3);
+    }
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     auto options = WorkerOptions {};
 
@@ -230,7 +237,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             options.dataMessagePorts = WTFMove(transferredPorts);
         }
 
-        auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
@@ -322,6 +328,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    // Emit the 'worker' event on the process. If we are constructing a `node:worker_threads`
+    // worker, we emit the event with the worker_threads Worker object instead of the Web Worker.
+    JSValue workerToEmit = jsValue;
+    if (nodeWorkerObject) {
+        workerToEmit = nodeWorkerObject;
+    }
+    auto* process = jsCast<Bun::Process*>(globalObject->processObject());
+    process->emitOnNextTick(globalObject, "worker"_s, workerToEmit);
 
     return JSValue::encode(jsValue);
 }
@@ -694,4 +709,4 @@ Worker* JSWorker::toWrapped(JSC::VM&, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
-}
+} // namespace WebCore

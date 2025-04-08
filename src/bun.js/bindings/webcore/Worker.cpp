@@ -518,11 +518,12 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         threadId = jsNumber(worker->clientIdentifier() - 1);
     }
 
-    JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 3, globalObject->nodeWorkerObjectSymbol());
 
     return array;
 }

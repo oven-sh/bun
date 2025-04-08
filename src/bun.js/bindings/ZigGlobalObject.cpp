@@ -173,6 +173,7 @@
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 #include "ProcessBindingFs.h"
+#include "BoundEmitFunction.h"
 
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
@@ -3499,6 +3500,13 @@ void GlobalObject::finishCreation(VM& vm)
     m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
         init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
     });
+    m_BoundEmitFunctionStructure.initLater([](const LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::BoundEmitFunction::createStructure(init.vm, init.owner));
+    });
+    m_nodeWorkerObjectSymbol.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
+        // This should not be visible to user code
+        init.set(Symbol::createWithDescription(init.vm, "node worker object symbol"_s));
+    });
 
     configureNodeVM(vm, this);
 
@@ -4118,6 +4126,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bigintStatValues.visit(visitor);
     thisObject->m_statFsValues.visit(visitor);
     thisObject->m_bigintStatFsValues.visit(visitor);
+    thisObject->m_nodeWorkerObjectSymbol.visit(visitor);
+    thisObject->m_BoundEmitFunctionStructure.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

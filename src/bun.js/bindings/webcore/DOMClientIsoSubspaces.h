@@ -66,6 +66,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBoundEmitFunction;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -75,7 +76,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParamsIterator;
-    
+
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookie;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookieMap;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookieMapIterator;

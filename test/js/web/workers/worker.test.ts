@@ -269,6 +269,38 @@ describe("web worker", () => {
       done();
     });
   });
+
+  describe("worker event", () => {
+    test("is fired with the right object", () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let worker: Worker | undefined = undefined;
+      let called = false;
+      process.once("worker", eventWorker => {
+        called = true;
+        expect(eventWorker as any).toBe(worker);
+        resolve();
+      });
+      worker = new Worker(new URL("data:text/javascript,"));
+      expect(called).toBeFalse();
+      return promise;
+    });
+
+    test("cannot fake a node:worker_threads Worker", () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let worker: Worker | undefined = undefined;
+      let called = false;
+      process.once("worker", eventWorker => {
+        called = true;
+        expect(eventWorker as any).toBe(worker);
+        resolve();
+      });
+      // make sure that the native constructor requires a secret symbol to emit a
+      // node:worker_threads object
+      worker = new (Worker as any)(new URL("data:text/javascript,"), {}, Symbol(), 5);
+      expect(called).toBeFalse();
+      return promise;
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

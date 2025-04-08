@@ -281,6 +281,7 @@ public:
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
+    Structure* BoundEmitFunctionStructure() { return m_BoundEmitFunctionStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
@@ -512,6 +513,7 @@ public:
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+    Symbol* nodeWorkerObjectSymbol() { return m_nodeWorkerObjectSymbol.getInitializedOnMainThread(this); }
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
@@ -618,6 +620,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
+    LazyProperty<JSGlobalObject, Structure> m_BoundEmitFunctionStructure;
 
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
@@ -643,6 +646,8 @@ public:
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatValues;
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
+
+    LazyProperty<JSGlobalObject, Symbol> m_nodeWorkerObjectSymbol;
 
     // De-optimization once `require("module")._resolveFilename` is written to
     bool hasOverriddenModuleResolveFilenameFunction = false;

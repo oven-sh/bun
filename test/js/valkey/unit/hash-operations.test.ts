@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, expectType } from "../test-utils";
+import { describe, expect, test, beforeEach } from "bun:test";
+import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering Redis hash operations
@@ -8,12 +8,12 @@ import { ConnectionType, createClient, ctx, expectType } from "../test-utils";
  * - Incremental operations (HINCRBY, HINCRBYFLOAT)
  * - Hash scanning operations (HGETALL, HKEYS, HVALS)
  */
-describe("Valkey: Hash Data Type Operations", () => {
+describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
   beforeEach(async () => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();
-      ctx.redis = createClient(ConnectionType.TCP);
     }
+    ctx.redis = createClient(ConnectionType.TCP);
   });
 
   describe("Basic Hash Commands", () => {

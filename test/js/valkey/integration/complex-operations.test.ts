@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient } from "bun";
 import { describe, expect, test, beforeEach, afterEach, afterAll } from "bun:test";
-import { ConnectionType, createClient, ctx } from "../test-utils";
+import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
 /**
  * Integration test suite for complex Redis operations
@@ -9,7 +9,7 @@ import { ConnectionType, createClient, ctx } from "../test-utils";
  * - Complex data type operations
  * - Realistic use cases
  */
-describe("Valkey: Complex Operations", () => {
+describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();

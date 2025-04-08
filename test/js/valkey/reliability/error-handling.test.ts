@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient } from "bun";
 import { describe, expect, test, beforeEach } from "bun:test";
-import { createClient, DEFAULT_REDIS_URL, ctx, ConnectionType } from "../test-utils";
+import { createClient, DEFAULT_REDIS_URL, ctx, ConnectionType, isEnabled } from "../test-utils";
 
 /**
  * Test suite for error handling, protocol failures, and edge cases
@@ -10,7 +10,7 @@ import { createClient, DEFAULT_REDIS_URL, ctx, ConnectionType } from "../test-ut
  * - Type errors
  * - Edge cases
  */
-describe("Valkey: Error Handling", () => {
+describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();
@@ -92,7 +92,9 @@ describe("Valkey: Error Handling", () => {
         `"Expected value to be a string or buffer for 'set'."`,
       );
 
-      expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(`"Expected value to be a string or buffer for 'set'."`);
+      expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(
+        `"Expected value to be a string or buffer for 'set'."`,
+      );
     });
 
     test("should handle invalid sendCommand inputs", async () => {

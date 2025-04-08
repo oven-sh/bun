@@ -1,9 +1,9 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { randomUUIDv7, RedisClient } from "bun";
-import { createClient, ctx, DEFAULT_REDIS_URL, ConnectionType } from "./test-utils";
+import { createClient, ctx, DEFAULT_REDIS_URL, ConnectionType, isEnabled } from "./test-utils";
 import { expectType } from "./test-utils";
 
-describe("Valkey Redis Client", () => {
+describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();

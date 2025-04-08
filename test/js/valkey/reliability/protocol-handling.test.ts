@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, testKey } from "../test-utils";
+import { ConnectionType, createClient, ctx, isEnabled, testKey } from "../test-utils";
 
 /**
  * Test suite for RESP protocol handling, focusing on edge cases
@@ -8,7 +8,7 @@ import { ConnectionType, createClient, ctx, testKey } from "../test-utils";
  * - Bulk string/array handling
  * - Special value encoding/decoding
  */
-describe("Valkey: Protocol Handling", () => {
+describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();

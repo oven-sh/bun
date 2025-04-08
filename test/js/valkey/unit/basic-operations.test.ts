@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { ctx, expectType, createClient, ConnectionType } from "../test-utils";
+import { ctx, expectType, createClient, ConnectionType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering basic Redis operations
@@ -9,7 +9,7 @@ import { ctx, expectType, createClient, ConnectionType } from "../test-utils";
  * - Existence checks (EXISTS)
  * - Deletion operations (DEL)
  */
-describe("Valkey: Basic String Operations", () => {
+describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();

@@ -4,7 +4,7 @@ import { bunEnv, randomPort } from "harness";
 import path from "path";
 
 const dockerCLI = Bun.which("docker") as string;
-let prefixIndex = 0;
+export const isEnabled = !!dockerCLI;
 
 /**
  * Test utilities for Valkey/Redis tests
@@ -501,126 +501,121 @@ export const context: TestContext = {
 };
 export { context as ctx };
 
-beforeAll(async () => {
-  // Initialize Docker container once for all tests
-  if (!dockerInitPromise) {
-    dockerInitPromise = setupDockerContainer();
-  }
+if (isEnabled)
+  beforeAll(async () => {
+    // Initialize Docker container once for all tests
+    if (!dockerInitPromise) {
+      dockerInitPromise = setupDockerContainer();
+    }
 
-  // Wait for Docker to initialize
-  await dockerInitPromise;
-  context.redis = createClient(ConnectionType.TCP);
-  context.redisTLS = createClient(ConnectionType.TLS);
-  context.redisUnix = createClient(ConnectionType.UNIX);
-  context.redisAuth = createClient(ConnectionType.AUTH);
-  context.redisReadOnly = createClient(ConnectionType.READONLY);
-  context.redisWriteOnly = createClient(ConnectionType.WRITEONLY);
+    // Wait for Docker to initialize
+    await dockerInitPromise;
+    context.redis = createClient(ConnectionType.TCP);
+    context.redisTLS = createClient(ConnectionType.TLS);
+    context.redisUnix = createClient(ConnectionType.UNIX);
+    context.redisAuth = createClient(ConnectionType.AUTH);
+    context.redisReadOnly = createClient(ConnectionType.READONLY);
+    context.redisWriteOnly = createClient(ConnectionType.WRITEONLY);
 
-  // Initialize the standard TCP client
-  context.initialized = await initializeClient(context.redis);
+    // Initialize the standard TCP client
+    context.initialized = await initializeClient(context.redis);
 
-  // // Initialize all other clients that were requested
-  // if (context.redisTLS) {
-  //   try {
-  //     await initializeClient(context.redisTLS);
-  //   } catch (err) {
-  //     console.warn("TLS client initialization failed - TLS tests may be skipped");
-  //   }
-  // }
+    // // Initialize all other clients that were requested
+    // if (context.redisTLS) {
+    //   try {
+    //     await initializeClient(context.redisTLS);
+    //   } catch (err) {
+    //     console.warn("TLS client initialization failed - TLS tests may be skipped");
+    //   }
+    // }
 
-  // if (context.redisUnix) {
-  //   try {
-  //     await initializeClient(context.redisUnix);
-  //   } catch (err) {
-  //     console.warn("Unix socket client initialization failed - Unix socket tests may be skipped");
-  //   }
-  // }
+    // if (context.redisUnix) {
+    //   try {
+    //     await initializeClient(context.redisUnix);
+    //   } catch (err) {
+    //     console.warn("Unix socket client initialization failed - Unix socket tests may be skipped");
+    //   }
+    // }
 
-  // if (context.redisAuth) {
-  //   try {
-  //     await initializeClient(context.redisAuth);
-  //   } catch (err) {
-  //     console.warn("Auth client initialization failed - Auth tests may be skipped");
-  //   }
-  // }
+    // if (context.redisAuth) {
+    //   try {
+    //     await initializeClient(context.redisAuth);
+    //   } catch (err) {
+    //     console.warn("Auth client initialization failed - Auth tests may be skipped");
+    //   }
+    // }
 
-  // if (context.redisReadOnly) {
-  //   try {
-  //     // For read-only we just check connection, not write
-  //     await context.redisReadOnly.send("PING", []);
-  //     console.log("Read-only client initialized");
-  //   } catch (err) {
-  //     console.warn("Read-only client initialization failed - Read-only tests may be skipped");
-  //   }
-  // }
+    // if (context.redisReadOnly) {
+    //   try {
+    //     // For read-only we just check connection, not write
+    //     await context.redisReadOnly.send("PING", []);
+    //     console.log("Read-only client initialized");
+    //   } catch (err) {
+    //     console.warn("Read-only client initialization failed - Read-only tests may be skipped");
+    //   }
+    // }
 
-  // if (context.redisWriteOnly) {
-  //   try {
-  //     await initializeClient(context.redisWriteOnly);
-  //   } catch (err) {
-  //     console.warn("Write-only client initialization failed - Write-only tests may be skipped");
-  //   }
-  // }
+    // if (context.redisWriteOnly) {
+    //   try {
+    //     await initializeClient(context.redisWriteOnly);
+    //   } catch (err) {
+    //     console.warn("Write-only client initialization failed - Write-only tests may be skipped");
+    //   }
+    // }
 
-  // if (!context.initialized) {
-  //   console.warn("Test initialization failed - tests may be skipped");
-  // }
-});
+    // if (!context.initialized) {
+    //   console.warn("Test initialization failed - tests may be skipped");
+    // }
+  });
 
-afterAll(async () => {
-  console.log("Cleaning up Redis container");
-  if (!context.redis?.connected) {
-    return;
-  }
+if (isEnabled)
+  afterAll(async () => {
+    console.log("Cleaning up Redis container");
+    if (!context.redis?.connected) {
+      return;
+    }
 
-  try {
-    // Clean up Redis keys created during tests
-    const keys = await context.redis.send("KEYS", [`${TEST_KEY_PREFIX}*`]);
-    if (Array.isArray(keys) && keys.length > 0) {
-      // Using del command directly when available
-      if (keys.length === 1) {
-        await context.redis.del(keys[0]);
-      } else {
-        await context.redis.send("DEL", keys);
+    try {
+      // Clean up Redis keys created during tests
+      const keys = await context.redis.send("KEYS", [`${TEST_KEY_PREFIX}*`]);
+      if (Array.isArray(keys) && keys.length > 0) {
+        // Using del command directly when available
+        if (keys.length === 1) {
+          await context.redis.del(keys[0]);
+        } else {
+          await context.redis.send("DEL", keys);
+        }
       }
+
+      // Disconnect all clients
+      await context.redis.disconnect();
+
+      if (context.redisTLS) {
+        await context.redisTLS.disconnect();
+      }
+
+      if (context.redisUnix) {
+        await context.redisUnix.disconnect();
+      }
+
+      if (context.redisAuth) {
+        await context.redisAuth.disconnect();
+      }
+
+      if (context.redisReadOnly) {
+        await context.redisReadOnly.disconnect();
+      }
+
+      if (context.redisWriteOnly) {
+        await context.redisWriteOnly.disconnect();
+      }
+    } catch (err) {
+      console.error("Error during test cleanup:", err);
     }
+  });
 
-    // Disconnect all clients
-    await context.redis.disconnect();
-
-    if (context.redisTLS) {
-      await context.redisTLS.disconnect();
-    }
-
-    if (context.redisUnix) {
-      await context.redisUnix.disconnect();
-    }
-
-    if (context.redisAuth) {
-      await context.redisAuth.disconnect();
-    }
-
-    if (context.redisReadOnly) {
-      await context.redisReadOnly.disconnect();
-    }
-
-    if (context.redisWriteOnly) {
-      await context.redisWriteOnly.disconnect();
-    }
-  } catch (err) {
-    console.error("Error during test cleanup:", err);
-  }
-});
-
-/**
- * Skip test if Redis is not available
- */
-export function skipIfNotInitialized(initialized: boolean) {
-  if (!initialized) {
-    console.warn("Skipping test because Redis initialization failed");
-    return true;
-  }
-  return false;
+if (!isEnabled) {
+  console.warn("Redis is not enabled, skipping tests");
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { randomUUIDv7, RedisClient } from "bun";
-import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, retry, testKey } from "../test-utils";
+import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled, retry, testKey } from "../test-utils";
 
 /**
  * Test suite for connection failures, reconnection, and error handling
@@ -9,7 +9,7 @@ import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, retry, testKey } from 
  * - Timeout handling
  * - Error propagation
  */
-describe("Valkey: Connection Failures", () => {
+describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   // Use invalid port to force connection failure
   const BAD_CONNECTION_URL = "redis://localhost:12345";
 

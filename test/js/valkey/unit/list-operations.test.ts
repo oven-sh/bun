@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { expectType, ctx, createClient, ConnectionType } from "../test-utils";
+import { expectType, ctx, createClient, ConnectionType, isEnabled } from "../test-utils";
 import { isCI } from "harness";
 
 /**
@@ -9,7 +9,7 @@ import { isCI } from "harness";
  * - List information (LLEN, LINDEX)
  * - Blocking operations (BLPOP, BRPOP)
  */
-describe("Valkey: List Data Type Operations", () => {
+describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();

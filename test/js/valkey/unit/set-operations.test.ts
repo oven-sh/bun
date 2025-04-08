@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { ctx, createClient, ConnectionType, expectType } from "../test-utils";
+import { ctx, createClient, ConnectionType, expectType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering Redis set operations
@@ -8,7 +8,7 @@ import { ctx, createClient, ConnectionType, expectType } from "../test-utils";
  * - Set manipulation (SPOP, SRANDMEMBER)
  * - Set operations (SUNION, SINTER, SDIFF)
  */
-describe("Valkey: Set Data Type Operations", () => {
+describe.skipIf(!isEnabled)("Valkey: Set Data Type Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
       ctx.redis.disconnect?.();

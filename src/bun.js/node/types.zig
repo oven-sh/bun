@@ -1778,7 +1778,7 @@ pub const Process = struct {
 
         var args_count: usize = vm.argv.len;
         if (vm.worker) |worker| {
-            args_count = if (worker.argv) |argv| argv.len else 0;
+            args_count = worker.argv.len;
         }
 
         const args = allocator.alloc(
@@ -1787,8 +1787,7 @@ pub const Process = struct {
             // argv also omits the script name
             args_count + 2,
         ) catch bun.outOfMemory();
-        var args_list = std.ArrayListUnmanaged(bun.String){ .items = args, .capacity = args.len };
-        args_list.items.len = 0;
+        var args_list: std.ArrayListUnmanaged(bun.String) = .initBuffer(args);
 
         if (vm.standalone_module_graph != null) {
             // Don't break user's code because they did process.argv.slice(2)
@@ -1807,16 +1806,18 @@ pub const Process = struct {
             !strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
             !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
         {
-            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            if (vm.worker != null and vm.worker.?.eval_mode) {
+                args_list.appendAssumeCapacity(bun.String.static("[worker eval]"));
+            } else {
+                args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            }
         }
 
         defer allocator.free(args);
 
         if (vm.worker) |worker| {
-            if (worker.argv) |argv| {
-                for (argv) |arg| {
-                    args_list.appendAssumeCapacity(bun.String.init(arg));
-                }
+            for (worker.argv) |arg| {
+                args_list.appendAssumeCapacity(bun.String.init(arg));
             }
         } else {
             for (vm.argv) |arg| {
@@ -1888,7 +1889,8 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.C) void {
+    // TODO(@190n) this may need to be noreturn
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
             vm.exit_handler.exit_code = code;

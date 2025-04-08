@@ -231,6 +231,10 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
+  _onTimeout = function () {
+    this.emit("timeout");
+  };
+
   _destroy(err, callback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
@@ -374,6 +378,22 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.#onClose();
     $isCallable(closeCallback) && closeCallback();
   }
+
+  _onTimeout = function () {
+    const handle = this._handle;
+    // const lastWriteQueueSize = this[kLastWriteQueueSize];
+    // if (lastWriteQueueSize > 0 && handle) {
+    //   // `lastWriteQueueSize !== writeQueueSize` means there is
+    //   // an active write in progress, so we suppress the timeout.
+    //   const { writeQueueSize } = handle;
+    //   if (lastWriteQueueSize !== writeQueueSize) {
+    //     this[kLastWriteQueueSize] = writeQueueSize;
+    //     this._unrefTimer();
+    //     return;
+    //   }
+    // }
+    this.emit("timeout");
+  };
 
   address() {
     return this[kHandle]?.remoteAddress || null;

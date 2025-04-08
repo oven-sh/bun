@@ -193,14 +193,12 @@ pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
 }
 
 comptime {
-    // _ = bun.bake.production.@"export"();
-
     _ = bun.bake.production.BakeProdResolve;
     _ = bun.bake.production.BakeProdLoad;
 
     _ = bun.bun_js.Bun__onRejectEntryPointResult;
     _ = bun.bun_js.Bun__onResolveEntryPointResult;
-    @import("bun.js/node/buffer.zig").@"export"();
+    _ = &@import("bun.js/node/buffer.zig").BufferVectorized;
     @import("cli/upgrade_command.zig").@"export"();
     @import("cli/test_command.zig").@"export"();
 }

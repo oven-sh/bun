@@ -52,6 +52,9 @@ nativeTests.test_napi_async_work_complete_null_check = async () => {
 };
 
 nativeTests.test_napi_async_work_cancel = () => {
+  // UV_THREADPOOL_SIZE is set to 2, create two blocking tasks,
+  // then create another and cancel it, ensuring the work is not
+  // scheduled before `napi_cancel_async_work` is called
   const res = nativeTests.test_cancel_async_work(result => {
     if (result) {
       console.log("success!");

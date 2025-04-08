@@ -379,14 +379,19 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     $isCallable(closeCallback) && closeCallback();
   }
 
-  _onTimeout = function () {
+  _onTimeout() {
     const handle = this[kHandle];
     const response = handle?.response;
+    // if there is a response, and it has pending data,
+    // we suppress the timeout because a write is in progress
     if (response && response.getBufferedAmount() > 0) {
       return;
     }
     this.emit("timeout");
-  };
+  }
+  _unrefTimer() {
+    // for compatibility
+  }
 
   address() {
     return this[kHandle]?.remoteAddress || null;

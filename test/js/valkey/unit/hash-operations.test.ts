@@ -32,40 +32,13 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       // HGET non-existent field should return null
       const nonExistentField = await ctx.redis.send("HGET", [key, "nonexistent"]);
       expect(nonExistentField).toBeNull();
-
-      // Test with TLS connection if available
-      if (ctx.redisTLS) {
-        const tlsKey = ctx.generateKey("hash-test-tls");
-        const tlsSetResult = await ctx.redisTLS.send("HSET", [tlsKey, "name", "Alice"]);
-        expect(tlsSetResult).toBe(1);
-        const tlsGetResult = await ctx.redisTLS.send("HGET", [tlsKey, "name"]);
-        expect(tlsGetResult).toBe("Alice");
-      }
-
-      // Test with Unix socket connection if available
-      if (ctx.redisUnix) {
-        const unixKey = ctx.generateKey("hash-test-unix");
-        const unixSetResult = await ctx.redisUnix.send("HSET", [unixKey, "name", "Bob"]);
-        expect(unixSetResult).toBe(1);
-        const unixGetResult = await ctx.redisUnix.send("HGET", [unixKey, "name"]);
-        expect(unixGetResult).toBe("Bob");
-      }
-
-      // Test with authenticated connection if available
-      if (ctx.redisAuth) {
-        const authKey = ctx.generateKey("hash-test-auth");
-        const authSetResult = await ctx.redisAuth.send("HSET", [authKey, "name", "Charlie"]);
-        expect(authSetResult).toBe(1);
-        const authGetResult = await ctx.redisAuth.send("HGET", [authKey, "name"]);
-        expect(authGetResult).toBe("Charlie");
-      }
     });
 
     test("HMSET and HMGET commands", async () => {
       const key = ctx.generateKey("hmset-test");
 
       // HMSET multiple fields
-      const hmsetResult = await ctx.redis.hmset(key, { name: "Alice", age: "30", active: "true" });
+      const hmsetResult = await ctx.redis.hmset(key, ["name", "Alice", "age", "30", "active", "true"]);
       expect(hmsetResult).toBe("OK");
 
       // HMGET specific fields

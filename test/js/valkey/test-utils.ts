@@ -398,9 +398,7 @@ export async function setupDockerContainer() {
  * Generate a unique test key to avoid collisions in Redis data
  */
 export function testKey(name: string): string {
-  if (this === context) {
-  }
-  return `${TEST_KEY_PREFIX}${name}`;
+  return `${context.id}:${TEST_KEY_PREFIX}${name}`;
 }
 
 // Import needed functions from Bun
@@ -412,6 +410,7 @@ import { tmpdir } from "os";
 export function createClient(connectionType: ConnectionType = ConnectionType.TCP, customOptions = {}) {
   let url: string;
   let options: any = {};
+  context.id++;
 
   switch (connectionType) {
     case ConnectionType.TCP:
@@ -492,6 +491,7 @@ export interface TestContext {
   redisAuth?: RedisClient;
   redisReadOnly?: RedisClient;
   redisWriteOnly?: RedisClient;
+  id: number;
 }
 
 // Create a singleton promise for Docker initialization
@@ -500,8 +500,8 @@ let dockerInitPromise: Promise<boolean> | null = null;
 /**
  * Setup shared test context for test suites
  */
-
-// Initialize test context with TCP client by default
+let id = Math.trunc(Math.random() * 1000000);
+// Initialize test context with TCP client by d efault
 export const context: TestContext = {
   redis: undefined,
   initialized: false,
@@ -512,6 +512,7 @@ export const context: TestContext = {
   redisAuth: undefined,
   redisReadOnly: undefined,
   redisWriteOnly: undefined,
+  id,
 };
 export { context as ctx };
 

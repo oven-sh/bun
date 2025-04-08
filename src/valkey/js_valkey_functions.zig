@@ -85,26 +85,6 @@ pub fn set(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: 
     return promise.asValue(globalObject);
 }
 
-pub fn del(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
-        return globalObject.throwInvalidArgumentType("del", "key", "string or buffer");
-    };
-    defer key.deinit();
-
-    // Send DEL command
-    const promise = this.send(
-        globalObject,
-        callframe.this(),
-        &.{
-            .command = "DEL",
-            .args = .{ .args = &.{key} },
-        },
-    ) catch |err| {
-        return protocol.valkeyErrorToJS(globalObject, "Failed to send DEL command", err);
-    };
-    return promise.asValue(globalObject);
-}
-
 pub fn incr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("incr", "key", "string or buffer");
@@ -521,6 +501,202 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     return promise.asValue(globalObject);
 }
 
+pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call;
+pub const dump = compile.@"(key: RedisKey)"("dump", "DUMP", "key").call;
+pub const expiretime = compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call;
+pub const getdel = compile.@"(key: RedisKey)"("getdel", "GETDEL", "key").call;
+pub const getex = compile.@"(key: RedisKey)"("getex", "GETEX", "key").call;
+pub const hgetall = compile.@"(key: RedisKey)"("hgetall", "HGETALL", "key").call;
+pub const hkeys = compile.@"(key: RedisKey)"("hkeys", "HKEYS", "key").call;
+pub const hlen = compile.@"(key: RedisKey)"("hlen", "HLEN", "key").call;
+pub const hvals = compile.@"(key: RedisKey)"("hvals", "HVALS", "key").call;
+pub const keys = compile.@"(key: RedisKey)"("keys", "KEYS", "key").call;
+pub const llen = compile.@"(key: RedisKey)"("llen", "LLEN", "key").call;
+pub const lpop = compile.@"(key: RedisKey)"("lpop", "LPOP", "key").call;
+pub const persist = compile.@"(key: RedisKey)"("persist", "PERSIST", "key").call;
+pub const pexpiretime = compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME", "key").call;
+pub const pttl = compile.@"(key: RedisKey)"("pttl", "PTTL", "key").call;
+pub const rpop = compile.@"(key: RedisKey)"("rpop", "RPOP", "key").call;
+pub const scard = compile.@"(key: RedisKey)"("scard", "SCARD", "key").call;
+pub const strlen = compile.@"(key: RedisKey)"("strlen", "STRLEN", "key").call;
+pub const @"type" = compile.@"(key: RedisKey)"("type", "TYPE", "key").call;
+pub const zcard = compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call;
+pub const zpopmax = compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call;
+pub const zpopmin = compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call;
+pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call;
+pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
+pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
+pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call;
+pub const lpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call;
+pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call;
+pub const rpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpush", "RPUSH").call;
+pub const rpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpushx", "RPUSHX").call;
+pub const setnx = compile.@"(key: RedisKey, value: RedisValue)"("setnx", "SETNX", "key", "value").call;
+pub const zscore = compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value").call;
+
+pub const del = compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key").call;
+pub const mget = compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key").call;
+
+// publish(channel: RedisValue, message: RedisValue)
+// script(subcommand: "LOAD", script: RedisValue)
+// select(index: number | string)
+// spublish(shardchannel: RedisValue, message: RedisValue)
+// smove(source: RedisKey, destination: RedisKey, member: RedisValue)
+// substr(key: RedisKey, start: number, end: number)` // Deprecated alias for getrang
+// hstrlen(key: RedisKey, field: RedisValue)
+// zrank(key: RedisKey, member: RedisValue)
+// zrevrank(key: RedisKey, member: RedisValue)
+// zscore(key: RedisKey, member: RedisValue)
+
+// cluster(subcommand: "KEYSLOT", key: RedisKey)
+const JSFunction = fn (*JSValkeyClient, *JSC.JSGlobalObject, *JSC.CallFrame) bun.JSError!JSValue;
+
+const compile = struct {
+    pub fn @"(key: RedisKey)"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+        comptime arg0_name: []const u8,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+                const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+                    return globalObject.throwInvalidArgumentType(name, arg0_name, "string or buffer");
+                };
+                defer key.deinit();
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = &.{key} },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.asValue(globalObject);
+            }
+        };
+    }
+
+    pub fn @"(key: RedisKey, ...args: RedisKey[])"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+        comptime arg0_name: []const u8,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+                if (callframe.argument(0).isUndefinedOrNull()) {
+                    return globalObject.throwMissingArgumentsValue(&.{arg0_name});
+                }
+
+                const arguments = callframe.arguments();
+                var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, arguments.len);
+                defer {
+                    for (args.items) |*item| {
+                        item.deinit();
+                    }
+                    args.deinit();
+                }
+
+                for (arguments) |arg| {
+                    if (arg.isUndefinedOrNull()) {
+                        continue;
+                    }
+
+                    const another = (try fromJS(globalObject, arg)) orelse {
+                        return globalObject.throwInvalidArgumentType(name, "additional arguments", "string or buffer");
+                    };
+                    try args.append(another);
+                }
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = args.items },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.asValue(globalObject);
+            }
+        };
+    }
+    pub fn @"(key: RedisKey, value: RedisValue)"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+        comptime arg0_name: []const u8,
+        comptime arg1_name: []const u8,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+                const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+                    return globalObject.throwInvalidArgumentType(name, arg0_name, "string or buffer");
+                };
+                defer key.deinit();
+                const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+                    return globalObject.throwInvalidArgumentType(name, arg1_name, "string or buffer");
+                };
+                defer value.deinit();
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = &.{ key, value } },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.asValue(globalObject);
+            }
+        };
+    }
+
+    pub fn @"(key: RedisKey, value: RedisValue, ...args: RedisValue)"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+                var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, callframe.arguments().len);
+                defer {
+                    for (args.items) |*item| {
+                        item.deinit();
+                    }
+                    args.deinit();
+                }
+
+                for (callframe.arguments()) |arg| {
+                    if (arg.isUndefinedOrNull()) {
+                        continue;
+                    }
+
+                    const another = (try fromJS(globalObject, arg)) orelse {
+                        return globalObject.throwInvalidArgumentType(name, "additional arguments", "string or buffer");
+                    };
+                    try args.append(another);
+                }
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = args.items },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.asValue(globalObject);
+            }
+        };
+    }
+};
+
 const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
 const bun = @import("root").bun;
 const JSC = bun.JSC;
@@ -529,6 +705,7 @@ const protocol = valkey.protocol;
 const JSValue = JSC.JSValue;
 const Command = valkey.Command;
 const std = @import("std");
+const Slice = JSC.ZigString.Slice;
 
 const JSArgument = JSC.Node.BlobOrStringOrBuffer;
 

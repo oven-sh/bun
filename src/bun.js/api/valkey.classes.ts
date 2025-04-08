@@ -111,6 +111,102 @@ export default [
         fn: "hincrbyfloat",
         length: 3,
       },
+      bitcount: {
+        fn: "bitcount",
+      },
+      dump: {
+        fn: "dump",
+      },
+      expiretime: {
+        fn: "expiretime",
+      },
+      getdel: {
+        fn: "getdel",
+      },
+      getex: {
+        fn: "getex",
+      },
+      hgetall: {
+        fn: "hgetall",
+      },
+      hkeys: {
+        fn: "hkeys",
+      },
+      hlen: {
+        fn: "hlen",
+      },
+      hvals: {
+        fn: "hvals",
+      },
+      keys: {
+        fn: "keys",
+      },
+      llen: {
+        fn: "llen",
+      },
+      lpop: {
+        fn: "lpop",
+      },
+      persist: {
+        fn: "persist",
+      },
+      pexpiretime: {
+        fn: "pexpiretime",
+      },
+      pttl: {
+        fn: "pttl",
+      },
+      rpop: {
+        fn: "rpop",
+      },
+      scard: {
+        fn: "scard",
+      },
+      strlen: {
+        fn: "strlen",
+      },
+      zcard: {
+        fn: "zcard",
+      },
+      zpopmax: {
+        fn: "zpopmax",
+      },
+      zpopmin: {
+        fn: "zpopmin",
+      },
+      zrandmember: {
+        fn: "zrandmember",
+      },
+      append: {
+        fn: "append",
+      },
+      getset: {
+        fn: "getset",
+      },
+      lpush: {
+        fn: "lpush",
+      },
+      lpushx: {
+        fn: "lpushx",
+      },
+      pfadd: {
+        fn: "pfadd",
+      },
+      rpush: {
+        fn: "rpush",
+      },
+      rpushx: {
+        fn: "rpushx",
+      },
+      setnx: {
+        fn: "setnx",
+      },
+      zscore: {
+        fn: "zscore",
+      },
+      mget: {
+        fn: "mget",
+      },
     },
     values: ["onconnect", "onclose", "connectionPromise", "hello"],
   }),

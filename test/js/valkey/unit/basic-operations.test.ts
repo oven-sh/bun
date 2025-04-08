@@ -35,6 +35,19 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       expect(nullResult).toBeNull();
     });
 
+    test("MGET command", async () => {
+      const key1 = ctx.generateKey("mget-test-1");
+      const key2 = ctx.generateKey("mget-test-2");
+      const value1 = "Hello";
+      const value2 = "World";
+
+      await ctx.redis.set(key1, value1);
+      await ctx.redis.set(key2, value2);
+
+      const result = await ctx.redis.mget(key1, key2, ctx.generateKey("non-existent"));
+      expect(result).toEqual([value1, value2, null]);
+    });
+
     test("SET with expiry option", async () => {
       const key = ctx.generateKey("expiry-set-test");
 

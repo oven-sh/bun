@@ -1907,26 +1907,13 @@ export fn CrashHandler__setNapiAction(action: ?[*:0]const u8) void {
     return;
 }
 
-export fn CrashHandler__setCurrentNapiFunction(function: ?*anyopaque) void {
-    current_napi_function = function;
+export fn CrashHandler__getCurrentNapiFunction() callconv(.C) ?*anyopaque {
+    return bun.JSC.VirtualMachine.VMHolder.getThreadLocalGlobalObjectCurrentNapiFunction();
 }
-
-export fn CrashHandler__getCurrentNapiFunction() ?*anyopaque {
-    return current_napi_function;
-}
-
-/// We set this everytime a NAPI native function is called (ones that are created using `napi_create_function`)
-///
-/// The value is the function pointer of the native function
-///
-/// If an unsupported UV function is called somewhere down the callstack during the execution of the native function,
-/// we use `dladdr(current_napi_function, &info)` to get the path of the NAPI module the native function belongs to.
-threadlocal var current_napi_function: ?*anyopaque = null;
 
 pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
     std.mem.doNotOptimizeAway(&CrashHandler__getCurrentNapiFunction);
-    std.mem.doNotOptimizeAway(&CrashHandler__setCurrentNapiFunction);
 }
 
 comptime {

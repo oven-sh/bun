@@ -1151,6 +1151,15 @@ String GlobalObject::agentClusterID() const
 
 namespace Zig {
 
+extern "C" void* Bun__getCurrentNapiFunctionFromGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    if (!globalObject) {
+        return nullptr;
+    }
+    return globalObject->m_currentNapiFunction;
+}
+
 using namespace WebCore;
 
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)

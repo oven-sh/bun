@@ -461,16 +461,9 @@ pub const StringOrBuffer = union(enum) {
             },
             .threadsafe_string => {},
             .encoded_slice => {},
-            .buffer => {},
-        }
-    }
-
-    pub fn protect(this: *const StringOrBuffer) void {
-        switch (this.*) {
-            .buffer => |buf| {
-                buf.buffer.value.protect();
+            .buffer => {
+                this.buffer.buffer.value.protect();
             },
-            else => {},
         }
     }
 

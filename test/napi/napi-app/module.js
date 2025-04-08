@@ -37,6 +37,37 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   await gcUntil(() => nativeTests.was_finalize_called());
 };
 
+nativeTests.test_napi_async_work_execute_null_check = () => {
+  const res = nativeTests.create_async_work_with_null_execute();
+  if (res) {
+    console.log("success!");
+  } else {
+    console.log("failure!");
+  }
+};
+
+nativeTests.test_napi_async_work_complete_null_check = async () => {
+  nativeTests.create_async_work_with_null_complete();
+  await gcUntil(() => true);
+};
+
+nativeTests.test_napi_async_work_cancel = () => {
+  // UV_THREADPOOL_SIZE is set to 2, create two blocking tasks,
+  // then create another and cancel it, ensuring the work is not
+  // scheduled before `napi_cancel_async_work` is called
+  const res = nativeTests.test_cancel_async_work(result => {
+    if (result) {
+      console.log("success!");
+    } else {
+      console.log("failure!");
+    }
+  });
+
+  if (!res) {
+    console.log("failure!");
+  }
+};
+
 nativeTests.test_promise_with_threadsafe_function = async () => {
   await new Promise(resolve => setTimeout(resolve, 1));
   // create_promise_with_threadsafe_function returns a promise that calls our function from another

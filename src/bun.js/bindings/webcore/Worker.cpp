@@ -29,6 +29,7 @@
 
 // #include "ContentSecurityPolicy.h"
 // #include "DedicatedWorkerGlobalScope.h"
+#include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
@@ -473,8 +474,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     auto port = callFrame->argument(0);
 
     if (!port.isObject()) {
-        throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-        return {};
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
@@ -484,8 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-    return {};
+    return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)

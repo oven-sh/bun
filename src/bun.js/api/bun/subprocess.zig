@@ -2597,7 +2597,7 @@ pub fn handleIPCClose(this: *Subprocess) void {
     var ok = false;
     if (this.ipc()) |ipc_data| {
         ok = true;
-        ipc_data.internal_msg_queue.deinit();
+        ipc_data.deinit();
     }
     this.ipc_data = null;
 

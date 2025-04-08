@@ -4429,6 +4429,8 @@ pub const VirtualMachine = struct {
                 uws.us_socket_context_free(0, this.context);
             }
             vm.channel_ref.disable();
+
+            if (this.ipc()) |ipc_data| ipc_data.deinit();
             this.destroy();
         }
 

@@ -332,7 +332,8 @@ pub const SendQueue = struct {
     }
     pub fn deinit(self: *@This()) void {
         for (self.queue.items) |*item| item.deinit();
-        self.queue.deinit(bun.default_allocator);
+        self.queue.deinit();
+        self.keep_alive.disable();
     }
 
     /// returned pointer is invalidated if the queue is modified
@@ -434,6 +435,7 @@ pub const SendQueue = struct {
             }
         } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
             // the item was partially sent; update the cursor and wait for writable to send the rest
+            // (even if a handle was sent, if there was a partial write we assume it wasn't sent)
             first.data.cursor += @intCast(n);
             return .writable;
         } else {
@@ -459,6 +461,19 @@ const SocketIPCData = struct {
     disconnected: bool = false,
     is_server: bool = false,
     close_next_tick: ?JSC.Task = null,
+
+    pub fn deinit(ipc_data: *SocketIPCData) void {
+        // ipc_data.socket may already be UAF when this is called
+        ipc_data.internal_msg_queue.deinit();
+        ipc_data.send_queue.deinit();
+        ipc_data.incoming.deinitWithAllocator(bun.default_allocator);
+
+        // if there is a close next tick task, cancel it so it doesn't get called and then UAF
+        if (ipc_data.close_next_tick) |close_next_tick_task| {
+            const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
+            managed.cancel();
+        }
+    }
 
     pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
@@ -827,11 +842,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("NewSocketIPCHandler#onClose\n", .{});
 
-            if (ipc.close_next_tick) |close_next_tick_task| {
-                const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
-                managed.cancel();
-                ipc.close_next_tick = null;
-            }
             // after onClose(), socketIPCData.close should never be called again because socketIPCData may be freed. just in case, set disconnected to true.
             ipc.disconnected = true;
 

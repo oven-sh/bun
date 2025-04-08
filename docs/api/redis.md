@@ -273,6 +273,24 @@ Special handling for specific commands:
 - `EXISTS` returns a boolean instead of a number (1 becomes true, 0 becomes false)
 - `SISMEMBER` returns a boolean (1 becomes true, 0 becomes false)
 
+The following commands disable automatic pipelining:
+
+- `AUTH`
+- `INFO`
+- `QUIT`
+- `EXEC`
+- `MULTI`
+- `WATCH`
+- `SCRIPT`
+- `SELECT`
+- `CLUSTER`
+- `DISCARD`
+- `UNWATCH`
+- `PIPELINE`
+- `SUBSCRIBE`
+- `UNSUBSCRIBE`
+- `UNPSUBSCRIBE`
+
 ## Connection Options
 
 When creating a client, you can pass various options to configure the connection:
@@ -489,3 +507,8 @@ Current limitations of the Redis client we are planning to address in future ver
 - [ ] No dedicated API for pub/sub functionality (though you can use the raw command API)
 - [ ] Transactions (MULTI/EXEC) must be done through raw commands for now
 - [ ] Streams are supported but without dedicated methods
+
+Unsupported features:
+
+- Redis Sentinel
+- Redis Cluster

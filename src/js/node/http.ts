@@ -1719,6 +1719,7 @@ const OutgoingMessagePrototype = {
 
   setHeader(name, value) {
     validateHeaderName(name);
+    validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
     return this;

@@ -153,11 +153,9 @@ pub const JSValkeyClient = struct {
         return JSValue.jsNumber(len);
     }
 
-    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn doConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, this_value: JSValue) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
-
-        const this_value = callframe.this();
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
@@ -207,6 +205,10 @@ pub const JSValkeyClient = struct {
         }
 
         return promise;
+    }
+
+    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        return try this.doConnect(globalObject, callframe.this());
     }
 
     pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

@@ -29,6 +29,7 @@
  * different value. In that case, it will have a stale value.
  */
 
+#include "BunString.h"
 #include "headers.h"
 
 #include "JavaScriptCore/CallData.h"
@@ -289,14 +290,16 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
         return {};
     }
 
+    auto requestStr = request.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     {
-        auto utf8 = request.toWTFString(globalObject).utf8();
-        if (ModuleLoader__isBuiltin(utf8.data(), utf8.length())) {
+        UTF8View utf8(requestStr);
+        auto span = utf8.span();
+        if (ModuleLoader__isBuiltin(span.data(), span.size())) {
             return JSC::JSValue::encode(JSC::jsNull());
         }
     }
 
-    auto requestStr = request.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     // This function is not bound with the module object. This is because nearly

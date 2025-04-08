@@ -484,6 +484,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             RELEASE_AND_RETURN(scope, array);
         } else if (parent.pathsArrayLazy && parent.filename) {
             auto filenameValue = parent.filename->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             auto filename = Bun::toString(filenameValue);
             auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filename, globalObject, true));
             RELEASE_AND_RETURN(scope, paths);

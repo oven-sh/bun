@@ -1212,7 +1212,7 @@ pub const Resolver = struct {
             if (r.custom_dir_paths) |custom_paths| {
                 @branchHint(.unlikely);
                 for (custom_paths) |custom_path| {
-                    const custom_utf8 = custom_path.toUTF8(bun.default_allocator);
+                    const custom_utf8 = custom_path.toUTF8WithoutRef(bun.default_allocator);
                     defer custom_utf8.deinit();
                     switch (r.checkRelativePath(custom_utf8.slice(), import_path, kind, global_cache)) {
                         .success => |res| return .{ .success = res },
@@ -1308,7 +1308,7 @@ pub const Resolver = struct {
             if (r.custom_dir_paths) |custom_paths| {
                 @branchHint(.unlikely);
                 for (custom_paths) |custom_path| {
-                    const custom_utf8 = custom_path.toUTF8(bun.default_allocator);
+                    const custom_utf8 = custom_path.toUTF8WithoutRef(bun.default_allocator);
                     defer custom_utf8.deinit();
                     switch (r.checkPackagePath(custom_utf8.slice(), import_path, kind, global_cache)) {
                         .success => |res| return .{ .success = res },

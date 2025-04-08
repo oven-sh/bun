@@ -238,7 +238,7 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 #include <cstdio>
 #include "headers.h"
 
-void std::__libcpp_verbose_abort(char const* format, ...) noexcept
+void std::__libcpp_verbose_abort(char const* format, ...) _LIBCPP_VERBOSE_ABORT_NOEXCEPT
 {
     va_list list;
     va_start(list, format);

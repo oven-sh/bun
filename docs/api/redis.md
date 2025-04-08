@@ -1,4 +1,4 @@
-Bun provides native bindings for working with Redis databases with a modern, Promise-based API. The interface is designed to be simple and performant, with built-in connection management, fully typed responses, and TLS support.
+Bun provides native bindings for working with Redis databases with a modern, Promise-based API. The interface is designed to be simple and performant, with built-in connection management, fully typed responses, and TLS support. **New in Bun v1.2.9**
 
 ```ts
 import { redis } from "bun";
@@ -190,31 +190,37 @@ const poppedTag = await redis.spop("tags");
 The client automatically pipelines commands, improving performance by sending multiple commands in a batch and processing responses as they arrive.
 
 ```ts
-// These commands are automatically pipelined
+// Commands are automatically pipelined by default
 const [infoResult, listResult] = await Promise.all([
-  redis.sendCommand("INFO", []),
-  redis.sendCommand("LRANGE", ["mylist", "0", "-1"]),
+  redis.get("user:1:name"),
+  redis.get("user:2:email"),
 ]);
 ```
 
-> **Note**: Commands are processed in the order they are received by the server. When using `Promise.all()`, the promises will resolve in the order they complete, which may not be the same as the order they were sent if some commands take longer than others.
+To disable automatic pipelining, you can set the `enableAutoPipelining` option to `false`:
+
+```ts
+const client = new RedisClient("redis://localhost:6379", {
+  enableAutoPipelining: false,
+});
+```
 
 ### Raw Commands
 
-When you need to use commands that don't have convenience methods, you can use the `sendCommand` method:
+When you need to use commands that don't have convenience methods, you can use the `send` method:
 
 ```ts
 // Run any Redis command
-const info = await redis.sendCommand("INFO", []);
+const info = await redis.send("INFO", []);
 
 // LPUSH to a list
-await redis.sendCommand("LPUSH", ["mylist", "value1", "value2"]);
+await redis.send("LPUSH", ["mylist", "value1", "value2"]);
 
 // Get list range
-const list = await redis.sendCommand("LRANGE", ["mylist", "0", "-1"]);
+const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
 ```
 
-The `sendCommand` method allows you to use any Redis/Redis command, even ones that don't have dedicated methods in the client. The first argument is the command name, and the second argument is an array of string arguments.
+The `send` method allows you to use any Redis command, even ones that don't have dedicated methods in the client. The first argument is the command name, and the second argument is an array of string arguments.
 
 ### Connection Events
 
@@ -250,7 +256,7 @@ console.log(client.bufferedAmount);
 
 ### Type Conversion
 
-The Redis client handles automatic type conversion for Redis/Redis responses:
+The Redis client handles automatic type conversion for Redis responses:
 
 - Integer responses are returned as JavaScript numbers
 - Bulk strings are returned as JavaScript strings
@@ -276,9 +282,6 @@ const client = new RedisClient("redis://localhost:6379", {
   // Connection timeout in milliseconds (default: 10000)
   connectionTimeout: 5000,
 
-  // Socket timeout in milliseconds (default: 0 = no timeout)
-  socketTimeout: 0,
-
   // Idle timeout in milliseconds (default: 0 = no timeout)
   idleTimeout: 30000,
 
@@ -290,6 +293,9 @@ const client = new RedisClient("redis://localhost:6379", {
 
   // Whether to queue commands when disconnected (default: true)
   enableOfflineQueue: true,
+
+  // Whether to automatically pipeline commands (default: true)
+  enableAutoPipelining: true,
 
   // TLS options (default: false)
   tls: true,
@@ -319,7 +325,7 @@ When a connection is lost, the client automatically attempts to reconnect with e
 The Redis client supports various URL formats:
 
 ```ts
-// Standard Redis/Redis URL
+// Standard Redis URL
 new RedisClient("redis://localhost:6379");
 new RedisClient("redis://localhost:6379");
 
@@ -482,22 +488,10 @@ Bun's Redis client uses the newer RESP3 protocol by default, which provides more
 
 When connecting to Redis servers using older versions that don't support RESP3, the client automatically fallbacks to compatible modes.
 
-### Performance Considerations
-
-For optimal performance with Bun's Redis client:
-
-1. **Connection Reuse**: Create a single client and reuse it for all operations
-2. **Pipelining**: Use `Promise.all()` for multiple operations when possible
-3. **Command Batching**: For operations on multiple keys, prefer batch operations (like `hmset` for hashes)
-
 ## Limitations and Future Plans
 
-Current limitations of the Redis client:
+Current limitations of the Redis client we are planning to address in future versions:
 
-- Limited TypeScript return type specificity (get can return string or null, but more specific typing would be helpful)
-- No dedicated API for pub/sub functionality (though you can use the raw command API)
-- Transactions (MULTI/EXEC) must be done through raw commands for now
-- Streams are supported but without dedicated methods
-- Server-sent events not yet supported
-
-These are areas that may be improved in future versions of the client.
+- [ ] No dedicated API for pub/sub functionality (though you can use the raw command API)
+- [ ] Transactions (MULTI/EXEC) must be done through raw commands for now
+- [ ] Streams are supported but without dedicated methods

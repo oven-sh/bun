@@ -722,6 +722,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.flush();
                     socket.timeout(0);
                     socket.setTimeoutMinutes(5);
+                    // pause readable side of the stream to use less resources
+                    //TODO: make it possible to receive EOF with paused socket on windows
+                    if (!Environment.isWindows) {
+                        _ = socket.pauseStream();
+                    }
 
                     pending.http_socket = socket;
                     pending.did_have_handshaking_error_while_reject_unauthorized_is_false = did_have_handshaking_error_while_reject_unauthorized_is_false;
@@ -1013,6 +1018,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
+                    // We need to resume the readable side of the stream to be able to receive data from it
+                    //TODO: remove this condition after we fix windows pause/resume
+                    if (!Environment.isWindows) {
+                        _ = sock.resumeStream();
+                    }
                     try client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
                         client.firstCall(comptime ssl, sock);

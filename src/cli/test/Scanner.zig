@@ -159,7 +159,6 @@ pub fn doesPathMatchFilter(this: *Scanner, name: []const u8) bool {
     return false;
 }
 
-
 pub fn isTestFile(this: *Scanner, name: []const u8) bool {
     return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name);
 }

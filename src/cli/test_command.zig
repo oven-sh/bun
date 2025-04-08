@@ -1221,7 +1221,7 @@ pub const TestCommand = struct {
                     Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {s}", .{dir_to_scan});
                     Output.flush();
                     Global.exit(1);
-                }
+                },
             };
 
             break :scan .{ scanner.results.items, scanner.search_count };

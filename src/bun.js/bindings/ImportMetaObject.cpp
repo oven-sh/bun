@@ -375,7 +375,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             } else {
                 Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "option.paths"_s, userPathList);
                 scope.release();
-                return {};            
+                return {};
             }
         }
     }

@@ -282,7 +282,7 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue request = callframe->argument(0);
-    
+
     if (!request.isString()) {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "request"_s, "string"_s, request);
         scope.release();

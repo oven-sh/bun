@@ -28,6 +28,7 @@ pub const PathString = packed struct {
         return @as([*:0]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len :0];
     }
 
+    /// Create a PathString from a borrowed slice. No allocation occurs.
     pub inline fn init(str: []const u8) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 

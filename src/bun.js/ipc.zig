@@ -299,39 +299,153 @@ pub const Handle = struct {
         _ = self;
     }
 };
-pub const HandleQueue = struct {
-    // sending handles:
-    // - when a handle is sent:
-    //   - add it to the queue
-    //   - maybe send it immediately
-    // - when more data is to be added:
-    //   - if there are queued handles, we can't send the data yet
-    //   - we have to queue the data to send after the handles have all been sent and acknowledged
-    // - when sending a handle:
-    //   - close and deref it after it's sent
-    //   - ie a server should stop listening
-    //   - node does handle.close() from closePendingHandle
-    //   - if we get NACK, retry. if we try 3 times:
-    //     process.emitWarning('Handle did not reach the receiving process ' +
-    //     'correctly', 'SentHandleNotReceivedWarning')
-    // how to implement:
-    // - don't add to the outgoing queue once a handle is queued
+pub const SendHandle = struct {
+    // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
+    // we only retry sending the message with the handle, not the original message.
+    data: bun.io.StreamBuffer = .{},
+    handle: ?Handle,
+    // keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
 
-    // It is possible that recvmsg\(\) may return an error on ancillary data
-    // reception when receiving a NODE\_HANDLE message (for example
-    // MSG\_CTRUNC). This would end up, if the handle type was net\.Socket,
-    // on a message event with a non null but invalid sendHandle. To
-    // improve the situation, send a NODE\_HANDLE\_NACK that'll cause the
-    // sending process to retransmit the message again. In case the same
-    // message is retransmitted 3 times without success, close the handle and
-    // print a warning.
-
-    handles: std.ArrayListUnmanaged(Handle) = .{},
-    remaining: std.ArrayListUnmanaged(u8) = .empty,
-
-    // implementation:
-    // - NewIPCHandler onWritable drains the outgoing buffer
+    pub fn deinit(self: *SendHandle) void {
+        self.data.deinit();
+        if (self.handle) |*handle| {
+            handle.deinit();
+        }
+    }
+    pub fn reset(self: *SendHandle) void {
+        self.data.reset();
+        if (self.handle) |*handle| {
+            handle.deinit();
+            self.handle = null;
+        }
+    }
 };
+
+pub const SendQueue = struct {
+    const WaitingFor = enum { serializeAndSend, writable, ack, err };
+    waiting_for: WaitingFor,
+    queue: std.ArrayList(SendHandle),
+    retry_count: u32 = 0,
+    keep_alive: bun.Async.KeepAlive = .{},
+    pub fn init() @This() {
+        return .{ .waiting_for = .serializeAndSend, .queue = .init(bun.default_allocator) };
+    }
+    pub fn deinit(self: *@This()) void {
+        for (self.queue.items) |*item| item.deinit();
+        self.queue.deinit(bun.default_allocator);
+    }
+
+    /// returned pointer is invalidated if the queue is modified
+    pub fn startMessage(self: *SendQueue, handle: ?Handle) *SendHandle {
+        if (self.queue.items.len == 0) {
+            // queue is empty; add an item
+            self.queue.append(.{ .handle = handle }) catch bun.outOfMemory();
+            return &self.queue.items[0];
+        }
+        const last = &self.queue.items[self.queue.items.len - 1];
+        // if there is a handle, always add a new item even if the previous item doesn't have a handle
+        //   this is so that in the case of a NACK, we can retry sending the whole message that has the handle
+        // if the last item has a handle, always add a new item
+        if (last.handle != null or handle != null) {
+            self.queue.append(.{ .handle = handle }) catch bun.outOfMemory();
+            return &self.queue.items[0];
+        }
+        bun.assert(handle == null);
+        return last;
+    }
+
+    pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, socket: anytype, ack_nack: enum { ack, nack }) void {
+        if (this.waiting_for != .ack) {
+            log("onAckNack: ack received but not waiting for ack", .{});
+            return;
+        }
+        if (this.items.len == 0) {
+            log("onAckNack: ack received but no handle message was pending", .{});
+            return;
+        }
+        const first = &this.queue.items[0];
+        if (first.handle == null) {
+            log("onAckNack: ack received but no handle message was pending", .{});
+            return;
+        }
+        if (first.data.cursor != first.data.list.items.len) {
+            log("onAckNack: ack received but the pending message has not been fully sent yet", .{});
+            return;
+        }
+        if (ack_nack == .nack) {
+            // retry up to three times
+            this.retry_count += 1;
+            if (this.retry_count < MAX_HANDLE_RETRANSMISSIONS) {
+                // retry sending the message
+                return this.continueSend(global, socket);
+            }
+            // too many retries; give up
+            global.emitWarning(
+                bun.String.static("Handle did not reach the receiving process correctly").transferToJS(global),
+                bun.String.static("SentHandleNotReceivedWarning").transferToJS(global),
+                .undefined,
+                .undefined,
+            );
+            // (fall through to success code in order to dequeue the message and continue sending)
+        }
+        // shift the queue and try to send the next item immediately.
+        var item = this.queue.orderedRemove(0);
+        item.deinit(); // unref the handle & free the StreamBuffer.
+        this.retry_count = 0; // success! (or warned failure). reset the retry count.
+        this.continueSend(global, socket);
+    }
+    pub fn setWaitingFor(this: *SendQueue, global: *JSGlobalObject, waiting_for: WaitingFor) void {
+        this.waiting_for = waiting_for;
+        switch (waiting_for) {
+            .serializeAndSend, .err => {
+                this.keep_alive.unref(global.bunVM());
+            },
+            .writable, .ack => {
+                this.keep_alive.ref(global.bunVM());
+            },
+        }
+    }
+    fn _continueSend(this: *SendQueue, socket: anytype) WaitingFor {
+        if (this.queue.items.len == 0) {
+            return .serializeAndSend; // nothing to send
+        }
+
+        const first = &this.queue.items[0];
+        if (first.handle != null) @panic("TODO send fd");
+        const to_send = first.data.list.items[first.data.cursor..];
+        const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send, false);
+        if (n == to_send.len) {
+            if (first.handle) |_| {
+                // the message was fully written, but it had a handle.
+                // we must wait for ACK or NACK before sending any more messages,
+                // and we need to keep the message in the queue in order to retry if needed.
+                return .ack;
+            } else if (this.queue.items.len == 1) {
+                // the message was fully sent and this is the last item; reuse the StreamBuffer for the next message
+                first.reset();
+                // the last item was fully sent; wait for the next .send() call from js
+                return .serializeAndSend;
+            } else {
+                // the message was fully sent, but there are more items in the queue.
+                // shift the queue and try to send the next item immediately.
+                var item = this.queue.orderedRemove(0);
+                item.deinit(); // free the StreamBuffer.
+                return @call(.always_tail, _continueSend, .{ this, socket });
+            }
+        } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
+            // the item was partially sent; update the cursor and wait for writable to send the rest
+            first.data.cursor += @intCast(n);
+            return .writable;
+        } else {
+            // error?
+            return .err;
+        }
+    }
+    pub fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: anytype) void {
+        this.setWaitingFor(global, this._continueSend(socket));
+    }
+};
+const MAX_HANDLE_RETRANSMISSIONS = 3;
 
 /// Used on POSIX
 const SocketIPCData = struct {
@@ -339,12 +453,11 @@ const SocketIPCData = struct {
     mode: Mode,
 
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
-    outgoing: bun.io.StreamBuffer = .{},
+    send_queue: SendQueue = .init(),
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
     is_server: bool = false,
-    keep_alive: bun.Async.KeepAlive = .{},
     close_next_tick: ?JSC.Task = null,
 
     pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
@@ -355,9 +468,10 @@ const SocketIPCData = struct {
         if (bytes.len > 0) {
             const n = this.socket.write(bytes, false);
             if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
-                this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
-                // more remaining; need to ref event loop
-                this.keep_alive.ref(global.bunVM());
+                // the message did not finish sending; queue it
+                const msg = this.send_queue.startMessage(null);
+                msg.data.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
+                this.send_queue.setWaitingFor(global, .writable);
             }
         }
         if (Environment.allow_assert) {
@@ -370,25 +484,13 @@ const SocketIPCData = struct {
             bun.assert(ipc_data.has_written_version == 1);
         }
 
-        // TODO: probably we should not direct access ipc_data.outgoing.list.items here
-        const start_offset = ipc_data.outgoing.list.items.len;
+        const msg = ipc_data.send_queue.startMessage(null);
+        const start_offset = msg.data.list.items.len;
 
-        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value, is_internal) catch return false;
+        const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return false;
+        bun.assert(msg.data.list.items.len == start_offset + payload_length);
 
-        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
-
-        _ = ipc_data.socket.writeFd("\x00", @enumFromInt(0));
-        if (start_offset == 0) {
-            bun.assert(ipc_data.outgoing.cursor == 0);
-            const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
-            if (n == payload_length) {
-                ipc_data.outgoing.reset();
-            } else if (n > 0) {
-                ipc_data.outgoing.cursor = @intCast(n);
-                // more remaining; need to ref event loop
-                ipc_data.keep_alive.ref(global.bunVM());
-            }
-        }
+        if (ipc_data.send_queue.waiting_for == .serializeAndSend) ipc_data.send_queue.continueSend(global, ipc_data.socket);
 
         return true;
     }
@@ -721,7 +823,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             log("onClose", .{});
             const ipc = this.ipc() orelse return;
             // unref if needed
-            ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
+            ipc.send_queue.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("NewSocketIPCHandler#onClose\n", .{});
 
@@ -832,21 +934,9 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             socket: Socket,
         ) void {
             log("onWritable", .{});
-            const ipc = context.ipc() orelse return;
-            const to_write = ipc.outgoing.slice();
-            if (to_write.len == 0) {
-                ipc.outgoing.reset();
-                // done sending message; unref event loop
-                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
-                return;
-            }
-            const n = socket.write(to_write, false);
-            if (n == to_write.len) {
-                ipc.outgoing.reset();
-                // almost done sending message; unref event loop
-                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
-            } else if (n > 0) {
-                ipc.outgoing.cursor += @intCast(n);
+            const ipc: *SocketIPCData = context.ipc() orelse return;
+            if (ipc.send_queue.waiting_for == .writable) {
+                ipc.send_queue.continueSend(context.getGlobalThis() orelse return, socket);
             }
         }
 
@@ -857,7 +947,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             log("onTimeout", .{});
             const ipc = context.ipc() orelse return;
             // unref if needed
-            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+            ipc.send_queue.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
         }
 
         pub fn onLongTimeout(
@@ -867,7 +957,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             log("onLongTimeout", .{});
             const ipc = context.ipc() orelse return;
             // unref if needed
-            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+            ipc.send_queue.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
         }
 
         pub fn onConnectError(

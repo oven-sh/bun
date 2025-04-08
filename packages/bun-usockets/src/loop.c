@@ -392,7 +392,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     int length;
-                    int fd = -1;
                     if(s->context->is_ipc) {
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
@@ -415,7 +414,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if (length > 0 && msg.msg_controllen > 0) {
                             struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
                             if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
-                                fd = *(int *)CMSG_DATA(cmsg_ptr);
+                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                                s->context->on_fd(s, fd);
                             }
                         }
                     }else{
@@ -424,9 +424,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
-                        if (fd != -1) {
-                            s->context->on_fd(s, fd);
-                        }
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:

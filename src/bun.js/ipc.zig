@@ -304,6 +304,7 @@ pub const SendHandle = struct {
     // we only retry sending the message with the handle, not the original message.
     data: bun.io.StreamBuffer = .{},
     handle: ?Handle,
+    is_ack_nack: bool = false,
     // keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
 
     pub fn deinit(self: *SendHandle) void {
@@ -322,18 +323,19 @@ pub const SendHandle = struct {
 };
 
 pub const SendQueue = struct {
-    const WaitingFor = enum { serializeAndSend, writable, ack, err };
-    waiting_for: WaitingFor,
     queue: std.ArrayList(SendHandle),
+    waiting_for_ack: ?SendHandle = null,
+
     retry_count: u32 = 0,
     keep_alive: bun.Async.KeepAlive = .{},
     pub fn init() @This() {
-        return .{ .waiting_for = .serializeAndSend, .queue = .init(bun.default_allocator) };
+        return .{ .queue = .init(bun.default_allocator) };
     }
     pub fn deinit(self: *@This()) void {
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
         self.keep_alive.disable();
+        if (self.waiting_for_ack) |*waiting| waiting.deinit();
     }
 
     /// returned pointer is invalidated if the queue is modified
@@ -356,21 +358,13 @@ pub const SendQueue = struct {
     }
 
     pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, socket: anytype, ack_nack: enum { ack, nack }) void {
-        if (this.waiting_for != .ack) {
+        if (this.waiting_for_ack == null) {
             log("onAckNack: ack received but not waiting for ack", .{});
             return;
         }
-        if (this.items.len == 0) {
-            log("onAckNack: ack received but no handle message was pending", .{});
-            return;
-        }
-        const first = &this.queue.items[0];
-        if (first.handle == null) {
-            log("onAckNack: ack received but no handle message was pending", .{});
-            return;
-        }
-        if (first.data.cursor != first.data.list.items.len) {
-            log("onAckNack: ack received but the pending message has not been fully sent yet", .{});
+        const item = &this.waiting_for_ack.?;
+        if (item.handle == null) {
+            log("onAckNack: ack received but waiting_for_ack is not a handle message?", .{});
             return;
         }
         if (ack_nack == .nack) {
@@ -378,7 +372,18 @@ pub const SendQueue = struct {
             this.retry_count += 1;
             if (this.retry_count < MAX_HANDLE_RETRANSMISSIONS) {
                 // retry sending the message
-                return this.continueSend(global, socket);
+                item.data.cursor = 0;
+                if (this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) {
+                    // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
+                    this.queue.insert(0, item.*) catch bun.outOfMemory();
+                    this.waiting_for_ack = null;
+                } else {
+                    // insert at index 1 (we are in the middle of sending an ack/nack to the other process)
+                    bun.debugAssert(this.queue.items[0].is_ack_nack);
+                    this.queue.insert(1, item.*) catch bun.outOfMemory();
+                    this.waiting_for_ack = null;
+                }
+                return this.continueSend(global, socket, .new_message_appended);
             }
             // too many retries; give up
             global.emitWarning(
@@ -387,64 +392,83 @@ pub const SendQueue = struct {
                 .undefined,
                 .undefined,
             );
-            // (fall through to success code in order to dequeue the message and continue sending)
+            // (fall through to success code in order to consume the message and continue sending)
         }
-        // shift the queue and try to send the next item immediately.
-        var item = this.queue.orderedRemove(0);
-        item.deinit(); // unref the handle & free the StreamBuffer.
-        this.retry_count = 0; // success! (or warned failure). reset the retry count.
+        // consume the message and continue sending
+        item.deinit();
+        this.waiting_for_ack = null;
         this.continueSend(global, socket);
     }
-    pub fn setWaitingFor(this: *SendQueue, global: *JSGlobalObject, waiting_for: WaitingFor) void {
-        this.waiting_for = waiting_for;
-        switch (waiting_for) {
-            .serializeAndSend, .err => {
-                this.keep_alive.unref(global.bunVM());
-            },
-            .writable, .ack => {
-                this.keep_alive.ref(global.bunVM());
-            },
+    fn shouldRef(this: *SendQueue) bool {
+        if (this.waiting_for_ack != null) return true; // waiting to receive an ack/nack from the other side
+        if (this.queue.items.len == 0) return false; // nothing to send
+        const first = &this.queue.items[0];
+        if (first.data.cursor > 0) return true; // send in progress, waiting on writable
+        return false; // error state.
+    }
+    pub fn updateRef(this: *SendQueue, global: *JSGlobalObject) void {
+        switch (this.shouldRef()) {
+            true => this.keep_alive.ref(global.bunVM()),
+            false => this.keep_alive.unref(global.bunVM()),
         }
     }
-    fn _continueSend(this: *SendQueue, socket: anytype) WaitingFor {
+    const ContinueSendReason = enum {
+        new_message_appended,
+        on_writable,
+    };
+    fn _continueSend(this: *SendQueue, socket: anytype, reason: ContinueSendReason) void {
         if (this.queue.items.len == 0) {
-            return .serializeAndSend; // nothing to send
+            return; // nothing to send
         }
 
         const first = &this.queue.items[0];
-        if (first.handle != null) @panic("TODO send fd");
+        if (this.waiting_for_ack != null and !first.is_ack_nack) {
+            // waiting for ack/nack. may not send any items until it is received.
+            // only allowed to send the message if it is an ack/nack itself.
+            return;
+        }
+        if (reason != .on_writable and first.data.cursor != 0) {
+            // the last message isn't fully sent yet, we're waiting for a writable event
+            return;
+        }
         const to_send = first.data.list.items[first.data.cursor..];
         const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send, false);
         if (n == to_send.len) {
             if (first.handle) |_| {
                 // the message was fully written, but it had a handle.
-                // we must wait for ACK or NACK before sending any more messages,
-                // and we need to keep the message in the queue in order to retry if needed.
-                return .ack;
+                // we must wait for ACK or NACK before sending any more messages.
+                if (this.waiting_for_ack != null) {
+                    log("[error] already waiting for ack. this should never happen.", .{});
+                }
+                // shift the item off the queue and move it to waiting_for_ack
+                const item = this.queue.orderedRemove(0);
+                this.waiting_for_ack = item;
+                return _continueSend(this, socket, reason); // in case the next item is an ack/nack waiting to be sent
             } else if (this.queue.items.len == 1) {
                 // the message was fully sent and this is the last item; reuse the StreamBuffer for the next message
                 first.reset();
                 // the last item was fully sent; wait for the next .send() call from js
-                return .serializeAndSend;
+                return;
             } else {
                 // the message was fully sent, but there are more items in the queue.
                 // shift the queue and try to send the next item immediately.
                 var item = this.queue.orderedRemove(0);
                 item.deinit(); // free the StreamBuffer.
-                return @call(.always_tail, _continueSend, .{ this, socket });
+                return _continueSend(this, socket, reason);
             }
         } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
             // the item was partially sent; update the cursor and wait for writable to send the rest
-            // (even if a handle was sent, if there was a partial write we assume it wasn't sent)
+            // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
             first.data.cursor += @intCast(n);
-            return .writable;
+            return;
         } else {
             // error?
-            return .err;
+            return;
         }
     }
-    pub fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: anytype) void {
-        this.setWaitingFor(global, this._continueSend(socket));
+    fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: anytype, reason: ContinueSendReason) void {
+        this._continueSend(socket, reason);
+        this.updateRef(global);
     }
 };
 const MAX_HANDLE_RETRANSMISSIONS = 3;
@@ -455,6 +479,7 @@ const SocketIPCData = struct {
     mode: Mode,
 
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
+    incoming_fd: ?bun.FileDescriptor = null,
     send_queue: SendQueue = .init(),
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
@@ -481,13 +506,9 @@ const SocketIPCData = struct {
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
-            const n = this.socket.write(bytes, false);
-            if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
-                // the message did not finish sending; queue it
-                const msg = this.send_queue.startMessage(null);
-                msg.data.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
-                this.send_queue.setWaitingFor(global, .writable);
-            }
+            const msg = this.send_queue.startMessage(null);
+            msg.data.write(bytes) catch bun.outOfMemory();
+            this.send_queue.continueSend(global, this.socket, .new_message_appended);
         }
         if (Environment.allow_assert) {
             this.has_written_version = 1;
@@ -505,7 +526,7 @@ const SocketIPCData = struct {
         const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return false;
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
 
-        if (ipc_data.send_queue.waiting_for == .serializeAndSend) ipc_data.send_queue.continueSend(global, ipc_data.socket);
+        ipc_data.send_queue.continueSend(global, ipc_data.socket, .new_message_appended);
 
         return true;
     }
@@ -854,7 +875,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             all_data: []const u8,
         ) void {
             var data = all_data;
-            const ipc = this.ipc() orelse return;
+            const ipc: *IPCData = this.ipc() orelse return;
             log("onData {}", .{std.fmt.fmtSliceHexLower(data)});
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
@@ -887,6 +908,28 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             return;
                         },
                     };
+
+                    // TODO:
+                    // switch (result.message) {
+                    //     .internal_ack => ipc.send_queue.onAckNack(globalThis, socket, .ack),
+                    //     .internal_nack => ipc.send_queue.onAckNack(globalThis, socket, .nack),
+                    //     .internal_handle => {
+                    //         // to send the ack/nack:
+                    //         // - append the message to the ack/nack queue
+                    //         // - unless (waiting on .writable or .err) continue sending the message
+                    //         if (true) @panic("TODO send ack/nack message");
+                    //         if (ipc.incoming_fd == null) {
+                    //             // nack
+                    //         } else {
+                    //             // ack, then handleIPCMessage() with the resolved handle
+                    //         }
+                    //         // TODO:
+                    //         // - we need to resolve on the JS side
+                    //         //   - for child_process, that's fine. we convert to a bun handle here and then
+                    //         //     ipc() has the bun handle. for process.on(), there's no js side atm.
+                    //     },
+                    //     else => this.handleIPCMessage(result.message),
+                    // }
 
                     this.handleIPCMessage(result.message);
 
@@ -930,13 +973,14 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
         pub fn onFd(
             this: *Context,
-            socket: Socket,
+            _: Socket,
             fd: c_int,
         ) void {
-            _ = this;
-            _ = socket;
-            _ = fd;
-            log("onFd", .{});
+            const ipc: *IPCData = this.ipc() orelse return;
+            if (ipc.incoming_fd != null) {
+                log("onFd: incoming_fd already set; overwriting", .{});
+            }
+            ipc.incoming_fd = @enumFromInt(fd);
         }
 
         pub fn onWritable(
@@ -944,10 +988,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             socket: Socket,
         ) void {
             log("onWritable", .{});
-            const ipc: *SocketIPCData = context.ipc() orelse return;
-            if (ipc.send_queue.waiting_for == .writable) {
-                ipc.send_queue.continueSend(context.getGlobalThis() orelse return, socket);
-            }
+            const ipc: *IPCData = context.ipc() orelse return;
+            ipc.send_queue.continueSend(context.getGlobalThis() orelse return, socket, .on_writable);
         }
 
         pub fn onTimeout(

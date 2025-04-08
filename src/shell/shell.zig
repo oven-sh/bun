@@ -72,7 +72,17 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
-        defer this.deinit(bun.default_allocator);
+        defer {
+            // basically `transferToJS`. don't want to double deref the sys error
+            switch (this.*) {
+                .sys => {
+                    // sys.toErrorInstance handles decrementing the ref count
+                },
+                .custom, .invalid_arguments, .todo => {
+                    this.deinit(bun.default_allocator);
+                },
+            }
+        }
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);

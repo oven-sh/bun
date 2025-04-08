@@ -380,18 +380,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _onTimeout = function () {
-    const handle = this._handle;
-    // const lastWriteQueueSize = this[kLastWriteQueueSize];
-    // if (lastWriteQueueSize > 0 && handle) {
-    //   // `lastWriteQueueSize !== writeQueueSize` means there is
-    //   // an active write in progress, so we suppress the timeout.
-    //   const { writeQueueSize } = handle;
-    //   if (lastWriteQueueSize !== writeQueueSize) {
-    //     this[kLastWriteQueueSize] = writeQueueSize;
-    //     this._unrefTimer();
-    //     return;
-    //   }
-    // }
+    const handle = this[kHandle];
+    const response = handle?.response;
+    if (response && response.getBufferedAmount() > 0) {
+      return;
+    }
     this.emit("timeout");
   };
 

@@ -21,6 +21,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const setResult = await redis.set(testKey, testValue);
       expect(setResult).toMatchInlineSnapshot(`"OK"`);
 
+      const setResult2 = await redis.set(testKey, testValue, "GET");
+      expect(setResult2).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);
+
       // GET should return the value we set
       const getValue = await redis.get(testKey);
       expect(getValue).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);

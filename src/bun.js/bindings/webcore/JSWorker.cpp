@@ -39,8 +39,10 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
+#include "JSDOMURL.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
+#include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
 #include "JSWorkerOptions.h"
 #include "ScriptExecutionContext.h"
@@ -123,7 +125,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     if (UNLIKELY(!context))
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto scriptUrl = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    String scriptUrl;
+    if (auto* url = jsDynamicCast<JSDOMURL*>(argument0.value())) {
+        scriptUrl = url->wrapped().href().string();
+    } else if (argument0.value().isString()) {
+        scriptUrl = argument0.value().getString(lexicalGlobalObject);
+    } else {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "filename"_s, "string or an instance of URL"_s, argument0.value());
+    }
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 

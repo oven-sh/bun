@@ -293,7 +293,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
-    if (value === "nodebuffer" || value === "arraybuffer") {
+    if (value === "nodebuffer" || value === "arraybuffer" || value === "blob") {
       this.#ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {

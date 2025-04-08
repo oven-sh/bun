@@ -1,6 +1,6 @@
-import { describe, test, expect, mock } from "bun:test";
 import { randomUUIDv7, RedisClient } from "bun";
-import { createClient, DEFAULT_REDIS_URL, delay, testKey } from "../test-utils";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { createClient, DEFAULT_REDIS_URL } from "../test-utils";
 
 /**
  * Test suite for error handling, protocol failures, and edge cases

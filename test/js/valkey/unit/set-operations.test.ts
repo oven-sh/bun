@@ -1,6 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { randomUUIDv7 } from "bun";
-import { setupTestContext, skipIfNotInitialized, expectType } from "../test-utils";
+import { describe, test, expect, beforeEach } from "bun:test";
+import { ctx, createClient, ConnectionType, expectType } from "../test-utils";
 
 /**
  * Test suite covering Redis set operations
@@ -10,7 +9,12 @@ import { setupTestContext, skipIfNotInitialized, expectType } from "../test-util
  * - Set operations (SUNION, SINTER, SDIFF)
  */
 describe("Valkey: Set Data Type Operations", () => {
-  const ctx = setupTestContext();
+  beforeEach(() => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
+  });
 
   describe("Basic Set Operations", () => {
     test("SADD and SISMEMBER commands", async () => {
@@ -18,6 +22,7 @@ describe("Valkey: Set Data Type Operations", () => {
 
       // Add a single member
       const singleAddResult = await ctx.redis.sadd(key, "member1");
+      console.log("singleAddResult", singleAddResult);
       expectType<number>(singleAddResult, "number");
       expect(singleAddResult).toBe(1); // 1 new member added
 
@@ -69,7 +74,7 @@ describe("Valkey: Set Data Type Operations", () => {
       // Get all members using direct smembers method
       const members = await ctx.redis.smembers(key);
       expect(Array.isArray(members)).toBe(true);
-      
+
       // Sort for consistent snapshot since set members can come in any order
       const sortedMembers = [...members].sort();
       expect(sortedMembers).toMatchInlineSnapshot(`
@@ -97,7 +102,7 @@ describe("Valkey: Set Data Type Operations", () => {
       // Remove some members - using direct srem method for first item, then send for second
       await ctx.redis.srem(key, "item1");
       await ctx.redis.send("SREM", [key, "item2"]);
-      
+
       // Check size again
       const updatedSize = await ctx.redis.send("SCARD", [key]);
       expectType<number>(updatedSize, "number");

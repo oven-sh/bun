@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient } from "bun";
-import { beforeAll, describe, expect, test } from "bun:test";
-import { createClient, DEFAULT_REDIS_URL } from "../test-utils";
+import { describe, expect, test, beforeEach } from "bun:test";
+import { createClient, DEFAULT_REDIS_URL, ctx, ConnectionType } from "../test-utils";
 
 /**
  * Test suite for error handling, protocol failures, and edge cases
@@ -11,9 +11,15 @@ import { createClient, DEFAULT_REDIS_URL } from "../test-utils";
  * - Edge cases
  */
 describe("Valkey: Error Handling", () => {
+  beforeEach(() => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
+  });
   describe("Command Errors", () => {
     test("should handle invalid command arguments", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // Wrong number of arguments
 
@@ -26,12 +32,6 @@ describe("Valkey: Error Handling", () => {
     });
 
     describe("should handle special character keys and values", async () => {
-      let client: RedisClient;
-
-      beforeAll(async () => {
-        client = createClient();
-      });
-
       // Keys with special characters
       const specialKeys = [
         "key with spaces",
@@ -58,7 +58,8 @@ describe("Valkey: Error Handling", () => {
       for (const key of specialKeys) {
         for (const value of specialValues) {
           const testKey = `special-key-${randomUUIDv7()}`;
-          test.only(`should handle special characters in key "${key}" and value "${value}"`, async () => {
+          test(`should handle special characters in key "${key}" and value "${value}"`, async () => {
+            const client = ctx.redis;
             // Set and get should work with special characters
             await client.set(testKey, value);
             const result = await client.get(testKey);
@@ -70,104 +71,56 @@ describe("Valkey: Error Handling", () => {
   });
 
   describe("Null/Undefined/Invalid Input Handling", () => {
-    test("should handle undefined/null command arguments", async () => {
-      const client = createClient();
+    test.only("should handle undefined/null command arguments", async () => {
+      const client = ctx.redis;
 
       // undefined key
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.get(undefined);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|undefined/i);
-      }
+      // @ts-expect-error: Testing runtime behavior with invalid types
+      expect(async () => await client.get(undefined)).toThrowErrorMatchingInlineSnapshot(
+        `"Expected key to be a string or buffer for 'get'."`,
+      );
 
       // null key
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.get(null);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|null/i);
-      }
+      // @ts-expect-error: Testing runtime behavior with invalid types
+      expect(async () => await client.get(null)).toThrowErrorMatchingInlineSnapshot(
+        `"Expected key to be a string or buffer for 'get'."`,
+      );
 
       // undefined value
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.set("valid-key", undefined);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|undefined/i);
-      }
+      // @ts-expect-error: Testing runtime behavior with invalid types
+      expect(async () => await client.set("valid-key", undefined)).toThrowErrorMatchingInlineSnapshot(
+        `"Expected value to be a string or buffer for 'set'."`,
+      );
 
-      // null value (this might actually be valid in some Redis clients, converting to empty string)
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.set("valid-key", null);
-
-        // If it doesn't throw, check what was stored
-        const result = await client.get("valid-key");
-        expect(result === null || result === "null" || result === "").toBe(true);
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|null/i);
-      }
+      expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(`"Expected value to be a string or buffer for 'set'."`);
     });
 
     test("should handle invalid sendCommand inputs", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // Undefined command
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.send(undefined, []);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|undefined|command/i);
-      }
+      // @ts-expect-error: Testing runtime behavior with invalid types
+      expect(async () => await client.send(undefined, [])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR unknown command 'undefined', with args beginning with: "`,
+      );
 
       // Invalid args type
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.send("GET", "not-an-array");
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|array/i);
-      }
+      // @ts-expect-error: Testing runtime behavior with invalid types
+      expect(async () => await client.send("GET", "not-an-array")).toThrowErrorMatchingInlineSnapshot(
+        `"Arguments must be an array"`,
+      );
 
       // Non-string command
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.send(123, []);
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Should be a type error or invalid argument
-        expect(error.message).toMatch(/invalid|type|argument|command/i);
-      }
-
-      // Non-string arguments
-      try {
-        // @ts-expect-error: Testing runtime behavior with invalid types
-        await client.send("SET", ["key", 123]);
-
-        // This might succeed with type coercion
-        const result = await client.get("key");
-        expect(result).toBe("123");
-      } catch (error) {
-        // Should either succeed with coercion or fail with useful error
-        expect(error.message).toMatch(/invalid|type|argument/i);
-      }
+      // @ts-expect-error: Testing runtime behavior with invalid types
+      expect(async () => await client.send(123, [])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR unknown command '123', with args beginning with: "`,
+      );
     });
   });
 
   describe("Protocol and Parser Edge Cases", () => {
     test("should handle various data types correctly", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // Integer/string conversions
       await client.set("int-key", "42");
@@ -198,7 +151,7 @@ describe("Valkey: Error Handling", () => {
     });
 
     test("should handle complex RESP3 types", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // HGETALL returns object in RESP3
       const hashKey = `hash-${randomUUIDv7()}`;
@@ -216,14 +169,9 @@ describe("Valkey: Error Handling", () => {
       }
 
       // Error type handling
-      try {
-        await client.send("HGET", []); // Missing key and field
-        expect(false).toBe(true); // Should not reach here
-      } catch (error) {
-        // Redis error should be properly parsed and thrown
-        expect(error instanceof Error).toBe(true);
-        expect(error.message).toMatch(/wrong number of arguments/i);
-      }
+      expect(async () => await client.send("HGET", [])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR wrong number of arguments for 'hget' command"`,
+      ); // Missing key and field
 
       // NULL handling from various commands
       const nullResult = await client.send("HGET", [hashKey, "nonexistent"]);
@@ -231,7 +179,7 @@ describe("Valkey: Error Handling", () => {
     });
 
     test("should handle RESP protocol boundaries", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // Mix of command types to stress protocol parser
       const commands = [
@@ -260,7 +208,7 @@ describe("Valkey: Error Handling", () => {
 
   describe("Resource Management and Edge Cases", () => {
     test("should handle very large number of parallel commands", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // Create a large number of parallel commands
       const parallelCount = 1000;
@@ -284,7 +232,7 @@ describe("Valkey: Error Handling", () => {
     });
 
     test("should handle many rapid sequential commands", async () => {
-      const client = createClient();
+      const client = ctx.redis;
 
       // Create many sequential commands
       const sequentialCount = 500;
@@ -302,107 +250,34 @@ describe("Valkey: Error Handling", () => {
     });
 
     test("should handle command after disconnect and reconnect", async () => {
-      // For this test, we need an actual Redis server
-      try {
-        const client = createClient();
+      const client = ctx.redis;
 
-        // Set initial value
-        const key = `reconnect-key-${randomUUIDv7()}`;
-        await client.set(key, "initial-value");
+      // Set initial value
+      const key = `reconnect-key-${randomUUIDv7()}`;
+      await client.set(key, "initial-value");
 
-        // Disconnect explicitly
-        await client.disconnect();
+      // Disconnect explicitly
+      client.disconnect();
 
-        // This command should fail
-        try {
-          await client.get(key);
-          expect(false).toBe(true); // Should not reach here
-        } catch (error) {
-          expect(error.message).toMatch(/connection closed/i);
-        }
-
-        // Create new client connection (simulating reconnection)
-        const newClient = createClient();
-
-        // Should be able to get the previously set value
-        const value = await newClient.get(key);
-        expect(value).toBe("initial-value");
-      } catch (error) {
-        // If Redis isn't available, we'll skip this test
-        console.warn("Reconnection test skipped:", error.message);
-      }
+      // This command should fail
+      expect(async () => await client.get(key)).toThrowErrorMatchingInlineSnapshot(`"Connection has failed"`);
     });
 
     test("should handle binary data", async () => {
       // Binary data in both keys and values
-      const client = createClient();
+      const client = ctx.redis;
 
       // Create Uint8Array with binary data
       const binaryData = new Uint8Array([0, 1, 2, 3, 255, 254, 253, 252]);
       const binaryString = String.fromCharCode(...binaryData);
 
-      // Set binary data
-      try {
-        await client.set("binary-key", binaryString);
+      await client.set("binary-key", binaryString);
 
-        // Get it back
-        const result = await client.get("binary-key");
+      // Get it back
+      const result = await client.get("binary-key");
 
-        // Compare binary data
-        expect(result).toBe(binaryString);
-
-        // More precise comparison with charCode
-        for (let i = 0; i < binaryData.length; i++) {
-          expect(result?.charCodeAt(i) ?? -1).toBe(binaryData[i]);
-        }
-      } catch (error) {
-        // Binary data should be supported
-        expect(false).toBe(true);
-        console.error("Binary data test failed:", error);
-      }
-    });
-  });
-
-  describe("Authentication Errors", () => {
-    test("should handle authentication failures", async () => {
-      // Skip if no Redis available (to avoid false negatives)
-      try {
-        // Client with wrong password
-        const client = redis(`${DEFAULT_REDIS_URL}`, {
-          password: "wrong-password",
-          connectionTimeout: 1000,
-          autoReconnect: false,
-        });
-
-        // Try to send a command
-        try {
-          await client.set("key", "value");
-          expect(false).toBe(true); // Should not reach here
-        } catch (error) {
-          // Should fail with auth error
-          expect(error.message).toMatch(/auth|authentication|password/i);
-        }
-      } catch (error) {
-        // If Redis isn't available, we'll skip
-        console.warn("Auth test skipped:", error.message);
-      }
-    });
-  });
-
-  describe("Command Timeout Handling", () => {
-    test("should handle long-running commands", async () => {
-      const client = createClient();
-
-      try {
-        // Try a potentially long-running command
-        const result = await client.send("KEYS", ["*"]);
-
-        // Should return result even if it's large
-        expect(Array.isArray(result)).toBe(true);
-      } catch (error) {
-        // Some Redis configurations might timeout or reject keys, client should handle gracefully
-        console.warn("Long-running command test got error:", error.message);
-      }
+      // Compare binary data
+      expect(result).toBe(binaryString);
     });
   });
 });

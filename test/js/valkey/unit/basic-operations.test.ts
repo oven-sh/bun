@@ -1,6 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { randomUUIDv7 } from "bun";
-import { setupTestContext, skipIfNotInitialized, expectType } from "../test-utils";
+import { describe, test, expect, beforeEach } from "bun:test";
+import { ctx, expectType, createClient, ConnectionType } from "../test-utils";
 
 /**
  * Test suite covering basic Redis operations
@@ -11,8 +10,12 @@ import { setupTestContext, skipIfNotInitialized, expectType } from "../test-util
  * - Deletion operations (DEL)
  */
 describe("Valkey: Basic String Operations", () => {
-  const ctx = setupTestContext();
-
+  beforeEach(() => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
+  });
   describe("String Commands", () => {
     test("SET and GET commands", async () => {
       const key = ctx.generateKey("string-test");
@@ -173,11 +176,12 @@ describe("Valkey: Basic String Operations", () => {
 
       // INCRBYFLOAT should add specified float value and return result
       const result = await ctx.redis.send("INCRBYFLOAT", [key, "0.7"]);
-      expectType<number>(result, "number");
-      expect(result).toBe(11.2);
+      expectType<string>(result, "string");
+      expect(result).toBe("11.2");
 
       // INCRBYFLOAT also works with negative values for subtraction
       const subtracted = await ctx.redis.send("INCRBYFLOAT", [key, "-1.2"]);
+      expectType<string>(subtracted, "string");
       expect(subtracted).toBe("10");
     });
   });

@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import { randomUUIDv7 } from "bun";
-import { setupTestContext } from "../test-utils";
+import { randomUUIDv7, RedisClient } from "bun";
+import { describe, expect, test, beforeEach, afterEach, afterAll } from "bun:test";
+import { ConnectionType, createClient, ctx } from "../test-utils";
 
 /**
  * Integration test suite for complex Redis operations
@@ -10,8 +10,12 @@ import { setupTestContext } from "../test-utils";
  * - Realistic use cases
  */
 describe("Valkey: Complex Operations", () => {
-  const ctx = setupTestContext();
-
+  beforeEach(() => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
+  });
   describe("Multi/Exec Transactions", () => {
     test("should execute commands in a transaction", async () => {
       const prefix = ctx.generateKey("transaction");

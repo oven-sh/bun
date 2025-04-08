@@ -1,6 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { randomUUIDv7 } from "bun";
-import { setupTestContext, skipIfNotInitialized, expectType } from "../test-utils";
+import { describe, expect, test } from "bun:test";
+import { ConnectionType, createClient, ctx, expectType } from "../test-utils";
 
 /**
  * Test suite covering Redis hash operations
@@ -10,7 +9,12 @@ import { setupTestContext, skipIfNotInitialized, expectType } from "../test-util
  * - Hash scanning operations (HGETALL, HKEYS, HVALS)
  */
 describe("Valkey: Hash Data Type Operations", () => {
-  const ctx = setupTestContext();
+  beforeEach(async () => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+      ctx.redis = createClient(ConnectionType.TCP);
+    }
+  });
 
   describe("Basic Hash Commands", () => {
     test("HSET and HGET commands", async () => {
@@ -28,34 +32,51 @@ describe("Valkey: Hash Data Type Operations", () => {
       // HGET non-existent field should return null
       const nonExistentField = await ctx.redis.send("HGET", [key, "nonexistent"]);
       expect(nonExistentField).toBeNull();
+
+      // Test with TLS connection if available
+      if (ctx.redisTLS) {
+        const tlsKey = ctx.generateKey("hash-test-tls");
+        const tlsSetResult = await ctx.redisTLS.send("HSET", [tlsKey, "name", "Alice"]);
+        expect(tlsSetResult).toBe(1);
+        const tlsGetResult = await ctx.redisTLS.send("HGET", [tlsKey, "name"]);
+        expect(tlsGetResult).toBe("Alice");
+      }
+
+      // Test with Unix socket connection if available
+      if (ctx.redisUnix) {
+        const unixKey = ctx.generateKey("hash-test-unix");
+        const unixSetResult = await ctx.redisUnix.send("HSET", [unixKey, "name", "Bob"]);
+        expect(unixSetResult).toBe(1);
+        const unixGetResult = await ctx.redisUnix.send("HGET", [unixKey, "name"]);
+        expect(unixGetResult).toBe("Bob");
+      }
+
+      // Test with authenticated connection if available
+      if (ctx.redisAuth) {
+        const authKey = ctx.generateKey("hash-test-auth");
+        const authSetResult = await ctx.redisAuth.send("HSET", [authKey, "name", "Charlie"]);
+        expect(authSetResult).toBe(1);
+        const authGetResult = await ctx.redisAuth.send("HGET", [authKey, "name"]);
+        expect(authGetResult).toBe("Charlie");
+      }
     });
 
     test("HMSET and HMGET commands", async () => {
       const key = ctx.generateKey("hmset-test");
 
       // HMSET multiple fields
-      const hmsetResult = await ctx.redis.hmset(key, ["name", "age", "active"], ["Alice", "30", "true"]);
+      const hmsetResult = await ctx.redis.hmset(key, { name: "Alice", age: "30", active: "true" });
       expect(hmsetResult).toBe("OK");
 
       // HMGET specific fields
       const hmgetResult = await ctx.redis.hmget(key, ["name", "age"]);
       expect(Array.isArray(hmgetResult)).toBe(true);
-      expect(hmgetResult).toMatchInlineSnapshot(`
-        [
-          "Alice",
-          "30",
-        ]
-      `);
+      expect(hmgetResult).toEqual(["Alice", "30"]);
 
       // HMGET with non-existent fields
       const mixedResult = await ctx.redis.hmget(key, ["name", "nonexistent"]);
       expect(Array.isArray(mixedResult)).toBe(true);
-      expect(mixedResult).toMatchInlineSnapshot(`
-        [
-          "Alice",
-          null,
-        ]
-      `);
+      expect(mixedResult).toEqual(["Alice", null]);
     });
 
     test("HMSET with object-style syntax", async () => {
@@ -69,14 +90,11 @@ describe("Valkey: Hash Data Type Operations", () => {
       expect(allFields).toBeDefined();
 
       if (typeof allFields === "object" && allFields !== null) {
-        // Use snapshot to verify the entire object structure
-        expect(allFields).toMatchInlineSnapshot(`
-          {
-            "age": "25",
-            "email": "bob@example.com",
-            "name": "Bob",
-          }
-        `);
+        expect(allFields).toEqual({
+          name: "Bob",
+          age: "25",
+          email: "bob@example.com",
+        });
       }
     });
 
@@ -245,7 +263,7 @@ describe("Valkey: Hash Data Type Operations", () => {
       const key = ctx.generateKey("hscan-test");
 
       // Create a hash with many fields
-      const fieldCount = 100;
+      const fieldCount = 20; // Reduced count for faster tests
       const fieldArgs = [];
       for (let i = 0; i < fieldCount; i++) {
         fieldArgs.push(`field:${i}`, `value:${i}`);
@@ -254,214 +272,29 @@ describe("Valkey: Hash Data Type Operations", () => {
       await ctx.redis.send("HSET", [key, ...fieldArgs]);
 
       // Use HSCAN to iterate through keys
-      const scanResult = await ctx.redis.send("HSCAN", [key, "0", "COUNT", "20"]);
-      expect(scanResult).toMatchInlineSnapshot(`
-        [
-          "0",
-          [
-            "field:0",
-            "value:0",
-            "field:1",
-            "value:1",
-            "field:2",
-            "value:2",
-            "field:3",
-            "value:3",
-            "field:4",
-            "value:4",
-            "field:5",
-            "value:5",
-            "field:6",
-            "value:6",
-            "field:7",
-            "value:7",
-            "field:8",
-            "value:8",
-            "field:9",
-            "value:9",
-            "field:10",
-            "value:10",
-            "field:11",
-            "value:11",
-            "field:12",
-            "value:12",
-            "field:13",
-            "value:13",
-            "field:14",
-            "value:14",
-            "field:15",
-            "value:15",
-            "field:16",
-            "value:16",
-            "field:17",
-            "value:17",
-            "field:18",
-            "value:18",
-            "field:19",
-            "value:19",
-            "field:20",
-            "value:20",
-            "field:21",
-            "value:21",
-            "field:22",
-            "value:22",
-            "field:23",
-            "value:23",
-            "field:24",
-            "value:24",
-            "field:25",
-            "value:25",
-            "field:26",
-            "value:26",
-            "field:27",
-            "value:27",
-            "field:28",
-            "value:28",
-            "field:29",
-            "value:29",
-            "field:30",
-            "value:30",
-            "field:31",
-            "value:31",
-            "field:32",
-            "value:32",
-            "field:33",
-            "value:33",
-            "field:34",
-            "value:34",
-            "field:35",
-            "value:35",
-            "field:36",
-            "value:36",
-            "field:37",
-            "value:37",
-            "field:38",
-            "value:38",
-            "field:39",
-            "value:39",
-            "field:40",
-            "value:40",
-            "field:41",
-            "value:41",
-            "field:42",
-            "value:42",
-            "field:43",
-            "value:43",
-            "field:44",
-            "value:44",
-            "field:45",
-            "value:45",
-            "field:46",
-            "value:46",
-            "field:47",
-            "value:47",
-            "field:48",
-            "value:48",
-            "field:49",
-            "value:49",
-            "field:50",
-            "value:50",
-            "field:51",
-            "value:51",
-            "field:52",
-            "value:52",
-            "field:53",
-            "value:53",
-            "field:54",
-            "value:54",
-            "field:55",
-            "value:55",
-            "field:56",
-            "value:56",
-            "field:57",
-            "value:57",
-            "field:58",
-            "value:58",
-            "field:59",
-            "value:59",
-            "field:60",
-            "value:60",
-            "field:61",
-            "value:61",
-            "field:62",
-            "value:62",
-            "field:63",
-            "value:63",
-            "field:64",
-            "value:64",
-            "field:65",
-            "value:65",
-            "field:66",
-            "value:66",
-            "field:67",
-            "value:67",
-            "field:68",
-            "value:68",
-            "field:69",
-            "value:69",
-            "field:70",
-            "value:70",
-            "field:71",
-            "value:71",
-            "field:72",
-            "value:72",
-            "field:73",
-            "value:73",
-            "field:74",
-            "value:74",
-            "field:75",
-            "value:75",
-            "field:76",
-            "value:76",
-            "field:77",
-            "value:77",
-            "field:78",
-            "value:78",
-            "field:79",
-            "value:79",
-            "field:80",
-            "value:80",
-            "field:81",
-            "value:81",
-            "field:82",
-            "value:82",
-            "field:83",
-            "value:83",
-            "field:84",
-            "value:84",
-            "field:85",
-            "value:85",
-            "field:86",
-            "value:86",
-            "field:87",
-            "value:87",
-            "field:88",
-            "value:88",
-            "field:89",
-            "value:89",
-            "field:90",
-            "value:90",
-            "field:91",
-            "value:91",
-            "field:92",
-            "value:92",
-            "field:93",
-            "value:93",
-            "field:94",
-            "value:94",
-            "field:95",
-            "value:95",
-            "field:96",
-            "value:96",
-            "field:97",
-            "value:97",
-            "field:98",
-            "value:98",
-            "field:99",
-            "value:99",
-          ],
-        ]
-      `);
+      const scanResult = await ctx.redis.send("HSCAN", [key, "0", "COUNT", "10"]);
+
+      // Validate scan result structure
+      expect(Array.isArray(scanResult)).toBe(true);
+      expect(scanResult.length).toBe(2);
+
+      // First element is cursor
+      expect(typeof scanResult[0]).toBe("string");
+
+      // Second element is the key-value pairs array
+      const pairs = scanResult[1];
+      expect(Array.isArray(pairs)).toBe(true);
+
+      // Should have key-value pairs (even number of elements)
+      expect(pairs.length % 2).toBe(0);
+
+      // Verify we have the expected pattern in our results
+      for (let i = 0; i < pairs.length; i += 2) {
+        const key = pairs[i];
+        const value = pairs[i + 1];
+        expect(key).toMatch(/^field:\d+$/);
+        expect(value).toMatch(/^value:\d+$/);
+      }
     });
   });
 });

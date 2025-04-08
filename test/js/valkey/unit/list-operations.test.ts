@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { expectType, setupTestContext } from "../test-utils";
+import { describe, expect, test, beforeEach } from "bun:test";
+import { expectType, ctx, createClient, ConnectionType } from "../test-utils";
 import { isCI } from "harness";
 
 /**
@@ -10,7 +10,12 @@ import { isCI } from "harness";
  * - Blocking operations (BLPOP, BRPOP)
  */
 describe("Valkey: List Data Type Operations", () => {
-  const ctx = setupTestContext();
+  beforeEach(() => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
+  });
 
   describe("Basic List Operations", () => {
     test("LPUSH and RPUSH commands", async () => {

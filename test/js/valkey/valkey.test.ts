@@ -1,33 +1,33 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { randomUUIDv7, RedisClient } from "bun";
-import { createClient } from "./test-utils";
+import { createClient, ctx, DEFAULT_REDIS_URL, ConnectionType } from "./test-utils";
 import { expectType } from "./test-utils";
 
 describe("Valkey Redis Client", () => {
-  let redis: RedisClient;
-
-  beforeAll(async () => {
-    redis = createClient();
+  beforeEach(() => {
+    if (ctx.redis?.connected) {
+      ctx.redis.disconnect?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
   });
 
   describe("Basic Operations", () => {
     test("should set and get strings", async () => {
-      const client = createClient();
+      const redis = ctx.redis;
       const testKey = "greeting";
       const testValue = "Hello from Bun Redis!";
 
       // Using direct set and get methods
-      const setResult = await client.set(testKey, testValue);
+      const setResult = await redis.set(testKey, testValue);
       expect(setResult).toMatchInlineSnapshot(`"OK"`);
 
       // GET should return the value we set
-      const getValue = await client.get(testKey);
+      const getValue = await redis.get(testKey);
       expect(getValue).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);
-
-      await client.disconnect();
     });
 
     test("should test key existence", async () => {
+      const redis = ctx.redis;
       // Let's set a key first
       await redis.set("greeting", "test existence");
 
@@ -47,6 +47,7 @@ describe("Valkey Redis Client", () => {
     });
 
     test("should increment and decrement counters", async () => {
+      const redis = ctx.redis;
       const counterKey = "counter";
       // First set a counter value
       await redis.set(counterKey, "10");
@@ -65,6 +66,7 @@ describe("Valkey Redis Client", () => {
     });
 
     test("should manage key expiration", async () => {
+      const redis = ctx.redis;
       // Set a key first
       const tempKey = "temporary";
       await redis.set(tempKey, "will expire");
@@ -77,11 +79,12 @@ describe("Valkey Redis Client", () => {
       // Use the TTL command directly
       const ttl = await redis.ttl(tempKey);
       expectType<number>(ttl, "number");
-      expect(ttl).toBeGreaterThan(0); 
+      expect(ttl).toBeGreaterThan(0);
       expect(ttl).toBeLessThanOrEqual(60); // Should be positive and not exceed our set time
     });
 
     test("should implement TTL command correctly for different cases", async () => {
+      const redis = ctx.redis;
       // 1. Key with expiration
       const tempKey = "ttl-test-key";
       await redis.set(tempKey, "ttl test value");
@@ -90,7 +93,7 @@ describe("Valkey Redis Client", () => {
       // Use native ttl command
       const ttl = await redis.ttl(tempKey);
       expectType<number>(ttl, "number");
-      expect(ttl).toBeGreaterThan(0); 
+      expect(ttl).toBeGreaterThan(0);
       expect(ttl).toBeLessThanOrEqual(60);
 
       // 2. Key with no expiration
@@ -108,6 +111,7 @@ describe("Valkey Redis Client", () => {
 
   describe("Connection State", () => {
     test("should have a connected property", () => {
+      const redis = ctx.redis;
       // The client should expose a connected property
       expect(typeof redis.connected).toBe("boolean");
     });
@@ -115,6 +119,7 @@ describe("Valkey Redis Client", () => {
 
   describe("RESP3 Data Types", () => {
     test("should handle hash maps (dictionaries) as command responses", async () => {
+      const redis = ctx.redis;
       // HSET multiple fields
       const userId = "user:" + randomUUIDv7().substring(0, 8);
       const setResult = await redis.send("HSET", [userId, "name", "John", "age", "30", "active", "true"]);
@@ -137,6 +142,7 @@ describe("Valkey Redis Client", () => {
     });
 
     test("should handle sets as command responses", async () => {
+      const redis = ctx.redis;
       // Add items to a set
       const setKey = "colors:" + randomUUIDv7().substring(0, 8);
       const addResult = await redis.send("SADD", [setKey, "red", "blue", "green"]);
@@ -158,11 +164,14 @@ describe("Valkey Redis Client", () => {
 
   describe("Connection Options", () => {
     test("connection errors", async () => {
-      const customRedis = new RedisClient("redis://badusername:secretpassword@localhost:6379");
+      const url = new URL(DEFAULT_REDIS_URL);
+      url.username = "badusername";
+      url.password = "secretpassword";
+      const customRedis = new RedisClient(url.toString());
 
       expect(async () => {
-        await customRedis.connect();
-      }).toThrow();
+        await customRedis.get("test");
+      }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
     });
   });
 });

@@ -84,6 +84,6 @@ pub const BufferVectorized = struct {
     }
 };
 
-pub fn @"export"() void {
+comptime {
     @export(&BufferVectorized.fill, .{ .name = "Bun__Buffer_fill" });
 }

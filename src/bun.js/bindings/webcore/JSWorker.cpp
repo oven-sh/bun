@@ -42,7 +42,7 @@
 #include "JSDOMURL.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
-#include "NodeValidator.h"
+#include "ErrorCode.h"
 #include "StructuredSerializeOptions.h"
 #include "JSWorkerOptions.h"
 #include "ScriptExecutionContext.h"

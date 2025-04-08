@@ -3054,7 +3054,7 @@ function ClientRequest(input, options, cb) {
   } else if (agent == null) {
     agent = defaultAgent;
   } else if (typeof agent.addRequest !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+    throw $ERR_INVALID_ARG_TYPE("options.agent", ["Agent-like Object", "undefined", "false"], agent);
   }
   this[kAgent] = agent;
   this.destroyed = false;

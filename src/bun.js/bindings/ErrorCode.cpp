@@ -537,33 +537,131 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     result.append("The "_s);
     addParameter(result, arg_name);
     result.append(" must be "_s);
-    result.append("of type "_s);
 
-    unsigned length = expected_types.size();
-    if (length == 1) {
-        auto* str = expected_types.at(0).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str->view(globalObject));
-    } else if (length == 2) {
-        auto* str1 = expected_types.at(0).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str1->view(globalObject));
-        result.append(" or "_s);
-        auto* str2 = expected_types.at(1).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str2->view(globalObject));
-    } else {
-        for (unsigned i = 0, end = length - 1; i < end; i++) {
-            JSValue expected_type = expected_types.at(i);
-            auto* str = expected_type.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            result.append(str->view(globalObject));
-            result.append(", "_s);
+    auto isCommon = [](WTF::String type) -> bool {
+        constexpr static std::array commonTypes = {
+            "string"_s,
+            "function"_s,
+            "number"_s,
+            "object"_s,
+            "Function"_s,
+            "Object"_s,
+            "boolean"_s,
+            "bigint"_s,
+            "symbol"_s,
+        };
+
+        for (ASCIILiteral common : commonTypes) {
+            if (type == common) {
+                return true;
+            }
         }
-        result.append("or "_s);
-        auto* str = expected_types.at(length - 1).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str->view(globalObject));
+
+        return false;
+    };
+
+    auto isClass = [](WTF::String type) -> bool {
+        const std::locale& locale = std::locale::classic();
+
+        if (!type.containsOnlyASCII()) {
+            return false;
+        }
+
+        const auto span = type.span8();
+
+        if (span.empty() || !std::isupper<char>(span[0], locale)) {
+            return false;
+        }
+
+        for (unsigned i = 1; i < span.size(); ++i) {
+            if (!std::isalnum<char>(span[i], locale)) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    auto formatList = [](WTF::Vector<WTF::String, 4>& types, WTF::StringBuilder& builder, WTF::ASCIILiteral spacedConjunction) -> void {
+        switch (types.size()) {
+        case 0:
+            break;
+        case 1:
+            builder.append(types[0]);
+        case 2:
+            builder.append(types[0]);
+            builder.append(spacedConjunction);
+            builder.append(types[1]);
+            break;
+        default:
+            for (unsigned i = 0; i < types.size() - 2; i++) {
+                builder.append(types[i]);
+                builder.append(", "_s);
+            }
+            builder.append(types[types.size() - 2]);
+            builder.append(","_s);
+            builder.append(spacedConjunction);
+            builder.append(types[types.size() - 1]);
+            break;
+        }
+    };
+
+    WTF::Vector<WTF::String, 4> types, instances, other;
+
+    for (unsigned i = 0; i < expected_types.size(); i++) {
+        JSValue value = expected_types.at(i);
+
+        if (!value.isString()) {
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INTERNAL_ASSERTION, "All expected entries have to be of type string"_s));
+            return {};
+        }
+
+        WTF::String valueString = value.getString(globalObject);
+        if (isCommon(valueString)) {
+            types.append(valueString.convertToASCIILowercase());
+        } else if (isClass(valueString)) {
+            instances.append(WTFMove(valueString));
+        } else {
+            if (valueString == "object") {
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INTERNAL_ASSERTION, "The value \"object\" should be written as \"Object\""_s));
+                return {};
+            }
+            other.append(WTFMove(valueString));
+        }
+    }
+
+    if (!instances.isEmpty() && types.removeFirst("object"_s)) {
+        instances.append("Object"_s);
+    }
+
+    if (!types.isEmpty()) {
+        if (types.size() > 1) {
+            result.append("one of type "_s);
+        } else {
+            result.append("of type "_s);
+        }
+        formatList(types, result, " or ");
+        if (!instances.isEmpty() || !other.isEmpty()) {
+            result.append(" or "_s);
+        }
+    }
+
+    if (!instances.isEmpty()) {
+        result.append("an instance of "_s);
+        formatList(instances, result, " or ");
+        if (!other.isEmpty()) {
+            result.append(" or "_s);
+        }
+    }
+
+    if (other.size() > 1) {
+        result.append("one of "_s);
+        formatList(other, result, " or ");
+    } else if (!other.isEmpty()) {
+        if (other[0].convertToASCIILowercase() != other[0]) {
+            result.append("an "_s);
+        }
+        result.append(other[0]);
     }
 
     result.append(". Received "_s);
@@ -573,7 +671,8 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return result.toString();
 }
 
-WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
+WTF::String
+ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
 {
     auto arg_name = std::span<const LChar>(arg_name_string->ptr, arg_name_string->len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));
@@ -622,7 +721,6 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 
     return builder.toString();
 }
-
 }
 
 namespace ERR {

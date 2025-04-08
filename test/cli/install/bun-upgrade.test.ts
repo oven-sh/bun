@@ -19,9 +19,9 @@ beforeEach(async () => {
   copyFileSync(bunExe(), execPath);
 });
 
-it("two invalid arguments, should display error message and suggest command", async () => {
+it("two or more arguments, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "bun-types", "--dev"],
+    cmd: [execPath, "upgrade", "foo", "bar"],
     cwd,
     stdout: null,
     stdin: "pipe",
@@ -30,13 +30,15 @@ it("two invalid arguments, should display error message and suggest command", as
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types --dev` instead.");
+  expect(err.split(/\r?\n/)).toContain("error: Invalid number of arguments.");
+  expect(err.split(/\r?\n/)).toContain(
+    "note: Run `bun upgrade` with `<version>`, `stable`,  `canary`, or no argument for latest version.",
+  );
 });
 
-it("two invalid arguments flipped, should display error message and suggest command", async () => {
+it("zero arguments and one invalid option, should display error message", async () => {
   const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "--dev", "bun-types"],
+    cmd: [execPath, "upgrade", "--foo"],
     cwd,
     stdout: null,
     stdin: "pipe",
@@ -45,13 +47,12 @@ it("two invalid arguments flipped, should display error message and suggest comm
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).toContain("note: Use `bun update --dev bun-types` instead.");
+  expect(err.split(/\r?\n/)).toContain("error: `bun upgrade` only accepts `--profile` as an option.");
 });
 
-it("one invalid argument, should display error message and suggest command", async () => {
+it("one valid argument and one invalid option, should display error message", async () => {
   const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "bun-types"],
+    cmd: [execPath, "upgrade", "stable", "--foo"],
     cwd,
     stdout: null,
     stdin: "pipe",
@@ -60,11 +61,10 @@ it("one invalid argument, should display error message and suggest command", asy
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types` instead.");
+  expect(err.split(/\r?\n/)).toContain("error: `bun upgrade` only accepts `--profile` as an option.");
 });
 
-it("one valid argument, should succeed", async () => {
+it("one valid options, should succeed", async () => {
   const { stderr } = spawn({
     cmd: [execPath, "upgrade", "--help"],
     cwd,
@@ -78,22 +78,6 @@ it("one valid argument, should succeed", async () => {
   // Should not contain error message
   expect(err.split(/\r?\n/)).not.toContain("error: This command updates bun itself, and does not take package names.");
   expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --help` instead.");
-});
-
-it("two valid argument, should succeed", async () => {
-  const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "--stable", "--profile"],
-    cwd,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-
-  const err = await new Response(stderr).text();
-  // Should not contain error message
-  expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");
 });
 
 it("zero arguments, should succeed", async () => {

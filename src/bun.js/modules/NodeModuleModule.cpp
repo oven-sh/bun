@@ -489,7 +489,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filename, globalObject, true));
             RELEASE_AND_RETURN(scope, paths);
         } else {
-            auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
+            auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
             RELEASE_AND_RETURN(scope, array);
         }
     }

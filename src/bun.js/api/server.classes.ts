@@ -191,7 +191,7 @@ export default [
     klass: {},
     finalize: true,
     noConstructor: true,
-    values: ["onAborted", "onWritable", "onData"],
+    values: ["onAborted", "onWritable", "onData", "promise"],
   }),
 
   define({

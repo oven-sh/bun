@@ -431,7 +431,32 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {}
+  #resumeSocket() {
+    const handle = this[kHandle];
+    const response = handle?.response;
+    if (response) {
+      const resumed = response.resume();
+      if (resumed && resumed !== true) {
+        const bodyReadState = handle.hasBody;
+
+        const message = this._httpMessage;
+        const req = message?.req;
+
+        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+          emitServerSocketEOFNT(this, req);
+        }
+        if (req) {
+          req.push(resumed);
+        }
+        this.push(resumed);
+      }
+    }
+  }
+
+  _read(size) {
+    // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+    this.#resumeSocket();
+  }
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -492,22 +517,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _write(chunk, encoding, callback) {}
 
   pause() {
-    const message = this._httpMessage;
     const handle = this[kHandle];
     const response = handle?.response;
-    if (response && message) {
+    if (response) {
       response.pause();
     }
     return super.pause();
   }
 
   resume() {
-    const message = this._httpMessage;
-    const handle = this[kHandle];
-    const response = handle?.response;
-    if (response && message) {
-      response.resume();
-    }
+    this.#resumeSocket();
     return super.resume();
   }
 
@@ -953,7 +972,9 @@ const ServerPrototype = {
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
           // start buffering data if any, the user will need to resume() or .on("data") to read it
-          handle.pause();
+          if (hasBody) {
+            handle.pause();
+          }
           drainMicrotasks();
 
           let capturedError;
@@ -985,7 +1006,6 @@ const ServerPrototype = {
 
           socket[kRequest] = http_req;
           const is_upgrade = http_req.headers.upgrade;
-
           if (!is_upgrade) {
             if (canUseInternalAssignSocket) {
               // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -994,7 +1014,6 @@ const ServerPrototype = {
               http_res.assignSocket(socket);
             }
           }
-
           function onClose() {
             didFinish = true;
             resolveFunction && resolveFunction();
@@ -1206,6 +1225,21 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
+function emitServerSocketEOF(self, req) {
+  self.push(null);
+  if (req) {
+    req.push(null);
+    req.complete = true;
+  }
+}
+
+function emitServerSocketEOFNT(self, req) {
+  if (req) {
+    req[eofInProgress] = true;
+  }
+  process.nextTick(emitServerSocketEOF, self);
+}
+
 function hasServerResponseFinished(self, chunk, callback) {
   const finished = self.finished;
 
@@ -1378,6 +1412,12 @@ const IncomingMessagePrototype = {
     if (!this._consuming) {
       this._readableState.readingMore = false;
       this._consuming = true;
+    }
+
+    const socket = this.socket;
+    if (socket && socket.readable) {
+      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+      socket.resume();
     }
 
     if (this[eofInProgress]) {
@@ -2215,6 +2255,7 @@ const ServerResponsePrototype = {
       socket.removeListener("close", onServerResponseClose);
       socket._httpMessage = null;
     }
+
     this.socket = null;
   },
 

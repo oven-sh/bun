@@ -1,6 +1,6 @@
 import { RedisClient, type SpawnOptions } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, randomPort } from "harness";
+import { bunEnv, isCI, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 const dockerCLI = Bun.which("docker") as string;
@@ -45,10 +45,13 @@ export const isEnabled =
  */
 
 // Redis connection information
+let REDIS_TEMP_DIR = tempDirWithFiles("redis-tmp", {
+  "a.txt": "a",
+});
 let REDIS_PORT = randomPort();
 let REDIS_TLS_PORT = randomPort();
 let REDIS_HOST = "0.0.0.0";
-let REDIS_UNIX_SOCKET = tmpdir() + "/redis.sock";
+let REDIS_UNIX_SOCKET = REDIS_TEMP_DIR + "/redis.sock";
 
 // Connection types
 export enum ConnectionType {
@@ -276,7 +279,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
         "-p",
         `${tlsPort}:6380`,
         "-v",
-        `${tmpdir()}:/tmp`,
+        `${REDIS_TEMP_DIR}:/tmp`,
         "--health-cmd",
         "redis-cli ping || exit 1",
         "--health-interval",

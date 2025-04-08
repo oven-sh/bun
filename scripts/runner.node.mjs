@@ -692,6 +692,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,

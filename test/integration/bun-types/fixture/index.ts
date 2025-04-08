@@ -1,9 +1,6 @@
 import fact from "./file.json";
 console.log(fact);
 
-import svgpath from "cool.svg";
-svgpath satisfies `${string}.svg`;
-
 import * as test from "bun:test";
 test.describe;
 test.it;

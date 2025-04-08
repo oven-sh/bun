@@ -1,4 +1,5 @@
 const EditorContext = @import("../open.zig").EditorContext;
+const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
 const Blob = JSC.WebCore.Blob;
 const default_allocator = bun.default_allocator;
 const Output = bun.Output;
@@ -52,6 +53,8 @@ aws_signature_cache: AWSSignatureCache = .{},
 
 s3_default_client: JSC.Strong = .empty,
 default_csrf_secret: []const u8 = "",
+
+valkey_context: ValkeyContext = .{},
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
@@ -502,4 +505,6 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+
+    this.valkey_context.deinit();
 }

@@ -382,14 +382,29 @@ pub const BlobOrStringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) JSError!?BlobOrStringOrBuffer {
-        if (value.as(JSC.WebCore.Blob)) |blob| {
+    pub fn byteLength(this: *const BlobOrStringOrBuffer) usize {
+        return this.slice().len;
+    }
+
+    pub fn fromJSMaybeFile(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, allow_file: bool) JSError!?BlobOrStringOrBuffer {
+        // Check StringOrBuffer first because it's more common and cheaper.
+        const str = try StringOrBuffer.fromJS(global, allocator, value) orelse {
+            const blob = value.as(JSC.WebCore.Blob) orelse return null;
+            if (allow_file and blob.needsToReadFile()) {
+                return global.throwInvalidArguments("File blob cannot be used here", .{});
+            }
+
             if (blob.store) |store| {
                 store.ref();
             }
             return .{ .blob = blob.* };
-        }
-        return .{ .string_or_buffer = try StringOrBuffer.fromJS(global, allocator, value) orelse return null };
+        };
+
+        return .{ .string_or_buffer = str };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) JSError!?BlobOrStringOrBuffer {
+        return fromJSMaybeFile(global, allocator, value, true);
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) bun.JSError!?BlobOrStringOrBuffer {

@@ -184,7 +184,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     void* impl = WebWorker__create(
         worker.ptr(),
-        jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(),
+        defaultGlobalObject(context.jsGlobalObject())->bunVM(),
         nameStr,
         urlStr,
         &errorMessage,

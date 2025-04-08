@@ -42,7 +42,7 @@
 #include "JSDOMURL.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
-#include "ErrorCode.h"
+#include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
 #include "JSWorkerOptions.h"
 #include "ScriptExecutionContext.h"
@@ -137,7 +137,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     auto options = WorkerOptions {};
-    options.bun.unref = false;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
         if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name)) {
@@ -148,12 +147,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         }
 
         if (auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
-            options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
+            options.mini = miniModeValue.toBoolean(lexicalGlobalObject);
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         if (auto ref = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
-            options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
+            options.unref = !ref.toBoolean(lexicalGlobalObject);
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        if (auto eval = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "eval"_s))) {
+            options.evalMode = eval.toBoolean(lexicalGlobalObject);
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         if (auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s))) {
             if (!preloadModulesValue.isUndefinedOrNull()) {
@@ -161,14 +167,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                     auto str = preloadModulesValue.toWTFString(lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(throwScope, {});
                     if (!str.isEmpty()) {
-                        options.bun.preloadModules.append(str);
+                        options.preloadModules.append(str);
                     }
                 } else if (auto* array = jsDynamicCast<JSC::JSArray*>(preloadModulesValue)) {
                     std::optional<Vector<String>> seq = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, array);
                     RETURN_IF_EXCEPTION(throwScope, {});
                     if (seq) {
-                        options.bun.preloadModules = WTFMove(*seq);
-                        options.bun.preloadModules.removeAllMatching([](const String& str) {
+                        options.preloadModules = WTFMove(*seq);
+                        options.preloadModules.removeAllMatching([](const String& str) {
                             return str.isEmpty();
                         });
                     }
@@ -220,13 +226,17 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 transferredPorts = disentangleResult.releaseReturnValue();
             }
 
-            options.bun.data = serialized.releaseReturnValue();
-            options.bun.dataMessagePorts = WTFMove(transferredPorts);
+            options.data = serialized.releaseReturnValue();
+            options.dataMessagePorts = WTFMove(transferredPorts);
         }
 
         auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
+        // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
+        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
+        }
         JSObject* envObject = nullptr;
 
         if (envValue && envValue.isCell()) {
@@ -255,35 +265,43 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 env.add(key.impl()->isolatedCopy(), str);
             }
 
-            options.bun.env = std::make_unique<HashMap<String, String>>(WTFMove(env));
+            options.env.emplace(WTFMove(env));
         }
+
+        // needed to match the coercion behavior of `String(value)`, which returns a descriptive
+        // string for Symbols instead of throwing like JSValue::toString does.
+        // may throw an exception!
+        auto coerceToIsolatedString = [lexicalGlobalObject](JSValue v) -> String {
+            String original = v.isSymbol() ? asSymbol(v)->descriptiveString() : v.toWTFString(lexicalGlobalObject);
+            return original.isolatedCopy();
+        };
 
         JSValue argvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "argv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (argvValue && argvValue.isCell() && argvValue.asCell()->type() == JSC::JSType::ArrayType) {
-            Vector<String> argv;
-            forEachInIterable(lexicalGlobalObject, argvValue, [&argv](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+        if (argvValue && argvValue.pureToBoolean() != TriState::False) {
+            Bun::V::validateArray(throwScope, globalObject, argvValue, "options.argv"_s, jsNumber(0));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            forEachInIterable(lexicalGlobalObject, argvValue, [&options, &coerceToIsolatedString](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                String str = nextValue.toWTFString(lexicalGlobalObject).isolatedCopy();
-                if (UNLIKELY(scope.exception()))
-                    return;
-                argv.append(str);
+                String str = coerceToIsolatedString(nextValue);
+                RETURN_IF_EXCEPTION(scope, );
+                options.argv.append(str);
             });
-            options.bun.argv = std::make_unique<Vector<String>>(WTFMove(argv));
         }
 
         JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (execArgvValue && execArgvValue.isCell() && execArgvValue.asCell()->type() == JSC::JSType::ArrayType) {
+        if (execArgvValue && execArgvValue.pureToBoolean() != TriState::False) {
             Vector<String> execArgv;
-            forEachInIterable(lexicalGlobalObject, execArgvValue, [&execArgv](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+            Bun::V::validateArray(throwScope, globalObject, execArgvValue, "options.execArgv"_s, jsNumber(0));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            forEachInIterable(lexicalGlobalObject, execArgvValue, [&execArgv, &coerceToIsolatedString](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                String str = nextValue.toWTFString(lexicalGlobalObject).isolatedCopy();
-                if (UNLIKELY(scope.exception()))
-                    return;
+                String str = coerceToIsolatedString(nextValue);
+                RETURN_IF_EXCEPTION(scope, );
                 execArgv.append(str);
             });
-            options.bun.execArgv = std::make_unique<Vector<String>>(WTFMove(execArgv));
+            options.execArgv.emplace(WTFMove(execArgv));
         }
     }
 

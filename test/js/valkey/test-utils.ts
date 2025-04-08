@@ -4,7 +4,21 @@ import { bunEnv, randomPort } from "harness";
 import path from "path";
 
 const dockerCLI = Bun.which("docker") as string;
-export const isEnabled = !!dockerCLI;
+export const isEnabled =
+  !!dockerCLI &&
+  (() => {
+    try {
+      const info = Bun.spawnSync({
+        cmd: [dockerCLI, "info"],
+        stdout: "pipe",
+        stderr: "inherit",
+        env: bunEnv,
+      });
+      return info.stdout.toString().indexOf("Server Version:") !== -1;
+    } catch (error) {
+      return false;
+    }
+  })();
 
 /**
  * Test utilities for Valkey/Redis tests

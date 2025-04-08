@@ -2514,18 +2514,13 @@ pub const VirtualMachine = struct {
 
     threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
     fn _resolve(
+        jsc_vm: *VirtualMachine,
         ret: *ResolveFunctionResult,
         specifier: string,
         source: string,
         is_esm: bool,
         comptime is_a_file_path: bool,
     ) !void {
-        bun.assert(VirtualMachine.isLoaded());
-        // macOS threadlocal vars are very slow
-        // we won't change threads in this function
-        // so we can copy it here
-        var jsc_vm = VirtualMachine.get();
-
         if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
             return;
@@ -2691,7 +2686,7 @@ pub const VirtualMachine = struct {
         }
 
         var result = ResolveFunctionResult{ .path = "", .result = null };
-        var jsc_vm = VirtualMachine.get();
+        const jsc_vm = global.bunVM();
         const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
         defer specifier_utf8.deinit();
 
@@ -2734,7 +2729,7 @@ pub const VirtualMachine = struct {
             jsc_vm.transpiler.linker.log = old_log;
             jsc_vm.transpiler.resolver.log = old_log;
         }
-        _resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
+        jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 const msgs: []logger.Msg = log.msgs.items;

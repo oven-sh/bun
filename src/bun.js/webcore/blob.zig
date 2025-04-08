@@ -1024,7 +1024,12 @@ pub const Blob = struct {
         // its usage from `Blob.writeFileInternal`), then upgrade this to
         // Environment.allow_assert
         if (Environment.isDebug) {
-            bun.assertf(destination_type != .bytes, "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller. Please report it to the Bun team.", .{});
+            bun.assertf(
+                destination_type != .bytes,
+                "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller. Please report it to the Bun team.",
+                .{},
+                @src(),
+            );
         }
 
         const source_store = source_blob.store orelse return writeFileWithEmptySourceToDestination(ctx, destination_blob, options);

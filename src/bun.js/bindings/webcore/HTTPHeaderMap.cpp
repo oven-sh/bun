@@ -29,20 +29,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "HTTPHeaderMap.h"
 
-#include <utility>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
-
-static StringView extractCookieName(const StringView& cookie)
-{
-    auto nameEnd = cookie.find('=');
-    if (nameEnd == notFound)
-        return String();
-    return cookie.substring(0, nameEnd);
-}
 
 namespace WebCore {
 

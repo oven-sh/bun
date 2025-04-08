@@ -82,7 +82,6 @@ WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const StringView&);
 #endif
 bool isValidHTTPToken(const StringView&);
 std::optional<WallTime> parseHTTPDate(const StringView&);
-StringView filenameFromHTTPContentDisposition(StringView);
 WEBCORE_EXPORT String extractMIMETypeFromMediaType(const String&);
 StringView extractCharsetFromMediaType(const String&);
 XSSProtectionDisposition parseXSSProtectionHeader(const String& header, String& failureReason, unsigned& failurePosition, String& reportURL);

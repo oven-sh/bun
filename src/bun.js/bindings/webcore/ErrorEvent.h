@@ -94,7 +94,7 @@ private:
     unsigned m_columnNumber;
     JSValueInWrappedObject m_error;
     // RefPtr<SerializedScriptValue> m_serializedError;
-    bool m_triedToSerialize { false };
+    // bool m_triedToSerialize { false };
 };
 
 } // namespace WebCore

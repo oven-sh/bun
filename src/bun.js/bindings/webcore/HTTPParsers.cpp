@@ -346,35 +346,6 @@ std::optional<WallTime> parseHTTPDate(const String& value)
     return WallTime::fromRawSeconds(dateInMillisecondsSinceEpoch / 1000.0);
 }
 
-// FIXME: This function doesn't comply with RFC 6266.
-// For example, this function doesn't handle the interaction between " and ;
-// that arises from quoted-string, nor does this function properly unquote
-// attribute values. Further this function appears to process parameter names
-// in a case-sensitive manner. (There are likely other bugs as well.)
-StringView filenameFromHTTPContentDisposition(StringView value)
-{
-    for (auto keyValuePair : value.split(';')) {
-        size_t valueStartPos = keyValuePair.find('=');
-        if (valueStartPos == notFound)
-            continue;
-
-        auto key = keyValuePair.left(valueStartPos).trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
-
-        if (key.isEmpty() || key != "filename"_s)
-            continue;
-
-        auto value = keyValuePair.substring(valueStartPos + 1).trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
-
-        // Remove quotes if there are any
-        if (value.length() > 1 && value[0] == '\"')
-            value = value.substring(1, value.length() - 2);
-
-        return value;
-    }
-
-    return String();
-}
-
 String extractMIMETypeFromMediaType(const String& mediaType)
 {
     unsigned position = 0;

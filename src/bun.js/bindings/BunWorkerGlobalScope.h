@@ -50,7 +50,7 @@ public:
 
     ScriptExecutionContext* m_context;
 
-private:
-    MessagePortChannelProviderImpl* m_messagePortChannelProvider;
+// private:
+//     MessagePortChannelProviderImpl* m_messagePortChannelProvider;
 };
 }

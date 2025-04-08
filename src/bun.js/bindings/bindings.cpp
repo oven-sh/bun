@@ -4991,7 +4991,8 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     }
 
     if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(obj)) {
-        auto view = WTF::StringView(function->name());
+        String name = function->name();
+        auto view = WTF::StringView(name);
         *arg2 = Zig::toZigString(view);
         return;
     }

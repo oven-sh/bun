@@ -2406,10 +2406,15 @@ pub const PackageManifest = struct {
                             // When reading the versions, we iterate through the
                             // list backwards to choose the highest matching
                             // version
-                            const first = semver_versions_[0];
-                            const second = semver_versions_[1];
+                            const first: Semver.Version = semver_versions_[0];
+                            const second: Semver.Version = semver_versions_[1];
                             const order = second.order(first, string_buf, string_buf);
-                            bun.assertWithLocation(order == .gt, @src());
+                            bun.assertf(
+                                order == .gt,
+                                "expected {s} > {s}",
+                                .{ second.fmt(source.contents), first.fmt(source.contents) },
+                                @src(),
+                            );
                         }
                     }
                 }

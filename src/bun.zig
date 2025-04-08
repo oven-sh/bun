@@ -3354,16 +3354,24 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
-noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) noreturn {
+noinline fn assertionFailureWithMsg(
+    comptime msg: []const u8,
+    args: anytype,
+    comptime src: ?std.builtin.SourceLocation,
+) noreturn {
     if (@inComptime()) {
         @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
+        const loc_part = if (src) |s|
+            std.fmt.comptimePrint(" at {s}:{d}:{d}", .{ s.file, s.line, s.column })
+        else
+            "";
+        Output.panic(assertion_failure_msg ++ loc_part ++ ": " ++ msg, args);
     }
 }
 
@@ -3426,20 +3434,26 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
 /// ```zig
 /// if (comptime bun.Environment.allow_assert) {
 ///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive, "Something happened: {}", .{ expensive });
+///   bun.assert(expensive, "Something happened: {}", .{ expensive }, @src());
 /// }
 /// ```
 ///
 /// Use `releaseAssert` for assertions that should not be stripped in release builds.
-pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
+pub fn assertf(
+    ok: bool,
+    comptime format: []const u8,
+    args: anytype,
+    comptime src: ?std.builtin.SourceLocation,
+) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
 
     if (!ok) {
+        @branchHint(.cold);
         // crash handler has runtime-only code.
         if (@inComptime()) @compileError(std.fmt.comptimePrint(format, args));
-        assertionFailureWithMsg(format, args);
+        assertionFailureWithMsg(format, args, src);
     }
 }
 

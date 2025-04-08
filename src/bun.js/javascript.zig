@@ -910,6 +910,12 @@ pub const VirtualMachine = struct {
     // if one disconnect event listener should be ignored
     channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
 
+    /// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
+    /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
+    /// true may expose bugs that would otherwise only occur using Workers. Controlled by
+    /// Options.destruct_main_thread_on_exit.
+    destruct_main_thread_on_exit: bool,
+
     /// A set of extensions that exist in the require.extensions map. Keys
     /// contain the leading '.'. Value is either a loader for built in
     /// functions, or an index into JSCommonJSExtensions.
@@ -1229,7 +1235,6 @@ pub const VirtualMachine = struct {
 
     extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
     extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
-    extern fn Bun__Process__exit(*JSGlobalObject, code: c_int) noreturn;
 
     export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
         this.exit_on_uncaught_exception = true;
@@ -1269,12 +1274,12 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 7);
+            JSC.Process.exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         if (this.exit_on_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            JSC.Process.exit(globalObject, 1);
             @panic("made it past Bun__Process__exit");
         }
         this.is_handling_uncaught_exception = true;
@@ -1283,6 +1288,7 @@ pub const VirtualMachine = struct {
         if (!handled) {
             // TODO maybe we want a separate code path for uncaught exceptions
             this.unhandled_error_counter += 1;
+            this.exit_handler.exit_code = 1;
             this.onUnhandledRejection(this, globalObject, err);
         }
         return handled;
@@ -1455,7 +1461,13 @@ pub const VirtualMachine = struct {
         }
     }
 
+    extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
+
     pub fn globalExit(this: *VirtualMachine) noreturn {
+        if (this.destruct_main_thread_on_exit and this.is_main_thread) {
+            Zig__GlobalObject__destructOnExit(this.global);
+            this.deinit();
+        }
         bun.Global.exit(this.exit_handler.exit_code);
     }
 
@@ -1954,6 +1966,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2026,6 +2039,10 @@ pub const VirtualMachine = struct {
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
         is_main_thread: bool = false,
+        /// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
+        /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
+        /// true may expose bugs that would otherwise only occur using Workers.
+        destruct_main_thread_on_exit: bool = false,
     };
 
     pub var is_smol_mode = false;
@@ -2076,6 +2093,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2238,6 +2256,8 @@ pub const VirtualMachine = struct {
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            // This option is irrelevant for Workers
+            .destruct_main_thread_on_exit = false,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2331,6 +2351,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(

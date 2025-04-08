@@ -44,6 +44,7 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+  BUN_DEBUG_linkerctx: "0",
 };
 
 const ciEnv = { ...bunEnv };
@@ -553,6 +554,9 @@ export function ospath(path: string) {
  */
 export async function toMatchNodeModulesAt(lockfile: any, root: string) {
   function shouldSkip(pkg: any, dep: any): boolean {
+    // Band-aid as toMatchNodeModulesAt will sometimes ask this function
+    // if a package depends on itself
+    if (pkg?.name === dep?.name) return true;
     return (
       !pkg ||
       !pkg.resolution ||
@@ -1111,7 +1115,7 @@ export async function runBunInstall(
   if (!options?.allowWarnings) {
     expect(err).not.toContain("warn:");
   }
-  if ((options?.savesLockfile ?? true) && !production) {
+  if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
   let out = await new Response(stdout).text();
@@ -1217,7 +1221,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
-  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
 
 declare module "bun:test" {

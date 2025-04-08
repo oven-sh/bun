@@ -87,7 +87,7 @@ pub const Stdio = union(enum) {
         }
     }
 
-    pub fn canUseMemfd(this: *const @This(), is_sync: bool) bool {
+    pub fn canUseMemfd(this: *const @This(), is_sync: bool, has_max_buffer: bool) bool {
         if (comptime !Environment.isLinux) {
             return false;
         }
@@ -95,7 +95,7 @@ pub const Stdio = union(enum) {
         return switch (this.*) {
             .blob => !this.blob.needsToReadFile(),
             .memfd, .array_buffer => true,
-            .pipe => is_sync,
+            .pipe => is_sync and !has_max_buffer,
             else => false,
         };
     }

@@ -352,9 +352,7 @@ pub const JunitReporter = struct {
         try this.contents.appendSlice(bun.default_allocator, "\"");
 
         const elapsed_seconds = elapsed_ms / std.time.ms_per_s;
-        var time_buf: [32]u8 = undefined;
-        const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d}\"", .{elapsed_seconds});
-        try this.contents.appendSlice(bun.default_allocator, time_str);
+        try this.contents.writer(bun.default_allocator).print(" time=\"{}\"", .{bun.fmt.trimmedPrecision(elapsed_seconds, 6)});
 
         try this.contents.appendSlice(bun.default_allocator, " file=\"");
         try escapeXml(file, this.contents.writer(bun.default_allocator));
@@ -760,21 +758,15 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
-        const trace = bun.tracy.traceNamed(@src(), comptime brk: {
-            if (reporters.text and reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCovAndText";
-            }
-
-            if (reporters.text) {
-                break :brk "TestCommand.printCodeCoverageText";
-            }
-
-            if (reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCov";
-            }
-
+        const trace = if (reporters.text and reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text)
+            bun.perf.trace("TestCommand.printCodeCoverageText")
+        else if (reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else
             @compileError("No reporters enabled");
-        });
+
         defer trace.end();
 
         if (comptime !reporters.text and !reporters.lcov) {
@@ -1335,7 +1327,7 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "./") or
                     strings.startsWith(arg, "../") or
                     (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+                        strings.startsWith(arg, "..\\")))) break true;
             } else false) {
                 // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
                 for (ctx.positionals[1..]) |arg| {
@@ -1453,9 +1445,9 @@ pub const TestCommand = struct {
 
                     if (has_file_like == null and
                         (strings.hasSuffixComptime(filter, ".ts") or
-                        strings.hasSuffixComptime(filter, ".tsx") or
-                        strings.hasSuffixComptime(filter, ".js") or
-                        strings.hasSuffixComptime(filter, ".jsx")))
+                            strings.hasSuffixComptime(filter, ".tsx") or
+                            strings.hasSuffixComptime(filter, ".js") or
+                            strings.hasSuffixComptime(filter, ".jsx")))
                     {
                         has_file_like = i;
                     }

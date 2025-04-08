@@ -40,7 +40,6 @@ declare module "bun" {
   type SignalsListener = (signal: NodeJS.Signals) => void;
   type BlobPart = string | Blob | BufferSource;
   type TimerHandler = (...args: any[]) => void;
-
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
@@ -526,7 +525,8 @@ declare module "bun" {
    *
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    */
-  const env: NodeJS.ProcessEnv;
+  const env: Env & NodeJS.ProcessEnv & ImportMetaEnv;
+
   /**
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
    */
@@ -536,9 +536,11 @@ declare module "bun" {
   /**
    * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
    *
-   * @param {string} command The name of the executable or script
-   * @param {string} options.PATH Overrides the PATH environment variable
-   * @param {string} options.cwd When given a relative path, use this path to join it.
+   * @category Utilities
+   *
+   * @param command The name of the executable or script
+   * @param options.PATH Overrides the PATH environment variable
+   * @param options.cwd When given a relative path, use this path to join it.
    */
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
@@ -944,19 +946,24 @@ declare module "bun" {
     blob(): Blob;
   }
 
+  /**
+   * The Bun shell
+   *
+   * @category Process Management
+   */
   const $: Shell;
 
-  interface TOML {
+  const TOML: {
     /**
      * Parse a TOML string into a JavaScript object.
      *
-     * @param {string} command The name of the executable or script
-     * @param {string} options.PATH Overrides the PATH environment variable
-     * @param {string} options.cwd Limits the search to a particular directory in which to searc
+     * @category Utilities
+     *
+     * @param input The TOML string to parse
+     * @returns A JavaScript object
      */
     parse(input: string): object;
-  }
-  const TOML: TOML;
+  };
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -978,6 +985,8 @@ declare module "bun" {
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
+   *
+   * @category File System
    *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
@@ -1270,6 +1279,8 @@ declare module "bun" {
   /**
    * Escape the following characters in a string:
    *
+   * @category Security
+   *
    * - `"` becomes `"&quot;"`
    * - `&` becomes `"&amp;"`
    * - `'` becomes `"&#x27;"`
@@ -1289,6 +1300,8 @@ declare module "bun" {
    *
    * @param path The path to convert.
    * @returns A {@link URL} with the file:// scheme.
+   *
+   * @category File System
    *
    * @example
    * ```js
@@ -1312,9 +1325,13 @@ declare module "bun" {
 
   /**
    * Convert a {@link URL} to a filesystem path.
+   *
    * @param url The URL to convert.
    * @returns A filesystem path.
    * @throws If the URL is not a URL.
+   *
+   * @category File System
+   *
    * @example
    * ```js
    * const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
@@ -1522,6 +1539,8 @@ declare module "bun" {
    * - `size` will not be valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
    *
+   * @category File System
+   *
    * @example
    * ```js
    * const file = Bun.file("./hello.json");
@@ -1557,7 +1576,7 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     * If `begin` > 0, {@link Bun.write}() will be slower on macOS
      *
      * @param begin - start offset in bytes
      * @param contentType - MIME type for the new BunFile
@@ -2039,10 +2058,32 @@ declare module "bun" {
     verify(token: string, options?: CSRFVerifyOptions): boolean;
   }
 
+  /**
+   * SQL client
+   *
+   * @category Database
+   */
   var sql: SQL;
+
+  /**
+   * SQL client for PostgreSQL
+   *
+   * @category Database
+   */
   var postgres: SQL;
+
+  /**
+   * The SQL constructor
+   *
+   * @category Database
+   */
   var SQL: SQL;
 
+  /**
+   * Generate and verify CSRF tokens
+   *
+   * @category Security
+   */
   var CSRF: CSRF;
 
   /**
@@ -2509,6 +2550,15 @@ declare module "bun" {
     throw?: boolean;
   }
 
+  /**
+   * Hash and verify passwords using argon2 or bcrypt
+   *
+   * These are fast APIs that can run in a worker thread if used asynchronously.
+   *
+   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   *
+   * @category Security
+   */
   namespace Password {
     type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
 
@@ -2539,6 +2589,8 @@ declare module "bun" {
    * Password hashing functions are necessarily slow, and this object will
    * automatically run in a worker thread.
    *
+   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
@@ -2563,6 +2615,8 @@ declare module "bun" {
    *
    * console.log(verify); // true
    * ```
+   *
+   * @category Security
    */
   const password: {
     /**
@@ -2723,6 +2777,11 @@ declare module "bun" {
     ): string;
   };
 
+  /**
+   * A build artifact represents a file that was generated by the bundler @see {@link Bun.build}
+   *
+   * @category Bundler
+   */
   interface BuildArtifact extends Blob {
     path: string;
     loader: Loader;
@@ -2731,6 +2790,11 @@ declare module "bun" {
     sourcemap: BuildArtifact | null;
   }
 
+  /**
+   * The output of a build
+   *
+   * @category Bundler
+   */
   interface BuildOutput {
     outputs: BuildArtifact[];
     success: boolean;
@@ -2744,220 +2808,222 @@ declare module "bun" {
    * @returns {Promise<BuildOutput>} Promise that resolves to build output containing generated artifacts and build status
    * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
    *
+   * @category Bundler
+   *
    * @example Basic usage - Bundle a single entrypoint and check results
-   ```ts
-   const result = await Bun.build({
-     entrypoints: ['./src/index.tsx'],
-     outdir: './dist'
-   });
+   * ```ts
+   * const result = await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist'
+   * });
+   *
+   *  if (!result.success) {
+   *    console.error('Build failed:', result.logs);
+   *    process.exit(1);
+   *  }
+   * ```
+   *  *
+   *  * @example Set up multiple entrypoints with code splitting enabled
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+   *    outdir: './dist',
+   *    splitting: true,
+   *    sourcemap: "external"
+   *  });
+   *  ```
+   *  *
+   *  * @example Configure minification and optimization settings
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    minify: {
+   *      whitespace: true,
+   *      identifiers: true,
+   *      syntax: true
+   *    },
+   *    drop: ['console', 'debugger']
+   *  });
+   *  ```
+   *  *
+   *  * @example Set up custom loaders and mark packages as external
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    loader: {
+   *      '.png': 'dataurl',
+   *      '.svg': 'file',
+   *      '.txt': 'text',
+   *      '.json': 'json'
+   *    },
+   *    external: ['react', 'react-dom']
+   *  });
+   *  ```
+   *  *
+   *  * @example Configure environment variable handling with different modes
+   *  ```ts
+   *  // Inline all environment variables
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    env: 'inline'
+   *  });
 
-    if (!result.success) {
-      console.error('Build failed:', result.logs);
-      process.exit(1);
-    }
-   ```
-    *
-    * @example Set up multiple entrypoints with code splitting enabled
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/app.tsx', './src/admin.tsx'],
-      outdir: './dist',
-      splitting: true,
-      sourcemap: "external"
-    });
-    ```
-    *
-    * @example Configure minification and optimization settings
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      minify: {
-        whitespace: true,
-        identifiers: true,
-        syntax: true
-      },
-      drop: ['console', 'debugger']
-    });
-    ```
-    *
-    * @example Set up custom loaders and mark packages as external
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      loader: {
-        '.png': 'dataurl',
-        '.svg': 'file',
-        '.txt': 'text',
-        '.json': 'json'
-      },
-      external: ['react', 'react-dom']
-    });
-    ```
-    *
-    * @example Configure environment variable handling with different modes
-    ```ts
-    // Inline all environment variables
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      env: 'inline'
-    });
+   *  // Only include specific env vars
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    env: 'PUBLIC_*'
+   *  });
+   *  ```
+   *  *
+   *  * @example Set up custom naming patterns for all output types
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    naming: {
+   *      entry: '[dir]/[name]-[hash].[ext]',
+   *      chunk: 'chunks/[name]-[hash].[ext]',
+   *      asset: 'assets/[name]-[hash].[ext]'
+   *    }
+   *  });
+   *  ```
+   *  @example Work with build artifacts in different formats
+   *  ```ts
+   *  const result = await Bun.build({
+   *    entrypoints: ['./src/index.tsx']
+   *  });
 
-    // Only include specific env vars
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      env: 'PUBLIC_*'
-    });
-    ```
-    *
-    * @example Set up custom naming patterns for all output types
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      naming: {
-        entry: '[dir]/[name]-[hash].[ext]',
-        chunk: 'chunks/[name]-[hash].[ext]',
-        asset: 'assets/[name]-[hash].[ext]'
-      }
-    });
-    ```
-    @example Work with build artifacts in different formats
-    ```ts
-    const result = await Bun.build({
-      entrypoints: ['./src/index.tsx']
-    });
+   *  for (const artifact of result.outputs) {
+   *    const text = await artifact.text();
+   *    const buffer = await artifact.arrayBuffer();
+   *    const bytes = await artifact.bytes();
 
-    for (const artifact of result.outputs) {
-      const text = await artifact.text();
-      const buffer = await artifact.arrayBuffer();
-      const bytes = await artifact.bytes();
-
-      new Response(artifact);
-      await Bun.write(artifact.path, artifact);
-    }
-    ```
-    @example Implement comprehensive error handling with position info
-    ```ts
-    try {
-      const result = await Bun.build({
-        entrypoints: ['./src/index.tsx'],
-      });
-    } catch (e) {
-      const error = e as AggregateError;
-      console.error('Build failed:');
-      for (const msg of error.errors) {
-        if ('position' in msg) {
-          console.error(
-            `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
-          );
-        } else {
-          console.error(msg.message);
-        }
-      }
-    }
-    ```
-    @example Set up Node.js target with specific configurations
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/server.ts'],
-      outdir: './dist',
-      target: 'node',
-      format: 'cjs',
-      sourcemap: 'external',
-      minify: false,
-      packages: 'external'
-    });
-    ```
-    *
-    * @example Configure experimental CSS bundling with multiple themes
-    ```ts
-    await Bun.build({
-      entrypoints: [
-        './src/styles.css',
-        './src/themes/dark.css',
-        './src/themes/light.css'
-      ],
-      outdir: './dist/css',
-    });
-    ```
-    @example Define compile-time constants and version information
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      define: {
-        'process.env.NODE_ENV': JSON.stringify('production'),
-        'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
-        'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
-      }
-    });
-    ```
-    @example Create a custom plugin for handling special file types
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      plugins: [
-        {
-          name: 'my-plugin',
-          setup(build) {
-            build.onLoad({ filter: /\.custom$/ }, async (args) => {
-              const content = await Bun.file(args.path).text();
-              return {
-                contents: `export default ${JSON.stringify(content)}`,
-                loader: 'js'
-              };
-            });
-          }
-        }
-      ]
-    });
-    ```
-    @example Enable bytecode generation for faster startup
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/server.ts'],
-      outdir: './dist',
-      target: 'bun',
-      format: 'cjs',
-      bytecode: true
-    });
-    ```
-    @example Add custom banner and footer to output files
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      banner: '"use client";\n// Built with Bun',
-      footer: '// Generated on ' + new Date().toISOString()
-    });
-    ```
-    @example Configure CDN public path for asset loading
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      publicPath: 'https://cdn.example.com/assets/',
-      loader: {
-        '.png': 'file',
-        '.svg': 'file'
-      }
-    });
-    ```
-    @example Set up package export conditions for different environments
-    ```ts
-    await Bun.build({
-      entrypoints: ['./src/index.tsx'],
-      outdir: './dist',
-      conditions: ['production', 'browser', 'module'],
-      packages: 'external'
-    });
-    ```
-  */
+   *    new Response(artifact);
+   *    await Bun.write(artifact.path, artifact);
+   *  }
+   *  ```
+   *  @example Implement comprehensive error handling with position info
+   *  ```ts
+   *  try {
+   *    const result = await Bun.build({
+   *      entrypoints: ['./src/index.tsx'],
+   *    });
+   *  } catch (e) {
+   *    const error = e as AggregateError;
+   *    console.error('Build failed:');
+   *    for (const msg of error.errors) {
+   *      if ('position' in msg) {
+   *        console.error(
+   *          `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
+   *        );
+   *      } else {
+   *        console.error(msg.message);
+   *      }
+   *    }
+   *  }
+   *  ```
+   *  @example Set up Node.js target with specific configurations
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/server.ts'],
+   *    outdir: './dist',
+   *    target: 'node',
+   *    format: 'cjs',
+   *    sourcemap: 'external',
+   *    minify: false,
+   *    packages: 'external'
+   *  });
+   *  ```
+   *  *
+   *  * @example Configure experimental CSS bundling with multiple themes
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: [
+   *      './src/styles.css',
+   *      './src/themes/dark.css',
+   *      './src/themes/light.css'
+   *    ],
+   *    outdir: './dist/css',
+   *  });
+   *  ```
+   *  @example Define compile-time constants and version information
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    define: {
+   *      'process.env.NODE_ENV': JSON.stringify('production'),
+   *      'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+   *      'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+   *    }
+   *  });
+   *  ```
+   *  @example Create a custom plugin for handling special file types
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    plugins: [
+   *      {
+   *        name: 'my-plugin',
+   *        setup(build) {
+   *          build.onLoad({ filter: /\.custom$/ }, async (args) => {
+   *            const content = await Bun.file(args.path).text();
+   *            return {
+   *              contents: `export default ${JSON.stringify(content)}`,
+   *              loader: 'js'
+   *            };
+   *          });
+   *        }
+   *      }
+   *    ]
+   *  });
+   *  ```
+   *  @example Enable bytecode generation for faster startup
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/server.ts'],
+   *    outdir: './dist',
+   *    target: 'bun',
+   *    format: 'cjs',
+   *    bytecode: true
+   *  });
+   *  ```
+   *  @example Add custom banner and footer to output files
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    banner: '"use client";\n// Built with Bun',
+   *    footer: '// Generated on ' + new Date().toISOString()
+   *  });
+   *  ```
+   *  @example Configure CDN public path for asset loading
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    publicPath: 'https://cdn.example.com/assets/',
+   *    loader: {
+   *      '.png': 'file',
+   *      '.svg': 'file'
+   *    }
+   *  });
+   *  ```
+   *  @example Set up package export conditions for different environments
+   *  ```ts
+   *  await Bun.build({
+   *    entrypoints: ['./src/index.tsx'],
+   *    outdir: './dist',
+   *    conditions: ['production', 'browser', 'module'],
+   *    packages: 'external'
+   *  });
+   *  ```
+   */
   function build(config: BuildConfig): Promise<BuildOutput>;
   /**
    * A status that represents the outcome of a sent message.
@@ -3006,9 +3072,7 @@ declare module "bun" {
    * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
    *
    * @example
-   * import { serve } from "bun";
-   *
-   * serve({
+   * Bun.serve({
    *   websocket: {
    *     open(ws) {
    *       console.log("Connected", ws.remoteAddress);
@@ -3022,6 +3086,8 @@ declare module "bun" {
    *     },
    *   }
    * });
+   *
+   * @category HTTP & Networking
    */
   interface ServerWebSocket<T = undefined> {
     /**
@@ -3262,6 +3328,8 @@ declare module "bun" {
 
   /**
    * Create a server-side {@link ServerWebSocket} handler for use with {@link Bun.serve}
+   *
+   * @category HTTP & Networking
    *
    * @example
    * ```ts
@@ -3628,8 +3696,7 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve } from "bun";
-     * serve({
+     * Bun.serve({
      *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
@@ -3739,6 +3806,14 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
+    tls?: TLSOptions | TLSOptions[];
+  }
+
+  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
+  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
@@ -3942,14 +4017,6 @@ declare module "bun" {
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
-  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
-  }
-
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
-  }
-
   interface SocketAddress {
     /**
      * The IP address of the client.
@@ -3974,7 +4041,9 @@ declare module "bun" {
    * That means starting a new server allocates about 500 KB of memory. Try to
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
-   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
+   *
+   * @category HTTP & Networking
    */
   interface Server extends Disposable {
     /**
@@ -4189,15 +4258,30 @@ declare module "bun" {
 
     readonly url: URL;
 
-    readonly port: number;
     /**
-     * The hostname the server is listening on. Does not include the port
+     * The port the server is listening on.
+     *
+     * This will be undefined when the server is listening on a unix socket.
+     *
+     * @example
+     * ```js
+     * 3000
+     * ```
+     */
+    readonly port: number | undefined;
+
+    /**
+     * The hostname the server is listening on. Does not include the port.
+     *
+     * This will be `undefined` when the server is listening on a unix socket.
+     *
      * @example
      * ```js
      * "localhost"
      * ```
      */
-    readonly hostname: string;
+    readonly hostname: string | undefined;
+
     /**
      * Is the server running in development mode?
      *
@@ -4268,6 +4352,8 @@ declare module "bun" {
    * parameters and method-specific handling.
    *
    * @param options - Server configuration options
+   *
+   * @category HTTP & Networking
    *
    * @example Basic Usage
    * ```ts
@@ -4599,6 +4685,11 @@ declare module "bun" {
 
   type StringLike = string | { toString(): string };
 
+  /**
+   * Valid inputs for {@link color}
+   *
+   * @category Utilities
+   */
   type ColorInput =
     | { r: number; g: number; b: number; a?: number }
     | [number, number, number]
@@ -4613,6 +4704,9 @@ declare module "bun" {
 
   /**
    * Converts formats of colors
+   *
+   * @category Utilities
+   *
    * @param input A value that could possibly be a color
    * @param outputFormat An optional output format
    */
@@ -5032,6 +5126,8 @@ declare module "bun" {
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
    *
+   * @category Utilities
+   *
    * @param ms milliseconds to delay resolving the promise. This is a minimum
    * number. It may take longer. If a {@link Date} is passed, it will sleep until the
    * {@link Date} is reached.
@@ -5074,6 +5170,8 @@ declare module "bun" {
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
+   * @category Utilities
+   *
    * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
    * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
    *
@@ -5092,6 +5190,8 @@ declare module "bun" {
 
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
+   *
+   * @category Utilities
    *
    * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
    * @param encoding `DigestEncoding` to return the hash in
@@ -5470,6 +5570,11 @@ declare module "bun" {
     readonly __ffi_function_callable: typeof import("bun:ffi").FFIFunctionCallableSymbol;
   };
 
+  /**
+   * The builder object passed to `Bun.plugin`
+   *
+   * @category Bundler
+   */
   interface PluginBuilder {
     /**
      * Register a callback which will be invoked when bundling starts. When
@@ -5570,6 +5675,11 @@ declare module "bun" {
     module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
   }
 
+  /**
+   * A Bun plugin. Used for extending Bun's behavior at runtime, or with {@link Bun.build}
+   *
+   * @category Bundler
+   */
   interface BunPlugin {
     /**
      * Human-readable name of the plugin
@@ -5586,9 +5696,10 @@ declare module "bun" {
      *
      * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * This field is not read by {@link Bun.plugin}
+     * This field is not read by {@link Bun.plugin}, only {@link Bun.build} and `bun build`
      */
     target?: Target;
+
     /**
      * A function that will be called when the plugin is loaded.
      *
@@ -5778,10 +5889,18 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
+    readonly remoteFamily: "IPv4" | "IPv6";
+
     /**
      * Remote IP address connected to the socket
      */
     readonly remoteAddress: string;
+
+    readonly remotePort: number;
+
+    readonly localFamily: "IPv4" | "IPv6";
+
+    readonly localAddress: string;
 
     /**
      * local port connected to the socket
@@ -6468,7 +6587,8 @@ declare module "bun" {
       timeout?: number;
 
       /**
-       * The signal to use when killing the process after a timeout or when the AbortSignal is aborted.
+       * The signal to use when killing the process after a timeout, when the AbortSignal is aborted,
+       * or when the process goes over the `maxBuffer` limit.
        *
        * @default "SIGTERM" (signal 15)
        *
@@ -6483,6 +6603,14 @@ declare module "bun" {
        * ```
        */
       killSignal?: string | number;
+
+      /**
+       * The maximum number of bytes the process may output. If the process goes over this limit,
+       * it is killed with signal `killSignal` (defaults to SIGTERM).
+       *
+       * @default undefined (no limit)
+       */
+      maxBuffer?: number;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -6728,12 +6856,15 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
-    exitedDueToTimeout?: true;
+    exitedDueToTimeout?: boolean;
+    exitedDueToMaxBuffer?: boolean;
     pid: number;
   }
 
   /**
    * Spawn a new process
+   *
+   * @category Process Management
    *
    * ```js
    * const subprocess = Bun.spawn({
@@ -6798,6 +6929,8 @@ declare module "bun" {
 
   /**
    * Spawn a new process
+   *
+   * @category Process Management
    *
    * ```js
    * const {stdout} = Bun.spawnSync({

@@ -80,6 +80,7 @@
 #include "JSBufferList.h"
 #include "JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
+#include "JSCommonJSExtensions.h"
 #include "JSCountQueuingStrategy.h"
 #include "JSCustomEvent.h"
 #include "JSDOMConvertBase.h"
@@ -180,7 +181,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
-#include "NodeFSBinding.h"
+#include "NodeFSStatBinding.h"
+#include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
 
 #if !OS(WINDOWS)
@@ -2938,18 +2940,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(crypto);
         });
 
-    m_lazyRequireCacheObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            init.set(result.toObject(globalObject));
-        });
-
     m_lazyTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
@@ -3014,6 +3004,16 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSStatsBigIntClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             Bun::initJSBigIntStatsClassStructure(init);
+        });
+
+    m_JSStatFSClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSStatFSClassStructure(init);
+        });
+
+    m_JSStatFSBigIntClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSBigIntStatFSClassStructure(init);
         });
 
     m_memoryFootprintStructure.initLater(
@@ -4015,6 +4015,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_currentNapiHandleScopeImpl);
 
     thisObject->m_moduleResolveFilenameFunction.visit(visitor);
+    thisObject->m_modulePrototypeUnderscoreCompileFunction.visit(visitor);
+    thisObject->m_commonJSRequireESMFromHijackedExtensionFunction.visit(visitor);
     thisObject->m_moduleRunMainFunction.visit(visitor);
     thisObject->m_nodeModuleConstructor.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
@@ -4059,10 +4061,13 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
+    thisObject->m_lazyRequireExtensionsObject.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSStatsClassStructure.visit(visitor);
     thisObject->m_JSStatsBigIntClassStructure.visit(visitor);
+    thisObject->m_JSStatFSClassStructure.visit(visitor);
+    thisObject->m_JSStatFSBigIntClassStructure.visit(visitor);
     thisObject->m_JSDirentClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);

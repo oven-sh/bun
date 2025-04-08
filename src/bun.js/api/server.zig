@@ -3262,7 +3262,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // we use this memory address to disable signals being sent
             signal.clear();
             assert(signal.isDead());
-
+            // we need to render metadata before assignToStream because the stream can call res.end
+            // and this would auto write an 200 status
+            if (!this.flags.has_written_status) {
+                this.renderMetadata();
+            }
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,
@@ -5356,7 +5360,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
-                if (nodeHttpResponse.ended or nodeHttpResponse.socket_closed) {
+                if (nodeHttpResponse.flags.ended or nodeHttpResponse.flags.socket_closed) {
                     return JSC.jsBoolean(false);
                 }
 
@@ -6484,7 +6488,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .pending => {
                             globalThis.handleRejectedPromises();
                             if (node_http_response) |node_response| {
-                                if (node_response.request_has_completed or node_response.socket_closed or node_response.upgraded) {
+                                if (node_response.flags.request_has_completed or node_response.flags.socket_closed or node_response.flags.upgraded) {
                                     strong_promise.deinit();
                                     break :brk .{ .success = {} };
                                 }
@@ -6515,7 +6519,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
 
                     if (node_http_response) |node_response| {
-                        if (!node_response.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                        if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
                             if (node_response.raw_response.state().isHttpStatusCalled()) {
                                 node_response.raw_response.writeStatus("500 Internal Server Error");
                                 node_response.raw_response.endWithoutBody(true);
@@ -6531,12 +6535,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.request_has_completed and node_response.raw_response.state().isResponsePending()) {
-                    node_response.setOnAbortedHandler();
-                }
-                // If we ended the response without attaching an ondata handler, we discard the body read stream
-                else if (http_result != .pending) {
-                    node_response.maybeStopReadingBody(vm);
+                if (!node_response.flags.upgraded) {
+                    if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                        node_response.setOnAbortedHandler();
+                    }
+                    // If we ended the response without attaching an ondata handler, we discard the body read stream
+                    else if (http_result != .pending) {
+                        node_response.maybeStopReadingBody(vm, node_response.getThisValue());
+                    }
                 }
             }
         }

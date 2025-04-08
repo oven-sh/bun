@@ -54,8 +54,6 @@ const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = bun.assert;
 
-threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
-threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = bun.ImportRecord;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 
@@ -687,7 +685,6 @@ fn NewPrinter(
         writer: Writer,
 
         has_printed_bundled_import_statement: bool = false,
-        imported_module_ids: std.ArrayList(u32),
 
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
@@ -5243,18 +5240,10 @@ fn NewPrinter(
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
         ) Printer {
-            if (imported_module_ids_list_unset) {
-                imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
-                imported_module_ids_list_unset = false;
-            }
-
-            imported_module_ids_list.clearRetainingCapacity();
-
             var printer = Printer{
                 .import_records = import_records,
                 .options = opts,
                 .writer = writer,
-                .imported_module_ids = imported_module_ids_list,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
@@ -5553,128 +5542,6 @@ pub const DirectWriter = struct {
     pub const Error = std.posix.WriteError;
 };
 
-// Unbuffered           653ms
-//   Buffered    65k     47ms
-//   Buffered    16k     43ms
-//   Buffered     4k     55ms
-const FileWriterInternal = struct {
-    file: std.fs.File,
-    last_bytes: [2]u8 = [_]u8{ 0, 0 },
-    threadlocal var buffer: MutableString = undefined;
-    threadlocal var has_loaded_buffer: bool = false;
-
-    pub fn getBuffer() *MutableString {
-        buffer.reset();
-        return &buffer;
-    }
-
-    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
-        return &buffer;
-    }
-
-    pub fn init(file: std.fs.File) FileWriterInternal {
-        if (!has_loaded_buffer) {
-            buffer = MutableString.init(default_allocator, 0) catch unreachable;
-            has_loaded_buffer = true;
-        }
-
-        buffer.reset();
-
-        return FileWriterInternal{
-            .file = file,
-        };
-    }
-    pub fn writeByte(this: *FileWriterInternal, byte: u8) anyerror!usize {
-        try buffer.appendChar(byte);
-
-        this.last_bytes = .{ this.last_bytes[1], byte };
-        return 1;
-    }
-    pub fn writeAll(this: *FileWriterInternal, bytes: anytype) anyerror!usize {
-        try buffer.append(bytes);
-        if (bytes.len >= 2) {
-            this.last_bytes = bytes[bytes.len - 2 ..][0..2].*;
-        } else if (bytes.len >= 1) {
-            this.last_bytes = .{ this.last_bytes[1], bytes[bytes.len - 1] };
-        }
-        return bytes.len;
-    }
-
-    pub fn slice(_: *@This()) string {
-        return buffer.list.items;
-    }
-
-    pub fn getLastByte(this: *const FileWriterInternal) u8 {
-        return this.last_bytes[1];
-    }
-
-    pub fn getLastLastByte(this: *const FileWriterInternal) u8 {
-        return this.last_bytes[0];
-    }
-
-    pub fn reserveNext(_: *FileWriterInternal, count: u64) anyerror![*]u8 {
-        try buffer.growIfNeeded(count);
-        return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
-    }
-    pub fn advanceBy(this: *FileWriterInternal, count: u64) void {
-        if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
-
-        buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
-        if (count >= 2) {
-            this.last_bytes = buffer.list.items[buffer.list.items.len - 2 ..][0..2].*;
-        } else if (count >= 1) {
-            this.last_bytes = .{ this.last_bytes[1], buffer.list.items[buffer.list.items.len - 1] };
-        }
-    }
-
-    pub fn done(
-        ctx: *FileWriterInternal,
-    ) anyerror!void {
-        defer buffer.reset();
-        const result_ = buffer.slice();
-        var result = result_;
-
-        while (result.len > 0) {
-            switch (result.len) {
-                0...4096 => {
-                    const written = try ctx.file.write(result);
-                    if (written == 0 or result.len - written == 0) return;
-                    result = result[written..];
-                },
-                else => {
-                    const first = result.ptr[0 .. result.len / 3];
-                    const second = result[first.len..][0..first.len];
-                    const remain = first.len + second.len;
-                    const third: []const u8 = result[remain..];
-
-                    var vecs = [_]std.posix.iovec_const{
-                        .{
-                            .base = first.ptr,
-                            .len = first.len,
-                        },
-                        .{
-                            .base = second.ptr,
-                            .len = second.len,
-                        },
-                        .{
-                            .base = third.ptr,
-                            .len = third.len,
-                        },
-                    };
-
-                    const written = try std.posix.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
-                    if (written == 0 or result.len - written == 0) return;
-                    result = result[written..];
-                },
-            }
-        }
-    }
-
-    pub fn flush(
-        _: *FileWriterInternal,
-    ) anyerror!void {}
-};
-
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
     written: []u8 = &[_]u8{},
@@ -5801,19 +5668,6 @@ pub const BufferPrinter = NewWriter(
     BufferWriter.reserveNext,
     BufferWriter.advanceBy,
 );
-pub const FileWriter = NewWriter(
-    FileWriterInternal,
-    FileWriterInternal.writeByte,
-    FileWriterInternal.writeAll,
-    FileWriterInternal.getLastByte,
-    FileWriterInternal.getLastLastByte,
-    FileWriterInternal.reserveNext,
-    FileWriterInternal.advanceBy,
-);
-pub fn NewFileWriter(file: std.fs.File) FileWriter {
-    const internal = FileWriterInternal.init(file);
-    return FileWriter.init(internal);
-}
 
 pub const Format = enum {
     esm,
@@ -5976,9 +5830,6 @@ pub fn printAst(
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
     if (!opts.bundling and
         tree.uses_require_ref and
@@ -6084,7 +5935,7 @@ pub fn print(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
-    const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
+    const trace = bun.perf.trace("JSPrinter.print");
     defer trace.end();
 
     const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
@@ -6172,9 +6023,6 @@ pub fn printWithWriterAndPlatform(
 
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer writer.* = printer.writer.*;
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
     if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.printDevServerModule(source, &ast, &parts[0]);
@@ -6252,9 +6100,6 @@ pub fn printCommonJS(
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {

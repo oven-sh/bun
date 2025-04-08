@@ -9,17 +9,30 @@ declare module "bun" {
      * Write a chunk of data to the file.
      *
      * If the file descriptor is not writable yet, the data is buffered.
+     *
+     * @param chunk The data to write
+     * @returns Number of bytes written
      */
     write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
     /**
      * Flush the internal buffer, committing the data to disk or the pipe.
+     *
+     * @returns Number of bytes flushed or a Promise resolving to the number of bytes
      */
     flush(): number | Promise<number>;
     /**
      * Close the file descriptor. This also flushes the internal buffer.
+     *
+     * @param error Optional error to associate with the close operation
+     * @returns Number of bytes written or a Promise resolving to the number of bytes
      */
     end(error?: Error): number | Promise<number>;
 
+    /**
+     * Start the file sink with provided options.
+     *
+     * @param options Configuration options for the file sink
+     */
     start(options?: {
       /**
        * Preallocate an internal buffer of this size
@@ -63,19 +76,29 @@ declare module "bun" {
      * Write a chunk of data to the network.
      *
      * If the network is not writable yet, the data is buffered.
+     *
+     * @param chunk The data to write
+     * @returns Number of bytes written
      */
     write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
     /**
      * Flush the internal buffer, committing the data to the network.
+     *
+     * @returns Number of bytes flushed or a Promise resolving to the number of bytes
      */
     flush(): number | Promise<number>;
     /**
      * Finish the upload. This also flushes the internal buffer.
+     *
+     * @param error Optional error to associate with the end operation
+     * @returns Number of bytes written or a Promise resolving to the number of bytes
      */
     end(error?: Error): number | Promise<number>;
 
     /**
      * Get the stat of the file.
+     *
+     * @returns Promise resolving to the file stats
      */
     stat(): Promise<import("node:fs").Stats>;
   }
@@ -649,7 +672,7 @@ declare module "bun" {
     contents?: {
       /** The algorithm that was used to create a checksum of the object. */
       checksumAlgorithm?: "CRC32" | "CRC32C" | "SHA1" | "SHA256" | "CRC64NVME";
-      /** The checksum type that is used to calculate the object’s checksum value. */
+      /** The checksum type that is used to calculate the object's checksum value. */
       checksumType?: "COMPOSITE" | "FULL_OBJECT";
       /**
        * The entity tag is a hash of the object. The ETag reflects changes only to the contents of an object, not its metadata. The ETag may or may not be an MD5 digest of the object data. Whether or not it is depends on how the object was created and how it is encrypted as described below:
@@ -748,6 +771,7 @@ declare module "bun" {
      *
      * @param options The default options to use for the S3 client. Can be
      * overriden by passing options to the methods.
+     * @returns A new S3Client instance
      *
      * ## Keep S3 credentials in a single instance
      *
@@ -779,6 +803,10 @@ declare module "bun" {
     /**
      * Creates an S3File instance for the given path.
      *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns An S3File instance
+     *
      * @example
      *     const file = bucket.file("image.jpg");
      *     await file.write(imageData);
@@ -792,6 +820,10 @@ declare module "bun" {
 
     /**
      * Creates an S3File instance for the given path.
+     *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns An S3File instance
      *
      * @example
      *     const file = S3Client.file("image.jpg", credentials);
@@ -808,6 +840,11 @@ declare module "bun" {
     /**
      * Writes data directly to a path in the bucket.
      * Supports strings, buffers, streams, and web API types.
+     *
+     * @param path The path to the file in the bucket
+     * @param data The data to write to the file
+     * @param options Additional S3 options to override defaults
+     * @returns The number of bytes written
      *
      * @example
      *     // Write string
@@ -849,6 +886,11 @@ declare module "bun" {
     /**
      * Writes data directly to a path in the bucket.
      * Supports strings, buffers, streams, and web API types.
+     *
+     * @param path The path to the file in the bucket
+     * @param data The data to write to the file
+     * @param options S3 credentials and configuration options
+     * @returns The number of bytes written
      *
      * @example
      *     // Write string
@@ -895,6 +937,10 @@ declare module "bun" {
      * Generate a presigned URL for temporary access to a file.
      * Useful for generating upload/download URLs without exposing credentials.
      *
+     * @param path The path to the file in the bucket
+     * @param options Options for generating the presigned URL
+     * @returns A presigned URL string
+     *
      * @example
      *     // Download URL
      *     const downloadUrl = bucket.presign("file.pdf", {
@@ -920,6 +966,10 @@ declare module "bun" {
     /**
      * Generate a presigned URL for temporary access to a file.
      * Useful for generating upload/download URLs without exposing credentials.
+     *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and presigned URL configuration
+     * @returns A presigned URL string
      *
      * @example
      *     // Download URL
@@ -949,6 +999,10 @@ declare module "bun" {
     /**
      * Delete a file from the bucket.
      *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves when deletion is complete
+     *
      * @example
      *     // Simple delete
      *     await bucket.unlink("old-file.txt");
@@ -965,6 +1019,10 @@ declare module "bun" {
 
     /**
      * Delete a file from the bucket.
+     *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves when deletion is complete
      *
      * @example
      *     // Simple delete
@@ -984,6 +1042,10 @@ declare module "bun" {
      * Delete a file from the bucket.
      * Alias for {@link S3Client.unlink}.
      *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves when deletion is complete
+     *
      * @example
      *     // Simple delete
      *     await bucket.delete("old-file.txt");
@@ -1001,6 +1063,10 @@ declare module "bun" {
     /**
      * Delete a file from the bucket.
      * Alias for {@link S3Client.unlink}.
+     *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves when deletion is complete
      *
      * @example
      *     // Simple delete
@@ -1020,6 +1086,10 @@ declare module "bun" {
      * Get the size of a file in bytes.
      * Uses HEAD request to efficiently get size.
      *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves to the file size in bytes
+     *
      * @example
      *     // Get size
      *     const bytes = await bucket.size("video.mp4");
@@ -1036,6 +1106,10 @@ declare module "bun" {
      * Get the size of a file in bytes.
      * Uses HEAD request to efficiently get size.
      *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves to the file size in bytes
+     *
      * @example
      *     // Get size
      *     const bytes = await S3Client.size("video.mp4", credentials);
@@ -1051,6 +1125,10 @@ declare module "bun" {
     /**
      * Check if a file exists in the bucket.
      * Uses HEAD request to check existence.
+     *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves to true if the file exists, false otherwise
      *
      * @example
      *     // Check existence
@@ -1074,6 +1152,10 @@ declare module "bun" {
      * Check if a file exists in the bucket.
      * Uses HEAD request to check existence.
      *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves to true if the file exists, false otherwise
+     *
      * @example
      *     // Check existence
      *     if (await S3Client.exists("config.json", credentials)) {
@@ -1095,6 +1177,10 @@ declare module "bun" {
     /**
      * Get the stat of a file in an S3-compatible storage service.
      *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves to the file stats
+     *
      * @example
      *     const stat = await bucket.stat("my-file.txt");
      */
@@ -1102,6 +1188,10 @@ declare module "bun" {
 
     /**
      * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves to the file stats
      *
      * @example
      *     const stat = await S3Client.stat("my-file.txt", credentials);
@@ -1112,6 +1202,10 @@ declare module "bun" {
      * Returns some or all (up to 1,000) of the objects in a bucket with each request.
      *
      * You can use the request parameters as selection criteria to return a subset of the objects in a bucket.
+     *
+     * @param input Options for listing objects in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves to the list response
      *
      * @example
      *     // List (up to) 1000 objects in the bucket
@@ -1144,6 +1238,10 @@ declare module "bun" {
      * Returns some or all (up to 1,000) of the objects in a bucket with each request.
      *
      * You can use the request parameters as selection criteria to return a subset of the objects in a bucket.
+     *
+     * @param input Options for listing objects in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves to the list response
      *
      * @example
      *     // List (up to) 1000 objects in the bucket

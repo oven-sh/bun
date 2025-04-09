@@ -224,8 +224,6 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
-
 #ifndef BUN_WEBKIT_VERSION
 #ifndef ASSERT_ENABLED
 #warning "BUN_WEBKIT_VERSION is not defined. WebKit's cmakeconfig.h is supposed to define that. If you're building a release build locally, ignore this warning. If you're seeing this warning in CI, please file an issue."
@@ -4020,6 +4018,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_pendingNapiModuleAndExports[1]);
 
     visitor.append(thisObject->m_currentNapiHandleScopeImpl);
+
+    visitor.append(thisObject->m_nodeWorkerEnvironmentData);
 
     thisObject->m_moduleResolveFilenameFunction.visit(visitor);
     thisObject->m_modulePrototypeUnderscoreCompileFunction.visit(visitor);

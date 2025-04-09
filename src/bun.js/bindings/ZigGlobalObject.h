@@ -437,6 +437,10 @@ public:
     // move them off the stack which will cause them to get collected if not in the handle scope.
     JSC::WriteBarrier<Bun::NapiHandleScopeImpl> m_currentNapiHandleScopeImpl;
 
+    // Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created
+    // Workers. Initialized in createNodeWorkerThreadsBinding.
+    WriteBarrier<JSMap> m_nodeWorkerEnvironmentData;
+
     // The original, unmodified Error.prepareStackTrace.
     //
     // We set a default value for this to mimic Node.js behavior It is a
@@ -513,7 +517,9 @@ public:
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+
     Symbol* nodeWorkerObjectSymbol() { return m_nodeWorkerObjectSymbol.getInitializedOnMainThread(this); }
+    JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }

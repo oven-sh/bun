@@ -16,7 +16,14 @@ const {
   1: _threadId,
   2: _receiveMessageOnPort,
   3: kNodeWorkerObject,
-} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [unknown, number, (port: unknown) => unknown, symbol];
+  4: environmentData,
+} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
+  unknown,
+  number,
+  (port: unknown) => unknown,
+  symbol,
+  Map<unknown, unknown>,
+];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -189,12 +196,16 @@ function fakeParentPort() {
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
-function getEnvironmentData() {
-  return process.env;
+function getEnvironmentData(key: unknown): unknown {
+  return environmentData.get(key);
 }
 
-function setEnvironmentData(env: any) {
-  process.env = env;
+function setEnvironmentData(key: unknown, value: unknown): void {
+  if (value === undefined) {
+    environmentData.delete(key);
+  } else {
+    environmentData.set(key, value);
+  }
 }
 
 function markAsUntransferable() {

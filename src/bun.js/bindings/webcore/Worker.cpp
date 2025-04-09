@@ -468,7 +468,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
 }
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -503,27 +503,34 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
+    JSMap* environmentData = nullptr;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
-        if (worker && options.data) {
-            auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
-            RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.data);
-            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
-            RETURN_IF_EXCEPTION(scope, {});
-            workerData = deserialized;
-        }
+        auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
+        RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.workerDataAndEnvironmentData);
+        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+        RETURN_IF_EXCEPTION(scope, {});
+        // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+        auto* pair = jsCast<JSArray*>(deserialized);
+        ASSERT(pair->length() == 2);
+        workerData = pair->getIndexQuickly(0);
+        environmentData = jsCast<JSMap*>(pair->getIndexQuickly(1));
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
+    } else {
+        environmentData = JSMap::create(vm, globalObject->mapStructure());
     }
+    globalObject->m_nodeWorkerEnvironmentData.set(vm, globalObject, environmentData);
 
-    JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
 
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, globalObject->nodeWorkerObjectSymbol());
+    array->putDirectIndex(globalObject, 4, environmentData);
 
     return array;
 }

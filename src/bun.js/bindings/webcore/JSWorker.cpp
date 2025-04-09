@@ -59,6 +59,7 @@
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
+#include <JavaScriptCore/JSMap.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -144,6 +145,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto options = WorkerOptions {};
+    JSValue workerData;
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
         if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name)) {
@@ -152,6 +155,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         if (auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
             options.mini = miniModeValue.toBoolean(lexicalGlobalObject);
@@ -192,49 +196,26 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             }
         }
 
-        auto workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "workerData"_s));
+        workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "workerData"_s));
         if (!workerData) {
             workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "data"_s));
+            if (!workerData) workerData = jsUndefined();
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (workerData) {
-            Vector<RefPtr<MessagePort>> ports;
-            Vector<JSC::Strong<JSC::JSObject>> transferList;
-
-            if (JSValue transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s))) {
-                if (transferListValue.isObject()) {
-                    JSC::JSObject* transferListObject = transferListValue.getObject();
-                    if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
-                        for (unsigned i = 0; i < transferListArray->length(); i++) {
-                            JSC::JSValue transferListValue = transferListArray->get(lexicalGlobalObject, i);
-                            if (transferListValue.isObject()) {
-                                JSC::JSObject* transferListObject = transferListValue.getObject();
-                                transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
-                            }
+        if (JSValue transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s))) {
+            if (transferListValue.isObject()) {
+                JSC::JSObject* transferListObject = transferListValue.getObject();
+                if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+                    for (unsigned i = 0; i < transferListArray->length(); i++) {
+                        JSC::JSValue transferListValue = transferListArray->get(lexicalGlobalObject, i);
+                        if (transferListValue.isObject()) {
+                            JSC::JSObject* transferListObject = transferListValue.getObject();
+                            transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
                         }
                     }
                 }
             }
-
-            ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, workerData, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
-            if (serialized.hasException()) {
-                WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
-                return encodedJSValue();
-            }
-
-            Vector<TransferredMessagePort> transferredPorts;
-
-            if (!ports.isEmpty()) {
-                auto disentangleResult = MessagePort::disentanglePorts(WTFMove(ports));
-                if (disentangleResult.hasException()) {
-                    WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
-                    return encodedJSValue();
-                }
-                transferredPorts = disentangleResult.releaseReturnValue();
-            }
-
-            options.data = serialized.releaseReturnValue();
-            options.dataMessagePorts = WTFMove(transferredPorts);
         }
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
@@ -310,6 +291,31 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             options.execArgv.emplace(WTFMove(execArgv));
         }
     }
+
+    Vector<RefPtr<MessagePort>> ports;
+    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
+    valueToTransfer->putDirectIndex(globalObject, 0, workerData);
+    valueToTransfer->putDirectIndex(globalObject, 1, globalObject->nodeWorkerEnvironmentData());
+
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    if (serialized.hasException()) {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
+        return encodedJSValue();
+    }
+
+    Vector<TransferredMessagePort> transferredPorts;
+
+    if (!ports.isEmpty()) {
+        auto disentangleResult = MessagePort::disentanglePorts(WTFMove(ports));
+        if (disentangleResult.hasException()) {
+            WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
+            return encodedJSValue();
+        }
+        transferredPorts = disentangleResult.releaseReturnValue();
+    }
+
+    options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
+    options.dataMessagePorts = WTFMove(transferredPorts);
 
     RETURN_IF_EXCEPTION(throwScope, {});
     auto object = Worker::create(*context, WTFMove(scriptUrl), WTFMove(options));

@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const c_size_t = std.c_size_t;
 const OOM = bun.OOM;
 
 const lex = bun.js_lexer;
@@ -1171,6 +1172,8 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        include: ?[]const []const u8 = null,
+        exclude: ?[]const []const u8 = null,
     };
     pub const Reporter = enum {
         text,
@@ -1322,7 +1325,7 @@ pub const TestCommand = struct {
         //
         try vm.ensureDebugger(false);
 
-        const test_files, const search_count = scan: {
+        var test_files, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
                 if (std.fs.path.isAbsolute(arg) or
                     strings.startsWith(arg, "./") or
@@ -1377,6 +1380,26 @@ pub const TestCommand = struct {
 
             break :scan .{ scanner.results.items, scanner.search_count };
         };
+
+        const coverage_options = ctx.test_options.coverage;
+
+        if (coverage_options.include or coverage_options.exclude) {
+            var filtered_files = try std.ArrayList(PathString).initCapacity(ctx.allocator, test_files.len);
+            defer filtered_files.deinit();
+
+            for (test_files) |test_file| {
+                const test_name = test_file.slice();
+                if (coverage_options.include) |includes| {
+                    if (!glob.detectGlobSyntax(includes) or !glob.matchImpl(test_name, includes)) continue;
+                }
+                if (coverage_options.exclude) |excludes| {
+                    if (glob.detectGlobSyntax(includes) and glob.matchImpl(test_name, includes)) continue;
+                }
+                try filtered_files.append(test_file);
+            }
+
+            test_files = filtered_files.items;
+        }
 
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;

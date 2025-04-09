@@ -11,7 +11,9 @@ import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../tes
 describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
   beforeEach(async () => {
     if (ctx.redis?.connected) {
-      ctx.redis.close?.();
+      try {
+        ctx.redis.close();
+      } catch (e) {}
     }
     ctx.redis = createClient?.(ConnectionType.TCP);
   });

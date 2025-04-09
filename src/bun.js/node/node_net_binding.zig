@@ -85,10 +85,10 @@ pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
 pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
 
 pub const SBlockList = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
+    pub usingnamespace bun.NewThreadSafeRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSBlockList;
 
-    ref_count: u32 = 1,
+    ref_count: std.atomic.Value(u32) = .init(1),
     globalThis: *JSC.JSGlobalObject,
     da_rules: std.ArrayList(Rule),
     mutex: std.Thread.Mutex = .{},

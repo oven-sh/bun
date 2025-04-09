@@ -1416,6 +1416,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return true;
         }
+
         pub fn detachNativeCallback(this: *This) void {
             const native_callback = this.native_callback;
             this.native_callback = .none;
@@ -1475,6 +1476,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return .undefined;
         }
+
         pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
@@ -1538,10 +1540,7 @@ fn NewSocket(comptime ssl: bool) type {
             _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
         }
 
-        pub fn onWritable(
-            this: *This,
-            _: Socket,
-        ) void {
+        pub fn onWritable(this: *This, _: Socket) void {
             JSC.markBinding(@src());
             log("onWritable", .{});
             if (this.socket.isDetached()) return;
@@ -1569,10 +1568,8 @@ fn NewSocket(comptime ssl: bool) type {
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
             };
         }
-        pub fn onTimeout(
-            this: *This,
-            _: Socket,
-        ) void {
+
+        pub fn onTimeout(this: *This, _: Socket) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
             if (this.socket.isDetached()) return;
@@ -1666,6 +1663,7 @@ fn NewSocket(comptime ssl: bool) type {
                 promise.rejectAsHandled(globalObject, err_);
             }
         }
+
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
             JSC.markBinding(@src());
             this.handleConnectError(errno);
@@ -1709,11 +1707,10 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
+            log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
-
-            log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count });
             // update the internal socket instance to the one that was just connected
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
             this.socket = socket;
@@ -1983,28 +1980,18 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getData(
-            _: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getData(_: *This, _: *JSC.JSGlobalObject) JSValue {
             log("getData()", .{});
             return JSValue.jsUndefined();
         }
 
-        pub fn setData(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            value: JSC.JSValue,
-        ) callconv(.C) bool {
+        pub fn setData(this: *This, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
             log("setData()", .{});
             This.dataSetCached(this.this_value, globalObject, value);
             return true;
         }
 
-        pub fn getListener(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getListener(this: *This, _: *JSC.JSGlobalObject) JSValue {
             if (!this.handlers.is_server or this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
@@ -2013,10 +2000,7 @@ fn NewSocket(comptime ssl: bool) type {
             return l.strong_self.get() orelse JSValue.jsUndefined();
         }
 
-        pub fn getReadyState(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getReadyState(this: *This, _: *JSC.JSGlobalObject) JSValue {
             log("getReadyState()", .{});
 
             if (this.socket.isDetached()) {
@@ -2032,10 +2016,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn getAuthorized(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getAuthorized(this: *This, _: *JSC.JSGlobalObject) JSValue {
             log("getAuthorized()", .{});
             return JSValue.jsBoolean(this.flags.authorized);
         }
@@ -2058,11 +2039,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn getAuthorizationError(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getAuthorizationError(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             if (this.socket.isDetached()) {
@@ -2088,11 +2065,7 @@ fn NewSocket(comptime ssl: bool) type {
             return fallback.toErrorInstance(globalObject);
         }
 
-        pub fn write(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn write(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             if (this.socket.isDetached()) {
@@ -2213,11 +2186,7 @@ fn NewSocket(comptime ssl: bool) type {
             return res;
         }
 
-        pub fn writeBuffered(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn writeBuffered(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                 return JSValue.jsBoolean(false);
@@ -2231,11 +2200,7 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn endBuffered(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn endBuffered(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                 return JSValue.jsBoolean(false);
@@ -2689,11 +2654,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn disableRenegotiation(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn disableRenegotiation(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2702,11 +2663,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn setVerifyMode(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn setVerifyMode(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2741,11 +2698,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn renegotiate(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn renegotiate(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2757,11 +2710,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return JSValue.jsUndefined();
         }
-        pub fn getTLSTicket(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn getTLSTicket(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2780,11 +2730,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSC.ArrayBuffer.createBuffer(globalObject, ticket[0..length]);
         }
 
-        pub fn setSession(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn setSession(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2818,11 +2764,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn getSession(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getSession(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2842,17 +2784,12 @@ fn NewSocket(comptime ssl: bool) type {
             bun.assert(result_size == size);
             return buffer;
         }
-        pub fn getBytesWritten(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
+
+        pub fn getBytesWritten(this: *This, _: *JSC.JSGlobalObject) JSValue {
             return JSC.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
 
-        pub fn getALPNProtocol(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-        ) JSValue {
+        pub fn getALPNProtocol(this: *This, globalObject: *JSC.JSGlobalObject) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsBoolean(false);
             }
@@ -2876,11 +2813,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return ZigString.fromUTF8(slice).toJS(globalObject);
         }
-        pub fn exportKeyingMaterial(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn exportKeyingMaterial(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2949,11 +2883,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn getEphemeralKeyInfo(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getEphemeralKeyInfo(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsNull();
             }
@@ -3015,11 +2945,7 @@ fn NewSocket(comptime ssl: bool) type {
             return result;
         }
 
-        pub fn getCipher(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getCipher(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3059,11 +2985,7 @@ fn NewSocket(comptime ssl: bool) type {
             return result;
         }
 
-        pub fn getTLSPeerFinishedMessage(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getTLSPeerFinishedMessage(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3087,11 +3009,7 @@ fn NewSocket(comptime ssl: bool) type {
             return buffer;
         }
 
-        pub fn getTLSFinishedMessage(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getTLSFinishedMessage(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3115,11 +3033,7 @@ fn NewSocket(comptime ssl: bool) type {
             return buffer;
         }
 
-        pub fn getSharedSigalgs(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getSharedSigalgs(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsNull();
@@ -3203,11 +3117,7 @@ fn NewSocket(comptime ssl: bool) type {
             return array;
         }
 
-        pub fn getTLSVersion(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getTLSVersion(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsNull();
@@ -3222,11 +3132,7 @@ fn NewSocket(comptime ssl: bool) type {
             return ZigString.fromUTF8(slice).toJS(globalObject);
         }
 
-        pub fn setMaxSendFragment(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn setMaxSendFragment(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsBoolean(false);
@@ -3253,11 +3159,8 @@ fn NewSocket(comptime ssl: bool) type {
             const ssl_ptr = this.socket.ssl() orelse return JSValue.jsBoolean(false);
             return JSValue.jsBoolean(BoringSSL.SSL_set_max_send_fragment(ssl_ptr, @as(usize, @intCast(size))) == 1);
         }
-        pub fn getPeerCertificate(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn getPeerCertificate(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
@@ -3303,11 +3206,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn getCertificate(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getCertificate(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3320,11 +3219,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn getPeerX509Certificate(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getPeerX509Certificate(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3336,11 +3231,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn getX509Certificate(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getX509Certificate(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3353,11 +3244,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn getServername(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn getServername(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3369,11 +3256,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return ZigString.fromUTF8(servername[0..bun.len(servername)]).toJS(globalObject);
         }
-        pub fn setServername(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn setServername(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3419,11 +3303,7 @@ fn NewSocket(comptime ssl: bool) type {
         // this invalidates the current socket returning 2 new sockets
         // one for non-TLS and another for TLS
         // handlers for non-TLS are preserved
-        pub fn upgradeTLS(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+        pub fn upgradeTLS(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const this_js = callframe.this();
 
@@ -3684,20 +3564,14 @@ pub const WrappedSocket = extern struct {
 pub fn NewWrappedHandler(comptime tls: bool) type {
     const Socket = uws.NewSocketHandler(true);
     return struct {
-        pub fn onOpen(
-            this: WrappedSocket,
-            socket: Socket,
-        ) void {
+        pub fn onOpen(this: WrappedSocket, socket: Socket) void {
             // only TLS will call onOpen
             if (comptime tls) {
                 TLSSocket.onOpen(this.tls, socket);
             }
         }
 
-        pub fn onEnd(
-            this: WrappedSocket,
-            socket: Socket,
-        ) void {
+        pub fn onEnd(this: WrappedSocket, socket: Socket) void {
             if (comptime tls) {
                 TLSSocket.onEnd(this.tls, socket);
             } else {
@@ -3705,24 +3579,14 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
 
-        pub fn onHandshake(
-            this: WrappedSocket,
-            socket: Socket,
-            success: i32,
-            ssl_error: uws.us_bun_verify_error_t,
-        ) void {
+        pub fn onHandshake(this: WrappedSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             // only TLS will call onHandshake
             if (comptime tls) {
                 TLSSocket.onHandshake(this.tls, socket, success, ssl_error);
             }
         }
 
-        pub fn onClose(
-            this: WrappedSocket,
-            socket: Socket,
-            err: c_int,
-            data: ?*anyopaque,
-        ) void {
+        pub fn onClose(this: WrappedSocket, socket: Socket, err: c_int, data: ?*anyopaque) void {
             if (comptime tls) {
                 TLSSocket.onClose(this.tls, socket, err, data);
             } else {
@@ -3730,11 +3594,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
 
-        pub fn onData(
-            this: WrappedSocket,
-            socket: Socket,
-            data: []const u8,
-        ) void {
+        pub fn onData(this: WrappedSocket, socket: Socket, data: []const u8) void {
             if (comptime tls) {
                 TLSSocket.onData(this.tls, socket, data);
             } else {
@@ -3743,20 +3603,15 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
 
-        pub fn onWritable(
-            this: WrappedSocket,
-            socket: Socket,
-        ) void {
+        pub fn onWritable(this: WrappedSocket, socket: Socket) void {
             if (comptime tls) {
                 TLSSocket.onWritable(this.tls, socket);
             } else {
                 TLSSocket.onWritable(this.tcp, socket);
             }
         }
-        pub fn onTimeout(
-            this: WrappedSocket,
-            socket: Socket,
-        ) void {
+
+        pub fn onTimeout(this: WrappedSocket, socket: Socket) void {
             if (comptime tls) {
                 TLSSocket.onTimeout(this.tls, socket);
             } else {
@@ -3764,10 +3619,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
 
-        pub fn onLongTimeout(
-            this: WrappedSocket,
-            socket: Socket,
-        ) void {
+        pub fn onLongTimeout(this: WrappedSocket, socket: Socket) void {
             if (comptime tls) {
                 TLSSocket.onTimeout(this.tls, socket);
             } else {
@@ -3775,11 +3627,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
 
-        pub fn onConnectError(
-            this: WrappedSocket,
-            socket: Socket,
-            errno: c_int,
-        ) void {
+        pub fn onConnectError(this: WrappedSocket, socket: Socket, errno: c_int) void {
             if (comptime tls) {
                 TLSSocket.onConnectError(this.tls, socket, errno);
             } else {

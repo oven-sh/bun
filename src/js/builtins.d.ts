@@ -2,6 +2,13 @@
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
+declare module "bun" {
+  interface Socket {
+    $write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
+    $end(): void;
+  }
+}
+
 /** $debug is a preprocessor macro that works like a templated console.log, and only runs in debug mode if you pass
  * BUN_DEBUG_JS=<module>
  *

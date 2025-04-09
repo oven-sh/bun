@@ -826,6 +826,19 @@ Writable.prototype.end = function (chunk, encoding, cb) {
 };
 
 function needFinish(state) {
+  $debug(
+    "needFinish",
+    state[kState] & kEnding ? "Ending" : "",
+    state[kState] & kDestroyed ? "Destroyed" : "",
+    state[kState] & kConstructed ? "Constructed" : "",
+    state[kState] & kFinished ? "Finished" : "",
+    state[kState] & kWriting ? "Writing" : "",
+    state[kState] & kErrorEmitted ? "ErrorEmitted" : "",
+    state[kState] & kCloseEmitted ? "CloseEmitted" : "",
+    state[kState] & kErrored ? "Errored" : "",
+    state[kState] & kBuffered ? "Buffered" : "",
+    `length=${state.length}`,
+  );
   return (
     // State is ended && constructed but not destroyed, finished, writing, errorEmitted or closedEmitted
     (state[kState] &
@@ -917,6 +930,13 @@ function finish(stream, state) {
 
   stream.emit("finish");
 
+  $debug(
+    "finish",
+    state[kState] & kAutoDestroy ? "AutoDestroy" : "",
+    stream._readableState.autoDestroy,
+    stream._readableState.endEmitted,
+    stream._readableState.readable,
+  );
   if ((state[kState] & kAutoDestroy) !== 0) {
     // In case of duplex streams we need a way to detect
     // if the readable side is ready for autoDestroy as well.

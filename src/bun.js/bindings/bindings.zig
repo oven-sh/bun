@@ -168,7 +168,7 @@ pub fn toJSHostFunctionWithContext(comptime ContextType: type, comptime Function
 }
 
 pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
-    if (bun.Environment.allow_assert and bun.Environment.is_canary) {
+    if ((bun.Environment.allow_assert and bun.Environment.is_canary) or bun.Environment.isDebug) {
         const normal = value catch |err| switch (err) {
             error.JSError => .zero,
             error.OutOfMemory => globalThis.throwOutOfMemoryValue(),

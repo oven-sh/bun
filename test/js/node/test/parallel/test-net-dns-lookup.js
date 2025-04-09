@@ -24,25 +24,13 @@ const common = require('../common');
 const assert = require('assert');
 const net = require('net');
 
-function patchEmitter(emitter, prefix) {
-  var oldEmit = emitter.emit;
-  emitter.emit = function () {
-    if (typeof arguments[0] !== "symbol") {
-      console.log([prefix, arguments[0]]);
-    }
-    oldEmit.apply(emitter, arguments);
-  };
-}
-
 const server = net.createServer(function(client) {
   client.end();
   server.close();
 });
-patchEmitter(server,'server')
 
 server.listen(0, common.mustCall(function() {
   const socket = net.connect(this.address().port, 'localhost');
-  patchEmitter(socket,'socket')
   socket.on('lookup', common.mustCallAtLeast(function(err, ip, type, host) {
       assert.strictEqual(err, null);
       assert.match(ip, /^(127\.0\.0\.1|::1)$/);

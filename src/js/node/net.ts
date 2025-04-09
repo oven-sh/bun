@@ -36,7 +36,7 @@ import type { SocketListener, SocketHandler, Socket } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
-const { NodeAggregateError } = require("internal/shared");
+const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
@@ -216,7 +216,7 @@ const SocketHandlers: SocketHandler = {
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
-      if (socket.write(writeChunk || "", self._pendingEncoding || "utf8")) {
+      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
       } else {
@@ -549,6 +549,7 @@ class TcpSocketHandle {
       hostname: address,
       port,
       ipv6Only: addressType === 6,
+      allowHalfOpen: self.allowHalfOpen,
       socket: {
         open(socket) {
           console.log("BUN TcpSocketHandle open", req.oncomplete);
@@ -565,6 +566,19 @@ class TcpSocketHandle {
         },
         drain(socket) {
           console.log("BUN TcpSocketHandle drain");
+          const callback = self[kwriteCallback];
+          self.connecting = false;
+          if (callback) {
+            const writeChunk = self._pendingData;
+            if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+              self._pendingData = self[kwriteCallback] = null;
+              callback(null);
+            } else {
+              self._pendingData = null;
+            }
+            self[kBytesWritten] = socket.bytesWritten;
+          }
+          console.log("BUN TcpSocketHandle drain fin");
         },
         timeout(socket) {
           console.log("BUN TcpSocketHandle timeout");
@@ -579,64 +593,67 @@ class TcpSocketHandle {
         },
         close(socket, err) {
           console.log("BUN TcpSocketHandle close");
-          self.destroy();
+          if (self[kclosed]) return;
+          self[kclosed] = true;
           that.#socket = null;
+          if (self[kended]) return;
+          self[kended] = true;
+          if (!self.allowHalfOpen) self.write = writeAfterFIN;
+          self.push(null);
+          self.read(0);
         },
         error(socket, err) {
           console.log("BUN TcpSocketHandle error");
           console.error(err);
         },
       },
-    })
-      .then(sock => {
-        that.#socket = sock;
-        that.#promise = null;
-      })
-      .catch(reason => {
-        console.error("TcpSocketHandle connect catch");
-        if (!self.destroyed) emitErrorAndCloseNextTick(self, reason);
-      });
+    }).then(sock => {
+      that.#socket = sock;
+      that.#promise = null;
+    });
     if ($isPromiseRejected(this.#promise)) {
       throw Bun.peek(this.#promise).errno;
     }
+    this.#promise.catch(reason => {
+      console.error("TcpSocketHandle connect catch");
+      if (!self.destroyed) destroyNT(self, reason);
+    });
     return 0;
   }
   setNoDelay(arg) {
     console.log("TcpSocketHandle setNoDelay");
     $assert(this.#socket != null);
-    this.#socket.setNoDelay(arg);
+    return this.#socket.setNoDelay(arg);
   }
   setKeepAlive(arg0, arg1) {
     console.log("TcpSocketHandle setKeepAlive");
     $assert(this.#socket != null);
-    this.#socket.setKeepAlive(arg0, arg1);
+    return this.#socket.setKeepAlive(arg0, arg1);
   }
   resume() {
     console.log("TcpSocketHandle resume");
-    this.#socket?.resume();
+    return this.#socket?.resume();
   }
   pause() {
     console.log("TcpSocketHandle pause");
-    this.#socket?.pause();
+    return this.#socket?.pause();
   }
   write() {
     console.log("TcpSocketHandle write");
     $assert(this.#socket != null);
-    this.#socket.write.$apply(this.#socket, arguments);
+    return this.#socket.$write.$apply(this.#socket, arguments);
   }
   end() {
     console.log("TcpSocketHandle end");
-    $assert(this.#socket != null);
-    this.#socket.end.$apply(this.#socket, arguments);
+    return this.#socket?.end.$apply(this.#socket, arguments);
   }
   close(cb) {
     console.log("TcpSocketHandle close");
     if (this.#socket == null) {
       console.warn("this.#socket == null");
-      return;
     }
-    this.#socket.close();
-    process.nextTick(cb);
+    this.#socket?.close();
+    if (typeof cb === "function") process.nextTick(cb);
   }
   reset(cb) {
     console.log("TcpSocketHandle reset");
@@ -650,12 +667,12 @@ class TcpSocketHandle {
   ref() {
     console.log("TcpSocketHandle ref");
     $assert(this.#socket != null);
-    this.#socket.ref();
+    return this.#socket.ref();
   }
   unref() {
     console.log("TcpSocketHandle unref");
     $assert(this.#socket != null);
-    this.#socket.unref();
+    return this.#socket.unref();
   }
   get bytesWritten() {
     return this.#socket?.bytesWritten;
@@ -677,6 +694,154 @@ class TcpSocketHandle {
   }
   get remotePort() {
     return this.#socket?.remotePort;
+  }
+}
+
+class PipeSocketHandle {
+  #promise: Promise<Socket<undefined>> | null;
+  #socket: Socket<undefined> | null;
+
+  constructor() {
+    this.#promise = null;
+    this.#socket = null;
+  }
+
+  [kConnect](self, req, address) {
+    console.log("PipeSocketHandle connect");
+    $assert(this.#promise == null);
+    $assert(this.#socket == null);
+    const that = this;
+    this.#promise = Bun.connect({
+      hostname: address,
+      unix: address,
+      allowHalfOpen: self.allowHalfOpen,
+      socket: {
+        open(socket) {
+          console.log("BUN PipeSocketHandle open", req.oncomplete);
+          self._handle = that;
+          socket[owner_symbol] = self;
+          that.#socket = socket;
+          that.#promise = null;
+          req.oncomplete(0, self._handle, req, true, true);
+        },
+        data(socket, buffer) {
+          console.log("BUN PipeSocketHandle data", buffer);
+          self.bytesRead += buffer.length;
+          if (!self.push(buffer)) socket.pause();
+        },
+        drain(socket) {
+          console.log("BUN PipeSocketHandle drain");
+          const callback = self[kwriteCallback];
+          self.connecting = false;
+          if (callback) {
+            const writeChunk = self._pendingData;
+            if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+              self._pendingData = self[kwriteCallback] = null;
+              callback(null);
+            } else {
+              self._pendingData = null;
+            }
+            self[kBytesWritten] = socket.bytesWritten;
+          }
+          console.log("BUN PipeSocketHandle drain fin");
+        },
+        timeout(socket) {
+          console.log("BUN PipeSocketHandle timeout");
+        },
+        end(socket) {
+          console.log("BUN PipeSocketHandle end");
+          if (self[kended]) return;
+          self[kended] = true;
+          if (!self.allowHalfOpen) self.write = writeAfterFIN;
+          self.push(null);
+          self.read(0);
+        },
+        close(socket, err) {
+          console.log("BUN PipeSocketHandle close");
+          if (self[kclosed]) return;
+          self[kclosed] = true;
+          that.#socket = null;
+          if (self[kended]) return;
+          self[kended] = true;
+          if (!self.allowHalfOpen) self.write = writeAfterFIN;
+          self.push(null);
+          self.read(0);
+        },
+        error(socket, err) {
+          console.log("BUN PipeSocketHandle error");
+          console.error(err);
+        },
+      },
+    }).then(sock => {
+      that.#socket = sock;
+      that.#promise = null;
+    });
+    if ($isPromiseRejected(this.#promise)) {
+      throw Bun.peek(this.#promise).errno;
+    }
+    this.#promise.catch(reason => {
+      console.error("PipeSocketHandle connect catch");
+      if (!self.destroyed) destroyNT(self, reason);
+    });
+    return 0;
+  }
+  setNoDelay(arg) {
+    console.log("PipeSocketHandle setNoDelay");
+    $assert(this.#socket != null);
+    return this.#socket.setNoDelay(arg);
+  }
+  setKeepAlive(arg0, arg1) {
+    console.log("PipeSocketHandle setKeepAlive");
+    $assert(this.#socket != null);
+    return this.#socket.setKeepAlive(arg0, arg1);
+  }
+  resume() {
+    console.log("PipeSocketHandle resume");
+    return this.#socket?.resume();
+  }
+  pause() {
+    console.log("PipeSocketHandle pause");
+    return this.#socket?.pause();
+  }
+  write() {
+    console.log("PipeSocketHandle write");
+    $assert(this.#socket != null);
+    return this.#socket.$write.$apply(this.#socket, arguments);
+  }
+  end() {
+    console.log("PipeSocketHandle end");
+    $assert(this.#socket != null);
+    return this.#socket.end.$apply(this.#socket, arguments);
+  }
+  close(cb) {
+    console.log("PipeSocketHandle close");
+    if (this.#socket == null) {
+      console.warn("this.#socket == null");
+    }
+    this.#socket?.close();
+    if (typeof cb === "function") process.nextTick(cb);
+  }
+  reset(cb) {
+    console.log("PipeSocketHandle reset");
+    if (this.#socket == null) {
+      console.warn("this.#socket == null");
+      return;
+    }
+    this.#socket.close();
+    process.nextTick(cb);
+  }
+  ref() {
+    console.log("PipeSocketHandle ref");
+    $assert(this.#socket != null);
+    return this.#socket.ref();
+  }
+  unref() {
+    console.log("PipeSocketHandle unref");
+    $assert(this.#socket != null);
+    return this.#socket.unref();
+  }
+  get bytesWritten() {
+    return this.#socket?.bytesWritten;
   }
 }
 
@@ -780,11 +945,11 @@ function Socket(options?) {
       signal.addEventListener("abort", destroyWhenAborted.bind(this));
     }
   }
-  if (options.blockList) {
-    if (!BlockList.isBlockList(options.blockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", options.blockList);
+  if (opts.blockList) {
+    if (!BlockList.isBlockList(opts.blockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", opts.blockList);
     }
-    this.blockList = options.blockList;
+    this.blockList = opts.blockList;
   }
 }
 $toClass(Socket, "Socket", Duplex);
@@ -894,12 +1059,14 @@ Socket.prototype.connect = function connect(...args) {
 
   if (!this._handle) {
     // this._handle = pipe ? new Pipe(PipeConstants.SOCKET) : new TCP(TCPConstants.SOCKET);
-    this._handle = pipe ? new Pipe(PipeConstants.SOCKET) : new TcpSocketHandle();
+    this._handle = pipe ? new PipeSocketHandle() : new TcpSocketHandle();
     initSocketHandle(this);
   }
 
   if (!pipe) {
     lookupAndConnect(this, options);
+  } else {
+    internalConnect(this, path);
   }
   return this;
 };
@@ -1176,7 +1343,7 @@ Socket.prototype.setTimeout = {
         this.removeListener("timeout", callback);
       }
     } else {
-      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs);
+      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -1257,6 +1424,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     }
     this.once("connect", function connect() {
       this.off("close", onClose);
+      this._write(chunk, encoding, callback);
     });
     this.once("close", onClose);
     return;
@@ -1269,16 +1437,45 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback($ERR_SOCKET_CLOSED());
     return false;
   }
-  const success = socket.write(chunk, encoding);
+  this._unrefTimer();
+  const success = writeGeneric(socket, chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
-    callback();
+    callback(null);
   } else if (this[kwriteCallback]) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
   }
 };
+
+function writeGeneric(socket, data, encoding) {
+  switch (encoding) {
+    case "buffer":
+    case "latin1":
+    case "binary":
+    case "utf8":
+    case "utf-8":
+    case "ascii":
+    case "ucs2":
+    case "ucs-2":
+    case "utf16le":
+    case "utf-16le": {
+      if (!(socket instanceof TcpSocketHandle || socket instanceof PipeSocketHandle)) {
+        // temp
+        return socket.$write(data, encoding);
+      }
+      return socket.write(data, encoding);
+    }
+    default: {
+      if (!(socket instanceof TcpSocketHandle || socket instanceof PipeSocketHandle)) {
+        // temp
+        return socket.$write(Buffer.from(data, encoding));
+      }
+      return socket.write(Buffer.from(data, encoding));
+    }
+  }
+}
 
 function createConnection(...args) {
   const normalized = normalizeArgs(args);
@@ -1486,6 +1683,7 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
   });
 }
 
+function internalConnect(self, path);
 function internalConnect(self, address, port, addressType, localAddress, localPort, flags?) {
   console.log("internalConnect");
   // TODO return promise from Socket.prototype.connect which wraps _connectReq.
@@ -1537,12 +1735,12 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
 
     err = self._handle[kConnect](self, addressType, req, address, port);
   } else {
-    throw new Error("TODO");
-    const req = new PipeConnectWrap();
+    // const req = new PipeConnectWrap();
+    const req = {};
     req.address = address;
     req.oncomplete = afterConnect;
 
-    err = self._handle.connect(req, address);
+    err = self._handle[kConnect](self, req, address);
   }
 
   if (err) {
@@ -2266,9 +2464,8 @@ function initSocketHandle(self) {
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {
-  console.log("closeSocketHandle");
+  $debug("closeSocketHandle", isException, isCleanupPending);
   if (self._handle) {
-    console.log(self._handle.close);
     self._handle.close(() => {
       $debug("emit close", isCleanupPending);
       self.emit("close", isException);

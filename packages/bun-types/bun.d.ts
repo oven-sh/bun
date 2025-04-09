@@ -6112,6 +6112,28 @@ declare module "bun" {
      * The number of bytes written to the socket.
      */
     readonly bytesWritten: number;
+
+    resume(): void;
+
+    pause(): void;
+
+    renegotiate(): void;
+
+    setVerifyMode(): void;
+
+    getSession(): void;
+
+    setSession(): void;
+
+    exportKeyingMaterial(): void;
+
+    upgradeTLS(): void;
+
+    close(): void;
+
+    getServername(): void;
+
+    setServername(): void;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {

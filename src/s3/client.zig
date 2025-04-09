@@ -426,12 +426,12 @@ pub fn uploadStream(
     const proxy_url = (proxy orelse "");
 
     if (readable_stream.isDisturbed(globalThis)) {
-        return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
     }
 
     switch (readable_stream.ptr) {
         .Invalid => {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
         },
         inline .File, .Bytes => |stream| {
             if (stream.pending.result == .err) {

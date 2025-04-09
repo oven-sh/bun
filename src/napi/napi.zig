@@ -1051,7 +1051,6 @@ pub const napi_async_work = struct {
     complete: ?napi_async_complete_callback,
     data: ?*anyopaque = null,
     status: std.atomic.Value(Status) = .init(.pending),
-    wait_for_deinit: bool = false,
     scheduled: bool = false,
     ref: Async.KeepAlive = .{},
 
@@ -1114,9 +1113,10 @@ pub const napi_async_work = struct {
         // likely `complete` will call `napi_delete_async_work`, so take a copy
         // of `ref` beforehand
         var ref = this.ref;
-        const vm = this.global.bunVM();
+        const env = this.env;
         defer {
-            ref.unref(vm);
+            const global = env.toJS();
+            ref.unref(global.bunVM());
         }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
@@ -1125,7 +1125,7 @@ pub const napi_async_work = struct {
         };
 
         const handle_scope = NapiHandleScope.open(this.env, false);
-        defer if (handle_scope) |scope| scope.close(this.env);
+        defer if (handle_scope) |scope| scope.close(env);
 
         const status: NapiStatus = if (this.status.load(.seq_cst) == .cancelled)
             .cancelled
@@ -1137,7 +1137,9 @@ pub const napi_async_work = struct {
             @intFromEnum(status),
             this.data,
         );
-        if (this.global.hasException()) {
+
+        const global = env.toJS();
+        if (global.hasException()) {
             return error.JSError;
         }
     }

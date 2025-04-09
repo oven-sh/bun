@@ -908,9 +908,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         // - `--smol` is passed
         // - The machine has less than 4GB of RAM
         bool shouldDisableStopIfNecessaryTimer = !miniMode;
-        if (WTF::ramSize() < 1024ull * 1024ull * 1024ull * 4ull) {
-            shouldDisableStopIfNecessaryTimer = false;
-        }
 
         if (disable_stop_if_necessary_timer) {
             const char value = disable_stop_if_necessary_timer[0];
@@ -989,26 +986,25 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
 
-            if (options.bun.env) {
-                auto map = WTFMove(options.bun.env);
-                auto size = map->size();
+            if (options.env.has_value()) {
+                HashMap<String, String> map = WTFMove(*std::exchange(options.env, std::nullopt));
+                auto size = map.size();
 
                 // In theory, a GC could happen before we finish putting all the properties on the object.
                 // So we use a MarkedArgumentBuffer to ensure that the strings are not collected and we immediately put them on the object.
                 MarkedArgumentBuffer strings;
-                strings.ensureCapacity(map->size());
-                for (const auto& value : map->values()) {
+                strings.ensureCapacity(size);
+                for (const auto& value : map.values()) {
                     strings.append(jsString(vm, value));
                 }
 
                 auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
                 size_t i = 0;
-                for (auto k : *map) {
+                for (auto k : map) {
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTFMove(k.key)), strings.at(i++));
                 }
-                map->clear();
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
 
@@ -4683,6 +4679,21 @@ bool GlobalObject::hasNapiFinalizers() const
     }
 
     return false;
+}
+
+extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.entryScope) {
+        // Exiting while running JavaScript code (e.g. `process.exit()`), so we can't destroy it
+        // just now. Perhaps later in this case we can defer destruction to run later.
+        return;
+    }
+    gcUnprotect(globalObject);
+    globalObject = nullptr;
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    vm.derefSuppressingSaferCPPChecking();
+    vm.derefSuppressingSaferCPPChecking();
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

@@ -443,53 +443,10 @@ pub const StringHashMapUnowned = struct {
         }
     };
 };
+pub const OffsetList = @import("./baby_list.zig").OffsetList;
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
-pub const OffsetByteList = struct {
-    head: u32 = 0,
-    byte_list: ByteList = .{},
-
-    pub fn init(head: u32, byte_list: ByteList) OffsetByteList {
-        return OffsetByteList{
-            .head = head,
-            .byte_list = byte_list,
-        };
-    }
-
-    pub fn write(self: *OffsetByteList, allocator: std.mem.Allocator, bytes: []const u8) !void {
-        _ = try self.byte_list.write(allocator, bytes);
-    }
-
-    pub fn slice(this: *OffsetByteList) []u8 {
-        return this.byte_list.slice()[0..this.head];
-    }
-
-    pub fn remaining(this: *OffsetByteList) []u8 {
-        return this.byte_list.slice()[this.head..];
-    }
-
-    pub fn consume(self: *OffsetByteList, bytes: u32) void {
-        self.head +|= bytes;
-        if (self.head >= self.byte_list.len) {
-            self.head = 0;
-            self.byte_list.len = 0;
-        }
-    }
-
-    pub fn len(self: *const OffsetByteList) u32 {
-        return self.byte_list.len - self.head;
-    }
-
-    pub fn clear(self: *OffsetByteList) void {
-        self.head = 0;
-        self.byte_list.len = 0;
-    }
-
-    pub fn deinit(self: *OffsetByteList, allocator: std.mem.Allocator) void {
-        self.byte_list.deinitWithAllocator(allocator);
-        self.* = .{};
-    }
-};
+pub const OffsetByteList = OffsetList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.allow_assert) {
@@ -2085,7 +2042,7 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 /// Converts a native file descriptor into a `bun.FileDescriptor`
 ///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-pub inline fn toFD(fd: anytype) FileDescriptor {
+pub fn toFD(fd: anytype) callconv(callconv_inline) FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
@@ -4163,3 +4120,4 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
+pub const valkey = @import("./valkey/index.zig");

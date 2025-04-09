@@ -6643,12 +6643,6 @@ fn NewParser_(
 
         pub fn prepareForVisitPass(p: *P) anyerror!void {
             {
-                var count: usize = 0;
-                for (p.scopes_in_order.items) |item| {
-                    if (item != null) {
-                        count += 1;
-                    }
-                }
                 var i: usize = 0;
                 p.scope_order_to_visit = try p.allocator.alloc(ScopeOrder, p.scopes_in_order.items.len);
                 for (p.scopes_in_order.items) |item| {
@@ -6657,6 +6651,7 @@ fn NewParser_(
                         i += 1;
                     }
                 }
+                p.scope_order_to_visit.len = i;
             }
 
             p.is_file_considered_to_have_esm_exports =

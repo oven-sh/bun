@@ -72,16 +72,24 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
-        defer this.deinit(bun.default_allocator);
+        defer {
+            // basically `transferToJS`. don't want to double deref the sys error
+            switch (this.*) {
+                .sys => {
+                    // sys.toErrorInstance handles decrementing the ref count
+                },
+                .custom, .invalid_arguments, .todo => {
+                    this.deinit(bun.default_allocator);
+                },
+            }
+        }
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
                 return globalThis.throwValue(err);
             },
             .custom => {
-                var str = JSC.ZigString.init(this.custom);
-                str.markUTF8();
-                const err_value = str.toErrorInstance(globalThis);
+                const err_value = bun.String.createUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
@@ -113,10 +121,10 @@ pub const ShellErr = union(enum) {
         bun.Global.exit(1);
     }
 
-    pub fn deinit(this: @This(), allocator: Allocator) void {
-        switch (this) {
+    pub fn deinit(this: *const @This(), allocator: Allocator) void {
+        switch (this.*) {
             .sys => {
-                // this.sys.
+                this.sys.deref();
             },
             .custom => allocator.free(this.custom),
             .invalid_arguments => {},
@@ -308,8 +316,7 @@ pub const GlobalMini = struct {
         };
     }
 
-    pub inline fn actuallyThrow(this: @This(), shellerr: ShellErr) void {
-        _ = this; // autofix
+    pub inline fn actuallyThrow(_: @This(), shellerr: ShellErr) void {
         shellerr.throwMini();
     }
 

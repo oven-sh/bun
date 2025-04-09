@@ -1,0 +1,4 @@
+user default on nopass ~* &* +@all
+user testuser on >test123 ~* &* +@all
+user readonly on >readonly ~* &* +@read
+user writeonly on >writeonly ~* &* +@write

@@ -1310,25 +1310,10 @@ Server.prototype.address = function address() {
       return unix;
     }
 
-    //TODO: fix adress when host is passed
-    let address = server.hostname;
-    const type = isIP(address);
-    const port = server.port;
-    if (typeof port === "number") {
-      return {
-        port,
-        address,
-        family: type ? `IPv${type}` : undefined,
-      };
-    }
-    if (type) {
-      return {
-        address,
-        family: type ? `IPv${type}` : undefined,
-      };
-    }
-
-    return address;
+    const out = {};
+    const err = this._handle.getsockname(out);
+    if (err) throw new ErrnoException(err, "address");
+    return out;
   }
   return null;
 };

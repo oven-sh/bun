@@ -113,9 +113,11 @@ JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope&, JSC::JSGlobalObject*
 JSC::EncodedJSValue CRYPTO_INVALID_AUTH_TAG(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::String& message);
 JSC::EncodedJSValue CRYPTO_INVALID_IV(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_UNSUPPORTED_OPERATION(JSC::ThrowScope&, JSC::JSGlobalObject*, WTF::ASCIILiteral message);
+JSC::EncodedJSValue CRYPTO_UNSUPPORTED_OPERATION(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_INVALID_KEYLEN(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_INVALID_STATE(JSC::ThrowScope&, JSC::JSGlobalObject*, WTF::ASCIILiteral message);
 JSC::EncodedJSValue CRYPTO_INVALID_MESSAGELEN(JSC::ThrowScope&, JSC::JSGlobalObject*);
+JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope&, JSC::JSGlobalObject*);
 
 // URL
 

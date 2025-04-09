@@ -47,11 +47,35 @@
 #include "CryptoPrimes.h"
 #include "JSCipher.h"
 #include "CryptoHkdf.h"
+#include "JSKeyObject.h"
+#include "JSSecretKeyObject.h"
+#include "JSPublicKeyObject.h"
+#include "JSPrivateKeyObject.h"
+#include "CryptoUtil.h"
 
 using namespace JSC;
 using namespace Bun;
 
 namespace WebCore {
+
+JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = lexicalGlobalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    JSValue keyValue = callFrame->argument(0);
+    JSValue encodingValue = callFrame->argument(1);
+
+    WTF::Vector<uint8_t> symmetricKey;
+    prepareSecretKey(lexicalGlobalObject, scope, symmetricKey, keyValue, encodingValue, true);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+    Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, KeyObject::Type::Secret, WTFMove(symmetricKey));
+
+    return JSValue::encode(secretKey);
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -433,6 +457,27 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 6, "hkdf"_s, jsHkdf, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdfSync"_s)),
         JSFunction::create(vm, globalObject, 5, "hkdfSync"_s, jsHkdfSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "KeyObject"_s)),
+        globalObject->m_JSKeyObjectClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "SecretKeyObject"_s)),
+        globalObject->m_JSSecretKeyObjectClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PublicKeyObject"_s)),
+        globalObject->m_JSPublicKeyObjectClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PrivateKeyObject"_s)),
+        globalObject->m_JSPrivateKeyObjectClassStructure.constructor(globalObject));
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicEncrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, jsPublicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicDecrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "publicDecrypt"_s, jsPublicDecrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "privateEncrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "privateEncrypt"_s, jsPrivateEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "privateDecrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "privateDecrypt"_s, jsPrivateDecrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "createSecretKey"_s)),
+        JSFunction::create(vm, globalObject, 2, "createSecretKey"_s, jsCreateSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

@@ -1,0 +1,59 @@
+#include "JSSecretKeyObjectPrototype.h"
+#include "JSSecretKeyObject.h"
+#include "ErrorCode.h"
+#include "CryptoUtil.h"
+#include "BunProcess.h"
+#include "NodeValidator.h"
+#include "JSBufferEncodingType.h"
+#include <JavaScriptCore/TypedArrayInlines.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+
+using namespace Bun;
+using namespace JSC;
+using namespace WebCore;
+using namespace ncrypto;
+
+JSC_DECLARE_HOST_FUNCTION(jsSecretKeyObjectExport);
+JSC_DECLARE_HOST_FUNCTION(jsToCryptoKey);
+
+const JSC::ClassInfo JSSecretKeyObjectPrototype::s_info = { "SecretKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSecretKeyObjectPrototype) };
+
+static const JSC::HashTableValue JSSecretKeyObjectPrototypeTableValues[] = {
+    { "export"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectExport, 1 } },
+    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsToCryptoKey, 3 } },
+};
+
+void JSSecretKeyObjectPrototype::finishCreation(JSC::VM& vm)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSSecretKeyObjectPrototype::info(), JSSecretKeyObjectPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(callFrame->thisValue());
+    if (!secretKeyObject) {
+        throwThisTypeError(*globalObject, scope, "SecretKeyObject"_s, "export"_s);
+        return JSValue::encode({});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsToCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(callFrame->thisValue());
+    if (!secretKeyObject) {
+        throwThisTypeError(*globalObject, scope, "SecretKeyObject"_s, "toCryptoKey"_s);
+        return JSValue::encode({});
+    }
+
+    return JSValue::encode(jsUndefined());
+}

@@ -289,6 +289,10 @@ public:
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSKeyObjectStructure() const { return m_JSKeyObjectClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSKeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSKeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
+
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
@@ -568,6 +572,11 @@ public:
     LazyClassStructure m_JSHashClassStructure;
     LazyClassStructure m_JSECDHClassStructure;
     LazyClassStructure m_JSCipherClassStructure;
+    LazyClassStructure m_JSKeyObjectClassStructure;
+    LazyClassStructure m_JSSecretKeyObjectClassStructure;
+    LazyClassStructure m_JSPublicKeyObjectClassStructure;
+    LazyClassStructure m_JSPrivateKeyObjectClassStructure;
+    LazyClassStructure m_JSKeyObjectHandleClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

@@ -91,7 +91,7 @@ pub const BunObject = struct {
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSValue {
-                return @call(.always_inline, getter, .{ this, object });
+                return JSC.toJSHostValue(this, @call(.always_inline, getter, .{ this, object }));
             }
         }.callback;
     }
@@ -1268,15 +1268,8 @@ pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
 }
 
-pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    const valkey = JSC.API.Valkey.create(globalThis, &[_]JSValue{.undefined}) catch |err| {
-        if (err != error.JSError) {
-            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
-            return .zero;
-        }
-        return .zero;
-    };
-
+pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSError!JSC.JSValue {
+    const valkey = try JSC.API.Valkey.create(globalThis, .undefined, .undefined);
     return valkey.toJS(globalThis);
 }
 
@@ -1795,7 +1788,7 @@ const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
+const JSError = bun.JSError;
 
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;

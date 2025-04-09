@@ -253,7 +253,7 @@ DataPointer DataPointer::resize(size_t len)
 {
     size_t actual_len = std::min(len_, len);
     auto buf = release();
-    if (actual_len == len_) return DataPointer(buf);
+    if (actual_len == len_) return DataPointer(buf.data, actual_len);
     buf.data = OPENSSL_realloc(buf.data, actual_len);
     buf.len = actual_len;
     return DataPointer(buf);
@@ -2796,7 +2796,7 @@ EVPKeyPointer::operator Dsa() const
 bool EVPKeyPointer::validateDsaParameters() const
 {
     if (!pkey_) return false;
-    /* Validate DSA2 parameters from FIPS 186-4 */
+        /* Validate DSA2 parameters from FIPS 186-4 */
 #if OPENSSL_VERSION_MAJOR >= 3
     if (EVP_default_properties_is_fips_enabled(nullptr) && EVP_PKEY_DSA == id()) {
 #else

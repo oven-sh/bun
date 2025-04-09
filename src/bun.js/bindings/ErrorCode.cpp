@@ -1091,6 +1091,12 @@ JSC::EncodedJSValue CRYPTO_UNSUPPORTED_OPERATION(JSC::ThrowScope& throwScope, JS
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_UNSUPPORTED_OPERATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNSUPPORTED_OPERATION, "Unsupported crypto operation"_s));
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_INVALID_KEYLEN(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYLEN, "Invalid key length"_s));
@@ -1222,6 +1228,12 @@ JSC::EncodedJSValue CRYPTO_UNKNOWN_DH_GROUP(JSC::ThrowScope& scope, JSGlobalObje
 {
     auto message = "Unknown DH group"_s;
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_DH_GROUP, message));
+    return {};
+}
+
+JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OSSL_EVP_INVALID_DIGEST, "Invalid digest used"_s));
     return {};
 }
 

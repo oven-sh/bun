@@ -431,7 +431,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get key argument
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options, std::nullopt);
+    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options);
     ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
     if (!maybeKeyPtr) {
         return {};

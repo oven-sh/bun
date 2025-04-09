@@ -25,19 +25,20 @@ pub const JSValkeyClient = struct {
     pub usingnamespace bun.NewRefCounted(JSValkeyClient, deinit, null);
 
     // Factory function to create a new Valkey client from JS
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSValkeyClient {
-        return try create(globalObject, callframe.arguments());
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSError!*JSValkeyClient {
+        const url_value, const options_value = callframe.argumentsAsArray(2);
+        return try create(globalObject, url_value, options_value);
     }
 
-    pub fn create(globalObject: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
+    pub fn create(globalObject: *JSC.JSGlobalObject, url_value: JSValue, options_value: JSValue) JSError!*JSValkeyClient {
         const vm = globalObject.bunVM();
-        const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
+        const url_str = if (url_value.isUndefined())
             if (vm.transpiler.env.get("REDIS_URL") orelse vm.transpiler.env.get("VALKEY_URL")) |url|
                 bun.String.init(url)
             else
                 bun.String.init("valkey://localhost:6379")
         else
-            try arguments[0].toBunString(globalObject);
+            try url_value.toBunString(globalObject);
         defer url_str.deref();
 
         const url_utf8 = url_str.toUTF8WithoutRef(bun.default_allocator);
@@ -75,8 +76,8 @@ pub const JSValkeyClient = struct {
             else => url.getPort() orelse 6379,
         };
 
-        const options = if (arguments.len >= 2 and !arguments[1].isUndefinedOrNull() and arguments[1].isObject())
-            try Options.fromJS(globalObject, arguments[1])
+        const options = if (options_value.isObject())
+            try Options.fromJS(globalObject, options_value)
         else
             valkey.Options{};
 
@@ -153,7 +154,7 @@ pub const JSValkeyClient = struct {
         return JSValue.jsNumber(len);
     }
 
-    pub fn doConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, this_value: JSValue) bun.JSError!JSValue {
+    pub fn doConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, this_value: JSValue) JSError!JSValue {
         this.ref();
         defer this.deref();
 
@@ -207,11 +208,11 @@ pub const JSValkeyClient = struct {
         return promise;
     }
 
-    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSError!JSValue {
         return try this.doConnect(globalObject, callframe.this());
     }
 
-    pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
         if (this.client.status == .disconnected) {
             return .undefined;
         }
@@ -865,3 +866,4 @@ const Socket = uws.AnySocket;
 const RedisError = protocol.RedisError;
 const Command = @import("ValkeyCommand.zig");
 const BoringSSL = bun.BoringSSL;
+const JSError = bun.JSError;

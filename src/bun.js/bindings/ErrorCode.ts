@@ -246,6 +246,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
+  ["ERR_OSSL_EVP_INVALID_DIGEST", Error],
 
   ["ERR_REDIS_CONNECTION_CLOSED", Error, "RedisError"],
   ["ERR_REDIS_INVALID_RESPONSE", Error, "RedisError"],

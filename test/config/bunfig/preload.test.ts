@@ -121,6 +121,14 @@ describe("Given a `bunfig.toml` file with a relative path to a preload in a pare
     expect(code).toBe(0);
   });
 
+  it("When `bun run` is run with a bunfig.toml in a separate directory, preloads are run", async () => {
+    const dir = fixturePath("parent");
+    const [out, err, code] = await run("foo/index.ts", { args: ["--config=foo/bunfig.toml"], cwd: dir });
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
+    expect(code).toBe(0);
+  });
+
   it("when `bun run` is run with --preload, preloads are run", async () => {
     const dir = fixturePath("parent", "foo", "bar");
     const [out, err, code] = await run("index.ts", { args: ["--preload=../../preload.ts"], cwd: dir });

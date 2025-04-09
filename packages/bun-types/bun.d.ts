@@ -2768,10 +2768,11 @@ declare module "bun" {
        * mistake to hash an empty password.
        */
       password: Bun.StringOrBuffer,
+
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       *
+       * @default Argon2Algorithm
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;
@@ -5861,6 +5862,12 @@ declare module "bun" {
      */
     shutdown(halfClose?: boolean): void;
 
+    // -1 = detached
+    // 0 = closed
+    // 1 = open
+    // -2 = closing
+    // 2 = everything else
+    // positive = open
     readonly readyState: "open" | "closing" | "closed";
 
     /**

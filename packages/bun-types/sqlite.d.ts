@@ -13,15 +13,15 @@
  *
  * The following types can be used when binding parameters:
  *
- * | JavaScript type | SQLite type |
- * | -------------- | ----------- |
- * | `string` | `TEXT` |
- * | `number` | `INTEGER` or `DECIMAL` |
- * | `boolean` | `INTEGER` (1 or 0) |
- * | `Uint8Array` | `BLOB` |
- * | `Buffer` | `BLOB` |
- * | `bigint` | `INTEGER` |
- * | `null` | `NULL` |
+ * | JavaScript type | SQLite type            |
+ * | --------------- | ---------------------- |
+ * | `string`        | `TEXT`                 |
+ * | `number`        | `INTEGER` or `DECIMAL` |
+ * | `boolean`       | `INTEGER` (1 or 0)     |
+ * | `Uint8Array`    | `BLOB`                 |
+ * | `Buffer`        | `BLOB`                 |
+ * | `bigint`        | `INTEGER`              |
+ * | `null`          | `NULL`                 |
  */
 declare module "bun:sqlite" {
   /**
@@ -193,15 +193,15 @@ declare module "bun:sqlite" {
      *
      *  * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
     /**
@@ -646,15 +646,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     get(...params: ParamsType): ReturnType | null;
 
@@ -687,15 +687,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     run(...params: ParamsType): Changes;
 
@@ -727,15 +727,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | ---------------|-------------|
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 

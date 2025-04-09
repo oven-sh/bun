@@ -22,7 +22,11 @@ declare function $debug(...args: any[]): void;
 declare function $assert(check: any, ...message: any[]): asserts check;
 
 /** Asserts the input is a promise. Returns `true` if the promise is resolved */
-declare function $isPromiseResolved(promise: Promise<any>): boolean;
+declare function $isPromiseFulfilled(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is rejected */
+declare function $isPromiseRejected(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is pending */
+declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
 
@@ -421,7 +425,7 @@ declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string, isESM?: boolean, isUserRequireResolve?: boolean): string;
+declare function $resolveSync(name: string, from: string, isESM?: boolean, isUserRequireResolve?: boolean, paths?: string[]): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;

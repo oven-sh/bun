@@ -694,3 +694,4 @@ pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
 pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
 pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
 pub const FileType = @import("./pipes.zig").FileType;
+pub const MaxBuf = @import("./MaxBuf.zig");

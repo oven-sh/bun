@@ -233,11 +233,27 @@ pub const AnyTaskWithExtraContext = struct {
     callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
     next: ?*AnyTaskWithExtraContext = null,
 
-    pub fn fromCallbackAutoDeinit(of: anytype, comptime callback: anytype) *AnyTaskWithExtraContext {
-        const TheTask = NewManaged(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), callback));
-        const task = bun.default_allocator.create(AnyTaskWithExtraContext) catch bun.outOfMemory();
-        task.* = TheTask.init(of);
-        return task;
+    pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *AnyTaskWithExtraContext {
+        const Ptr = std.meta.Child(@TypeOf(ptr));
+        const Wrapper = struct {
+            any_task: AnyTaskWithExtraContext = undefined,
+            wrapped: *Ptr,
+            pub fn function(this: *anyopaque, extra: *anyopaque) void {
+                const that: *@This() = @ptrCast(@alignCast(this));
+                defer bun.default_allocator.destroy(that);
+                const ctx = that.wrapped;
+                @field(Ptr, fieldName)(ctx, extra);
+            }
+        };
+        const task = bun.default_allocator.create(Wrapper) catch bun.outOfMemory();
+        task.* = Wrapper{
+            .any_task = AnyTaskWithExtraContext{
+                .callback = &Wrapper.function,
+                .ctx = task,
+            },
+            .wrapped = ptr,
+        };
+        return &task.any_task;
     }
 
     pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
@@ -271,30 +287,6 @@ pub const AnyTaskWithExtraContext = struct {
                         @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
-            }
-        };
-    }
-
-    pub fn NewManaged(comptime Type: type, comptime ContextType: type, comptime Callback: anytype) type {
-        return struct {
-            pub fn init(ctx: *Type) AnyTaskWithExtraContext {
-                return AnyTaskWithExtraContext{
-                    .callback = wrap,
-                    .ctx = ctx,
-                };
-            }
-
-            pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) void {
-                @call(
-                    .always_inline,
-                    Callback,
-                    .{
-                        @as(*Type, @ptrCast(@alignCast(this.?))),
-                        @as(*ContextType, @ptrCast(@alignCast(extra.?))),
-                    },
-                );
-                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr("ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
-                bun.default_allocator.destroy(anytask);
             }
         };
     }

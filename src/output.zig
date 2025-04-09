@@ -873,7 +873,7 @@ pub const color_map = ComptimeStringMap(string, .{
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     if (comptime bun.fast_debug_build_mode)
-        return fmt;
+        return fmt ++ "\x00";
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;

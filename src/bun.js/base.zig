@@ -766,10 +766,6 @@ pub const RefString = struct {
         this.impl.deref();
     }
 
-    pub export fn RefString__free(this: *anyopaque, _: *anyopaque, _: u32) void {
-        bun.cast(*RefString, this).deinit();
-    }
-
     pub fn deinit(this: *RefString) void {
         if (this.onBeforeDeinit) |onBeforeDeinit| {
             onBeforeDeinit(this.ctx.?, this);
@@ -779,10 +775,6 @@ pub const RefString = struct {
         this.allocator.destroy(this);
     }
 };
-
-comptime {
-    std.testing.refAllDecls(RefString);
-}
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../allocators/mimalloc.zig");

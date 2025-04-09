@@ -507,7 +507,7 @@ pub const BuildCommand = struct {
                 const rel_path = bun.strings.trimPrefixComptime(u8, f.dest_path, "./");
 
                 // Print summary
-                const padding_count = (@max(rel_path.len, max_path_len) - rel_path.len);
+                const padding_count = @max(2, @max(rel_path.len, max_path_len) - rel_path.len);
                 try writer.writeByteNTimes(' ', 2);
 
                 if (Output.enable_ansi_colors_stdout) try writer.writeAll(switch (f.output_kind) {

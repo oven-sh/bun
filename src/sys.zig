@@ -1379,7 +1379,7 @@ pub fn openFileAtWindowsNtPath(
             0,
         );
 
-        if (comptime Environment.allow_assert) {
+        if (Environment.allow_assert and Environment.enable_logs) {
             if (rc == .INVALID_PARAMETER) {
                 // Double check what flags you are passing to this
                 //
@@ -1391,7 +1391,11 @@ pub fn openFileAtWindowsNtPath(
                 // See above comment. For absolute paths you must have \??\ at the start.
                 bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
-                log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                if (rc == .SUCCESS) {
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.toFD(result) });
+                } else {
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                }
             }
         }
 
@@ -1798,6 +1802,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: i32, per
 }
 
 pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    // this is what open() does anyway.
     return openatA(.cwd(), file_path, flags, perm);
 }
 
@@ -2168,6 +2173,22 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         },
         else => @compileError("read is not implemented on this platform"),
     };
+}
+
+pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    var rest = buf;
+    var total_read: usize = 0;
+    while (rest.len > 0) {
+        switch (read(fd, rest)) {
+            .result => |len| {
+                if (len == 0) break;
+                rest = rest[len..];
+                total_read += len;
+            },
+            .err => |err| return .{ .err = err },
+        }
+    }
+    return .{ .result = total_read };
 }
 
 const socket_flags_nonblock = bun.c.MSG_DONTWAIT | bun.c.MSG_NOSIGNAL;
@@ -3824,6 +3845,10 @@ pub const File = struct {
 
     pub fn read(self: File, buf: []u8) Maybe(usize) {
         return This.read(self.handle, buf);
+    }
+
+    pub fn readAll(self: File, buf: []u8) Maybe(usize) {
+        return This.readAll(self.handle, buf);
     }
 
     pub fn writeAll(self: File, buf: []const u8) Maybe(void) {

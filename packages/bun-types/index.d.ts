@@ -18,7 +18,7 @@
 /// <reference path="./wasm.d.ts" />
 /// <reference path="./overrides.d.ts" />
 /// <reference path="./deprecated.d.ts" />
-
+/// <reference path="./redis.d.ts" />
 /// <reference path="./bun.ns.d.ts" />
 
 // @ts-ignore Must disable this so it doesn't conflict with the DOM onmessage type, but still

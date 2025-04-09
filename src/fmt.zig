@@ -1575,6 +1575,33 @@ pub fn hexIntUpper(value: anytype) HexIntFormatter(@TypeOf(value), false) {
     return Formatter{ .value = value };
 }
 
+/// Equivalent to `{d:.<precision>}` but trims trailing zeros
+/// if decimal part is less than `precision` digits.
+fn TrimmedPrecisionFormatter(comptime precision: usize) type {
+    return struct {
+        num: f64,
+        precision: usize,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const whole = @trunc(self.num);
+            try writer.print("{d}", .{whole});
+            const rem = self.num - whole;
+            if (rem != 0) {
+                var buf: [2 + precision]u8 = undefined;
+                var formatted = std.fmt.bufPrint(&buf, "{d:." ++ std.fmt.comptimePrint("{d}", .{precision}) ++ "}", .{rem}) catch unreachable;
+                formatted = formatted[2..];
+                const trimmed = std.mem.trimRight(u8, formatted, "0");
+                try writer.print(".{s}", .{trimmed});
+            }
+        }
+    };
+}
+
+pub fn trimmedPrecision(value: f64, comptime precision: usize) TrimmedPrecisionFormatter(precision) {
+    const Formatter = TrimmedPrecisionFormatter(precision);
+    return Formatter{ .num = value, .precision = precision };
+}
+
 const FormatDurationData = struct {
     ns: u64,
     negative: bool = false,

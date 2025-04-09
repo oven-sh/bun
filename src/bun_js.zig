@@ -77,7 +77,7 @@ pub const Run = struct {
 
         var vm = run.vm;
         var b = &vm.transpiler;
-        vm.preload = ctx.preloads;
+        vm.preload = ctx.preloads.items;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
@@ -216,7 +216,7 @@ pub const Run = struct {
 
         var vm = run.vm;
         var b = &vm.transpiler;
-        vm.preload = ctx.preloads;
+        vm.preload = ctx.preloads.items;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();

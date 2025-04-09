@@ -28,6 +28,7 @@ pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.Bundle
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
+const Preload = Command.ContextData.Preload;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 
 // TODO: replace Api.TransformOptions with Bunfig
@@ -50,6 +51,9 @@ pub const Bunfig = struct {
         allocator: std.mem.Allocator,
         bunfig: *Api.TransformOptions,
         ctx: Command.Context,
+        /// Absolute path to bunfig's parent dir.
+        /// Lazy-loaded. Derived from `source.path`.
+        parent_dir: ?[]const u8 = null,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
             this.log.addErrorOpts(text, .{
@@ -67,6 +71,25 @@ pub const Bunfig = struct {
                 .redact_sensitive_information = true,
             }) catch unreachable;
             return error.@"Invalid Bunfig";
+        }
+
+        /// Lazy-load the parent directory of the source file. Result is both
+        /// cached in `.parent_dir` and returned.
+        fn loadParentDir(this: *Parser) ![]const u8 {
+            // Caller is responsible for lazy-load check
+            bun.debugAssert(this.parent_dir == null);
+            var source = this.source.path.sourceDir();
+            if (!std.fs.path.isAbsolute(source)) {
+                const cwd = try bun.getcwdAlloc(this.allocator);
+                defer this.allocator.free(cwd);
+                const absolute = bun.path.join(&[_]bun.string{ cwd, source }, .auto);
+                source = try this.allocator.dupe(u8, absolute);
+            } else {
+                // arena is reset before entering entrypoint, clobbering source path.
+                source = try this.allocator.dupe(u8, source);
+            }
+            this.parent_dir = source;
+            return source;
         }
 
         fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
@@ -154,21 +177,22 @@ pub const Bunfig = struct {
             allocator: std.mem.Allocator,
             expr: js_ast.Expr,
         ) !void {
+            const parent_dir = if (this.parent_dir) |p| p else try this.loadParentDir();
+            var preloads = &this.ctx.preloads;
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
-                errdefer preloads.deinit();
+                preloads.clearRetainingCapacity();
+                try preloads.ensureTotalCapacityPrecise(this.ctx.allocator, array.array.items.len);
                 while (array.next()) |item| {
                     try this.expectString(item);
-                    if (item.data.e_string.len() > 0)
-                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                    if (item.data.e_string.len() == 0) continue;
+                    const target = try item.data.e_string.string(allocator);
+                    preloads.appendAssumeCapacity(Preload.initRelative(parent_dir, target));
                 }
-                this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
                 if (expr.data.e_string.len() > 0) {
-                    var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try expr.data.e_string.string(allocator);
-                    this.ctx.preloads = preloads;
+                    const preload = try expr.data.e_string.string(allocator);
+                    try preloads.append(this.ctx.allocator, Preload.initRelative(parent_dir, preload));
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");

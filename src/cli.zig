@@ -767,23 +767,12 @@ pub const Arguments = struct {
                 }
             }
 
-            if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
-                all.appendSliceAssumeCapacity(ctx.preloads);
-                all.appendSliceAssumeCapacity(preloads);
-                all.appendSliceAssumeCapacity(preloads2);
-                ctx.preloads = all.items;
-            } else if (preloads.len > 0) {
-                if (preloads2.len > 0) {
-                    var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
-                    all.appendSliceAssumeCapacity(preloads);
-                    all.appendSliceAssumeCapacity(preloads2);
-                    ctx.preloads = all.items;
-                } else {
-                    ctx.preloads = preloads;
-                }
-            } else if (preloads2.len > 0) {
-                ctx.preloads = preloads2;
+            ctx.preloads.ensureTotalCapacityPrecise(ctx.allocator, ctx.preloads.items.len + preloads.len + preloads2.len) catch bun.outOfMemory();
+            for (preloads) |preload| {
+                ctx.preloads.appendAssumeCapacity(Command.ContextData.Preload.initCwd(preload));
+            }
+            for (preloads2) |preload| {
+                ctx.preloads.appendAssumeCapacity(Command.ContextData.Preload.initCwd(preload));
             }
 
             if (args.option("--print")) |script| {
@@ -1568,7 +1557,7 @@ pub const Command = struct {
 
         filters: []const []const u8 = &.{},
 
-        preloads: []const string = &.{},
+        preloads: std.ArrayListUnmanaged(Preload) = .{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
@@ -1609,6 +1598,56 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
+        };
+
+        /// Preloads are files or plugins that should be run before the main script.
+        /// Used by run, test, and build.
+        ///
+        /// Preloads have the semantics to `import(target)` from a JS/TS file in
+        /// `root_dir`. TODO: allow relative paths that do not have a leading `./`.
+        pub const Preload = struct {
+            /// Directory to resolve preload files from. `null` means CWD (_not_ project root).
+            root_dir: ?[]const u8,
+            /// The filepath/import specifier being preloaded. Path may be relative.
+            target: []const u8,
+
+            /// Create a `Preload` from an absolute path.
+            pub fn initAbsolute(target: []const u8) Preload {
+                if (comptime Environment.isDebug) {
+                    bun.assertWithLocation(std.fs.path.isAbsolute(target), @src());
+                }
+                return .{ .root_dir = null, .target = target };
+            }
+
+            /// Create a `Preload` from a path relative to some absolute root directory path.
+            pub fn initRelative(root_dir: []const u8, target: []const u8) Preload {
+                if (comptime Environment.isDebug) {
+                    bun.assertWithLocation(std.fs.path.isAbsolute(root_dir), @src());
+                }
+                return Preload{ .root_dir = root_dir, .target = target };
+            }
+
+            /// Create a `Preload` from a path relative to the current working directory.
+            pub fn initCwd(target: []const u8) Preload {
+                return Preload{ .root_dir = null, .target = target };
+            }
+
+            /// A preload that may be relative to some file declaring it.
+            /// `from_file` is a path to a file. It may be relative or absolute.
+            pub fn initRelativeToFile(from_file: []const u8, target: []const u8) Preload {
+                // Its safe to assume that file extensions are less than 16 characters.
+                // This lets us halt our search early, saving time on long paths.
+                const max_ext = 16;
+                const section_to_search = if (from_file.len > max_ext) from_file[from_file.len - max_ext ..] else from_file;
+                // in case they pass us a file with no extension or, accidentally, a directory.
+                // NOTE: lastIndexOfScalar uses SIMD on available targets.
+                const dirname = if (std.mem.lastIndexOfScalar(u8, section_to_search, '.')) |dot|
+                    section_to_search[0..dot]
+                else
+                    section_to_search;
+
+                return .{ .root_dir = dirname, .target = target };
+            }
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

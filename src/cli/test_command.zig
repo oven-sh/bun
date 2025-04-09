@@ -1272,7 +1272,7 @@ pub const TestCommand = struct {
             },
         );
         vm.argv = ctx.passthrough;
-        vm.preload = ctx.preloads;
+        vm.preload = ctx.preloads.items;
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.env.behavior = .load_all_without_inlining;
 

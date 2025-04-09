@@ -749,9 +749,9 @@ pub fn deinit(dev: *DevServer) void {
             dev.active_websocket_connections.deinit(allocator);
         },
         .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
-            event.aligned.dirs.deinit(dev.allocator);
-            event.aligned.files.deinit(dev.allocator);
-            event.aligned.extra_files.deinit(dev.allocator);
+            event.dirs.deinit(dev.allocator);
+            event.files.deinit(dev.allocator);
+            event.extra_files.deinit(dev.allocator);
         },
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
@@ -6146,8 +6146,8 @@ fn markAllRouteChildrenFailed(dev: *DevServer, route_index: Route.Index) void {
 
 /// This task informs the DevServer's thread about new files to be bundled.
 pub const HotReloadEvent = struct {
-    /// Align to cache lines to eliminate contention.
-    const Aligned = struct { aligned: HotReloadEvent align(std.atomic.cache_line) };
+    /// Align to cache lines to eliminate false sharing.
+    _: u0 align(std.atomic.cache_line) = 0,
 
     owner: *DevServer,
     /// Initialized in WatcherAtomics.watcherReleaseAndSubmitEvent
@@ -6387,7 +6387,7 @@ const WatcherAtomics = struct {
     /// once. Memory is reused by swapping between these two. These items are
     /// aligned to cache lines to reduce contention, since these structures are
     /// carefully passed between two threads.
-    events: [2]HotReloadEvent.Aligned align(std.atomic.cache_line),
+    events: [2]HotReloadEvent align(std.atomic.cache_line),
     /// 0  - no watch
     /// 1  - has fired additional watch
     /// 2+ - new events available, watcher is waiting on bundler to finish
@@ -6401,10 +6401,7 @@ const WatcherAtomics = struct {
 
     pub fn init(dev: *DevServer) WatcherAtomics {
         return .{
-            .events = .{
-                .{ .aligned = .initEmpty(dev) },
-                .{ .aligned = .initEmpty(dev) },
-            },
+            .events = .{ .initEmpty(dev), .initEmpty(dev) },
             .current = 0,
             .watcher_events_emitted = .init(0),
             .watcher_has_event = .{},
@@ -6417,7 +6414,7 @@ const WatcherAtomics = struct {
     fn watcherAcquireEvent(state: *WatcherAtomics) *HotReloadEvent {
         state.watcher_has_event.lock();
 
-        var ev: *HotReloadEvent = &state.events[state.current].aligned;
+        var ev: *HotReloadEvent = &state.events[state.current];
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
                 // New event, initialize the timer if it is empty.
@@ -6429,7 +6426,7 @@ const WatcherAtomics = struct {
                 // DevServer stole this event. Unlikely but possible when
                 // the user is saving very heavily (10-30 times per second)
                 state.current +%= 1;
-                ev = &state.events[state.current].aligned;
+                ev = &state.events[state.current];
                 if (Environment.allow_assert) {
                     bun.assert(ev.contention_indicator.swap(1, .seq_cst) == 0);
                 }
@@ -6503,10 +6500,10 @@ const WatcherAtomics = struct {
         if (state.watcher_events_emitted.swap(0, .seq_cst) >= 2) {
             // Cannot use `state.current` because it will contend with the watcher.
             // Since there are are two events, one pointer comparison suffices
-            const other_event = if (first_event == &state.events[0].aligned)
-                &state.events[1].aligned
+            const other_event = if (first_event == &state.events[0])
+                &state.events[1]
             else
-                &state.events[0].aligned;
+                &state.events[0];
 
             switch (other_event.contention_indicator.swap(1, .seq_cst)) {
                 0 => {

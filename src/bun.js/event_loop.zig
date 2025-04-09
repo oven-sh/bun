@@ -1400,11 +1400,9 @@ pub const EventLoop = struct {
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
         var global = this.global;
         const global_vm = global.vm();
-        var counter: usize = 0;
 
         while (this.immediate_tasks.readItem()) |task| {
             log("run {s} (immediate)", .{@tagName(task.tag())});
-            defer counter += 1;
 
             switch (task.tag()) {
                 @field(Task.Tag, @typeName(ImmediateObject)) => {

@@ -91,6 +91,7 @@ fn runTests() u8 {
     const tests: []const TestFn = builtin.test_functions;
     for (tests) |t| {
         std.testing.allocator_instance = .{};
+        defer Output.flush();
 
         var did_lock = true;
         stderr.lock(.exclusive) catch {

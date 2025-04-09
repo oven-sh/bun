@@ -970,7 +970,8 @@ pub const PackageManifest = struct {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
         // - v0.0.5: added bundled dependencies
-        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
+        // - v0.0.6: change patch from u32 to u64 to support date-formatted patch versions
+        pub const version = "bun-npm-manifest-cache-v0.0.6\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -1582,7 +1583,7 @@ pub const PackageManifest = struct {
             }
         }
 
-        var result: PackageManifest = bun.serializable(PackageManifest{});
+        var manifest: PackageManifest = bun.serializable(PackageManifest{});
 
         var string_pool = String.Builder.StringPool.init(default_allocator);
         defer string_pool.deinit();
@@ -1833,7 +1834,7 @@ pub const PackageManifest = struct {
 
         // Using `expected_name` instead of the name from the manifest. Custom registries might
         // have a different name than the dependency name in package.json.
-        result.pkg.name = string_builder.append(ExternalString, expected_name);
+        manifest.pkg.name = string_builder.append(ExternalString, expected_name);
 
         get_versions: {
             if (json.asProperty("versions")) |versions_q| {
@@ -2293,14 +2294,14 @@ pub const PackageManifest = struct {
                     }
                 }
 
-                result.pkg.dist_tags = DistTagMap{
+                manifest.pkg.dist_tags = DistTagMap{
                     .tags = ExternalStringList.init(all_extern_strings, extern_strings_slice[0..dist_tag_i]),
                     .versions = VersionSlice.init(all_semver_versions, dist_tag_versions[0..dist_tag_i]),
                 };
 
                 if (comptime Environment.allow_assert) {
-                    bun.assertWithLocation(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]), @src());
-                    bun.assertWithLocation(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]), @src());
+                    bun.assertWithLocation(std.meta.eql(manifest.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]), @src());
+                    bun.assertWithLocation(std.meta.eql(manifest.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]), @src());
                 }
 
                 extern_strings = extern_strings[dist_tag_i..];
@@ -2308,24 +2309,24 @@ pub const PackageManifest = struct {
         }
 
         if (last_modified.len > 0) {
-            result.pkg.last_modified = string_builder.append(String, last_modified);
+            manifest.pkg.last_modified = string_builder.append(String, last_modified);
         }
 
         if (etag.len > 0) {
-            result.pkg.etag = string_builder.append(String, etag);
+            manifest.pkg.etag = string_builder.append(String, etag);
         }
 
         if (json.asProperty("modified")) |name_q| {
             const field = name_q.expr.asString(allocator) orelse return null;
 
-            result.pkg.modified = string_builder.append(String, field);
+            manifest.pkg.modified = string_builder.append(String, field);
         }
 
-        result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
-        result.pkg.releases.values = PackageVersionList.init(versioned_packages, all_versioned_package_releases);
+        manifest.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
+        manifest.pkg.releases.values = PackageVersionList.init(versioned_packages, all_versioned_package_releases);
 
-        result.pkg.prereleases.keys = VersionSlice.init(all_semver_versions, all_prerelease_versions);
-        result.pkg.prereleases.values = PackageVersionList.init(versioned_packages, all_versioned_package_prereleases);
+        manifest.pkg.prereleases.keys = VersionSlice.init(all_semver_versions, all_prerelease_versions);
+        manifest.pkg.prereleases.values = PackageVersionList.init(versioned_packages, all_versioned_package_prereleases);
 
         const max_versions_count = @max(all_release_versions.len, all_prerelease_versions.len);
 
@@ -2366,7 +2367,7 @@ pub const PackageManifest = struct {
 
                 var all_indices = try bun.default_allocator.alloc(Int, max_versions_count);
                 defer bun.default_allocator.free(all_indices);
-                const releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
+                const releases_list = .{ &manifest.pkg.releases, &manifest.pkg.prereleases };
 
                 var all_cloned_versions = try bun.default_allocator.alloc(Semver.Version, max_versions_count);
                 defer bun.default_allocator.free(all_cloned_versions);
@@ -2375,7 +2376,7 @@ pub const PackageManifest = struct {
                 defer bun.default_allocator.free(all_cloned_packages);
 
                 inline for (0..2) |release_i| {
-                    var release = releases_list[release_i];
+                    var release: *ExternVersionMap = releases_list[release_i];
                     const indices = all_indices[0..release.keys.len];
                     const cloned_packages = all_cloned_packages[0..release.keys.len];
                     const cloned_versions = all_cloned_versions[0..release.keys.len];
@@ -2430,25 +2431,25 @@ pub const PackageManifest = struct {
             all_extern_strings = all_extern_strings[0 .. all_extern_strings.len - extern_strings.len];
         }
 
-        result.pkg.string_lists_buf.off = 0;
-        result.pkg.string_lists_buf.len = @as(u32, @truncate(all_extern_strings.len));
+        manifest.pkg.string_lists_buf.off = 0;
+        manifest.pkg.string_lists_buf.len = @as(u32, @truncate(all_extern_strings.len));
 
-        result.pkg.versions_buf.off = 0;
-        result.pkg.versions_buf.len = @as(u32, @truncate(all_semver_versions.len));
+        manifest.pkg.versions_buf.off = 0;
+        manifest.pkg.versions_buf.len = @as(u32, @truncate(all_semver_versions.len));
 
-        result.versions = all_semver_versions;
-        result.external_strings = all_extern_strings;
-        result.external_strings_for_versions = version_extern_strings;
-        result.package_versions = versioned_packages;
-        result.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
-        result.bundled_deps_buf = bundled_deps_buf;
-        result.pkg.public_max_age = public_max_age;
+        manifest.versions = all_semver_versions;
+        manifest.external_strings = all_extern_strings;
+        manifest.external_strings_for_versions = version_extern_strings;
+        manifest.package_versions = versioned_packages;
+        manifest.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
+        manifest.bundled_deps_buf = bundled_deps_buf;
+        manifest.pkg.public_max_age = public_max_age;
 
         if (string_builder.ptr) |ptr| {
-            result.string_buf = ptr[0..string_builder.len];
+            manifest.string_buf = ptr[0..string_builder.len];
         }
 
-        return result;
+        return manifest;
     }
 };
 

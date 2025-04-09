@@ -1,8 +1,31 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const bun = @import("root").bun;
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
+const JSC = bun.JSC;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const OOM = bun.OOM;
+const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const Lockfile = bun.install.Lockfile;
+const ExternalString = bun.Semver.ExternalString;
+const SlicedString = bun.Semver.SlicedString;
+const String = bun.Semver.String;
+
+const Query = bun.Semver.Query;
+const assert = bun.assert;
+
 pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
-    patch: u32 = 0,
-    _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
+    patch: u64 = 0,
     tag: Tag = .{},
 
     /// Assumes that there is only one buffer for all the strings
@@ -221,7 +244,7 @@ pub const Version = extern struct {
     pub const Partial = struct {
         major: ?u32 = null,
         minor: ?u32 = null,
-        patch: ?u32 = null,
+        patch: ?u64 = null,
         tag: Tag = .{},
 
         pub fn min(this: Partial) Version {
@@ -241,6 +264,30 @@ pub const Version = extern struct {
                 .tag = this.tag,
             };
         }
+
+        pub fn fmt(this: *const Partial, input: string) Formatter {
+            return .{ .version = this.min(), .input = input };
+        }
+        pub const PartialFormatter = struct {
+            version: Partial,
+            input: string,
+
+            pub fn format(formatter: PartialFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const self = formatter.version;
+                try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major orelse 0, self.minor orelse 0, self.patch orelse 0 });
+
+                if (self.tag.hasPre()) {
+                    const pre = self.tag.pre.slice(formatter.input);
+                    try writer.writeAll("-");
+                    try writer.writeAll(pre);
+                }
+                if (self.tag.hasBuild()) {
+                    const build = self.tag.build.slice(formatter.input);
+                    try writer.writeAll("+");
+                    try writer.writeAll(build);
+                }
+            }
+        };
     };
 
     const Hashable = extern struct {
@@ -815,15 +862,15 @@ pub const Version = extern struct {
 
                     switch (part_i) {
                         0 => {
-                            result.version.major = parseVersionNumber(input[part_start_i..last_char_i]);
+                            result.version.major = parseVersionNumber(u32, input[part_start_i..last_char_i]);
                             part_i = 1;
                         },
                         1 => {
-                            result.version.minor = parseVersionNumber(input[part_start_i..last_char_i]);
+                            result.version.minor = parseVersionNumber(u32, input[part_start_i..last_char_i]);
                             part_i = 2;
                         },
                         2 => {
-                            result.version.patch = parseVersionNumber(input[part_start_i..last_char_i]);
+                            result.version.patch = parseVersionNumber(u64, input[part_start_i..last_char_i]);
                             part_i = 3;
                         },
                         else => {},
@@ -945,9 +992,14 @@ pub const Version = extern struct {
         return result;
     }
 
-    fn parseVersionNumber(input: string) ?u32 {
-        // max decimal u32 is 4294967295
-        var bytes: [10]u8 = undefined;
+    fn parseVersionNumber(T: type, input: string) ?T {
+        // max decimal u32 is 4294967295. Max decimal u64 is 18446744073709551615
+        const buflen = switch (T) {
+            u32 => 10,
+            u64 => 20,
+            else => @compileError("parseVersionNumber only supports u32 and u64"),
+        };
+        var bytes: [buflen]u8 = undefined;
         var byte_i: u8 = 0;
 
         assert(input[0] != '.');
@@ -970,41 +1022,96 @@ pub const Version = extern struct {
         // If there are no numbers
         if (byte_i == 0) return null;
 
-        if (comptime Environment.isDebug) {
-            return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
+        return std.fmt.parseInt(T, bytes[0..byte_i], 10) catch |err| {
+            if (comptime Environment.isDebug) {
                 Output.prettyErrorln("ERROR {s} parsing version: \"{s}\", bytes: {s}", .{
                     @errorName(err),
                     input,
                     bytes[0..byte_i],
                 });
-                return 0;
-            };
-        }
-
-        return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch 0;
+            }
+            return 0;
+        };
     }
 };
 
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
-const JSC = bun.JSC;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const OOM = bun.OOM;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
-const Lockfile = bun.install.Lockfile;
-const ExternalString = bun.Semver.ExternalString;
-const SlicedString = bun.Semver.SlicedString;
-const String = bun.Semver.String;
+const t = std.testing;
+const expect = t.expect;
+const expectEqual = t.expectEqual;
+const expectEqualStrings = t.expectEqualStrings;
 
-const Query = bun.Semver.Query;
-const assert = bun.assert;
+test "Version.parse simple cases" {
+    const TestCase = struct { []const u8, Version.Partial };
+    const cases = &[_]TestCase{
+        .{ "1.0.0", .{ .major = 1, .minor = 0, .patch = 0 } },
+        .{ "2", .{ .major = 2 } },
+        .{ "0.1", .{ .major = 0, .minor = 1 } },
+        .{
+            "0.0.202410031711", // date-formatted patches could cause u32 overflows
+            .{ .major = 0, .minor = 0, .patch = 202410031711 },
+        },
+        .{
+            "1.0.0-alpha",
+            .{ .major = 1, .minor = 0, .patch = 0, .tag = Version.Tag{ .pre = .from("alpha") } },
+        },
+        .{
+            "1.0.0+build",
+            .{ .major = 1, .minor = 0, .patch = 0, .tag = Version.Tag{ .build = .from("build") } },
+        },
+        .{
+            "0.5.0-foo+bar",
+            .{ .major = 0, .minor = 5, .patch = 0, .tag = Version.Tag{
+                .pre = .from("foo"),
+                .build = .from("bar"),
+            } },
+        },
+    };
+
+    for (cases) |test_case| {
+        const src, const expected = test_case;
+        const parsed = Version.parseUTF8(src);
+        expect(parsed.valid) catch |e| {
+            bun.Output.printErrorln("'{s}' produced an invalid Version.", .{src});
+            return e;
+        };
+        expectEqual(expected, parsed.version) catch |err| {
+            bun.Output.printErrorln(
+                \\Parsed '{s}' into unexpected version.
+                \\Expected: {any}
+                \\Received: {}
+                \\     Raw: {any}
+            ,
+                .{
+                    src,
+                    expected,
+                    parsed.version.fmt(src),
+                    parsed.version,
+                },
+            );
+            return err;
+        };
+    }
+}
+
+test "Version.parse with large pre/build parts" {
+    {
+        const src = "0.0.0-202410031711";
+        const version = Version.parseUTF8(src).version;
+
+        try expectEqual(version.major, 0);
+        try expectEqual(version.minor, 0);
+        try expectEqual(version.patch, 0);
+        try expect(version.tag.hasPre());
+        try expectEqualStrings(version.tag.pre.slice(src), "202410031711");
+        try expect(!version.tag.hasBuild());
+    }
+    {
+        const src = "0.0.0-some.pre.tag.thing+some.build.ID.thatislong";
+        const version = Version.parseUTF8(src).version;
+
+        try expect(version.tag.hasPre());
+        try expectEqualStrings(version.tag.pre.slice(src), "some.pre.tag.thing");
+        try expect(version.tag.hasBuild());
+        try expectEqualStrings(version.tag.build.slice(src), "some.build.ID.thatislong");
+    }
+}

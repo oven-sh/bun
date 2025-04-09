@@ -10,6 +10,10 @@ pub inline fn init(buf: string, slice: string) SlicedString {
     return SlicedString{ .buf = buf, .slice = slice };
 }
 
+pub inline fn from(slice: string) SlicedString {
+    return .{ .buf = slice, .slice = slice };
+}
+
 pub inline fn external(this: SlicedString) ExternalString {
     if (comptime Environment.allow_assert) {
         assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));

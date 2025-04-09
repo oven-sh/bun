@@ -1412,6 +1412,9 @@ pub const EventLoop = struct {
                     var any: *ImmediateObject = task.get(ImmediateObject).?;
                     any.runImmediateTask(virtual_machine);
                 },
+                @field(Task.Tag, @typeName(NapiFinalizerTask)) => {
+                    task.get(NapiFinalizerTask).?.runOnJSThread();
+                },
                 else => {
                     // This shouldn't happen if queueing is correct
                     bun.Output.panic("Unexpected task type '{s}' in immediate queue", .{@tagName(task.tag())});
@@ -1604,7 +1607,7 @@ pub const EventLoop = struct {
                 this.forever_timer = t;
             }
         }
-
+        this.has_scheduled_wakeup_for_immediate_tasks = false;
         this.processGCTimer();
         this.processGCTimer();
         loop.tick();

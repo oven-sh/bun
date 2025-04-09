@@ -1538,6 +1538,9 @@ pub const EventLoop = struct {
         }
 
         this.runImminentGCTimer();
+        if (this.immediate_tasks.count > 0 or this.next_immediate_tasks.count > 0) {
+            this.wakeupForImmediateTasks();
+        }
         this.has_scheduled_wakeup_for_immediate_tasks = false;
 
         if (loop.isActive()) {
@@ -1562,6 +1565,7 @@ pub const EventLoop = struct {
         }
 
         this.flushImmediateQueue();
+
         ctx.onAfterEventLoop();
         this.global.handleRejectedPromises();
     }
@@ -1723,7 +1727,6 @@ pub const EventLoop = struct {
     pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
         JSC.markBinding(@src());
         this.next_immediate_tasks.writeItem(task) catch unreachable;
-        this.wakeupForImmediateTasks();
     }
 
     fn wakeupForImmediateTasks(this: *EventLoop) void {

@@ -12,7 +12,7 @@ import { ctx, expectType, createClient, ConnectionType, isEnabled } from "../tes
 describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });

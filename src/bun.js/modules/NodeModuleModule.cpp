@@ -712,11 +712,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -849,8 +844,8 @@ static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 _cache                  getModuleCacheObject              PropertyCallback
 _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
-_findPath                jsFunctionFindPath                Function 3
-_initPaths              jsFunctionInitPaths               Function 0
+_findPath                jsFunctionFindPath               Function 3
+_initPaths              JSBuiltin                         Function|Builtin 0
 _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback

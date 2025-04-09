@@ -40,6 +40,7 @@ pub const All = struct {
     /// Incremented when timers are scheduled or rescheduled. See doc comment on
     /// TimerObjectInternals.epoch.
     epoch: u25 = 0,
+    immediate_ref_count: i32 = 0,
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -140,6 +141,24 @@ pub const All = struct {
         all.ensureUVTimer(vm);
     }
 
+    pub fn incrementImmediateRef(this: *All, delta: i32) void {
+        const old = this.immediate_ref_count;
+        const new = old + delta;
+        this.immediate_ref_count = new;
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+        if (old <= 0 and new > 0) {
+            vm.uwsLoop().ref();
+        } else if (old > 0 and new <= 0) {
+            vm.uwsLoop().unref();
+        } else if (comptime Environment.isWindows) {
+            if (old <= 0 and new > 0) {
+                this.uv_timer.ref();
+            } else if (old > 0 and new <= 0) {
+                this.uv_timer.unref();
+            }
+        }
+    }
+
     pub fn incrementTimerRef(this: *All, delta: i32) void {
         const vm: *JSC.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
 
@@ -175,6 +194,10 @@ pub const All = struct {
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         if (this.active_timer_count == 0) {
             return false;
+        }
+        if (vm.event_loop.immediate_tasks.count > 0 or vm.event_loop.next_immediate_tasks.count > 0) {
+            spec.* = .{ .nsec = 0, .sec = 0 };
+            return true;
         }
 
         var maybe_now: ?timespec = null;
@@ -1018,7 +1041,9 @@ const TimerObjectInternals = struct {
             // If setImmediate calls ref the event loop, then when the only pending tasks are
             // immediate callbacks we will still try to check for I/O activity, when really we only
             // want to run immediate callbacks.
-            .setImmediate => {},
+            .setImmediate => {
+                vm.timer.incrementImmediateRef(if (enable) 1 else -1);
+            },
         }
     }
 

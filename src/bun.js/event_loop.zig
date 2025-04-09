@@ -840,7 +840,6 @@ pub const EventLoop = struct {
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
     imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
-    has_scheduled_wakeup_for_immediate_tasks: bool = false,
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
@@ -1538,10 +1537,6 @@ pub const EventLoop = struct {
         }
 
         this.runImminentGCTimer();
-        if (this.immediate_tasks.count > 0 or this.next_immediate_tasks.count > 0) {
-            this.wakeupForImmediateTasks();
-        }
-        this.has_scheduled_wakeup_for_immediate_tasks = false;
 
         if (loop.isActive()) {
             this.processGCTimer();
@@ -1603,7 +1598,7 @@ pub const EventLoop = struct {
                 this.forever_timer = t;
             }
         }
-        this.has_scheduled_wakeup_for_immediate_tasks = false;
+
         this.processGCTimer();
         this.processGCTimer();
         loop.tick();
@@ -1620,13 +1615,9 @@ pub const EventLoop = struct {
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
+
         this.flushImmediateQueue();
         this.tickImmediateTasks(ctx);
-
-        if (this.immediate_tasks.count > 0 or this.next_immediate_tasks.count > 0) {
-            this.wakeupForImmediateTasks();
-        }
-        this.has_scheduled_wakeup_for_immediate_tasks = false;
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1730,12 +1721,6 @@ pub const EventLoop = struct {
     pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
         JSC.markBinding(@src());
         this.next_immediate_tasks.writeItem(task) catch unreachable;
-    }
-
-    fn wakeupForImmediateTasks(this: *EventLoop) void {
-        if (this.has_scheduled_wakeup_for_immediate_tasks) return;
-        this.has_scheduled_wakeup_for_immediate_tasks = true;
-        this.wakeup();
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {

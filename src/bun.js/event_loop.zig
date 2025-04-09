@@ -840,6 +840,7 @@ pub const EventLoop = struct {
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
     imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
+    has_scheduled_wakeup_for_immediate_tasks: bool = false,
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
@@ -1397,7 +1398,32 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        _ = this.tickQueueWithCount(virtual_machine, "immediate_tasks");
+        var global = this.global;
+        const global_vm = global.vm();
+        var counter: usize = 0;
+
+        while (this.immediate_tasks.readItem()) |task| {
+            log("run {s} (immediate)", .{@tagName(task.tag())});
+            defer counter += 1;
+            // Only expect ImmediateObject here, but keep switch for safety/future?
+            // Or assert/unreachable for performance? Let's keep switch for now.
+            switch (task.tag()) {
+                @field(Task.Tag, @typeName(ImmediateObject)) => {
+                    var any: *ImmediateObject = task.get(ImmediateObject).?;
+                    any.runImmediateTask(virtual_machine);
+                },
+                else => {
+                    // This shouldn't happen if queueing is correct
+                    bun.Output.panic("Unexpected task type '{s}' in immediate queue", .{@tagName(task.tag())});
+                },
+            }
+            // DO NOT drain microtasks here
+        }
+
+        // Drain microtasks ONCE after all immediate tasks are processed
+        if (counter > 0) {
+            this.drainMicrotasksWithGlobal(global, global_vm);
+        }
     }
 
     fn tickConcurrent(this: *EventLoop) void {
@@ -1517,6 +1543,7 @@ pub const EventLoop = struct {
         }
 
         this.runImminentGCTimer();
+        this.has_scheduled_wakeup_for_immediate_tasks = false;
 
         if (loop.isActive()) {
             this.processGCTimer();
@@ -1604,6 +1631,8 @@ pub const EventLoop = struct {
                 loop.unrefCount(pending_unref);
             }
         }
+
+        this.has_scheduled_wakeup_for_immediate_tasks = false;
 
         if (loop.isActive()) {
             this.processGCTimer();
@@ -1699,6 +1728,13 @@ pub const EventLoop = struct {
     pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
         JSC.markBinding(@src());
         this.next_immediate_tasks.writeItem(task) catch unreachable;
+        this.wakeupForImmediateTasks();
+    }
+
+    fn wakeupForImmediateTasks(this: *EventLoop) void {
+        if (this.has_scheduled_wakeup_for_immediate_tasks) return;
+        this.has_scheduled_wakeup_for_immediate_tasks = true;
+        this.wakeup();
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {

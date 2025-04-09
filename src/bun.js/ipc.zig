@@ -432,6 +432,9 @@ pub const SendQueue = struct {
             return;
         }
         const to_send = first.data.list.items[first.data.cursor..];
+        if (to_send.len == 0) {
+            return; // nothing to send
+        }
         const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send, false);
         if (n == to_send.len) {
             if (first.handle) |_| {

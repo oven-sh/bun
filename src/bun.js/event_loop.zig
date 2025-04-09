@@ -1623,6 +1623,11 @@ pub const EventLoop = struct {
         this.flushImmediateQueue();
         this.tickImmediateTasks(ctx);
 
+        if (this.immediate_tasks.count > 0 or this.next_immediate_tasks.count > 0) {
+            this.wakeupForImmediateTasks();
+        }
+        this.has_scheduled_wakeup_for_immediate_tasks = false;
+
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
             if (pending_unref > 0) {
@@ -1630,8 +1635,6 @@ pub const EventLoop = struct {
                 loop.unrefCount(pending_unref);
             }
         }
-
-        this.has_scheduled_wakeup_for_immediate_tasks = false;
 
         if (loop.isActive()) {
             this.processGCTimer();

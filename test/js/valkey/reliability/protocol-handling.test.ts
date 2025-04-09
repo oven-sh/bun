@@ -11,7 +11,7 @@ import { ConnectionType, createClient, ctx, isEnabled, testKey } from "../test-u
 describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });
@@ -394,7 +394,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         throw error;
       } finally {
         // Clean up clients
-        await Promise.all(clients.map(client => client.disconnect()));
+        await Promise.all(clients.map(client => client.close()));
       }
     });
   });

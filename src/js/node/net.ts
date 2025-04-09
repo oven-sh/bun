@@ -571,11 +571,11 @@ class TcpSocketHandle {
         },
         end(socket) {
           console.log("BUN TcpSocketHandle end");
-          // self._readableState.ended = true;
-          // self.end();
-          // self.push(null);
-          // SocketEmitEndNT(self);
-          // process.nextTick(() => self.emit("end"));
+          if (self[kended]) return;
+          self[kended] = true;
+          if (!self.allowHalfOpen) self.write = writeAfterFIN;
+          self.push(null);
+          self.read(0);
         },
         close(socket, err) {
           console.log("BUN TcpSocketHandle close");

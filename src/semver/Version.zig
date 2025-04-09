@@ -25,6 +25,8 @@ const assert = bun.assert;
 pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
+    /// Some packages use the current date, e.g. `20241225` to make the patch number unique. Some
+    /// dates are large enough to overflow a u32.
     patch: u64 = 0,
     tag: Tag = .{},
 
@@ -265,9 +267,6 @@ pub const Version = extern struct {
             };
         }
 
-        pub fn fmt(this: *const Partial, input: string) Formatter {
-            return .{ .version = this.min(), .input = input };
-        }
         pub const PartialFormatter = struct {
             version: Partial,
             input: string,

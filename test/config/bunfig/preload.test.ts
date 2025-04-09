@@ -112,7 +112,6 @@ describe("Given a `bunfig.toml` with a plugin preload", () => {
 }); // </given a `bunfig.toml` with a plugin preload>
 
 describe("Given a `bunfig.toml` file with a relative path to a preload in a parent directory", () => {
-  // FIXME
   it("When `bun run` is run with a bunfig.toml, preloads are run", async () => {
     const dir = fixturePath("parent", "foo");
     const [out, err, code] = await run("index.ts", { cwd: dir });

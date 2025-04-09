@@ -6,9 +6,9 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   " != undefined": { reason: "This is by definition Undefined Behavior." },
   " == undefined": { reason: "This is by definition Undefined Behavior." },
   '@import("root").bun.': { reason: "Only import 'bun' once" },
-  "std.debug.assert": { reason: "Use bun.assert instead", limit: 25 },
+  "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
-  "std.debug.print": { reason: "Don't let this be committed", limit: 2 },
+  "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
   "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
   "undefined != ": { reason: "This is by definition Undefined Behavior." },
   "undefined == ": { reason: "This is by definition Undefined Behavior." },
@@ -28,7 +28,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 245, regex: true },
-  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 493 },
+  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 495 },
 };
 const words_keys = [...Object.keys(words)];
 

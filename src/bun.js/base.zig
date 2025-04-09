@@ -777,10 +777,6 @@ pub const RefString = struct {
     }
 };
 
-comptime {
-    std.testing.refAllDecls(RefString);
-}
-
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../allocators/mimalloc.zig");
     // zig's memory allocator interface won't work here

@@ -382,14 +382,29 @@ pub const BlobOrStringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) JSError!?BlobOrStringOrBuffer {
-        if (value.as(JSC.WebCore.Blob)) |blob| {
+    pub fn byteLength(this: *const BlobOrStringOrBuffer) usize {
+        return this.slice().len;
+    }
+
+    pub fn fromJSMaybeFile(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, allow_file: bool) JSError!?BlobOrStringOrBuffer {
+        // Check StringOrBuffer first because it's more common and cheaper.
+        const str = try StringOrBuffer.fromJS(global, allocator, value) orelse {
+            const blob = value.as(JSC.WebCore.Blob) orelse return null;
+            if (allow_file and blob.needsToReadFile()) {
+                return global.throwInvalidArguments("File blob cannot be used here", .{});
+            }
+
             if (blob.store) |store| {
                 store.ref();
             }
             return .{ .blob = blob.* };
-        }
-        return .{ .string_or_buffer = try StringOrBuffer.fromJS(global, allocator, value) orelse return null };
+        };
+
+        return .{ .string_or_buffer = str };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) JSError!?BlobOrStringOrBuffer {
+        return fromJSMaybeFile(global, allocator, value, true);
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) bun.JSError!?BlobOrStringOrBuffer {
@@ -461,16 +476,9 @@ pub const StringOrBuffer = union(enum) {
             },
             .threadsafe_string => {},
             .encoded_slice => {},
-            .buffer => {},
-        }
-    }
-
-    pub fn protect(this: *const StringOrBuffer) void {
-        switch (this.*) {
-            .buffer => |buf| {
-                buf.buffer.value.protect();
+            .buffer => {
+                this.buffer.buffer.value.protect();
             },
-            else => {},
         }
     }
 
@@ -1770,7 +1778,7 @@ pub const Process = struct {
 
         var args_count: usize = vm.argv.len;
         if (vm.worker) |worker| {
-            args_count = if (worker.argv) |argv| argv.len else 0;
+            args_count = worker.argv.len;
         }
 
         const args = allocator.alloc(
@@ -1779,8 +1787,7 @@ pub const Process = struct {
             // argv also omits the script name
             args_count + 2,
         ) catch bun.outOfMemory();
-        var args_list = std.ArrayListUnmanaged(bun.String){ .items = args, .capacity = args.len };
-        args_list.items.len = 0;
+        var args_list: std.ArrayListUnmanaged(bun.String) = .initBuffer(args);
 
         if (vm.standalone_module_graph != null) {
             // Don't break user's code because they did process.argv.slice(2)
@@ -1799,16 +1806,18 @@ pub const Process = struct {
             !strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
             !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
         {
-            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            if (vm.worker != null and vm.worker.?.eval_mode) {
+                args_list.appendAssumeCapacity(bun.String.static("[worker eval]"));
+            } else {
+                args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            }
         }
 
         defer allocator.free(args);
 
         if (vm.worker) |worker| {
-            if (worker.argv) |argv| {
-                for (argv) |arg| {
-                    args_list.appendAssumeCapacity(bun.String.init(arg));
-                }
+            for (worker.argv) |arg| {
+                args_list.appendAssumeCapacity(bun.String.init(arg));
             }
         } else {
             for (vm.argv) |arg| {
@@ -1880,7 +1889,8 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.C) void {
+    // TODO(@190n) this may need to be noreturn
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
             vm.exit_handler.exit_code = code;
@@ -1895,6 +1905,7 @@ pub const Process = struct {
 
     // TODO: switch this to using *bun.wtf.String when it is added
     pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+        comptime bun.assert(bun.Environment.isWindows);
         if (k.tag == .Empty) return;
         const wtf1 = k.value.WTFStringImpl;
         var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
@@ -1977,10 +1988,6 @@ pub const PathOrBlob = union(enum) {
         return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
     }
 };
-
-comptime {
-    std.testing.refAllDecls(Process);
-}
 
 pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;

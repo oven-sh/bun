@@ -1268,6 +1268,7 @@ pub const TestCommand = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
+                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT"),
             },
         );
         vm.argv = ctx.passthrough;
@@ -1583,6 +1584,8 @@ pub const TestCommand = struct {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
+        } else {
+            vm.runWithAPILock(JSC.VirtualMachine, vm, JSC.VirtualMachine.globalExit);
         }
     }
 
@@ -1804,4 +1807,8 @@ fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
         }
     }
     Global.exit(1);
+}
+
+pub fn @"export"() void {
+    _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
 }

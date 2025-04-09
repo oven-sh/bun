@@ -3083,5 +3083,5 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.Str
 
 export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     const str = data[0..len];
-    return HardcodedModule.map.get(str) != null;
+    return HardcodedModule.Alias.bun_aliases.get(str) != null;
 }

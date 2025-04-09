@@ -5562,8 +5562,15 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
-        if (!uniqueTransferables.add(transferable.get()).isNewEntry)
-            return Exception { DataCloneError, "Duplicate transferable for structured clone"_s };
+        if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
+            if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
+                return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };
+            } else if (JSMessagePort::toWrapped(vm, transferable.get())) {
+                return Exception { DataCloneError, "Transfer list contains duplicate MessagePort"_s };
+            } else {
+                return Exception { DataCloneError, "Duplicate transferable for structured clone"_s };
+            }
+        }
 
         if (auto arrayBuffer = toPossiblySharedArrayBuffer(vm, transferable.get())) {
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
@@ -5690,7 +5697,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (arrayBufferContentsArray.hasException())
         return arrayBufferContentsArray.releaseException();
 
-    // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
+        // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedCanvases;

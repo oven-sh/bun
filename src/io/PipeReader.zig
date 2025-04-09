@@ -305,7 +305,7 @@ const PosixBufferedReader = struct {
         return this.start(fd, poll);
     }
 
-    // Exists for consistentcy with Windows.
+    // Exists for consistently with Windows.
     pub fn hasPendingRead(this: *const PosixBufferedReader) bool {
         return this.handle == .poll and this.handle.poll.isRegistered();
     }
@@ -852,6 +852,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn deinit(this: *WindowsBufferedReader) void {
+        MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
         if (!source.isClosed()) {

@@ -273,6 +273,7 @@ function idToEnumName(id: string) {
 }
 
 function idToPublicSpecifierOrEnumName(id: string) {
+  if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
   id = id.replace(/\.[mc]?[tj]s$/, "");
   if (id.startsWith("node/")) {
     return "node:" + id.slice(5).replaceAll(".", "/");
@@ -395,7 +396,6 @@ writeIfNotChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
-    // Predefined
     javascript = 0,
     package_json_type_module = 1,
     package_json_type_commonjs = 2,
@@ -404,11 +404,12 @@ pub const ResolvedSourceTag = enum(u32) {
     file = 5,
     esm = 6,
     json_for_object_loader = 7,
-    /// Generate an object with "default" set to all the exports, including a "default" propert
+    /// Generate an object with "default" set to all the exports, including a "default" property
     exports_object = 8,
-
     /// Generate a module that only exports default the input JSValue
     export_default_object = 9,
+    /// Signal upwards that the matching value in 'require.extensions' should be used.
+    common_js_custom_extension = 10,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -438,6 +439,7 @@ writeIfNotChanged(
     JSONForObjectLoader = 7,
     ExportsObject = 8,
     ExportDefaultObject = 9,
+    CommonJSCustomExtension = 10,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
@@ -489,7 +491,7 @@ declare module "module" {
 
     namespace NodeJS {
       interface Require {
-        
+
 `;
 
     for (let i = 0; i < nativeStartIndex; i++) {
@@ -501,8 +503,7 @@ declare module "module" {
       let internalName = idToPublicSpecifierOrEnumName(id);
       if (internalName.startsWith("internal:")) internalName = internalName.replace(":", "/");
 
-      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;
-`;
+      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;\n`;
     }
 
     dts += `

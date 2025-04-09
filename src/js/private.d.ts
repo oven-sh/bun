@@ -219,4 +219,4 @@ declare function $newZigFunction<T = (...args: any) => any>(
  * @param symbol - The name of the function to call.
  */
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
-// NOTE: $debug, $assert, and $isPromiseResolved omitted
+// NOTE: $debug, $assert, and $isPromiseFulfilled omitted

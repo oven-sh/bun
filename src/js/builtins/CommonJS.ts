@@ -7,7 +7,7 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, id: string) {
+export function require(this: JSCommonJSModule, _: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
@@ -15,8 +15,8 @@ export function require(this: JSCommonJSModule, id: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string) {
-  const id = $resolveSync(originalId, this.filename, false);
+export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith('node:')) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -146,8 +146,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { filename?: string; id?: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.filename ?? this?.id ?? "", false, true);
+export function requireResolve(this: string | { filename?: string; id?: string }, id: string, options: { paths?: string[] } = {}) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.filename ?? this?.id ?? "", false, true, options ? options.paths : undefined);
 }
 
 $visibility = "Private";
@@ -300,6 +300,41 @@ export function requireESM(this, resolved: string) {
   var exports = Loader.getModuleNamespaceObject(entry.module);
 
   return exports;
+}
+
+export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
+  $assert(this);
+  try {
+    $requireESM(id);
+  } catch (exception) {
+    // Since the ESM code is mostly JS, we need to handle exceptions here.
+    $requireMap.$delete(id);
+    throw exception;
+  }
+
+  const esm = Loader.registry.$get(id);
+
+  // If we can pull out a ModuleNamespaceObject, let's do it.
+  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
+    const namespace = Loader.getModuleNamespaceObject(esm!.module);
+    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+    // Various libraries expect __esModule to be set when using ESM from require().
+    // We don't want to always inject the __esModule export into every module,
+    // And creating an Object wrapper causes the actual exports to not be own properties.
+    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+    // https://github.com/oven-sh/bun/issues/14411
+    if (namespace.__esModule === undefined) {
+      try {
+        namespace.__esModule = true;
+      } catch {
+        // https://github.com/oven-sh/bun/issues/17816
+      }
+    }
+
+    this.exports = namespace["module.exports"] ?? namespace;
+    return;
+  }
 }
 
 $visibility = "Private";

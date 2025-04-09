@@ -74,6 +74,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -900,7 +901,7 @@ pub const VirtualMachine = struct {
 
     is_inside_deferred_task_queue: bool = false,
 
-    // defaults off. .on("message") will set it to true unles overridden
+    // defaults off. .on("message") will set it to true unless overridden
     // process.channel.unref() will set it to false and mark it overridden
     // on disconnect it will be disabled
     channel_ref: bun.Async.KeepAlive = .{},
@@ -908,6 +909,24 @@ pub const VirtualMachine = struct {
     channel_ref_overridden: bool = false,
     // if one disconnect event listener should be ignored
     channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
+
+    /// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
+    /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
+    /// true may expose bugs that would otherwise only occur using Workers. Controlled by
+    /// Options.destruct_main_thread_on_exit.
+    destruct_main_thread_on_exit: bool,
+
+    /// A set of extensions that exist in the require.extensions map. Keys
+    /// contain the leading '.'. Value is either a loader for built in
+    /// functions, or an index into JSCommonJSExtensions.
+    ///
+    /// `.keys() == transpiler.resolver.opts.extra_cjs_extensions`, so
+    /// mutations in this map must update the resolver.
+    commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.CustomLoader.Packed) = .empty,
+    /// Incremented when the `require.extensions` for a built-in extension is mutated.
+    /// An example is mutating `require.extensions['.js']` to intercept all '.js' files.
+    /// The value is decremented when defaults are restored.
+    has_mutated_built_in_extensions: u32 = 0,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -1177,6 +1196,11 @@ pub const VirtualMachine = struct {
             }
         }
 
+        // Node.js checks if this are set to "1" and no other value
+        if (map.get("NODE_PRESERVE_SYMLINKS")) |value| {
+            this.transpiler.resolver.opts.preserve_symlinks = bun.strings.eqlComptime(value, "1");
+        }
+
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
@@ -1211,7 +1235,6 @@ pub const VirtualMachine = struct {
 
     extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
     extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
-    extern fn Bun__Process__exit(*JSGlobalObject, code: c_int) noreturn;
 
     export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
         this.exit_on_uncaught_exception = true;
@@ -1251,12 +1274,12 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 7);
+            JSC.Process.exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         if (this.exit_on_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            JSC.Process.exit(globalObject, 1);
             @panic("made it past Bun__Process__exit");
         }
         this.is_handling_uncaught_exception = true;
@@ -1265,6 +1288,7 @@ pub const VirtualMachine = struct {
         if (!handled) {
             // TODO maybe we want a separate code path for uncaught exceptions
             this.unhandled_error_counter += 1;
+            this.exit_handler.exit_code = 1;
             this.onUnhandledRejection(this, globalObject, err);
         }
         return handled;
@@ -1437,7 +1461,13 @@ pub const VirtualMachine = struct {
         }
     }
 
+    extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
+
     pub fn globalExit(this: *VirtualMachine) noreturn {
+        if (this.destruct_main_thread_on_exit and this.is_main_thread) {
+            Zig__GlobalObject__destructOnExit(this.global);
+            this.deinit();
+        }
         bun.Global.exit(this.exit_handler.exit_code);
     }
 
@@ -1936,6 +1966,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2008,6 +2039,10 @@ pub const VirtualMachine = struct {
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
         is_main_thread: bool = false,
+        /// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
+        /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
+        /// true may expose bugs that would otherwise only occur using Workers.
+        destruct_main_thread_on_exit: bool = false,
     };
 
     pub var is_smol_mode = false;
@@ -2058,6 +2093,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2077,6 +2113,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
         vm.transpiler.resolver.prefer_module_field = false;
+        vm.transpiler.resolver.opts.preserve_symlinks = opts.args.preserve_symlinks orelse false;
 
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -2219,6 +2256,8 @@ pub const VirtualMachine = struct {
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            // This option is irrelevant for Workers
+            .destruct_main_thread_on_exit = false,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2312,6 +2351,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
+            .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2367,7 +2407,6 @@ pub const VirtualMachine = struct {
                 .source_code = bun.String.init(""),
                 .specifier = specifier,
                 .source_url = specifier.createIfDifferent(source_url),
-                .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
             };
@@ -2382,13 +2421,12 @@ pub const VirtualMachine = struct {
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
             .source_url = specifier.createIfDifferent(source_url),
-            .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,
         };
     }
 
-    pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+    fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
         bun.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
@@ -2407,7 +2445,7 @@ pub const VirtualMachine = struct {
                 .allocator = this.allocator,
                 .ptr = input.ptr,
                 .len = input.len,
-                .impl = bun.String.createExternal(input, true, ref, &JSC.RefString.RefString__free).value.WTFStringImpl,
+                .impl = bun.String.createExternal(*JSC.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
                 .hash = hash,
                 .ctx = this,
                 .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -2416,6 +2454,10 @@ pub const VirtualMachine = struct {
         }
         new.* = !entry.found_existing;
         return entry.value_ptr.*;
+    }
+
+    fn freeRefString(str: *JSC.RefString, _: *anyopaque, _: u32) callconv(.C) void {
+        str.deinit();
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
@@ -2493,18 +2535,13 @@ pub const VirtualMachine = struct {
 
     threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
     fn _resolve(
+        jsc_vm: *VirtualMachine,
         ret: *ResolveFunctionResult,
         specifier: string,
         source: string,
         is_esm: bool,
         comptime is_a_file_path: bool,
     ) !void {
-        bun.assert(VirtualMachine.isLoaded());
-        // macOS threadlocal vars are very slow
-        // we won't change threads in this function
-        // so we can copy it here
-        var jsc_vm = VirtualMachine.get();
-
         if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
             return;
@@ -2670,7 +2707,7 @@ pub const VirtualMachine = struct {
         }
 
         var result = ResolveFunctionResult{ .path = "", .result = null };
-        var jsc_vm = VirtualMachine.get();
+        const jsc_vm = global.bunVM();
         const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
         defer specifier_utf8.deinit();
 
@@ -2713,7 +2750,7 @@ pub const VirtualMachine = struct {
             jsc_vm.transpiler.linker.log = old_log;
             jsc_vm.transpiler.resolver.log = old_log;
         }
-        _resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
+        jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 const msgs: []logger.Msg = log.msgs.items;

@@ -670,3 +670,28 @@ it("x25519", () => {
     });
   }).toThrow();
 });
+
+it("encoding should not throw in null, undefined or in valid encodings in createHmac #18700", () => {
+  for (let encoding of [undefined, null, "utf8", "utf-8", "ascii", "binary", "hex", "base64", "base64url"]) {
+    const hmac = crypto.createHmac("sha256", "a secret", { encoding });
+
+    hmac.update("some data to hash");
+    expect(hmac.digest("hex")?.length).toBe(64);
+  }
+});
+
+it("verifyError should not be on the prototype of DiffieHellman and DiffieHellmanGroup", () => {
+  const dh = crypto.createDiffieHellman(512);
+  expect("verifyError" in crypto.DiffieHellman.prototype).toBeFalse();
+  expect("verifyError" in dh).toBeTrue();
+  expect(dh.verifyError).toBe(0);
+
+  const dhg = crypto.createDiffieHellmanGroup("modp5");
+  expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
+  expect("verifyError" in dhg).toBeTrue();
+
+  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
+  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
+  // DH_generate_parameters_ex
+  expect(dhg.verifyError).toBe(8);
+});

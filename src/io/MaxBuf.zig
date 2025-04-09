@@ -1,12 +1,3 @@
-const Subprocess = @import("api/bun/subprocess.zig");
-const MaxBuf = @This();
-const bun = @import("root").bun;
-const std = @import("std");
-
-pub const Kind = enum {
-    stdout,
-    stderr,
-};
 // null after subprocess finalize
 owned_by_subprocess: ?*Subprocess,
 // null after pipereader finalize
@@ -29,7 +20,7 @@ pub fn createForSubprocess(owner: *Subprocess, ptr: *?*MaxBuf, initial: ?i64) vo
     ptr.* = maxbuf;
 }
 fn disowned(this: *MaxBuf) bool {
-    return this.owned_by_subprocess != null and this.owned_by_reader == false;
+    return this.owned_by_subprocess == null and this.owned_by_reader == false;
 }
 fn destroy(this: *MaxBuf) void {
     bun.assert(this.disowned());
@@ -82,3 +73,13 @@ pub fn onReadBytes(this: *MaxBuf, bytes: u64) void {
         }
     }
 }
+
+pub const Kind = enum {
+    stdout,
+    stderr,
+};
+
+const bun = @import("root").bun;
+const std = @import("std");
+const Subprocess = bun.JSC.Subprocess;
+const MaxBuf = @This();

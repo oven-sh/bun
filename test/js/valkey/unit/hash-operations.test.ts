@@ -176,7 +176,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       // Get all fields and values
       const result = await ctx.redis.send("HGETALL", [key]);
       expect(result).toBeDefined();
-      const res = ctx.redis.set("ok", "123", "GET");
+      const res = await ctx.redis.set("ok", "123", "GET");
 
       // When using RESP3, HGETALL returns a map/object
       if (typeof result === "object" && result !== null) {

@@ -912,20 +912,50 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         },
                     };
 
+                    var skip_handle_message = false;
                     if (result.message == .data) {
                         // TODO: get property 'cmd' from the message, read as a string
-                        // if it equals 'NODE_HANDLE':
-                        // - did we get a handle? serialize {cmd: 'NODE_HANDLE_ACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
-                        //   - proceed to extracting the handle using a js function, then call handleIPCMessage() with the resolved handle
-                        // - else? serialize {cmd: 'NODE_HANDLE_NACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
-                        //   - skip calling handleIPCMessage()
-                        // 'NODE_HANDLE_ACK':
-                        // - ipc.send_queue.onAckNack(globalThis, socket, .ack)
-                        // 'NODE_HANDLE_NACK':
-                        // - ipc.send_queue.onAckNack(globalThis, socket, .nack)
+                        const msg_data = result.message.data;
+                        if (msg_data.isObject()) {
+                            const cmd = try msg_data.get(globalThis, JSC.ZigString.static("cmd"));
+                            if (cmd != null and cmd.?.isString()) {
+                                const cmd_str = try bun.String.fromJS(cmd.?, globalThis);
+                                if (cmd_str.eqlComptime("NODE_HANDLE")) {
+                                    if (ipc.incoming_fd != null) {
+                                        ipc.incoming_fd = null;
+                                        // send ack
+                                        // - create a js object with {cmd: 'NODE_HANDLE_ACK'}
+                                        // - create a message
+                                        // - serialize the object to the message
+                                        // - insert the message at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
+                                        // - call js function to resolve the handle
+                                        // - pass the resolved handle to handleIPCMessage()
+                                        if (true) @panic("TODO: send ack, then handle the handle");
+                                    } else {
+                                        // failure! send nack
+                                        // - create a js object with {cmd: 'NODE_HANDLE_NACK'}
+                                        // - create a message
+                                        // - serialize the object to the message
+                                        // - insert the message at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
+                                        if (true) @panic("TODO: send nack");
+                                        skip_handle_message = true;
+                                    }
+                                    // - did we get a handle? serialize {cmd: 'NODE_HANDLE_ACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
+                                    //   - proceed to extracting the handle using a js function, then call handleIPCMessage() with the resolved handle
+                                    // - else? serialize {cmd: 'NODE_HANDLE_NACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
+                                    //   - skip calling handleIPCMessage()
+                                } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
+                                    ipc.send_queue.onAckNack(globalThis, socket, .ack);
+                                    skip_handle_message = true;
+                                } else if (cmd_str.eqlComptime("NODE_HANDLE_NACK")) {
+                                    ipc.send_queue.onAckNack(globalThis, socket, .nack);
+                                    skip_handle_message = true;
+                                }
+                            }
+                        }
                     }
 
-                    this.handleIPCMessage(result.message);
+                    if (!skip_handle_message) this.handleIPCMessage(result.message);
 
                     if (result.bytes_consumed < data.len) {
                         data = data[result.bytes_consumed..];

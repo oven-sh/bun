@@ -647,26 +647,26 @@ if (isEnabled)
       }
 
       // Disconnect all clients
-      await context.redis.disconnect();
+      await context.redis.close();
 
       if (context.redisTLS) {
-        await context.redisTLS.disconnect();
+        await context.redisTLS.close();
       }
 
       if (context.redisUnix) {
-        await context.redisUnix.disconnect();
+        await context.redisUnix.close();
       }
 
       if (context.redisAuth) {
-        await context.redisAuth.disconnect();
+        await context.redisAuth.close();
       }
 
       if (context.redisReadOnly) {
-        await context.redisReadOnly.disconnect();
+        await context.redisReadOnly.close();
       }
 
       if (context.redisWriteOnly) {
-        await context.redisWriteOnly.disconnect();
+        await context.redisWriteOnly.close();
       }
     } catch (err) {
       console.error("Error during test cleanup:", err);

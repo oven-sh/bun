@@ -6,7 +6,7 @@ import { expectType } from "./test-utils";
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });

@@ -13,7 +13,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
     if (ctx.redis?.connected) {
       ctx.redis.close?.();
     }
-    ctx.redis = createClient(ConnectionType.TCP);
+    ctx.redis = createClient?.(ConnectionType.TCP);
   });
 
   describe("Basic Hash Commands", () => {

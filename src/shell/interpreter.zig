@@ -4948,7 +4948,7 @@ pub const Interpreter = struct {
         }
 
         pub fn runFromMainThread(this: *@This()) void {
-            this.writer().__deinit();
+            this.writer().deinitOnMainThread();
         }
 
         pub fn runFromMainThreadMini(this: *@This(), _: *void) void {

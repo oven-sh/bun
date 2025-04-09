@@ -772,7 +772,7 @@ node_api_create_external_string_latin1(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -808,7 +808,7 @@ node_api_create_external_string_utf16(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);

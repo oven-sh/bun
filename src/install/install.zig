@@ -2232,7 +2232,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const bin_path = bin_path: {
                 const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;
                 defer fd.close();
-                const size = fd.asFile().readAll(temp_buffer) catch return true;
+                const size = fd.stdFile().readAll(temp_buffer) catch return true;
                 const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
                 bun.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
                 break :bin_path decoded.bin_path;

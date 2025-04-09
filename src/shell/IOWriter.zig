@@ -458,7 +458,7 @@ pub fn __deinit(this: *This) void {
             this.writer.handle.closeImpl(null, {}, false);
         }
     } else this.winbuf.deinit(bun.default_allocator);
-    if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+    if (this.fd.isValid()) this.fd.close();
     this.writer.disableKeepingProcessAlive(this.evtloop);
     this.destroy();
 }

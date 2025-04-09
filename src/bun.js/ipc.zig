@@ -909,27 +909,18 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         },
                     };
 
-                    // TODO:
-                    // switch (result.message) {
-                    //     .internal_ack => ipc.send_queue.onAckNack(globalThis, socket, .ack),
-                    //     .internal_nack => ipc.send_queue.onAckNack(globalThis, socket, .nack),
-                    //     .internal_handle => {
-                    //         // to send the ack/nack:
-                    //         // - append the message to the ack/nack queue
-                    //         // - unless (waiting on .writable or .err) continue sending the message
-                    //         if (true) @panic("TODO send ack/nack message");
-                    //         if (ipc.incoming_fd == null) {
-                    //             // nack
-                    //         } else {
-                    //             // ack, then handleIPCMessage() with the resolved handle
-                    //         }
-                    //         // TODO:
-                    //         // - we need to resolve on the JS side
-                    //         //   - for child_process, that's fine. we convert to a bun handle here and then
-                    //         //     ipc() has the bun handle. for process.on(), there's no js side atm.
-                    //     },
-                    //     else => this.handleIPCMessage(result.message),
-                    // }
+                    if (result.message == .data) {
+                        // TODO: get property 'cmd' from the message, read as a string
+                        // if it equals 'NODE_HANDLE':
+                        // - did we get a handle? serialize {cmd: 'NODE_HANDLE_ACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
+                        //   - proceed to extracting the handle using a js function, then call handleIPCMessage() with the resolved handle
+                        // - else? serialize {cmd: 'NODE_HANDLE_NACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
+                        //   - skip calling handleIPCMessage()
+                        // 'NODE_HANDLE_ACK':
+                        // - ipc.send_queue.onAckNack(globalThis, socket, .ack)
+                        // 'NODE_HANDLE_NACK':
+                        // - ipc.send_queue.onAckNack(globalThis, socket, .nack)
+                    }
 
                     this.handleIPCMessage(result.message);
 

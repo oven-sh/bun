@@ -228,8 +228,8 @@ async function startContainer(): Promise<ContainerConfiguration> {
     const port = randomPort();
     const tlsPort = randomPort();
 
-    // Create container name with fixed name
-    const containerName = `valkey-unified-test-bun`;
+    // Create container name with unique identifier to avoid conflicts in CI
+    const containerName = `valkey-unified-test-bun-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     // Check if container exists and remove it
     try {
@@ -267,42 +267,82 @@ async function startContainer(): Promise<ContainerConfiguration> {
     // Start the unified container with TCP, TLS, and Unix socket
     console.log(`Starting Redis container ${containerName} on ports ${port}:6379 and ${tlsPort}:6380...`);
 
-    const startProcess = Bun.spawn({
-      cmd: [
-        dockerCLI,
-        "run",
-        "-d",
-        "--name",
-        containerName,
-        "-p",
-        `${port}:6379`,
-        "-p",
-        `${tlsPort}:6380`,
-        // TODO: unix domain socket has permission errors in CI.
-        // "-v",
-        // `${REDIS_TEMP_DIR}:/tmp`,
-        "--health-cmd",
-        "redis-cli ping || exit 1",
-        "--health-interval",
-        "2s",
-        "--health-timeout",
-        "1s",
-        "--health-retries",
-        "5",
-        "bun-valkey-unified-test",
-      ],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    // Function to try starting container with port retries
+    async function tryStartContainer(attempt = 1, maxAttempts = 3) {
+      const currentPort = attempt === 1 ? port : randomPort();
+      const currentTlsPort = attempt === 1 ? tlsPort : randomPort();
+      
+      console.log(`Attempt ${attempt}: Using ports ${currentPort}:6379 and ${currentTlsPort}:6380...`);
+      
+      const startProcess = Bun.spawn({
+        cmd: [
+          dockerCLI,
+          "run",
+          "-d",
+          "--name",
+          containerName,
+          "-p",
+          `${currentPort}:6379`,
+          "-p",
+          `${currentTlsPort}:6380`,
+          // TODO: unix domain socket has permission errors in CI.
+          // "-v",
+          // `${REDIS_TEMP_DIR}:/tmp`,
+          "--health-cmd",
+          "redis-cli ping || exit 1",
+          "--health-interval",
+          "2s",
+          "--health-timeout",
+          "1s",
+          "--health-retries",
+          "5",
+          "bun-valkey-unified-test",
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const containerID = await new Response(startProcess.stdout).text();
-    const startError = await new Response(startProcess.stderr).text();
-    const startExitCode = await startProcess.exited;
+      const containerID = await new Response(startProcess.stdout).text();
+      const startError = await new Response(startProcess.stderr).text();
+      const startExitCode = await startProcess.exited;
 
-    if (startExitCode !== 0 || !containerID.trim()) {
+      if (startExitCode === 0 && containerID.trim()) {
+        // Update the ports if we used different ones on a retry
+        if (attempt > 1) {
+          REDIS_PORT = currentPort;
+          REDIS_TLS_PORT = currentTlsPort;
+          DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
+          TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
+          UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
+          AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
+          READONLY_REDIS_URL = `redis://readonly:readonly@${REDIS_HOST}:${REDIS_PORT}`;
+          WRITEONLY_REDIS_URL = `redis://writeonly:writeonly@${REDIS_HOST}:${REDIS_PORT}`;
+          
+          containerConfig = {
+            port: currentPort,
+            tlsPort: currentTlsPort,
+            containerName,
+            useUnixSocket: true,
+          };
+        }
+        return { containerID, success: true };
+      }
+      
+      // If the error is related to port already in use, try again with different ports
+      if (startError.includes("address already in use") && attempt < maxAttempts) {
+        console.log(`Port conflict detected. Retrying with different ports...`);
+        // Remove failed container if it was created
+        if (containerID.trim()) {
+          await Bun.spawn([dockerCLI, "rm", "-f", containerID.trim()]).exited;
+        }
+        return tryStartContainer(attempt + 1, maxAttempts);
+      }
+      
       console.error(`Failed to start container. Exit code: ${startExitCode}, Error: ${startError}`);
       throw new Error(`Failed to start Redis container: ${startError || "unknown error"}`);
     }
+    
+    const { containerID } = await tryStartContainer();
 
     console.log(`Container started with ID: ${containerID.trim()}`);
 
@@ -607,26 +647,26 @@ if (isEnabled)
       }
 
       // Disconnect all clients
-      await context.redis.disconnect();
+      await context.redis.close();
 
       if (context.redisTLS) {
-        await context.redisTLS.disconnect();
+        await context.redisTLS.close();
       }
 
       if (context.redisUnix) {
-        await context.redisUnix.disconnect();
+        await context.redisUnix.close();
       }
 
       if (context.redisAuth) {
-        await context.redisAuth.disconnect();
+        await context.redisAuth.close();
       }
 
       if (context.redisReadOnly) {
-        await context.redisReadOnly.disconnect();
+        await context.redisReadOnly.close();
       }
 
       if (context.redisWriteOnly) {
-        await context.redisWriteOnly.disconnect();
+        await context.redisWriteOnly.close();
       }
     } catch (err) {
       console.error("Error during test cleanup:", err);

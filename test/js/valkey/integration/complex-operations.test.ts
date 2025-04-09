@@ -12,7 +12,7 @@ import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });

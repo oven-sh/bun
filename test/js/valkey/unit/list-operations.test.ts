@@ -12,7 +12,7 @@ import { isCI } from "harness";
 describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });

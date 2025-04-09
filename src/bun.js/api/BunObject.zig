@@ -901,6 +901,35 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
 }
 
+export fn Bun__resolveSyncWithPaths(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: JSValue,
+    is_esm: bool,
+    is_user_require_resolve: bool,
+    paths_ptr: ?[*]const bun.String,
+    paths_len: usize,
+) JSC.JSValue {
+    const paths: []const bun.String = if (paths_len == 0) &.{} else paths_ptr.?[0..paths_len];
+
+    const specifier_str = specifier.toBunString(global) catch return .zero;
+    defer specifier_str.deref();
+
+    if (specifier_str.length() == 0) {
+        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+    }
+
+    const source_str = source.toBunString(global) catch return .zero;
+    defer source_str.deref();
+
+    const bun_vm = global.bunVM();
+    bun.assert(bun_vm.transpiler.resolver.custom_dir_paths == null);
+    bun_vm.transpiler.resolver.custom_dir_paths = paths;
+    defer bun_vm.transpiler.resolver.custom_dir_paths = null;
+
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+}
+
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true, false));

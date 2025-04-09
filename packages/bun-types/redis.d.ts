@@ -103,7 +103,7 @@ declare module "bun" {
     /**
      * Disconnect from the Redis server
      */
-    disconnect(): void;
+    close(): void;
 
     /**
      * Send a raw command to the Redis server
@@ -118,43 +118,156 @@ declare module "bun" {
      * @param key The key to get
      * @returns Promise that resolves with the key's value, or null if the key doesn't exist
      */
-    get(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    get(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
-     * Set the value of a key
+     * Set key to hold the string value
      * @param key The key to set
      * @param value The value to set
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<"OK">;
+    set(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value with expiration
+     * @param key The key to set
+     * @param value The value to set
+     * @param ex Set the specified expire time, in seconds
+     * @returns Promise that resolves with "OK" on success
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      ex: "EX",
+      seconds: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value with expiration
+     * @param key The key to set
+     * @param value The value to set
+     * @param px Set the specified expire time, in milliseconds
+     * @returns Promise that resolves with "OK" on success
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      px: "PX",
+      milliseconds: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value with expiration at a specific Unix timestamp
+     * @param key The key to set
+     * @param value The value to set
+     * @param exat Set the specified Unix time at which the key will expire, in seconds
+     * @returns Promise that resolves with "OK" on success
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      exat: "EXAT",
+      timestampSeconds: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value with expiration at a specific Unix timestamp
+     * @param key The key to set
+     * @param value The value to set
+     * @param pxat Set the specified Unix time at which the key will expire, in milliseconds
+     * @returns Promise that resolves with "OK" on success
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      pxat: "PXAT",
+      timestampMilliseconds: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value only if key does not exist
+     * @param key The key to set
+     * @param value The value to set
+     * @param nx Only set the key if it does not already exist
+     * @returns Promise that resolves with "OK" on success, or null if the key already exists
+     */
+    set(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob, nx: "NX"): Promise<"OK" | null>;
+
+    /**
+     * Set key to hold the string value only if key already exists
+     * @param key The key to set
+     * @param value The value to set
+     * @param xx Only set the key if it already exists
+     * @returns Promise that resolves with "OK" on success, or null if the key does not exist
+     */
+    set(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob, xx: "XX"): Promise<"OK" | null>;
+
+    /**
+     * Set key to hold the string value and return the old value
+     * @param key The key to set
+     * @param value The value to set
+     * @param get Return the old string stored at key, or null if key did not exist
+     * @returns Promise that resolves with the old value, or null if key did not exist
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      get: "GET",
+    ): Promise<string | null>;
+
+    /**
+     * Set key to hold the string value and retain the time to live
+     * @param key The key to set
+     * @param value The value to set
+     * @param keepttl Retain the time to live associated with the key
+     * @returns Promise that resolves with "OK" on success
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      keepttl: "KEEPTTL",
+    ): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value with various options
+     * @param key The key to set
+     * @param value The value to set
+     * @param options Array of options (EX, PX, EXAT, PXAT, NX, XX, KEEPTTL, GET)
+     * @returns Promise that resolves with "OK" on success, null if NX/XX condition not met, or the old value if GET is specified
+     */
+    set(
+      key: string | ArrayBufferView | Blob,
+      value: string | ArrayBufferView | Blob,
+      ...options: string[]
+    ): Promise<"OK" | string | null>;
 
     /**
      * Delete a key
      * @param key The key to delete
      * @returns Promise that resolves with the number of keys removed
      */
-    del(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    del(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Increment the integer value of a key by one
      * @param key The key to increment
      * @returns Promise that resolves with the new value
      */
-    incr(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    incr(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Decrement the integer value of a key by one
      * @param key The key to decrement
      * @returns Promise that resolves with the new value
      */
-    decr(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    decr(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Determine if a key exists
      * @param key The key to check
      * @returns Promise that resolves with true if the key exists, false otherwise
      */
-    exists(key: string | NodeJS.TypedArray | Blob): Promise<boolean>;
+    exists(key: string | ArrayBufferView | Blob): Promise<boolean>;
 
     /**
      * Set a key's time to live in seconds
@@ -162,14 +275,14 @@ declare module "bun" {
      * @param seconds The number of seconds until expiration
      * @returns Promise that resolves with 1 if the timeout was set, 0 if not
      */
-    expire(key: string | NodeJS.TypedArray | Blob, seconds: number): Promise<number>;
+    expire(key: string | ArrayBufferView | Blob, seconds: number): Promise<number>;
 
     /**
      * Get the time to live for a key in seconds
      * @param key The key to get the TTL for
      * @returns Promise that resolves with the TTL, -1 if no expiry, or -2 if key doesn't exist
      */
-    ttl(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    ttl(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Set multiple hash fields to multiple values
@@ -177,7 +290,7 @@ declare module "bun" {
      * @param fieldValues An array of alternating field names and values
      * @returns Promise that resolves with "OK" on success
      */
-    hmset(key: string | NodeJS.TypedArray | Blob, fieldValues: string[]): Promise<string>;
+    hmset(key: string | ArrayBufferView | Blob, fieldValues: string[]): Promise<string>;
 
     /**
      * Get the values of all the given hash fields
@@ -185,7 +298,7 @@ declare module "bun" {
      * @param fields The fields to get
      * @returns Promise that resolves with an array of values
      */
-    hmget(key: string | NodeJS.TypedArray | Blob, fields: string[]): Promise<Array<string | null>>;
+    hmget(key: string | ArrayBufferView | Blob, fields: string[]): Promise<Array<string | null>>;
 
     /**
      * Check if a value is a member of a set
@@ -193,7 +306,7 @@ declare module "bun" {
      * @param member The member to check
      * @returns Promise that resolves with true if the member exists, false otherwise
      */
-    sismember(key: string | NodeJS.TypedArray | Blob, member: string): Promise<boolean>;
+    sismember(key: string | ArrayBufferView | Blob, member: string): Promise<boolean>;
 
     /**
      * Add a member to a set
@@ -201,7 +314,7 @@ declare module "bun" {
      * @param member The member to add
      * @returns Promise that resolves with 1 if the member was added, 0 if it already existed
      */
-    sadd(key: string | NodeJS.TypedArray | Blob, member: string): Promise<number>;
+    sadd(key: string | ArrayBufferView | Blob, member: string): Promise<number>;
 
     /**
      * Remove a member from a set
@@ -209,28 +322,28 @@ declare module "bun" {
      * @param member The member to remove
      * @returns Promise that resolves with 1 if the member was removed, 0 if it didn't exist
      */
-    srem(key: string | NodeJS.TypedArray | Blob, member: string): Promise<number>;
+    srem(key: string | ArrayBufferView | Blob, member: string): Promise<number>;
 
     /**
      * Get all the members in a set
      * @param key The set key
      * @returns Promise that resolves with an array of all members
      */
-    smembers(key: string | NodeJS.TypedArray | Blob): Promise<string[]>;
+    smembers(key: string | ArrayBufferView | Blob): Promise<string[]>;
 
     /**
      * Get a random member from a set
      * @param key The set key
      * @returns Promise that resolves with a random member, or null if the set is empty
      */
-    srandmember(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    srandmember(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Remove and return a random member from a set
      * @param key The set key
      * @returns Promise that resolves with the removed member, or null if the set is empty
      */
-    spop(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    spop(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Increment the integer value of a hash field by the given number
@@ -239,7 +352,7 @@ declare module "bun" {
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value
      */
-    hincrby(key: string | NodeJS.TypedArray | Blob, field: string, increment: string | number): Promise<number>;
+    hincrby(key: string | ArrayBufferView | Blob, field: string, increment: string | number): Promise<number>;
 
     /**
      * Increment the float value of a hash field by the given amount
@@ -248,35 +361,35 @@ declare module "bun" {
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value as a string
      */
-    hincrbyfloat(key: string | NodeJS.TypedArray | Blob, field: string, increment: string | number): Promise<string>;
+    hincrbyfloat(key: string | ArrayBufferView | Blob, field: string, increment: string | number): Promise<string>;
 
     /**
      * Get all the fields and values in a hash
      * @param key The hash key
      * @returns Promise that resolves with an object containing all fields and values
      */
-    hgetall(key: string | NodeJS.TypedArray | Blob): Promise<Record<string, string> | null>;
+    hgetall(key: string | ArrayBufferView | Blob): Promise<Record<string, string> | null>;
 
     /**
      * Get all field names in a hash
      * @param key The hash key
      * @returns Promise that resolves with an array of field names
      */
-    hkeys(key: string | NodeJS.TypedArray | Blob): Promise<string[]>;
+    hkeys(key: string | ArrayBufferView | Blob): Promise<string[]>;
 
     /**
      * Get the number of fields in a hash
      * @param key The hash key
      * @returns Promise that resolves with the number of fields
      */
-    hlen(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    hlen(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get all values in a hash
      * @param key The hash key
      * @returns Promise that resolves with an array of values
      */
-    hvals(key: string | NodeJS.TypedArray | Blob): Promise<string[]>;
+    hvals(key: string | ArrayBufferView | Blob): Promise<string[]>;
 
     /**
      * Find all keys matching the given pattern
@@ -290,84 +403,84 @@ declare module "bun" {
      * @param key The list key
      * @returns Promise that resolves with the length of the list
      */
-    llen(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    llen(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Remove and get the first element in a list
      * @param key The list key
      * @returns Promise that resolves with the first element, or null if the list is empty
      */
-    lpop(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    lpop(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Remove the expiration from a key
      * @param key The key to persist
      * @returns Promise that resolves with 1 if the timeout was removed, 0 if the key doesn't exist or has no timeout
      */
-    persist(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    persist(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in milliseconds
      * @param key The key to check
      * @returns Promise that resolves with the timestamp, or -1 if the key has no expiration, or -2 if the key doesn't exist
      */
-    pexpiretime(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    pexpiretime(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get the time to live for a key in milliseconds
      * @param key The key to check
      * @returns Promise that resolves with the TTL in milliseconds, or -1 if the key has no expiration, or -2 if the key doesn't exist
      */
-    pttl(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    pttl(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Remove and get the last element in a list
      * @param key The list key
      * @returns Promise that resolves with the last element, or null if the list is empty
      */
-    rpop(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    rpop(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Get the number of members in a set
      * @param key The set key
      * @returns Promise that resolves with the cardinality (number of elements) of the set
      */
-    scard(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    scard(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get the length of the value stored in a key
      * @param key The key to check
      * @returns Promise that resolves with the length of the string value, or 0 if the key doesn't exist
      */
-    strlen(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    strlen(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get the number of members in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the cardinality (number of elements) of the sorted set
      */
-    zcard(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    zcard(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Remove and return members with the highest scores in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the removed member and its score, or null if the set is empty
      */
-    zpopmax(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    zpopmax(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Remove and return members with the lowest scores in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the removed member and its score, or null if the set is empty
      */
-    zpopmin(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    zpopmin(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Get one or multiple random members from a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with a random member, or null if the set is empty
      */
-    zrandmember(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    zrandmember(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Append a value to a key
@@ -375,7 +488,7 @@ declare module "bun" {
      * @param value The value to append
      * @returns Promise that resolves with the length of the string after the append operation
      */
-    append(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<number>;
+    append(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Set the value of a key and return its old value
@@ -383,7 +496,7 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with the old value, or null if the key didn't exist
      */
-    getset(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    getset(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Prepend one or multiple values to a list
@@ -391,7 +504,7 @@ declare module "bun" {
      * @param value The value to prepend
      * @returns Promise that resolves with the length of the list after the push operation
      */
-    lpush(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<number>;
+    lpush(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Prepend a value to a list, only if the list exists
@@ -399,7 +512,7 @@ declare module "bun" {
      * @param value The value to prepend
      * @returns Promise that resolves with the length of the list after the push operation, or 0 if the list doesn't exist
      */
-    lpushx(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<number>;
+    lpushx(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Add one or more members to a HyperLogLog
@@ -407,7 +520,7 @@ declare module "bun" {
      * @param element The element to add
      * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0 otherwise
      */
-    pfadd(key: string | NodeJS.TypedArray | Blob, element: string): Promise<number>;
+    pfadd(key: string | ArrayBufferView | Blob, element: string): Promise<number>;
 
     /**
      * Append one or multiple values to a list
@@ -415,7 +528,7 @@ declare module "bun" {
      * @param value The value to append
      * @returns Promise that resolves with the length of the list after the push operation
      */
-    rpush(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<number>;
+    rpush(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Append a value to a list, only if the list exists
@@ -423,7 +536,7 @@ declare module "bun" {
      * @param value The value to append
      * @returns Promise that resolves with the length of the list after the push operation, or 0 if the list doesn't exist
      */
-    rpushx(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<number>;
+    rpushx(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Set the value of a key, only if the key does not exist
@@ -431,7 +544,7 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with 1 if the key was set, 0 if the key was not set
      */
-    setnx(key: string | NodeJS.TypedArray | Blob, value: string | NodeJS.TypedArray | Blob): Promise<number>;
+    setnx(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get the score associated with the given member in a sorted set
@@ -439,49 +552,49 @@ declare module "bun" {
      * @param member The member to get the score for
      * @returns Promise that resolves with the score of the member as a string, or null if the member or key doesn't exist
      */
-    zscore(key: string | NodeJS.TypedArray | Blob, member: string): Promise<string | null>;
+    zscore(key: string | ArrayBufferView | Blob, member: string): Promise<string | null>;
 
     /**
      * Get the values of all specified keys
      * @param keys The keys to get
      * @returns Promise that resolves with an array of values, with null for keys that don't exist
      */
-    mget(...keys: (string | NodeJS.TypedArray | Blob)[]): Promise<(string | null)[]>;
+    mget(...keys: (string | ArrayBufferView | Blob)[]): Promise<(string | null)[]>;
 
     /**
      * Count the number of set bits (population counting) in a string
      * @param key The key to count bits in
      * @returns Promise that resolves with the number of bits set to 1
      */
-    bitcount(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    bitcount(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Return a serialized version of the value stored at the specified key
      * @param key The key to dump
      * @returns Promise that resolves with the serialized value, or null if the key doesn't exist
      */
-    dump(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    dump(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in seconds
      * @param key The key to check
      * @returns Promise that resolves with the timestamp, or -1 if the key has no expiration, or -2 if the key doesn't exist
      */
-    expiretime(key: string | NodeJS.TypedArray | Blob): Promise<number>;
+    expiretime(key: string | ArrayBufferView | Blob): Promise<number>;
 
     /**
      * Get the value of a key and delete the key
      * @param key The key to get and delete
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
-    getdel(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    getdel(key: string | ArrayBufferView | Blob): Promise<string | null>;
 
     /**
      * Get the value of a key and optionally set its expiration
      * @param key The key to get
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
-    getex(key: string | NodeJS.TypedArray | Blob): Promise<string | null>;
+    getex(key: string | ArrayBufferView | Blob): Promise<string | null>;
   }
 
   /**

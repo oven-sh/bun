@@ -331,13 +331,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         JSValue plaintextLengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "plaintextLength"_s));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         if (!plaintextLengthValue.isUndefinedOrNull()) {
-            double plaintextLengthNumber = plaintextLengthValue.toNumber(globalObject);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-            plaintextLength = JSC::toInt32(plaintextLengthNumber);
-            if (plaintextLengthNumber != plaintextLength) {
+            std::optional<int32_t> maybePlaintextLength = plaintextLengthValue.tryGetAsInt32();
+            if (!maybePlaintextLength || *maybePlaintextLength < 0) {
                 return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.plaintextLength"_s, plaintextLengthValue);
             }
+
+            plaintextLength = *maybePlaintextLength;
         }
     }
 

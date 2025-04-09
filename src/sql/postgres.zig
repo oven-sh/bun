@@ -534,8 +534,22 @@ pub const PostgresSQLQuery = struct {
         const event_loop = vm.eventLoop();
         const tag = CommandTag.init(command_tag_str);
 
+        const columns = brk: {
+            const fields = &this.statement.?.fields;
+            const columns = JSValue.createEmptyArray(globalObject, fields.len);
+
+            var i: u32 = 0;
+            for (fields.*) |*field| {
+                columns.putIndex(globalObject, i, field.toJS(globalObject));
+                i += 1;
+            }
+
+            break :brk columns;
+        };
+
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
+            columns,
             consumePendingValue(thisValue, globalObject) orelse .undefined,
             tag.toJSTag(globalObject),
             tag.toJSNumber(),

@@ -809,9 +809,9 @@ pub const ErrorResponse = struct {
         const error_code: JSC.Error =
             // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
             if (code.eqlComptime("42601"))
-                JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
-            else
-                JSC.Error.ERR_POSTGRES_SERVER_ERROR;
+            JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
+        else
+            JSC.Error.ERR_POSTGRES_SERVER_ERROR;
         const err = error_code.fmt(globalObject, "{s}", .{b.allocatedSlice()[0..b.len]});
 
         inline for (possible_fields) |field| {
@@ -1047,6 +1047,28 @@ pub const FieldDescription = struct {
     }
 
     pub const decode = decoderWrap(FieldDescription, decodeInternal).decode;
+
+    pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSValue {
+        const obj = JSValue.createEmptyObject(globalObject, 4);
+
+        const name = switch (this.name_or_index) {
+            .name => |n| bun.String.init(n.slice()).toJS(globalObject),
+            .index => |i| JSValue.jsNumberFromInt32(@intCast(i)),
+            .duplicate => .null,
+        };
+        obj.put(globalObject, JSC.ZigString.static("name"), name);
+
+        const table = JSValue.jsNumberFromInt32(@intCast(this.table_oid));
+        obj.put(globalObject, JSC.ZigString.static("table"), table);
+
+        const number = JSValue.jsNumberFromInt32(@intCast(this.column_index));
+        obj.put(globalObject, JSC.ZigString.static("number"), number);
+
+        const @"type" = JSValue.jsNumberFromInt32(@intCast(this.type_oid));
+        obj.put(globalObject, JSC.ZigString.static("type"), @"type");
+
+        return obj;
+    }
 };
 
 pub const RowDescription = struct {

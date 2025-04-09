@@ -45,6 +45,7 @@ class SQLResultArray extends PublicArray {
     Object.defineProperties(this, {
       count: { value: null, writable: true },
       command: { value: null, writable: true },
+      columns: { value: null, writable: true },
     });
   }
   static get [Symbol.species]() {
@@ -611,7 +612,7 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+  function onResolvePostgresQuery(query, columns, result, commandTag, count, queries, is_last) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
       // simple can have multiple results or a single result
@@ -639,6 +640,7 @@ init(
         result.command = cmds[commandTag];
       }
 
+      result.columns = columns;
       result.count = count || 0;
       const last_result = query[_results];
 
@@ -665,6 +667,7 @@ init(
       result.command = cmds[commandTag];
     }
 
+    result.columns = columns;
     result.count = count || 0;
     if (queries) {
       const queriesIndex = queries.indexOf(query);

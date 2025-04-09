@@ -2377,8 +2377,12 @@ if (isDockerEnabled()) {
   //   [true, (await sql`bad keyword`.catch(e => e)) instanceof sql.PostgresError]
   // )
 
-  test.todo("Result has columns spec", async () => {
+  test("Safe result has columns spec", async () => {
     expect((await sql`select 1 as x`).columns[0].name).toBe("x");
+  });
+
+  test("Unsafe result has columns spec", async () => {
+    expect((await sql.unsafe("select 1 as x")).columns[0].name).toBe("x");
   });
 
   // t('forEach has result as second argument', async() => {

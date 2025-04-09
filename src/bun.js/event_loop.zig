@@ -1405,8 +1405,7 @@ pub const EventLoop = struct {
         while (this.immediate_tasks.readItem()) |task| {
             log("run {s} (immediate)", .{@tagName(task.tag())});
             defer counter += 1;
-            // Only expect ImmediateObject here, but keep switch for safety/future?
-            // Or assert/unreachable for performance? Let's keep switch for now.
+
             switch (task.tag()) {
                 @field(Task.Tag, @typeName(ImmediateObject)) => {
                     var any: *ImmediateObject = task.get(ImmediateObject).?;
@@ -1420,11 +1419,6 @@ pub const EventLoop = struct {
                     bun.Output.panic("Unexpected task type '{s}' in immediate queue", .{@tagName(task.tag())});
                 },
             }
-            // DO NOT drain microtasks here
-        }
-
-        // Drain microtasks ONCE after all immediate tasks are processed
-        if (counter > 0) {
             this.drainMicrotasksWithGlobal(global, global_vm);
         }
     }

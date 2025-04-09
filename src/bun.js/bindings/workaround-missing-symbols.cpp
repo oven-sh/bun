@@ -238,7 +238,13 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 #include <cstdio>
 #include "headers.h"
 
-void std::__libcpp_verbose_abort(char const* format, ...) _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+#ifdef _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+#define VERBOSE_ABORT_NOEXCEPT _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+#else
+#define VERBOSE_ABORT_NOEXCEPT
+#endif
+
+void std::__libcpp_verbose_abort(char const* format, ...) VERBOSE_ABORT_NOEXCEPT
 {
     va_list list;
     va_start(list, format);
@@ -248,6 +254,8 @@ void std::__libcpp_verbose_abort(char const* format, ...) _LIBCPP_VERBOSE_ABORT_
 
     Bun__panic(buffer, len);
 }
+
+#undef VERBOSE_ABORT_NOEXCEPT
 
 #endif
 

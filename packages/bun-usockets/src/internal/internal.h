@@ -288,7 +288,7 @@ struct us_socket_context_t {
   struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
   struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
-  bool is_ipc;
+  int is_ipc;
   
 };
 

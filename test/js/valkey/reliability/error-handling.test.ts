@@ -89,11 +89,11 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       // undefined value
       // @ts-expect-error: Testing runtime behavior with invalid types
       expect(async () => await client.set("valid-key", undefined)).toThrowErrorMatchingInlineSnapshot(
-        "Expected value to be a string or buffer or number for 'set'.",
+        `"Expected value to be a string or buffer or number for 'set'."`,
       );
 
       expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(
-        "Expected value to be a string or buffer or number for 'set'.",
+        `"Expected value to be a string or buffer or number for 'set'."`,
       );
     });
 

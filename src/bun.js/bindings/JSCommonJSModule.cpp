@@ -1215,6 +1215,23 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
+ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
+{
+    JSC::JSValue exception = throwScope.exception();
+    ASSERT(exception);
+    throwScope.clearException();
+
+    // On error, remove the module from the require map/
+    // so that it can be re-evaluated on the next require.
+    bool wasRemoved = globalObject->requireMap()->remove(globalObject, specifierValue);
+    ASSERT(wasRemoved);
+
+    throwScope.throwException(globalObject, exception);
+    RELEASE_AND_RETURN(throwScope, {});
+}
+#define REQUIRE_CJS_RETURN_IF_EXCEPTION \
+    if (UNLIKELY(throwScope.exception())) return finishRequireWithError(globalObject, throwScope, specifierValue)
+
 // JSCommonJSModule.$require(resolvedId, newModule, userArgumentCount, userOptions)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
@@ -1229,10 +1246,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     JSValue specifierValue = callframe->uncheckedArgument(0);
     // If Module._resolveFilename is overridden, this could cause this to be a non-string
     WTF::String specifier = specifierValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    REQUIRE_CJS_RETURN_IF_EXCEPTION;
     // If this.filename is overridden, this could cause this to be a non-string
     WTF::String referrer = referrerModule->filename().toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    REQUIRE_CJS_RETURN_IF_EXCEPTION;
 
     // This is always a new JSCommonJSModule object; cast cannot fail.
     JSCommonJSModule* child = jsCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
@@ -1258,7 +1275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
                     typeAttributeStr = Bun::toString(typeAttribute);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, {});
+            REQUIRE_CJS_RETURN_IF_EXCEPTION;
         }
     }
 
@@ -1272,21 +1289,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         LIKELY(typeAttribute.isEmpty())
             ? nullptr
             : &typeAttributeStr);
-
-    if (auto exception = throwScope.exception()) {
-        throwScope.clearException();
-
-        // On error, remove the module from the require map/
-        // so that it can be re-evaluated on the next require.
-        bool wasRemoved = globalObject->requireMap()->remove(globalObject, specifierValue);
-        ASSERT(wasRemoved);
-
-        throwScope.throwException(globalObject, exception);
-        RELEASE_AND_RETURN(throwScope, {});
-    }
-
+    REQUIRE_CJS_RETURN_IF_EXCEPTION;
     RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
 }
+#undef REQUIRE_CJS_RETURN_IF_EXCEPTION
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {

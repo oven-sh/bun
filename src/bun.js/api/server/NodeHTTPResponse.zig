@@ -855,7 +855,6 @@ fn writeOrEnd(
             NodeHTTPResponse.onAbortedSetCached(this_value, globalObject, .zero);
         }
 
-        this.raw_response.clearAborted();
         this.raw_response.clearOnWritable();
         this.raw_response.clearTimeout();
         this.flags.ended = true;

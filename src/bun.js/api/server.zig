@@ -3481,10 +3481,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
-                if (this.flags.has_abort_handler) {
-                    resp.clearAborted();
-                    this.flags.has_abort_handler = false;
-                }
+                // if (this.flags.has_abort_handler) {
+                //     resp.clearAborted();
+                //     this.flags.has_abort_handler = false;
+                // }
                 if (this.flags.has_timeout_handler) {
                     resp.clearTimeout();
                     this.flags.has_timeout_handler = false;

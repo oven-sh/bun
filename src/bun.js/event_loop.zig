@@ -1519,7 +1519,6 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
 
-        this.flushImmediateQueue();
         this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
@@ -1559,24 +1558,8 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        this.flushImmediateQueue();
-
         ctx.onAfterEventLoop();
         this.global.handleRejectedPromises();
-    }
-
-    pub fn flushImmediateQueue(this: *EventLoop) void {
-        // If we can get away with swapping the queues, do that rather than copying the data
-        if (this.immediate_tasks.count > 0) {
-            this.immediate_tasks.write(this.next_immediate_tasks.readableSlice(0)) catch unreachable;
-            this.next_immediate_tasks.head = 0;
-            this.next_immediate_tasks.count = 0;
-        } else if (this.next_immediate_tasks.count > 0) {
-            const prev_immediate = this.immediate_tasks;
-            const next_immediate = this.next_immediate_tasks;
-            this.immediate_tasks = next_immediate;
-            this.next_immediate_tasks = prev_immediate;
-        }
     }
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
@@ -1616,7 +1599,6 @@ pub const EventLoop = struct {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
 
-        this.flushImmediateQueue();
         this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
@@ -1640,7 +1622,6 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        this.flushImmediateQueue();
         ctx.onAfterEventLoop();
     }
 
@@ -1720,7 +1701,7 @@ pub const EventLoop = struct {
 
     pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
         JSC.markBinding(@src());
-        this.next_immediate_tasks.writeItem(task) catch unreachable;
+        this.immediate_tasks.writeItem(task) catch unreachable;
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {

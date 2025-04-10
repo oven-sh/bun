@@ -951,6 +951,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             // - ack
                             // - nack
                             // This would make the IPC not interoperable with node
+                            // - advanced ipc already is completely different in bun. bun uses
+                            // - json ipc is the same as node in bun
                             const msg_data = result.message.data;
                             if (msg_data.isObject()) {
                                 const cmd = msg_data.get(globalThis, "cmd") catch |e| {
@@ -963,26 +965,31 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                                         break :skip_handle_message;
                                     };
                                     if (cmd_str.eqlComptime("NODE_HANDLE")) {
-                                        // TODO: precompute values of ack & nack messages, use those rather than serializing
-                                        if (ipc.incoming_fd != null) {
-                                            ipc.incoming_fd = null;
-                                            // send ack
-                                            // - getAckPacket()
-                                            // - insert the message at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
-                                            // - call js function to resolve the handle
-                                            // - pass the resolved handle to handleIPCMessage()
-                                            if (true) @panic("TODO: send ack, then handle the handle");
+                                        // Handle NODE_HANDLE message
+                                        const ack = ipc.incoming_fd != null;
+
+                                        const packet = if (ack) getAckPacket(ipc) else getNackPacket(ipc);
+                                        var handle = SendHandle{ .data = .{}, .handle = null, .is_ack_nack = true };
+                                        handle.data.write(packet) catch bun.outOfMemory();
+
+                                        // Insert at appropriate position in send queue
+                                        if (ipc.send_queue.queue.items.len == 0 or ipc.send_queue.queue.items[0].data.cursor == 0) {
+                                            ipc.send_queue.queue.insert(0, handle) catch bun.outOfMemory();
                                         } else {
-                                            // failure! send nack
-                                            // - getNackPacket()
-                                            // - insert the message at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
-                                            if (true) @panic("TODO: send nack");
-                                            break :skip_handle_message;
+                                            ipc.send_queue.queue.insert(1, handle) catch bun.outOfMemory();
                                         }
-                                        // - did we get a handle? serialize {cmd: 'NODE_HANDLE_ACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
-                                        //   - proceed to extracting the handle using a js function, then call handleIPCMessage() with the resolved handle
-                                        // - else? serialize {cmd: 'NODE_HANDLE_NACK'} and insert it at index 0 or 1 of the send queue (based on if 0 is in the process of being sent or not)
-                                        //   - skip calling handleIPCMessage()
+
+                                        // Send if needed
+                                        ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
+
+                                        if (!ack) break :skip_handle_message;
+
+                                        // Get file descriptor and clear it
+                                        const fd = ipc.incoming_fd.?;
+                                        ipc.incoming_fd = null;
+                                        _ = fd;
+
+                                        @panic("TODO: decode handle, decode message, call handleIPCMessage() with the resolved handle");
                                     } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
                                         ipc.send_queue.onAckNack(globalThis, socket, .ack);
                                         break :skip_handle_message;

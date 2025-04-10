@@ -187,7 +187,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         /* make sure the context is alive until the callback ends */
         us_socket_context_ref(ssl, s->context);
 
-        if (s->low_prio_state == 1) {
+        if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
@@ -196,7 +196,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 
             s->prev = 0;
             s->next = 0;
-            s->low_prio_state = 0;
+            s->flags.low_prio_state = 0;
             us_socket_context_unref(ssl, s->context);
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
@@ -247,7 +247,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 // - does not close
 struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
     if (!us_socket_is_closed(0, s)) {
-        if (s->low_prio_state == 1) {
+        if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
@@ -256,7 +256,7 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
 
             s->prev = 0;
             s->next = 0;
-            s->low_prio_state = 0;
+            s->flags.low_prio_state = 0;
             us_socket_context_unref(ssl, s->context);
 
         } else {
@@ -286,7 +286,7 @@ struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd,
 
     s->context = ctx;
     s->timeout = 0;
-    s->low_prio_state = 0;
+    s->flags.low_prio_state = 0;
 
     /* We always use nodelay */
     bsd_socket_nodelay(client_fd, 1);
@@ -339,7 +339,9 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->context = ctx;
     s->timeout = 0;
     s->long_timeout = 0;
-    s->low_prio_state = 0;
+    s->flags.low_prio_state = 0;
+    s->flags.is_paused = 0;
+    s->flags.allow_half_open = 0;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
@@ -565,13 +567,17 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 }
 
 void us_socket_pause(int ssl, struct us_socket_t *s) {
+    if(s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+    s->flags.is_paused = 1;
 }
 
 void us_socket_resume(int ssl, struct us_socket_t *s) {
+    if(!s->flags.is_paused) return;
+    s->flags.is_paused = 0;
     // closed cannot be resumed
     if(us_socket_is_closed(ssl, s)) return;
 

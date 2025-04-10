@@ -4,6 +4,7 @@
  */
 
 var assert = require("node:assert");
+var { METHODS } = require("node:http");
 
 /**
  * Module exports.
@@ -15,6 +16,7 @@ exports.shouldHaveHeader = shouldHaveHeader;
 exports.shouldNotHaveBody = shouldNotHaveBody;
 exports.shouldNotHaveHeader = shouldNotHaveHeader;
 exports.shouldSkipQuery = shouldSkipQuery;
+exports.methods = METHODS.map(method => method.toLowerCase()); // from lib/utils.js
 
 /**
  * Assert that a supertest response has a specific body.

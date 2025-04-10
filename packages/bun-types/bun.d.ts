@@ -1725,21 +1725,21 @@ declare module "bun" {
    * Represents a SQL query that can be executed, with additional control methods
    * Extends Promise to allow for async/await usage
    */
-  interface SQLQuery extends Promise<SQLQueryResult> {
+  interface SQLQuery<T = any> extends Promise<SQLQueryResult<T>> {
     /** Indicates if the query is currently executing */
     active: boolean;
     /** Indicates if the query has been cancelled */
     cancelled: boolean;
     /** Cancels the executing query */
-    cancel(): SQLQuery;
+    cancel(): SQLQuery<T>;
     /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-    simple(): SQLQuery;
+    simple(): SQLQuery<T>;
     /** Executes the query */
-    execute(): SQLQuery;
+    execute(): SQLQuery<T>;
     /** Returns the raw query result */
-    raw(): SQLQuery;
+    raw(): SQLQuery<T>;
     /** Returns only the values from the query result */
-    values(): SQLQuery;
+    values(): SQLQuery<T>;
   }
 
   /**
@@ -1769,7 +1769,7 @@ declare module "bun" {
   /**
    * A SQLQuery result
    */
-  interface SQLQueryResult extends Array<any> {
+  interface SQLQueryResult<T = any> extends Array<T> {
     /** Query of this result */
     query?: SQLQuery;
     /** Statement of this query */

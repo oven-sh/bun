@@ -1523,10 +1523,15 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
+        var ctx = this.virtual_machine;
 
         this.tickImmediateTasks(ctx);
+        if (comptime Environment.isPosix) {
+            if (this.immediate_tasks.items.len > 0) {
+                this.wakeup();
+            }
+        }
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1607,6 +1612,11 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
 
         this.tickImmediateTasks(ctx);
+        if (comptime Environment.isPosix) {
+            if (this.immediate_tasks.items.len > 0) {
+                this.wakeup();
+            }
+        }
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1671,12 +1681,13 @@ pub const EventLoop = struct {
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-        switch (promise.status(this.virtual_machine.jsc)) {
+        const jsc_vm = this.virtual_machine.jsc;
+        switch (promise.status(jsc_vm)) {
             .pending => {
-                while (promise.status(this.virtual_machine.jsc) == .pending) {
+                while (promise.status(jsc_vm) == .pending) {
                     this.tick();
 
-                    if (promise.status(this.virtual_machine.jsc) == .pending) {
+                    if (promise.status(jsc_vm) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1687,12 +1698,13 @@ pub const EventLoop = struct {
 
     pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-        switch (promise.status(this.virtual_machine.jsc)) {
+        const jsc_vm = this.virtual_machine.jsc;
+        switch (promise.status(jsc_vm)) {
             .pending => {
-                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
+                while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
                     this.tick();
 
-                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1702,12 +1714,10 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
-        JSC.markBinding(@src());
         this.tasks.writeItem(task) catch unreachable;
     }
 
     pub fn enqueueImmediateTask(this: *EventLoop, task: *JSC.BunTimer.ImmediateObject) void {
-        JSC.markBinding(@src());
         this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
     }
 

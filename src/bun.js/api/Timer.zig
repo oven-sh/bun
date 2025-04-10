@@ -211,10 +211,6 @@ pub const All = struct {
         if (this.active_timer_count == 0) {
             return false;
         }
-        if (vm.event_loop.immediate_tasks.items.len > 0 or vm.event_loop.next_immediate_tasks.items.len > 0) {
-            spec.* = .{ .nsec = 0, .sec = 0 };
-            return true;
-        }
 
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {

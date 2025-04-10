@@ -495,6 +495,7 @@ pub const WebWorker = struct {
 
         if (this.vm) |vm| {
             vm.eventLoop().wakeup();
+            vm.jsc.notifyNeedTermination();
         }
     }
 

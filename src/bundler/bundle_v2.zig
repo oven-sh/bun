@@ -3250,7 +3250,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (path.loader(&this.transpiler.options.loaders) == .html) {
+                if (path.loader(&this.transpiler.options.loaders) == .html and (import_record.loader == null or import_record.loader.? == .html)) {
                     // This use case is currently not supported. This error
                     // blocks an assertion failure because the DevServer
                     // reserves the HTML file's spot in IncrementalGraph for the

@@ -113,6 +113,9 @@ declare module "bun" {
   var fetch: typeof globalThis.fetch;
 }
 
+/**
+ * `JSC::JSModuleLoader`
+ */
 declare var Loader: {
   registry: Map<string, LoaderEntry>;
 

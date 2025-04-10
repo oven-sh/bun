@@ -867,7 +867,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -881,7 +881,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true, false) catch {
         const err = global.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(global, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(global, err);
     };
 
     return JSC.JSPromise.resolvedPromiseValue(global, value);

@@ -2485,7 +2485,7 @@ pub const NapiFinalizerTask = struct {
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             vm.rareData().pushCleanupHook(vm.global, this, runAsCleanupHook);
         } else {
-            globalThis.bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
+            globalThis.bunVM().event_loop.enqueueTask(JSC.Task.init(this));
         }
     }
 

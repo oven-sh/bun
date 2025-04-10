@@ -128,7 +128,41 @@
 //   },
 // };
 
-function serialize() {}
-function parse() {}
+const net = require("node:net");
+const dgram = require("node:dgram");
 
-export { serialize, parse };
+type Serialized = {
+  cmd: "NODE_HANDLE";
+  message: unknown;
+  type: "net.Socket" | "net.Server" | "dgram.Socket";
+};
+type Handle = import("node:net").Server | import("node:net").Socket | import("node:dgram").Socket;
+function serialize(message: unknown, handle: Handle) {
+  if (handle instanceof net.Server) {
+    throw new Error("todo serialize net.Server");
+  } else if (handle instanceof net.Socket) {
+    throw new Error("todo serialize net.Socket");
+  } else if (handle instanceof dgram.Socket) {
+    throw new Error("todo serialize dgram.Socket");
+  } else {
+    throw $ERR_INVALID_HANDLE_TYPE();
+  }
+}
+function parseHandle(serialized: Serialized): Handle {
+  switch (serialized.type) {
+    case "net.Server": {
+      throw new Error("TODO case net.Server");
+    }
+    case "net.Socket": {
+      throw new Error("TODO case net.Socket");
+    }
+    case "dgram.Socket": {
+      throw new Error("TODO case dgram.Socket");
+    }
+    default: {
+      throw new Error("failed to parse handle");
+    }
+  }
+}
+
+export { serialize, parseHandle };

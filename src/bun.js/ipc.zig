@@ -775,7 +775,6 @@ const NamedPipeIPCData = struct {
 };
 
 fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    std.log.info("S#impl", .{});
     const ex = callframe.argumentsAsArray(1)[0];
     JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
     return .undefined;

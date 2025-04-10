@@ -809,9 +809,9 @@ pub const ErrorResponse = struct {
         const error_code: JSC.Error =
             // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
             if (code.eqlComptime("42601"))
-            JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
-        else
-            JSC.Error.ERR_POSTGRES_SERVER_ERROR;
+                JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
+            else
+                JSC.Error.ERR_POSTGRES_SERVER_ERROR;
         const err = error_code.fmt(globalObject, "{s}", .{b.allocatedSlice()[0..b.len]});
 
         inline for (possible_fields) |field| {

@@ -534,22 +534,8 @@ pub const PostgresSQLQuery = struct {
         const event_loop = vm.eventLoop();
         const tag = CommandTag.init(command_tag_str);
 
-        const columns = brk: {
-            const fields = &this.statement.?.fields;
-            const columns = JSValue.createEmptyArray(globalObject, fields.len);
-
-            var i: u32 = 0;
-            for (fields.*) |*field| {
-                columns.putIndex(globalObject, i, field.toJS(globalObject));
-                i += 1;
-            }
-
-            break :brk columns;
-        };
-
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
-            columns,
             consumePendingValue(thisValue, globalObject) orelse .undefined,
             tag.toJSTag(globalObject),
             tag.toJSNumber(),
@@ -632,6 +618,38 @@ pub const PostgresSQLQuery = struct {
     pub fn push(this: *PostgresSQLQuery, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
         var pending_value = this.pending_value.get() orelse return;
         pending_value.push(globalThis, value);
+    }
+
+    pub fn getStatement(this: *PostgresSQLQuery, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
+        if (this.statement) |statement| {
+            if (PostgresSQLQuery.statementGetCached(thisValue)) |value| {
+                return value;
+            }
+
+            const obj = JSValue.createEmptyObject(globalObject, 2);
+
+            obj.put(globalObject, JSC.ZigString.static("string"), bun.String.init(this.query).toJS(globalObject));
+
+            const columns = brk: {
+                const fields = &statement.fields;
+                const columns = JSValue.createEmptyArray(globalObject, fields.len);
+
+                var i: u32 = 0;
+                for (fields.*) |*field| {
+                    columns.putIndex(globalObject, i, field.toJS(globalObject));
+                    i += 1;
+                }
+
+                break :brk columns;
+            };
+            obj.put(globalObject, JSC.ZigString.static("columns"), columns);
+
+            PostgresSQLQuery.statementSetCached(thisValue, globalObject, obj);
+
+            return obj;
+        }
+
+        return .undefined;
     }
 
     pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

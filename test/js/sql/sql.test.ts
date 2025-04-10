@@ -2385,6 +2385,18 @@ if (isDockerEnabled()) {
     expect((await sql.unsafe("select 1 as x")).columns[0].name).toBe("x");
   });
 
+  test("Result has statement with query", async () => {
+    expect((await sql`select 1 as x`).statement.string).toBe("select 1 as x");
+  });
+
+  test("Result has statement with template query", async () => {
+    expect((await sql`select ${"TEST"} as x`).statement.string).toBe("select $1  as x");
+  });
+
+  test("Result has statement with columns", async () => {
+    expect((await sql`select 1 as x`).statement.columns[0].name).toBe("x");
+  });
+
   // t('forEach has result as second argument', async() => {
   //   let x
   //   await sql`select 1 as x`.forEach((_, result) => x = result)

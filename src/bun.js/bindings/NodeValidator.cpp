@@ -643,7 +643,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "values"_s, "Array"_s, arrayValue);
 }
 
-JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
+JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::FixedVector<ASCIILiteral>& oneOf)
 {
     if (!value.isString()) {
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
@@ -656,6 +656,25 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     for (ASCIILiteral oneOfStr : oneOf) {
 
         if (valueView == oneOfStr) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
+}
+
+JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::FixedVector<int32_t>& oneOf, int32_t* out)
+{
+    if (!value.isInt32()) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
+    }
+
+    int32_t value_num = value.asInt32();
+    for (int32_t oneOfNum : oneOf) {
+        if (value_num == oneOfNum) {
+            if (out) {
+                *out = oneOfNum;
+            }
             return JSValue::encode(jsUndefined());
         }
     }

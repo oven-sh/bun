@@ -247,6 +247,7 @@ const errors: ErrorCodeMapping = [
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
   ["ERR_OSSL_EVP_INVALID_DIGEST", Error],
+  ["ERR_KEY_GENERATION_JOB_FAILED", Error],
 
   ["ERR_REDIS_CONNECTION_CLOSED", Error, "RedisError"],
   ["ERR_REDIS_INVALID_RESPONSE", Error, "RedisError"],

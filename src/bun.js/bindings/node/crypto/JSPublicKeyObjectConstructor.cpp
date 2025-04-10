@@ -23,7 +23,7 @@ JSC_DEFINE_HOST_FUNCTION(callPublicKeyObject, (JSC::JSGlobalObject * lexicalGlob
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    throwTypeError(lexicalGlobalObject, scope, "Cannot call PublicKeyObject class constructor without |new|"_s);
+    throwConstructorCannotBeCalledAsFunctionTypeError(lexicalGlobalObject, scope, "PublicKeyObject"_s);
     return JSValue::encode({});
 }
 

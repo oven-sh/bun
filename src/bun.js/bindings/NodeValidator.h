@@ -47,7 +47,8 @@ JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* 
 JSC::EncodedJSValue validateInt32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue min, JSValue max);
 JSC::EncodedJSValue validateInt32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue min, JSValue max, int32_t* out = nullptr);
 JSC::EncodedJSValue validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
-JSC::EncodedJSValue validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::Vector<ASCIILiteral>& oneOf);
+JSC::EncodedJSValue validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::FixedVector<ASCIILiteral>& oneOf);
+JSC::EncodedJSValue validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::FixedVector<int32_t>& oneOf, int32_t* out = nullptr);
 JSC::EncodedJSValue validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
 JSC::EncodedJSValue validateBoolean(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
 

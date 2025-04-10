@@ -24,7 +24,7 @@ JSC_DEFINE_HOST_FUNCTION(callKeyObjectHandle, (JSC::JSGlobalObject * lexicalGlob
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    throwTypeError(lexicalGlobalObject, scope, "Cannot call KeyObjectHandle class constructor without |new|"_s);
+    throwConstructorCannotBeCalledAsFunctionTypeError(lexicalGlobalObject, scope, "KeyObjectHandle"_s);
     return JSValue::encode({});
 }
 

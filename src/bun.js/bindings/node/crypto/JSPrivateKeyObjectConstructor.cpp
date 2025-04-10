@@ -23,7 +23,7 @@ JSC_DEFINE_HOST_FUNCTION(callPrivateKeyObject, (JSC::JSGlobalObject * lexicalGlo
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    throwTypeError(lexicalGlobalObject, scope, "Cannot call PrivateKeyObject class constructor without |new|"_s);
+    throwConstructorCannotBeCalledAsFunctionTypeError(lexicalGlobalObject, scope, "PrivateKeyObject"_s);
     return JSValue::encode({});
 }
 

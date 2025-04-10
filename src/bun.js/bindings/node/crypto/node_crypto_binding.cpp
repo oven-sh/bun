@@ -52,30 +52,12 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "CryptoUtil.h"
+#include "CryptoKeygen.h"
 
 using namespace JSC;
 using namespace Bun;
 
 namespace WebCore {
-
-JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    JSValue keyValue = callFrame->argument(0);
-    JSValue encodingValue = callFrame->argument(1);
-
-    WTF::Vector<uint8_t> symmetricKey;
-    prepareSecretKey(lexicalGlobalObject, scope, symmetricKey, keyValue, encodingValue, true);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-    Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, KeyObject::Type::Secret, WTFMove(symmetricKey));
-
-    return JSValue::encode(secretKey);
-}
 
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -478,6 +460,18 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "createSecretKey"_s)),
         JSFunction::create(vm, globalObject, 2, "createSecretKey"_s, jsCreateSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "createPublicKey"_s)),
+        JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, jsCreatePublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generateKey"_s)),
+        JSFunction::create(vm, globalObject, 3, "generateKey"_s, jsGenerateKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generateKeySync"_s)),
+        JSFunction::create(vm, globalObject, 2, "generateKeySync"_s, jsGenerateKeySync, ImplementationVisibility::Public, NoIntrinsic), 0);
+    
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generateKeyPair"_s)),
+        JSFunction::create(vm, globalObject, 3, "generateKeyPair"_s, jsGenerateKeyPair, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generateKeyPairSync"_s)),
+        JSFunction::create(vm, globalObject, 2, "generateKeyPairSync"_s, jsGenerateKeyPairSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

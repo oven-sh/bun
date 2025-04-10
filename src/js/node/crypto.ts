@@ -12,8 +12,6 @@ const {
   exports,
   createPublicKey,
   createPrivateKey,
-  generateKeySync,
-  generateKeyPairSync,
   X509Certificate,
 } = $cpp("KeyObject.cpp", "createKeyObjectBinding");
 
@@ -53,6 +51,11 @@ const {
   PrivateKeyObject: PrivateKeyObject2,
 
   createSecretKey,
+
+  generateKey,
+  generateKeySync,
+  generateKeyPair,
+  generateKeyPairSync,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
@@ -232,46 +235,10 @@ class KeyObject {
   }
 }
 
-crypto_exports.generateKeySync = function (algorithm, options) {
-  return KeyObject.from(generateKeySync(algorithm, options?.length));
-};
-
-crypto_exports.generateKey = function (algorithm, options, callback) {
-  try {
-    const key = KeyObject.from(generateKeySync(algorithm, options?.length));
-    typeof callback === "function" && callback(null, KeyObject.from(key));
-  } catch (err) {
-    typeof callback === "function" && callback(err);
-  }
-};
-
-function _generateKeyPairSync(algorithm, options) {
-  const result = generateKeyPairSync(algorithm, options);
-  if (result) {
-    const publicKeyEncoding = options?.publicKeyEncoding;
-    const privateKeyEncoding = options?.privateKeyEncoding;
-    result.publicKey = publicKeyEncoding
-      ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
-      : KeyObject.from(result.publicKey);
-    result.privateKey = privateKeyEncoding
-      ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
-      : KeyObject.from(result.privateKey);
-  }
-  return result;
-}
-crypto_exports.generateKeyPairSync = _generateKeyPairSync;
-
-function _generateKeyPair(algorithm, options, callback) {
-  try {
-    const result = _generateKeyPairSync(algorithm, options);
-    typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
-  } catch (err) {
-    typeof callback === "function" && callback(err);
-  }
-}
-const { defineCustomPromisifyArgs } = require("internal/promisify");
-defineCustomPromisifyArgs(_generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = _generateKeyPair;
+crypto_exports.generateKey = generateKey;
+crypto_exports.generateKeySync = generateKeySync;
+crypto_exports.generateKeyPair = generateKeyPair;
+crypto_exports.generateKeyPairSync = generateKeyPairSync;
 
 crypto_exports.createSecretKey = createSecretKey;
 

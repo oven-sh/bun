@@ -874,7 +874,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const WTF::FixedVector<ASCIILiteral>& oneOf)
 {
     WTF::StringBuilder builder;
     builder.append("The "_s);
@@ -896,6 +896,32 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
         builder.append('`');
         builder.append(oneOfStr);
         builder.append('`');
+    }
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const WTF::FixedVector<int32_t>& oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    if (WTF::StringView(name).contains('.')) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+
+    bool first = true;
+    for (int32_t oneOfStr : oneOf) {
+        if (!first) {
+            builder.append(", "_s);
+        }
+        first = false;
+        builder.append(oneOfStr);
     }
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -1240,6 +1266,13 @@ JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope& scope, JSC::JSGloba
 JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
 {
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_PASSPHRASE, message));
+    return {};
+}
+
+JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Key generation job failed"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_KEY_GENERATION_JOB_FAILED, message));
     return {};
 }
 

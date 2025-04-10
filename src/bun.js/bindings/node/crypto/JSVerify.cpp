@@ -1029,7 +1029,7 @@ std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* 
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     // Validate kty is one of the supported types
-    const WTF::Vector<ASCIILiteral> validKeyTypes = { "RSA"_s, "EC"_s, "OKP"_s };
+    const WTF::FixedVector<ASCIILiteral> validKeyTypes = { "RSA"_s, "EC"_s, "OKP"_s };
     bool isValidType = false;
     for (const auto& validType : validKeyTypes) {
         if (kty == validType) {
@@ -1058,7 +1058,7 @@ std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
         // Validate crv is one of the supported curves
-        const WTF::Vector<WTF::ASCIILiteral> validCurves = { "Ed25519"_s, "Ed448"_s, "X25519"_s, "X448"_s };
+        const WTF::FixedVector<WTF::ASCIILiteral> validCurves = { "Ed25519"_s, "Ed448"_s, "X25519"_s, "X448"_s };
         bool validCurve = false;
         for (const auto& validCurveType : validCurves) {
             if (crv == validCurveType) {
@@ -1168,7 +1168,7 @@ std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
         // Validate crv is one of the supported curves
-        const WTF::Vector<WTF::ASCIILiteral> validCurves = { "P-256"_s, "secp256k1"_s, "P-384"_s, "P-521"_s };
+        const WTF::FixedVector<WTF::ASCIILiteral> validCurves = { "P-256"_s, "secp256k1"_s, "P-384"_s, "P-521"_s };
         bool validCurve = false;
         for (const auto& validCurveType : validCurves) {
             if (crv == validCurveType) {

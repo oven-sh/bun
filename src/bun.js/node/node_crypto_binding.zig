@@ -104,11 +104,13 @@ fn ExternCryptoJob(comptime name: []const u8) type {
 pub const CheckPrimeJob = ExternCryptoJob("CheckPrimeJob");
 pub const GeneratePrimeJob = ExternCryptoJob("GeneratePrimeJob");
 pub const HkdfJob = ExternCryptoJob("HkdfJob");
+pub const GenerateSecretKeyJob = ExternCryptoJob("GenerateSecretKeyJob");
 
 comptime {
     _ = CheckPrimeJob;
     _ = GeneratePrimeJob;
     _ = HkdfJob;
+    _ = GenerateSecretKeyJob;
 }
 
 fn CryptoJob(comptime Ctx: type) type {

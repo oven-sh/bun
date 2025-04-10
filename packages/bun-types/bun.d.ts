@@ -1739,7 +1739,7 @@ declare module "bun" {
     /** Returns the raw query result */
     raw(): SQLQuery;
     /** Returns only the values from the query result */
-    values(): SQLQueryResult;
+    values(): SQLQuery;
   }
 
   /**

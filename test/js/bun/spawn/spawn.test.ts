@@ -532,7 +532,6 @@ for (let [gcTick, label] of [
 }
 
 // This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-// it.skipIf(!(!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS))(
 it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {

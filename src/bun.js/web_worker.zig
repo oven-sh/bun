@@ -411,6 +411,7 @@ pub const WebWorker = struct {
         vm.preload = this.preloads;
         WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
+            vm.exit_handler.exit_code = 1;
             this.flushLogs();
             this.exitAndDeinit();
             return;

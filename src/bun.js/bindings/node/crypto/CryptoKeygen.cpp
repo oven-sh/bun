@@ -8,16 +8,16 @@ using namespace Bun;
 using namespace JSC;
 using namespace WebCore;
 
-GenerateSecretKeyJobCtx::GenerateSecretKeyJobCtx(size_t length)
+SecretKeyJobCtx::SecretKeyJobCtx(size_t length)
     : m_length(length)
 {
 }
 
-extern "C" void Bun__GenerateSecretKeyJobCtx__runTask(GenerateSecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
+extern "C" void Bun__SecretKeyJobCtx__runTask(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
 {
     ctx->runTask(lexicalGlobalObject);
 }
-void GenerateSecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
+void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
     Vector<uint8_t> key;
     key.grow(m_length);
@@ -27,11 +27,11 @@ void GenerateSecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = WTFMove(key);
 }
 
-extern "C" void Bun__GenerateSecretKeyJobCtx__runFromJS(GenerateSecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
+extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
 {
     ctx->runFromJS(lexicalGlobalObject, callback);
 }
-void GenerateSecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
+void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
@@ -53,36 +53,36 @@ void GenerateSecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC
         JSValue::encode(secretKey));
 }
 
-extern "C" void Bun__GenerateSecretKeyJobCtx__deinit(GenerateSecretKeyJobCtx* ctx)
+extern "C" void Bun__SecretKeyJobCtx__deinit(SecretKeyJobCtx* ctx)
 {
     ctx->deinit();
 }
-void GenerateSecretKeyJobCtx::deinit()
+void SecretKeyJobCtx::deinit()
 {
     delete this;
 }
 
-extern "C" GenerateSecretKeyJob* Bun__GenerateSecretKeyJob__create(JSC::JSGlobalObject*, GenerateSecretKeyJobCtx*, EncodedJSValue callback);
-GenerateSecretKeyJob* GenerateSecretKeyJob::create(JSC::JSGlobalObject* lexicalGlobalObject, size_t length, JSC::JSValue callback)
+extern "C" SecretKeyJob* Bun__SecretKeyJob__create(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
+SecretKeyJob* SecretKeyJob::create(JSC::JSGlobalObject* lexicalGlobalObject, size_t length, JSC::JSValue callback)
 {
-    GenerateSecretKeyJobCtx* ctx = new GenerateSecretKeyJobCtx(length);
-    return Bun__GenerateSecretKeyJob__create(lexicalGlobalObject, ctx, JSValue::encode(callback));
+    SecretKeyJobCtx* ctx = new SecretKeyJobCtx(length);
+    return Bun__SecretKeyJob__create(lexicalGlobalObject, ctx, JSValue::encode(callback));
 }
 
-extern "C" void Bun__GenerateSecretKeyJob__schedule(GenerateSecretKeyJob* job);
-void GenerateSecretKeyJob::schedule()
+extern "C" void Bun__SecretKeyJob__schedule(SecretKeyJob* job);
+void SecretKeyJob::schedule()
 {
-    Bun__GenerateSecretKeyJob__schedule(this);
+    Bun__SecretKeyJob__schedule(this);
 }
 
-extern "C" void Bun__GenerateSecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, GenerateSecretKeyJobCtx*, EncodedJSValue callback);
-void GenerateSecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, GenerateSecretKeyJobCtx&& ctx, JSC::JSValue callback)
+extern "C" void Bun__SecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
+void SecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, SecretKeyJobCtx&& ctx, JSC::JSValue callback)
 {
-    GenerateSecretKeyJobCtx* ctxCopy = new GenerateSecretKeyJobCtx(WTFMove(ctx));
-    return Bun__GenerateSecretKeyJob__createAndSchedule(lexicalGlobalObject, ctxCopy, JSValue::encode(callback));
+    SecretKeyJobCtx* ctxCopy = new SecretKeyJobCtx(WTFMove(ctx));
+    return Bun__SecretKeyJob__createAndSchedule(lexicalGlobalObject, ctxCopy, JSValue::encode(callback));
 }
 
-std::optional<GenerateSecretKeyJobCtx> GenerateSecretKeyJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue typeValue, JSC::JSValue optionsValue)
+std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue typeValue, JSC::JSValue optionsValue)
 {
     V::validateString(scope, globalObject, typeValue, "type"_s);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -99,14 +99,14 @@ std::optional<GenerateSecretKeyJobCtx> GenerateSecretKeyJobCtx::fromJS(JSC::JSGl
         int32_t length;
         V::validateInteger(scope, globalObject, optionsValue, "options.length"_s, jsNumber(8), jsNumber(std::numeric_limits<int32_t>::max()), &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        return GenerateSecretKeyJobCtx(length);
+        return SecretKeyJobCtx(length);
     }
 
     if (typeView == "aes"_s) {
         int32_t length;
         V::validateOneOf(scope, globalObject, "options.length"_s, optionsValue, { 128, 192, 256 }, &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        return GenerateSecretKeyJobCtx(length);
+        return SecretKeyJobCtx(length);
     }
 
     ERR::INVALID_ARG_VALUE(scope, globalObject, "type"_s, typeValue, "must be a supported key type"_s);
@@ -138,11 +138,11 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKey, (JSC::JSGlobalObject * lexicalGlobalObje
     V::validateFunction(scope, lexicalGlobalObject, callbackValue, "callback"_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    std::optional<GenerateSecretKeyJobCtx> ctx = GenerateSecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
+    std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
     ASSERT(ctx.has_value() == !!scope.exception());
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    GenerateSecretKeyJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callbackValue);
+    SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callbackValue);
 
     return JSValue::encode(jsUndefined());
 }
@@ -155,7 +155,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     JSValue typeValue = callFrame->argument(0);
     JSValue optionsValue = callFrame->argument(1);
 
-    std::optional<GenerateSecretKeyJobCtx> ctx = GenerateSecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
+    std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
     ASSERT(ctx.has_value() == !!scope.exception());
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 

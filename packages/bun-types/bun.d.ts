@@ -1725,7 +1725,7 @@ declare module "bun" {
    * Represents a SQL query that can be executed, with additional control methods
    * Extends Promise to allow for async/await usage
    */
-  interface SQLQuery extends Promise<any> {
+  interface SQLQuery extends Promise<SQLQueryResult> {
     /** Indicates if the query is currently executing */
     active: boolean;
     /** Indicates if the query has been cancelled */
@@ -1739,7 +1739,47 @@ declare module "bun" {
     /** Returns the raw query result */
     raw(): SQLQuery;
     /** Returns only the values from the query result */
-    values(): SQLQuery;
+    values(): SQLQueryResult;
+  }
+
+  /**
+   * A SQLQuery statement summary
+   */
+  interface SQLQueryStatement {
+    /** Template SQL query */
+    string: string;
+    /** Columns associated with the SQL query */
+    columns: SQLQueryStatementColumn[];
+  }
+
+  /**
+   * A SQLQueryStatement column
+   */
+  interface SQLQueryStatementColumn {
+    /** Name/ID of column */
+    name: string;
+    /** Table ID of column (set to zero if no table associated) */
+    table: number;
+    /** Table column index of column (set to zero if no table associated) */
+    number: number;
+    /** Data Type OID of column */
+    type: number;
+  }
+
+  /**
+   * A SQLQuery result
+   */
+  interface SQLQueryResult extends Array<any> {
+    /** Query of this result */
+    query?: SQLQuery;
+    /** Statement of this query */
+    statement?: SQLQueryStatement;
+    /** Columns of this query */
+    columns?: SQLQueryStatementColumn[];
+    /** Number of rows in this query */
+    count?: number;
+    /** The command type ran */
+    commands?: string;
   }
 
   /**

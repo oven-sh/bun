@@ -1689,10 +1689,11 @@ fn NewPrinter(
                     .bun => {
                         if (record.kind == .dynamic) {
                             p.print("Promise.resolve(globalThis.Bun)");
-                        } else if (record.kind == .require) {
+                            return;
+                        } else if (record.kind == .require or record.kind == .stmt) {
                             p.print("globalThis.Bun");
+                            return;
                         }
-                        return;
                     },
                     .bun_test => {
                         if (record.kind == .dynamic) {

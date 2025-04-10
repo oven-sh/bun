@@ -930,12 +930,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             // - json ipc is the same as node in bun
                             const msg_data = result.message.data;
                             if (msg_data.isObject()) {
-                                const cmd = msg_data.get(globalThis, "cmd") catch |e| {
-                                    _ = globalThis.takeException(e);
+                                const cmd = msg_data.fastGet(globalThis, .cmd) orelse {
+                                    if (globalThis.hasException()) _ = globalThis.takeException(bun.JSError.JSError);
                                     break :skip_handle_message;
                                 };
-                                if (cmd != null and cmd.?.isString()) {
-                                    const cmd_str = bun.String.fromJS(cmd.?, globalThis) catch |e| {
+                                if (cmd.isString()) {
+                                    const cmd_str = bun.String.fromJS(cmd, globalThis) catch |e| {
                                         _ = globalThis.takeException(e);
                                         break :skip_handle_message;
                                     };

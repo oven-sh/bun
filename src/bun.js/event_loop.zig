@@ -236,7 +236,7 @@ pub const AnyTaskWithExtraContext = struct {
     pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *AnyTaskWithExtraContext {
         const Ptr = std.meta.Child(@TypeOf(ptr));
         const Wrapper = struct {
-            any_task: AnyTaskWithExtraContext = undefined,
+            any_task: AnyTaskWithExtraContext,
             wrapped: *Ptr,
             pub fn function(this: *anyopaque, extra: *anyopaque) void {
                 const that: *@This() = @ptrCast(@alignCast(this));

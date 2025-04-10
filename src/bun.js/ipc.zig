@@ -825,7 +825,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
 
     if (!handle.isUndefinedOrNull()) {
         // zig side of handling the handle
-        std.log.info("TODO handle handle", .{});
+        // std.log.info("TODO handle handle", .{});
     }
 
     const good = ipc_data.serializeAndSend(globalObject, message, .external);

@@ -126,7 +126,7 @@ pub const Tester = struct {
 
         switch (ReportType.init(tester)) {
             .none => {
-                std.log.info("No expectations.\n\n", .{});
+                std.fmt.format(stderr.writer(), "No expectations.\n\n", .{}) catch {};
             },
             .pass => {
                 std.fmt.format(stderr.writer(), "{s}All {d} expectations passed.{s}\n", .{ GREEN, tester.pass.items.len, GREEN }) catch unreachable;

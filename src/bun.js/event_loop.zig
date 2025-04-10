@@ -825,8 +825,8 @@ pub const EventLoop = struct {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    immediate_tasks: Queue = undefined,
-    next_immediate_tasks: Queue = undefined,
+    immediate_tasks: std.ArrayList(*JSC.BunTimer.ImmediateObject) = .init(bun.default_allocator),
+    next_immediate_tasks: std.ArrayList(*JSC.BunTimer.ImmediateObject) = .init(bun.default_allocator),
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSC.JSGlobalObject = undefined,
@@ -1400,34 +1400,32 @@ pub const EventLoop = struct {
         var global = this.global;
         const global_vm = global.vm();
 
-        var immediate_tasks = this.immediate_tasks;
-        defer immediate_tasks.deinit();
+        var to_run_now = this.immediate_tasks;
 
         this.immediate_tasks = this.next_immediate_tasks;
-        this.next_immediate_tasks = .init(this.immediate_tasks.allocator);
+        this.next_immediate_tasks = .init(bun.default_allocator);
 
-        for (immediate_tasks.readableSlice(0)) |task| {
-            log("run {s} (immediate)", .{@tagName(task.tag())});
-
-            switch (task.tag()) {
-                @field(Task.Tag, @typeName(ImmediateObject)) => {
-                    var any: *ImmediateObject = task.get(ImmediateObject).?;
-                    any.runImmediateTask(virtual_machine);
-                },
-                @field(Task.Tag, @typeName(NapiFinalizerTask)) => {
-                    task.get(NapiFinalizerTask).?.runOnJSThread();
-                },
-                else => {
-                    // This shouldn't happen if queueing is correct
-                    bun.Output.panic("Unexpected task type '{s}' in immediate queue", .{@tagName(task.tag())});
-                },
-            }
+        for (to_run_now.items) |task| {
+            task.runImmediateTask(virtual_machine);
             this.drainMicrotasksWithGlobal(global, global_vm);
         }
 
-        if (this.virtual_machine.timer.immediate_ref_count > 0) {
-            this.wakeup();
+        if (this.next_immediate_tasks.capacity > 0) {
+            // this would only occur if we were recursively running tickImmediateTasks.
+            @branchHint(.unlikely);
+            this.immediate_tasks.appendSlice(this.next_immediate_tasks.items) catch bun.outOfMemory();
+            this.next_immediate_tasks.deinit();
         }
+
+        to_run_now.clearRetainingCapacity();
+
+        if (to_run_now.capacity > 1024 * 128) {
+            // once in a while, deinit the array to free up memory
+            to_run_now.deinit();
+            to_run_now = .init(bun.default_allocator);
+        }
+
+        this.next_immediate_tasks = to_run_now;
     }
 
     fn tickConcurrent(this: *EventLoop) void {
@@ -1709,9 +1707,9 @@ pub const EventLoop = struct {
         this.tasks.writeItem(task) catch unreachable;
     }
 
-    pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
+    pub fn enqueueImmediateTask(this: *EventLoop, task: *JSC.BunTimer.ImmediateObject) void {
         JSC.markBinding(@src());
-        this.immediate_tasks.writeItem(task) catch unreachable;
+        this.immediate_tasks.append(task) catch bun.outOfMemory();
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {

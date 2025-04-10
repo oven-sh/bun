@@ -146,15 +146,18 @@ pub const All = struct {
         const new = old + delta;
         this.immediate_ref_count = new;
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+
         if (old <= 0 and new > 0) {
-            vm.uwsLoop().ref();
-        } else if (old > 0 and new <= 0) {
-            vm.uwsLoop().unref();
-        } else if (comptime Environment.isWindows) {
-            if (old <= 0 and new > 0) {
+            if (comptime Environment.isWindows) {
                 this.uv_timer.ref();
-            } else if (old > 0 and new <= 0) {
+            } else {
+                vm.uwsLoop().ref();
+            }
+        } else if (old > 0 and new <= 0) {
+            if (comptime Environment.isWindows) {
                 this.uv_timer.unref();
+            } else {
+                vm.uwsLoop().unref();
             }
         }
     }
@@ -195,7 +198,7 @@ pub const All = struct {
         if (this.active_timer_count == 0) {
             return false;
         }
-        if (vm.event_loop.immediate_tasks.count > 0 or vm.event_loop.next_immediate_tasks.count > 0) {
+        if (vm.event_loop.immediate_tasks.items.len > 0 or vm.event_loop.next_immediate_tasks.items.len > 0) {
             spec.* = .{ .nsec = 0, .sec = 0 };
             return true;
         }
@@ -934,7 +937,7 @@ const TimerObjectInternals = struct {
                 ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
             ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
             const parent: *ImmediateObject = @fieldParentPtr("internals", this);
-            vm.enqueueImmediateTask(JSC.Task.init(parent));
+            vm.enqueueImmediateTask(parent);
             this.setEnableKeepingEventLoopAlive(vm, true);
             // ref'd by event loop
             parent.ref();
@@ -1038,12 +1041,9 @@ const TimerObjectInternals = struct {
         this.flags.is_keeping_event_loop_alive = enable;
         switch (this.flags.kind) {
             .setTimeout, .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
-            // If setImmediate calls ref the event loop, then when the only pending tasks are
-            // immediate callbacks we will still try to check for I/O activity, when really we only
-            // want to run immediate callbacks.
-            .setImmediate => {
-                vm.timer.incrementImmediateRef(if (enable) 1 else -1);
-            },
+
+            // setImmediate has slightly different event loop logic
+            .setImmediate => vm.timer.incrementImmediateRef(if (enable) 1 else -1),
         }
     }
 

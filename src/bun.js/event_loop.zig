@@ -1400,7 +1400,13 @@ pub const EventLoop = struct {
         var global = this.global;
         const global_vm = global.vm();
 
-        while (this.immediate_tasks.readItem()) |task| {
+        var immediate_tasks = this.immediate_tasks;
+        defer immediate_tasks.deinit();
+
+        this.immediate_tasks = this.next_immediate_tasks;
+        this.next_immediate_tasks = .init(this.immediate_tasks.allocator);
+
+        for (immediate_tasks.readableSlice(0)) |task| {
             log("run {s} (immediate)", .{@tagName(task.tag())});
 
             switch (task.tag()) {
@@ -1417,6 +1423,10 @@ pub const EventLoop = struct {
                 },
             }
             this.drainMicrotasksWithGlobal(global, global_vm);
+        }
+
+        if (this.virtual_machine.timer.immediate_ref_count > 0) {
+            this.wakeup();
         }
     }
 

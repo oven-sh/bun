@@ -2396,6 +2396,7 @@ class ServerHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+      error = $makeAbortError(undefined, { cause: error });
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
@@ -2855,6 +2856,7 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+      error = $makeAbortError(undefined, { cause: error });
 
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },

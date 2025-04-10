@@ -1759,11 +1759,11 @@ declare module "bun" {
     /** Name/ID of column */
     name: string;
     /** Table ID of column (set to zero if no table associated) */
-    table: number;
+    table?: number;
     /** Table column index of column (set to zero if no table associated) */
-    number: number;
+    number?: number;
     /** Data Type OID of column */
-    type: number;
+    type?: number;
   }
 
   /**

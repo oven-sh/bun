@@ -1476,7 +1476,7 @@ pub const ThreadSafeFunction = struct {
     closing: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.not_closing),
     aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
-    pub usingnamespace bun.New(ThreadSafeFunction);
+    pub const new = bun.TrivialNew(ThreadSafeFunction);
 
     const ClosingState = enum(u8) {
         not_closing,
@@ -1690,7 +1690,7 @@ pub const ThreadSafeFunction = struct {
 
         this.callback.deinit();
         this.queue.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn ref(this: *ThreadSafeFunction) void {

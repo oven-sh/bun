@@ -296,7 +296,7 @@ pub const UDPSocket = struct {
         return this.js_refcount.load(.monotonic) > 0;
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) bun.JSError!JSValue {
         log("udpSocket", .{});
@@ -901,7 +901,7 @@ pub const UDPSocket = struct {
         bun.assert(this.closed);
         this.poll_ref.disable();
         this.config.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {

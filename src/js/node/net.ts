@@ -1525,10 +1525,6 @@ Server.prototype[kRealListen] = function (
   setTimeout(emitListeningNextTick, 1, this);
 };
 
-Server.prototype[bunInternalHandle] = function () {
-  return this._handle;
-};
-
 Server.prototype.getsockname = function getsockname(out) {
   out.port = this.address().port;
   return out;

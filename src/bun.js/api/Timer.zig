@@ -41,6 +41,7 @@ pub const All = struct {
     /// TimerObjectInternals.epoch.
     epoch: u25 = 0,
     immediate_ref_count: i32 = 0,
+    uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -149,13 +150,25 @@ pub const All = struct {
 
         if (old <= 0 and new > 0) {
             if (comptime Environment.isWindows) {
-                this.uv_timer.ref();
+                if (this.uv_idle.data == null) {
+                    this.uv_idle.init(uv.Loop.get());
+                    this.uv_idle.data = vm;
+                }
+
+                // Matches Node.js behavior
+                this.uv_idle.start(struct {
+                    fn cb(_: *uv.uv_idle_t) callconv(.C) void {
+                        // prevent libuv from polling forever
+                    }
+                }.cb);
             } else {
                 vm.uwsLoop().ref();
             }
         } else if (old > 0 and new <= 0) {
             if (comptime Environment.isWindows) {
-                this.uv_timer.unref();
+                if (this.uv_idle.data != null) {
+                    this.uv_idle.stop();
+                }
             } else {
                 vm.uwsLoop().unref();
             }

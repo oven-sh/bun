@@ -496,8 +496,6 @@ pub const WebWorker = struct {
         if (this.vm) |vm| {
             vm.eventLoop().wakeup();
         }
-
-        this.setRefInternal(false);
     }
 
     /// This handles cleanup, emitting the "close" event, and deinit.

@@ -1332,15 +1332,13 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
 {
     switch (abortReason) {
     case CommonAbortReason::Timeout: {
-        // This message is defined in the spec: https://webidl.spec.whatwg.org/#timeouterror
         return createDOMException(globalObject, ExceptionCode::TimeoutError, "The operation timed out."_s);
     }
     case CommonAbortReason::UserAbort: {
-        // This message is defined in the spec: https://webidl.spec.whatwg.org/#aborterror
         return createDOMException(globalObject, ExceptionCode::AbortError, "The operation was aborted."_s);
     }
     case CommonAbortReason::ConnectionClosed: {
-        return createDOMException(globalObject, ExceptionCode::NetworkError, "The connection was closed."_s);
+        return createDOMException(globalObject, ExceptionCode::AbortError, "The connection was closed."_s);
     }
     default: {
         break;

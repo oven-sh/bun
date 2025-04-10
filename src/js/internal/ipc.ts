@@ -137,8 +137,9 @@ type Serialized = {
   type: "net.Socket" | "net.Server" | "dgram.Socket";
 };
 type Handle = import("node:net").Server | import("node:net").Socket | import("node:dgram").Socket;
-function serialize(message: unknown, handle: Handle) {
+function serialize(message: unknown, handle: Handle): [unknown, Serialized] {
   if (handle instanceof net.Server) {
+    return [handle._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
     throw new Error("todo serialize net.Server");
   } else if (handle instanceof net.Socket) {
     throw new Error("todo serialize net.Socket");
@@ -148,9 +149,23 @@ function serialize(message: unknown, handle: Handle) {
     throw $ERR_INVALID_HANDLE_TYPE();
   }
 }
-function parseHandle(serialized: Serialized): Handle {
+function parseHandle(serialized: Serialized, handle: unknown, emit: (handle: Handle) => void) {
   switch (serialized.type) {
     case "net.Server": {
+      const server = new net.Server();
+      server.listen(handle, () => {
+        // means the message might arrive out of order.
+        // node does this too though so that's okay.
+        // which is weird. we should check if that is actually true:
+        // - send(server), send({message}), watch the event order
+        emit(server);
+        // interestingly, internal messages can be nested in node. maybe for cluster?
+        // emit is:
+        // handleMessage(message.msg, handle, isInternal(message.msg))
+
+        // in node, the messages seem to always arrive in order. maybe due to luck given that the ack response
+        // is sent immediately.
+      });
       throw new Error("TODO case net.Server");
     }
     case "net.Socket": {

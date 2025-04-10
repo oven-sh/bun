@@ -1691,6 +1691,7 @@ pub const JSValue = enum(i64) {
         ignoreBOM,
         type,
         signal,
+        cmd,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

@@ -816,6 +816,19 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         return globalObject.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
     }
 
+    if (!handle.isUndefinedOrNull()) {
+        const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
+        const serialized_message = serialized_array.getIndex(globalObject, 0);
+        const serialized_handle = serialized_array.getIndex(globalObject, 1);
+        message = serialized_message;
+        handle = serialized_handle;
+    }
+
+    if (!handle.isUndefinedOrNull()) {
+        // zig side of handling the handle
+        std.log.info("TODO handle handle", .{});
+    }
+
     const good = ipc_data.serializeAndSend(globalObject, message, .external);
 
     if (good) {
@@ -1163,3 +1176,11 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 ///     fn handleIPCClose(*Context) void
 /// }
 pub const NewIPCHandler = if (Environment.isWindows) NewNamedPipeIPCHandler else NewSocketIPCHandler;
+
+extern "c" fn IPCSerialize(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) JSC.JSValue;
+
+pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
+    const result = IPCSerialize(globalObject, message, handle);
+    if (result == .zero) return error.JSError;
+    return result;
+}

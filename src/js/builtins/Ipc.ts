@@ -128,19 +128,26 @@
 //   },
 // };
 
-const net = require("node:net");
-const dgram = require("node:dgram");
-
-type Serialized = {
-  cmd: "NODE_HANDLE";
-  message: unknown;
-  type: "net.Socket" | "net.Server" | "dgram.Socket";
-};
-type Handle = import("node:net").Server | import("node:net").Socket | import("node:dgram").Socket;
-function serialize(message: unknown, handle: Handle): [unknown, Serialized] {
+// have to use jsdoc type definitions because bundle-functions is based on regex
+/**
+ * @typedef {Object} Serialized
+ * @property {"NODE_HANDLE"} cmd
+ * @property {unknown} message
+ * @property {"net.Socket" | "net.Server" | "dgram.Socket"} type
+ */
+/**
+ * @typedef {import("node:net").Server | import("node:net").Socket | import("node:dgram").Socket} Handle
+ */
+/**
+ * @param {unknown} message
+ * @param {Handle} handle
+ * @returns {[unknown, Serialized]}
+ */
+export function serialize(message, handle) {
+  const net = require("node:net");
+  const dgram = require("node:dgram");
   if (handle instanceof net.Server) {
     return [handle._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
-    throw new Error("todo serialize net.Server");
   } else if (handle instanceof net.Socket) {
     throw new Error("todo serialize net.Socket");
   } else if (handle instanceof dgram.Socket) {
@@ -149,7 +156,15 @@ function serialize(message: unknown, handle: Handle): [unknown, Serialized] {
     throw $ERR_INVALID_HANDLE_TYPE();
   }
 }
-function parseHandle(serialized: Serialized, handle: unknown, emit: (handle: Handle) => void) {
+/**
+ * @param {Serialized} serialized
+ * @param {unknown} handle
+ * @param {(handle: Handle) => void} emit
+ * @returns {void}
+ */
+export function parseHandle(serialized, handle, emit) {
+  const net = require("node:net");
+  const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
@@ -179,5 +194,3 @@ function parseHandle(serialized: Serialized, handle: unknown, emit: (handle: Han
     }
   }
 }
-
-export { serialize, parseHandle };

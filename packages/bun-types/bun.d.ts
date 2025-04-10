@@ -2447,6 +2447,7 @@ declare module "bun" {
      * @see {@link publicPath} to customize the base url of linked source maps
      */
     sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -2475,6 +2476,7 @@ declare module "bun" {
      * ```
      */
     env?: "inline" | "disable" | `${string}*`;
+
     /**
      * Whether to enable minification.
      *
@@ -2490,16 +2492,19 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+
     /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
      */
     ignoreDCEAnnotations?: boolean;
+
     /**
      * Force emitting @__PURE__ annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
+
     // treeshaking?: boolean;
 
     // jsx?:
@@ -2526,10 +2531,12 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
     /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
+
     /**
      * Add a footer to the bundled code such as a comment block like
      *
@@ -2560,10 +2567,9 @@ declare module "bun" {
    * @category Security
    */
   namespace Password {
-    type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
-
     interface Argon2Algorithm {
       algorithm: "argon2id" | "argon2d" | "argon2i";
+
       /**
        * Memory cost, which defines the memory usage, given in kibibytes.
        */
@@ -2577,11 +2583,14 @@ declare module "bun" {
 
     interface BCryptAlgorithm {
       algorithm: "bcrypt";
+
       /**
        * A number between 4 and 31. The default is 10.
        */
       cost?: number;
     }
+
+    type AlgorithmLabel = (BCryptAlgorithm | Argon2Algorithm)["algorithm"];
   }
 
   /**
@@ -2592,7 +2601,7 @@ declare module "bun" {
    * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -2684,9 +2693,9 @@ declare module "bun" {
        */
       password: Bun.StringOrBuffer,
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): Promise<string>;
@@ -2722,7 +2731,13 @@ declare module "bun" {
      * ```
      */
     verifySync(
+      /**
+       * The password to verify.
+       */
       password: Bun.StringOrBuffer,
+      /**
+       * The hash to verify against.
+       */
       hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm will be inferred from the hash.
@@ -2772,7 +2787,7 @@ declare module "bun" {
       /**
        * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
        *
-       * @default Argon2Algorithm
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;
@@ -6255,6 +6270,8 @@ declare module "bun" {
    * @param options.port The port to connect to
    * @param options.tls The TLS configuration object
    * @param options.unix The unix socket to connect to
+   *
+   * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
   function connect<Data = undefined>(options: UnixSocketOptions<Data>): Promise<Socket<Data>>;
@@ -6269,10 +6286,15 @@ declare module "bun" {
    * @param options.port The port to connect to
    * @param options.tls The TLS configuration object
    * @param options.unix The unix socket to connect to
+   *
+   * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  /**
+   * @category HTTP & Networking
+   */
   namespace udp {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
@@ -6350,6 +6372,8 @@ declare module "bun" {
    * @param options.port The port to listen on
    * @param options.binaryType The binary type to use for the socket
    * @param options.connect The hostname and port to connect to
+   *
+   * @category HTTP & Networking
    */
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
     options: udp.SocketOptions<DataBinaryType>,

@@ -825,15 +825,14 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
         ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
-        switch (from) {
-            .process => {
-                const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
-                JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
-            },
-            // child_process wrapper will catch the error and emit it as an 'error' event or send it to the callback
-            else => return globalObject.throwValue(ex),
+        if (from == .process or callback.isFunction()) {
+            const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
+            JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
+            return .false;
         }
-        return .false;
+        // Bun.spawn().send() should throw an error
+        // if callback is passed, call it with the error instead so that child_process.ts can handle it
+        return globalObject.throwValue(ex);
     }
 
     return .true;

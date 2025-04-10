@@ -1549,19 +1549,16 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
-    // Bun does not handle handles yet
-    try {
-      this.#handle.send(message);
-      if (callback) process.nextTick(callback, null);
-      return true;
-    } catch (error) {
-      if (callback) {
-        process.nextTick(callback, error);
-      } else {
-        process.nextTick(() => this.emit("error", error));
+    // We still need this send function because
+    return this.#handle.send(message, handle, options, err => {
+      // node does process.nextTick() to emit or call the callback
+      // we don't need to because the send callback is called on nextTick by ipc.zig
+      if (err) {
+        this.emit("error", err);
+      } else if (callback) {
+        callback(null);
       }
-      return false;
-    }
+    });
   }
 
   #onDisconnect(firstTime: boolean) {

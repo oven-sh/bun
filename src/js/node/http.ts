@@ -1709,7 +1709,7 @@ const OutgoingMessagePrototype = {
   },
 
   removeHeader(name) {
-    if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
       throw $ERR_HTTP_HEADERS_SENT("remove");
     }
     const headers = this[headersSymbol];
@@ -1718,6 +1718,9 @@ const OutgoingMessagePrototype = {
   },
 
   setHeader(name, value) {
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());

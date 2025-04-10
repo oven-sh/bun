@@ -99,7 +99,7 @@ const advanced = struct {
                     .message = .{ .version = message_len },
                 };
             },
-            .SerializedMessage => {
+            .SerializedMessage, .SerializedInternalMessage => |tag| {
                 if (data.len < (header_length + message_len)) {
                     log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
                     return IPCDecodeError.NotEnoughBytes;
@@ -114,25 +114,7 @@ const advanced = struct {
 
                 return .{
                     .bytes_consumed = header_length + message_len,
-                    .message = .{ .data = deserialized },
-                };
-            },
-            .SerializedInternalMessage => {
-                if (data.len < (header_length + message_len)) {
-                    log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
-                    return IPCDecodeError.NotEnoughBytes;
-                }
-
-                const message = data[header_length .. header_length + message_len];
-                const deserialized = JSValue.deserialize(message, global);
-
-                if (deserialized == .zero) {
-                    return IPCDecodeError.InvalidFormat;
-                }
-
-                return .{
-                    .bytes_consumed = header_length + message_len,
-                    .message = .{ .internal = deserialized },
+                    .message = if (tag == .SerializedInternalMessage) .{ .internal = deserialized } else .{ .data = deserialized },
                 };
             },
             _ => {

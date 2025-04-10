@@ -917,7 +917,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                     };
 
                     skip_handle_message: {
-                        if (result.message == .data) {
+                        if (result.message == .data) handle_message: {
                             // TODO: get property 'cmd' from the message, read as a string
                             // to skip this property lookup (and simplify the code significantly)
                             // we could make three new message types:
@@ -931,12 +931,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             if (msg_data.isObject()) {
                                 const cmd = msg_data.fastGet(globalThis, .cmd) orelse {
                                     if (globalThis.hasException()) _ = globalThis.takeException(bun.JSError.JSError);
-                                    break :skip_handle_message;
+                                    break :handle_message;
                                 };
                                 if (cmd.isString()) {
                                     const cmd_str = bun.String.fromJS(cmd, globalThis) catch |e| {
                                         _ = globalThis.takeException(e);
-                                        break :skip_handle_message;
+                                        break :handle_message;
                                     };
                                     if (cmd_str.eqlComptime("NODE_HANDLE")) {
                                         // Handle NODE_HANDLE message

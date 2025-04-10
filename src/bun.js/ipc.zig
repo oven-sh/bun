@@ -170,28 +170,22 @@ const json = struct {
         return "{\"cmd\":\"NODE_HANDLE_NACK\"}\n";
     }
 
-    // In order to not have to do a property lookup json messages sent from Bun will have a single u8 prepended to them
+    // In order to not have to do a property lookup internal messages sent from Bun will have a single u8 prepended to them
     // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
-    // 1 is regular
     // 2 is internal
+    // ["[{\d\.] is regular
 
     pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
-            var kind = data[0];
             var json_data = data[0..idx];
-
-            switch (kind) {
-                2 => {
-                    json_data = data[1..idx];
-                },
-                else => {
-                    // assume it's valid json with no header
-                    // any error will be thrown by toJSByParseJSON below
-                    kind = 1;
-                },
-            }
-
             if (json_data.len == 0) return IPCDecodeError.NotEnoughBytes;
+
+            var kind: enum { regular, internal } = .regular;
+            if (json_data[0] == 2) {
+                // internal message
+                json_data = json_data[1..];
+                kind = .internal;
+            }
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
@@ -220,15 +214,14 @@ const json = struct {
             };
 
             return switch (kind) {
-                1 => .{
+                .regular => .{
                     .bytes_consumed = idx + 1,
                     .message = .{ .data = deserialized },
                 },
-                2 => .{
+                .internal => .{
                     .bytes_consumed = idx + 1,
                     .message = .{ .internal = deserialized },
                 },
-                else => @panic("invalid ipc json message kind this is a bug in Bun."),
             };
         }
         return IPCDecodeError.NotEnoughBytes;

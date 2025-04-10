@@ -239,6 +239,7 @@ pub fn toInvalidArguments(
     return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
+/// Deprecated. Use `bun.default_allocator` instead.
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
     return default_allocator;
 }

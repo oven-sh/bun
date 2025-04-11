@@ -4458,7 +4458,7 @@ pub const VirtualMachine = struct {
 
         const instance = switch (Environment.os) {
             else => instance: {
-                const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
+                const context = uws.us_create_bun_nossl_socket_context(this.event_loop_handle.?, @sizeOf(usize), 1).?;
                 IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
                 var instance = IPCInstance.new(.{

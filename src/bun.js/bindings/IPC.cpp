@@ -1,12 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
-#include "JavaScriptCore/JSValue.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSFunction.h"
 #include "WebCoreJSBuiltins.h"
-#include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/Exception.h"
 
 extern "C" JSC::EncodedJSValue IPCSerialize(JSC::JSGlobalObject* global, JSC::JSValue message, JSC::JSValue handle)
 {

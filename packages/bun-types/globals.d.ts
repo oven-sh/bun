@@ -12,6 +12,8 @@ declare module "bun" {
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
 
+    type LibEmptyOrWSWebSocket = LibDomIsLoaded extends true ? {} : import("ws").WebSocket;
+
     type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
 
     type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("node:util").TextDecoder;
@@ -66,6 +68,7 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface WebSocket extends Bun.__internal.LibEmptyOrWSWebSocket {}
 /**
  * A WebSocket client implementation
  *

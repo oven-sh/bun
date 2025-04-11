@@ -295,7 +295,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     Vector<RefPtr<MessagePort>> ports;
     auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
     valueToTransfer->putDirectIndex(globalObject, 0, workerData);
-    valueToTransfer->putDirectIndex(globalObject, 1, globalObject->nodeWorkerEnvironmentData());
+    auto* environmentData = globalObject->nodeWorkerEnvironmentData();
+    // If node:worker_threads has not been imported, environment data will not be set up yet.
+    if (environmentData) {
+        valueToTransfer->putDirectIndex(globalObject, 1, environmentData);
+    }
 
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {

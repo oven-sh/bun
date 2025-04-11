@@ -12,7 +12,6 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import ErrorCode from "../bun.js/bindings/ErrorCode";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
@@ -92,22 +91,61 @@ for (let i = 0; i < nativeStartIndex; i++) {
       }
     }
 
-    // TODO: there is no reason this cannot be converted automatically.
+    // Support some ES import statements.
     // import { ... } from '...' -> `const { ... } = require('...')`
     const scannedImports = t.scanImports(input);
     for (const imp of scannedImports) {
       if (imp.kind === "import-statement") {
-        var isBuiltin = true;
-        try {
-          if (!builtinModules.includes(imp.path)) {
-            requireTransformer(imp.path, moduleList[i]);
-          }
-        } catch {
-          isBuiltin = false;
+        const result = requireTransformer(imp.path, moduleList[i]);
+        function escapeRegExp(str: string) {
+          return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         }
-        if (isBuiltin) {
+        // Replace the import with a require
+        let called = false;
+        const regexp = new RegExp(
+          `import\\s+(type\\s+)?([a-zA-Z0-9_$]+|{[^}]*}|\\*\\s*as\\s+([a-zA-Z0-9_$]+))\\s+from\\s+['"]${escapeRegExp(JSON.stringify(imp.path).slice(1, -1))}['"];?`,
+        );
+        input = input.replace(
+          regexp,
+          (_, type, clause, star) => {
+            called = true;
+            if (type) return '';
+            let decl;
+            if (clause[0] === '{') {
+              // convert the ES import clause into a destructuring assignment
+              const items = clause.slice(1, -1)
+                .split(',')
+                .map(x => x.trim())
+                .map(item => {
+                  if (!item) return null;
+                  if (item.startsWith('type')) {
+                    return null;
+                  }
+                  if (item.includes(' as ')) {
+                    const [name, as] = item.split(' as ').map(x => x.trim());
+                    return `${name}: ${as}`;
+                  }
+                  return item;
+                })
+                .filter(Boolean)
+                .join(',');
+              decl = `{ ${items} }`;
+            } else if (star) {
+              decl = star;
+            } else {
+              decl = clause;
+            }
+            return 'const ' + decl + ' = ' + result + ';\n';
+          },
+        );
+        if (!called) {
+          const template = JSON.stringify(imp.path);
           throw new Error(
-            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md`,
+            `Only a subset of ESM imports are supported in builtin modules.
+  - 'import namespace from ${template};'
+  - 'import * as namespace from ${template};
+  - 'import { name, func } from ${template};`,
+            // Or, the above regular expression is wrong.
           );
         }
       }

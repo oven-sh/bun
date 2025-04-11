@@ -173,6 +173,7 @@ export const function_replacements = [
   "$isPromiseRejected",
   "$isPromisePending",
   "$bindgenFn",
+  "$unwrap",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
@@ -219,6 +220,33 @@ export function applyReplacements(src: string, length: number) {
           ) +
           extraArgs +
           "):void 0)",
+        rest2,
+        true,
+      ];
+    } else if (name === "unwrap") {
+      const checkSlice = sliceSourceCode(rest, true, undefined, true);
+      let rest2 = checkSlice.rest;
+      let extraArgs = "";
+      if (checkSlice.result.at(-1) === ",") {
+        const sliced = sliceSourceCode("(" + rest2.slice(1), true, undefined, false);
+        extraArgs = ", " + sliced.result.slice(1, -1);
+        rest2 = sliced.rest;
+      }
+      return [
+        slice.slice(0, match.index) +
+          "!(IS_BUN_DEVELOPMENT?($assert(__intrinsic__lazy.temp=(" +
+          checkSlice.result.slice(1, -1) +
+          ")," +
+          JSON.stringify(
+            checkSlice.result
+              .slice(1, -1)
+              .replace(/__intrinsic__/g, "$")
+              .trim(),
+          ) +
+          extraArgs +
+          "),__intrinsic__lazy.temp):(" +
+          checkSlice.result.slice(1, -1) +
+          "))",
         rest2,
         true,
       ];

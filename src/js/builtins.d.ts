@@ -20,6 +20,25 @@ declare function $debug(...args: any[]): void;
  * @note gets removed in release builds. Do not put code with side effects in the `check`.
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
+/**
+ * Assert that a value is not null or undefined. Returns the unwrapped value.
+ * 
+ * The purpose of this builtin is to satisfy the TypeScript type checker in
+ * places where it sees `T | null` but you know for sure it is non-null. For
+ * example, a private variable whose initialization happens based on another
+ * field's state. Unlike the postfix `!` operator in TypeScript (non-null assert),
+ * these will be verified at runtime, with errors appearing much more loudly. 
+ *
+ * $unwrap is a preprocessor macro that only runs in debug mode. In release, it is
+ * as if you just wrote the value. In debug, $unwrap(VALUE) is equivalent to:
+ * 
+ *     function $unwrap(value) {
+ *         let temp = VALUE;
+ *         if (!temp) throw new Error("Unwrap of " + temp);
+ *         return temp;
+ *     }
+ */
+declare function $unwrap<T>(value: T | null | undefined): T;
 
 /** Asserts the input is a promise. Returns `true` if the promise is resolved */
 declare function $isPromiseFulfilled(promise: Promise<any>): boolean;

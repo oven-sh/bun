@@ -3,10 +3,9 @@ declare module "bun" {
     type NodeWorkerThreadsWorker = import("worker_threads").Worker;
     type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
 
-    type NodePerfHooksPerformance = import("perf_hooks").Performance;
     type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
       "Performance",
-      NodePerfHooksPerformance
+      import("perf_hooks").Performance
     >;
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;

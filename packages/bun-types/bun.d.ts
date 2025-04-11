@@ -6226,70 +6226,108 @@ declare module "bun" {
   }
 
   interface SocketOptions<Data = unknown> {
+    /**
+     * Handlers for socket events
+     */
     socket: SocketHandler<Data>;
+    /**
+     * The per-instance data context
+     */
     data?: Data;
   }
-  // interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
-  //   hostname: string;
-  //   port: number;
-  // }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to listen on
+     */
     hostname: string;
+    /**
+     * The port to listen on
+     */
     port: number;
+    /**
+     * The TLS configuration object with which to create the server
+     */
     tls?: TLSOptions;
+    /**
+     * Whether to use exclusive mode
+     */
     exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections
+     */
     allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to connect to
+     */
     hostname: string;
+    /**
+     * The port to connect to
+     */
     port: number;
+    /**
+     * TLS Configuration with which to create the socket
+     */
     tls?: boolean;
+    /**
+     * Whether to use exclusive mode
+     */
     exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections
+     */
     allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
-    tls?: TLSOptions;
+    /**
+     * The unix socket to listen on or connect to
+     */
     unix: string;
+    /**
+     * TLS Configuration with which to create the socket
+     */
+    tls?: TLSOptions;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * TLS Configuration with which to create the socket
+     */
     tls?: TLSOptions;
+    /**
+     * The file descriptor to connect to
+     */
     fd: number;
   }
 
   /**
-   * Create a TCP client that connects to a server
-   *
-   * @param options The options to use when creating the client
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * Create a TCP client that connects to a server via a TCP socket
    *
    * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
+  /**
+   * Create a TCP client that connects to a server via a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function connect<Data = undefined>(options: UnixSocketOptions<Data>): Promise<Socket<Data>>;
 
   /**
    * Create a TCP server that listens on a port
    *
-   * @param options The options to use when creating the server
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
-   *
    * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
+  /**
+   * Create a TCP server that listens on a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
   /**

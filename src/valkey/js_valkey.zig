@@ -18,11 +18,13 @@ pub const JSValkeyClient = struct {
             .nsec = 0,
         },
     },
-
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     pub usingnamespace JSC.Codegen.JSRedisClient;
-    pub usingnamespace bun.NewRefCounted(JSValkeyClient, deinit, null);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+    pub const new = bun.TrivialNew(@This());
 
     // Factory function to create a new Valkey client from JS
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSValkeyClient {
@@ -102,7 +104,8 @@ pub const JSValkeyClient = struct {
         bun.analytics.Features.valkey += 1;
 
         return JSValkeyClient.new(.{
-            .client = valkey.ValkeyClient{
+            .ref_count = .init(),
+            .client = .{
                 .vm = vm,
                 .address = switch (uri) {
                     .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
@@ -138,7 +141,6 @@ pub const JSValkeyClient = struct {
                 .idle_timeout_interval_ms = options.idle_timeout_ms,
             },
             .globalObject = globalObject,
-            .ref_count = 1,
         });
     }
 
@@ -153,11 +155,9 @@ pub const JSValkeyClient = struct {
         return JSValue.jsNumber(len);
     }
 
-    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn doConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, this_value: JSValue) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
-
-        const this_value = callframe.this();
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
@@ -207,6 +207,10 @@ pub const JSValkeyClient = struct {
         }
 
         return promise;
+    }
+
+    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        return try this.doConnect(globalObject, callframe.this());
     }
 
     pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -604,15 +608,15 @@ pub const JSValkeyClient = struct {
         return memory_cost;
     }
 
-    pub fn deinit(this: *JSValkeyClient) void {
+    fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
 
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
         this.this_value.deinit();
-        bun.debugAssert(this.ref_count == 0);
-        this.destroy();
+        this.ref_count.assertNoRefs();
+        bun.destroy(this);
     }
 
     /// Keep the event loop alive, or don't keep it alive

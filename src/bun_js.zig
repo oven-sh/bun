@@ -298,6 +298,28 @@ pub const Run = struct {
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         this.addConditionalGlobals();
+        do_redis_preconnect: {
+            // This must happen within the API lock, which is why it's not in the "doPreconnect" function
+            if (this.ctx.runtime_options.redis_preconnect) {
+                // Go through the global object's getter because Bun.redis is a
+                // PropertyCallback which means we don't have a WriteBarrier we can access
+                const global = vm.global;
+                const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                } orelse break :do_redis_preconnect;
+                const redis = bun_object.get(global, "redis") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                } orelse break :do_redis_preconnect;
+                const client = redis.as(bun.valkey.JSValkeyClient) orelse break :do_redis_preconnect;
+                // If connection fails, this will become an unhandled promise rejection, which is fine.
+                _ = client.doConnect(vm.global, redis) catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                };
+            }
+        }
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),

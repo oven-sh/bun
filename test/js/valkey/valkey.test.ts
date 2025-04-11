@@ -6,7 +6,7 @@ import { expectType } from "./test-utils";
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });
@@ -20,6 +20,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       // Using direct set and get methods
       const setResult = await redis.set(testKey, testValue);
       expect(setResult).toMatchInlineSnapshot(`"OK"`);
+
+      const setResult2 = await redis.set(testKey, testValue, "GET");
+      expect(setResult2).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);
 
       // GET should return the value we set
       const getValue = await redis.get(testKey);

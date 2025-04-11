@@ -906,9 +906,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         // - `--smol` is passed
         // - The machine has less than 4GB of RAM
         bool shouldDisableStopIfNecessaryTimer = !miniMode;
-        if (WTF::ramSize() < 1024ull * 1024ull * 1024ull * 4ull) {
-            shouldDisableStopIfNecessaryTimer = false;
-        }
 
         if (disable_stop_if_necessary_timer) {
             const char value = disable_stop_if_necessary_timer[0];
@@ -1009,8 +1006,12 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
 
-            // ensure remote termination works.
+            // Ensure that the TerminationException singleton is constructed. Workers need this so
+            // that we can request their termination from another thread. For the main thread, we
+            // can delay this until we are actually requesting termination (until and unless we ever
+            // do need to request termination from another thread).
             vm.ensureTerminationException();
+            // Make the VM stop sooner once terminated (e.g. microtasks won't run)
             vm.forbidExecutionOnTermination();
         };
 
@@ -4151,14 +4152,23 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     return false;
 }
 
-extern "C" void JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
+extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
 {
-    globalObject->vm().setHasTerminationRequest();
+    auto& vm = JSC::getVM(globalObject);
+    vm.ensureTerminationException();
+    vm.setHasTerminationRequest();
 }
 
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
 {
-    globalObject->vm().clearHasTerminationRequest();
+    auto& vm = JSC::getVM(globalObject);
+    // Clear the request for the termination exception to be thrown
+    vm.clearHasTerminationRequest();
+    // In case it actually has been thrown, clear the exception itself as well
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    if (scope.exception() && vm.isTerminationException(scope.exception())) {
+        scope.clearException();
+    }
 }
 
 extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);

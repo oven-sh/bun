@@ -867,7 +867,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -881,7 +881,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true, false) catch {
         const err = global.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(global, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(global, err);
     };
 
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -897,6 +897,35 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
+
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+}
+
+export fn Bun__resolveSyncWithPaths(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: JSValue,
+    is_esm: bool,
+    is_user_require_resolve: bool,
+    paths_ptr: ?[*]const bun.String,
+    paths_len: usize,
+) JSC.JSValue {
+    const paths: []const bun.String = if (paths_len == 0) &.{} else paths_ptr.?[0..paths_len];
+
+    const specifier_str = specifier.toBunString(global) catch return .zero;
+    defer specifier_str.deref();
+
+    if (specifier_str.length() == 0) {
+        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+    }
+
+    const source_str = source.toBunString(global) catch return .zero;
+    defer source_str.deref();
+
+    const bun_vm = global.bunVM();
+    bun.assert(bun_vm.transpiler.resolver.custom_dir_paths == null);
+    bun_vm.transpiler.resolver.custom_dir_paths = paths;
+    defer bun_vm.transpiler.resolver.custom_dir_paths = null;
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
 }

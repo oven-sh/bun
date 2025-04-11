@@ -7,7 +7,7 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, id: string) {
+export function require(this: JSCommonJSModule, _: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
@@ -15,8 +15,8 @@ export function require(this: JSCommonJSModule, id: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string) {
-  const id = $resolveSync(originalId, this.filename, false);
+export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith('node:')) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -146,8 +146,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { filename?: string; id?: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.filename ?? this?.id ?? "", false, true);
+export function requireResolve(this: string | { filename?: string; id?: string }, id: string, options: { paths?: string[] } = {}) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.filename ?? this?.id ?? "", false, true, options ? options.paths : undefined);
 }
 
 $visibility = "Private";

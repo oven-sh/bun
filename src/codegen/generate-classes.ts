@@ -1861,7 +1861,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("memoryCost", symbolName(typeName, "memoryCost"));
       output += `
     pub fn ${symbolName(typeName, "memoryCost")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
-      return @call(.always_inline, ${typeName}.memoryCost, .{thisValue});
+      return @call(bun.callmod_inline, ${typeName}.memoryCost, .{thisValue});
     }
   `;
     }
@@ -1870,7 +1870,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("estimatedSize", symbolName(typeName, "estimatedSize"));
       output += `
         pub fn ${symbolName(typeName, "estimatedSize")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
-          return @call(.always_inline, ${typeName}.estimatedSize, .{thisValue});
+          return @call(bun.callmod_inline, ${typeName}.estimatedSize, .{thisValue});
         }
       `;
     } else if (!memoryCost && !estimatedSize) {
@@ -1883,7 +1883,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
       output += `
         pub fn ${symbolName(typeName, "hasPendingActivity")}(thisValue: *${typeName}) callconv(JSC.conv) bool {
-          return @call(.always_inline, ${typeName}.hasPendingActivity, .{thisValue});
+          return @call(bun.callmod_inline, ${typeName}.hasPendingActivity, .{thisValue});
         }
       `;
     }
@@ -1964,7 +1964,7 @@ const JavaScriptCoreBindings = struct {
           pub fn ${names.DOMJIT}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ${args
             .map(ZigDOMJITArgTypeDefinition)
             .join(", ")}) callconv(JSC.conv) JSC.JSValue {
-            return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
+            return @call(bun.callmod_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
           }
           `;
           }

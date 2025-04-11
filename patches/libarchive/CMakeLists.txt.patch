@@ -1,0 +1,9 @@
+--- CMakeLists.txt
++++ CMakeLists.txt
+@@ -1,5 +1,5 @@
+ #
+-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12 FATAL_ERROR)
++CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12...3.5 FATAL_ERROR)
+ if(POLICY CMP0065)
+   cmake_policy(SET CMP0065 NEW) #3.4 don't use `-rdynamic` with executables
+ endif()

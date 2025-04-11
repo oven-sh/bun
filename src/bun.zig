@@ -1938,39 +1938,6 @@ pub fn threadlocalAllocator() std.mem.Allocator {
     return default_allocator;
 }
 
-pub fn Ref(comptime T: type) type {
-    return struct {
-        ref_count: u32,
-        allocator: std.mem.Allocator,
-        value: T,
-
-        pub fn init(value: T, allocator: std.mem.Allocator) !*@This() {
-            var this = try allocator.create(@This());
-            this.allocator = allocator;
-            this.ref_count = 1;
-            this.value = value;
-            return this;
-        }
-
-        pub fn ref(this: *@This()) *@This() {
-            this.ref_count += 1;
-            return this;
-        }
-
-        pub fn unref(this: *@This()) ?*@This() {
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
-                if (@hasDecl(T, "deinit")) {
-                    this.value.deinit();
-                }
-                this.allocator.destroy(this);
-                return null;
-            }
-            return this;
-        }
-    };
-}
-
 pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     return struct {
         const HiveAllocator = HiveArray(@This(), capacity).Fallback;
@@ -2993,18 +2960,14 @@ pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
 
 pub const heap_breakdown = @import("./heap_breakdown.zig");
 
-/// Globally-allocate a value on the heap.
+/// Globally-allocate a value on the heap. Must free with `bun.destroy`.
+/// Prefer this over `default_allocator.create`
 ///
-/// **Prefer `bun.New`, `bun.NewRefCounted`, or `bun.NewThreadSafeRefCounted` instead.**
-/// Use this when the struct is a third-party struct you cannot modify, like a
-/// Zig stdlib struct. Choosing the wrong allocator is an easy way to introduce
-/// bugs.
+/// By using this over the default allocator, you gain access to:
+/// - Automatic named heaps on macOS.
+/// - Additional assertions when freeing memory.
 ///
-/// When used, you must call `bun.destroy` to free the memory.
-/// default_allocator.destroy should not be used.
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
+/// On macOS, you can use `Bun.unsafe.mimallocDump()` to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const pointer = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
@@ -3023,14 +2986,27 @@ pub inline fn new(comptime T: type, init: T) *T {
     return pointer;
 }
 
-/// Free a globally-allocated a value from `bun.new()`. Using this with
-/// pointers allocated from other means may cause crashes.
+/// Free a globally-allocated a value from `bun.new()`.
+/// For single-item heap pointers, prefer bun.new/destroy over default_allocator
+///
+/// Destruction performs additional safety checks:
+/// - Generic assertions can be added to T.assertMayDeinit()
+/// - Automatic integration with `RefCount`
 pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
         const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
+
+        // If this type implements a RefCount, make sure it is zero.
+        @import("./ptr/ref_count.zig").maybeAssertNoRefs(T, pointer);
+
+        switch (@typeInfo(T)) {
+            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertMayDeinit"))
+                pointer.assertMayDeinit(),
+            else => {},
+        }
     }
 
     if (comptime heap_breakdown.enabled) {
@@ -3044,22 +3020,35 @@ pub inline fn dupe(comptime T: type, t: *T) *T {
     return new(T, t.*);
 }
 
-pub fn New(comptime T: type) type {
+/// Implements `fn new` for a type.
+/// Pair with `TrivialDeinit` if the type contains no pointers.
+pub fn TrivialNew(comptime T: type) fn (T) *T {
     return struct {
-        pub const ban_standard_library_allocator = true;
-
-        pub inline fn destroy(self: *T) void {
-            bun.destroy(self);
-        }
-
-        pub inline fn new(t: T) *T {
+        pub fn new(t: T) *T {
             return bun.new(T, t);
         }
-    };
+    }.new;
 }
 
-pub const NewRefCounted = ptr.NewRefCounted;
-pub const NewThreadSafeRefCounted = ptr.NewThreadSafeRefCounted;
+/// Implements `fn deinit` for a type.
+/// Pair with `TrivialNew` if the type contains no pointers.
+pub fn TrivialDeinit(comptime T: type) fn (*T) void {
+    return struct {
+        pub fn deinit(self: *T) void {
+            // TODO: assert that the structure contains no pointers.
+            //
+            // // Assert the structure contains no pointers. If there are
+            // // pointers, you must implement `deinit` manually, ideally
+            // // explaining why those pointers should or should not be freed.
+            // const fields = switch (@typeInfo(T)) {
+            //     .@"struct", .@"union" => |i| i.fields,
+            //     else => @compileError("please implement `deinit` manually"),
+            // };
+
+            bun.destroy(self);
+        }
+    }.deinit;
+}
 
 pub fn exitThread() noreturn {
     const exiter = struct {
@@ -3769,64 +3758,6 @@ pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
 }
 
-pub const WeakPtrData = packed struct(u32) {
-    reference_count: u31 = 0,
-    finalized: bool = false,
-
-    pub fn onFinalize(this: *WeakPtrData) bool {
-        bun.debugAssert(!this.finalized);
-        this.finalized = true;
-        return this.reference_count == 0;
-    }
-};
-
-pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T)) type {
-    return struct {
-        const WeakRef = @This();
-
-        value: ?*T = null,
-        pub fn create(req: *T) WeakRef {
-            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
-            @field(req, @tagName(weakable_field)).reference_count += 1;
-            return .{ .value = req };
-        }
-
-        comptime {
-            if (@TypeOf(@field(@as(T, undefined), @tagName(weakable_field))) != WeakPtrData) {
-                @compileError("Expected " ++ @typeName(T) ++ " to have a " ++ @typeName(WeakPtrData) ++ " field named " ++ @tagName(weakable_field));
-            }
-        }
-
-        fn deinitInternal(this: *WeakRef, value: *T) void {
-            const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
-
-            this.value = null;
-            const count = weak_data.reference_count - 1;
-            weak_data.reference_count = count;
-            if (weak_data.finalized and count == 0) {
-                value.destroy();
-            }
-        }
-
-        pub fn deinit(this: *WeakRef) void {
-            if (this.value) |value| {
-                this.deinitInternal(value);
-            }
-        }
-
-        pub fn get(this: *WeakRef) ?*T {
-            if (this.value) |value| {
-                if (!@field(value, @tagName(weakable_field)).finalized) {
-                    return value;
-                }
-
-                this.deinitInternal(value);
-            }
-            return null;
-        }
-    };
-}
-
 pub const DebugThreadLock = if (Environment.isDebug)
     struct {
         owning_thread: ?std.Thread.Id,
@@ -3840,7 +3771,7 @@ pub const DebugThreadLock = if (Environment.isDebug)
         pub fn lock(impl: *@This()) void {
             if (impl.owning_thread) |thread| {
                 Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
-                crash_handler.dumpStackTrace(impl.locked_at.trace());
+                crash_handler.dumpStackTrace(impl.locked_at.trace(), .{ .frame_count = 10, .stop_at_jsc_llint = true });
                 Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
             }
             impl.owning_thread = std.Thread.getCurrentId();

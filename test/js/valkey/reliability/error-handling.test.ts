@@ -13,7 +13,7 @@ import { createClient, DEFAULT_REDIS_URL, ctx, ConnectionType, isEnabled } from 
 describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });
@@ -89,11 +89,11 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       // undefined value
       // @ts-expect-error: Testing runtime behavior with invalid types
       expect(async () => await client.set("valid-key", undefined)).toThrowErrorMatchingInlineSnapshot(
-        `"Expected value to be a string or buffer for 'set'."`,
+        `"Expected value to be a string or buffer or number for 'set'."`,
       );
 
       expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(
-        `"Expected value to be a string or buffer for 'set'."`,
+        `"Expected value to be a string or buffer or number for 'set'."`,
       );
     });
 
@@ -259,7 +259,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       await client.set(key, "initial-value");
 
       // Disconnect explicitly
-      client.disconnect();
+      client.close();
 
       // This command should fail
       expect(async () => await client.get(key)).toThrowErrorMatchingInlineSnapshot(`"Connection has failed"`);

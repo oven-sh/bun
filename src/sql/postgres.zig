@@ -253,7 +253,7 @@ pub const PostgresSQLContext = struct {
         @export(&js_init, .{ .name = "PostgresSQLContext__init" });
     }
 };
-pub const PostgresSQLQueryResultMode = enum(u8) {
+pub const PostgresSQLQueryResultMode = enum(u2) {
     objects = 0,
     values = 1,
     raw = 2,
@@ -272,12 +272,13 @@ pub const PostgresSQLQuery = struct {
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
-    flags: packed struct {
+    flags: packed struct(u8) {
         is_done: bool = false,
         binary: bool = false,
         bigint: bool = false,
         simple: bool = false,
         result_mode: PostgresSQLQueryResultMode = .objects,
+        _padding: u2 = 0,
     } = .{},
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;

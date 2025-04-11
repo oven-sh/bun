@@ -89,7 +89,7 @@ const SkipTypeParameterResult = enum {
     definitely_type_parameters,
 };
 
-const TypeParameterFlag = packed struct {
+const TypeParameterFlag = packed struct(u8) {
     /// TypeScript 4.7
     allow_in_out_variance_annotations: bool = false,
 
@@ -98,6 +98,8 @@ const TypeParameterFlag = packed struct {
 
     /// Allow "<>" without any type parameters
     allow_empty_type_parameters: bool = false,
+
+    _: u5 = 0,
 };
 
 const JSXImport = enum {
@@ -2436,11 +2438,12 @@ const AsyncPrefixExpression = enum(u2) {
     }
 };
 
-const IdentifierOpts = packed struct {
+const IdentifierOpts = packed struct(u8) {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
     is_call_target: bool = false,
+    _padding: u3 = 0,
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {

@@ -981,6 +981,11 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     });
 
+    // Ensure that the TerminationException singleton is constructed (this doesn't terminate
+    // anything, it just allows the termination mechanism to be used). We need this for Workers and
+    // for bun:test timeouts.
+    vm.ensureTerminationException();
+
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
@@ -1007,8 +1012,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
 
-            // ensure remote termination works.
-            vm.ensureTerminationException();
+            // Make the VM stop sooner once terminated (e.g. microtasks won't run)
             vm.forbidExecutionOnTermination();
         };
 
@@ -4140,12 +4144,19 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
 
 extern "C" void JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
 {
-    globalObject->vm().setHasTerminationRequest();
+    JSC::getVM(globalObject).setHasTerminationRequest();
 }
 
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
 {
-    globalObject->vm().clearHasTerminationRequest();
+    auto& vm = JSC::getVM(globalObject);
+    // Clear the request for the termination exception to be thrown
+    vm.clearHasTerminationRequest();
+    // In case it actually has been thrown, clear the exception itself as well
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    if (scope.exception() && vm.isTerminationException(scope.exception())) {
+        scope.clearException();
+    }
 }
 
 extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);

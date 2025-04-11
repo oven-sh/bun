@@ -628,7 +628,7 @@ pub const PostgresSQLQuery = struct {
 
             const obj = JSValue.createEmptyObject(globalObject, 2);
 
-            obj.put(globalObject, JSC.ZigString.static("string"), bun.String.init(this.query).toJS(globalObject));
+            obj.put(globalObject, JSC.ZigString.static("string"), this.query.toJS(globalObject));
 
             const columns = brk: {
                 const fields = &statement.fields;

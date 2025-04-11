@@ -2021,6 +2021,8 @@ const ServerResponsePrototype = {
   _removedConnection: false,
   _removedContLen: false,
   _hasBody: true,
+  _ended: false,
+
   get headersSent() {
     return (
       this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
@@ -2142,6 +2144,9 @@ const ServerResponsePrototype = {
     }
     this.detachSocket(socket);
     this.finished = true;
+    process.nextTick(self => {
+      self._ended = true;
+    }, this);
     this.emit("prefinish");
     this._callPendingCallbacks();
 
@@ -2173,7 +2178,7 @@ const ServerResponsePrototype = {
   },
 
   get writable() {
-    return !hasServerResponseFinished(this);
+    return !this._ended || !hasServerResponseFinished(this);
   },
 
   write(chunk, encoding, callback) {
@@ -2238,13 +2243,11 @@ const ServerResponsePrototype = {
       return false;
     }
 
-    if (result >= 0) {
-      this._callPendingCallbacks();
-      if (callback) {
-        process.nextTick(callback);
-      }
-      this.emit("drain");
+    this._callPendingCallbacks();
+    if (callback) {
+      process.nextTick(callback);
     }
+    this.emit("drain");
 
     return true;
   },
@@ -3461,7 +3464,7 @@ const ClientRequestPrototype = {
   },
 
   get writable() {
-    return !this.finished;
+    return true;
   },
 };
 

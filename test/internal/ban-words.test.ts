@@ -10,7 +10,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
   "std.log": { reason: "Don't let this be committed", limit: 0 },
-  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
+  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 0 },
   "undefined != ": { reason: "This is by definition Undefined Behavior." },
   "undefined == ": { reason: "This is by definition Undefined Behavior." },
   "bun.toFD(std.fs.cwd().fd)": { reason: "Use bun.FD.cwd()" },

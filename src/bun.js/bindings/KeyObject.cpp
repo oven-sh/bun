@@ -2157,45 +2157,6 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(KeyObject__Equals, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-    if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
-        if (auto* key2 = jsDynamicCast<JSCryptoKey*>(callFrame->argument(1))) {
-            auto& wrapped = key->wrapped();
-            auto& wrapped2 = key2->wrapped();
-            auto key_type = wrapped.type();
-            if (key_type != wrapped2.type()) {
-                return JSC::JSValue::encode(jsBoolean(false));
-            }
-
-            if (key_type == CryptoKeyType::Secret) {
-                auto keyData = GetRawKeyFromSecret(wrapped);
-                auto keyData2 = GetRawKeyFromSecret(wrapped2);
-                auto size = keyData.size();
-
-                if (size != keyData2.size()) {
-                    return JSC::JSValue::encode(jsBoolean(false));
-                }
-                return JSC::JSValue::encode(jsBoolean(CRYPTO_memcmp(keyData.data(), keyData2.data(), size) == 0));
-            }
-            AsymmetricKeyValue first(wrapped);
-            AsymmetricKeyValue second(wrapped2);
-
-            int ok = !first.key || !second.key ? -2 : EVP_PKEY_cmp(first.key, second.key);
-
-            if (ok == -2) {
-                auto& vm = JSC::getVM(lexicalGlobalObject);
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_CRYPTO_UNSUPPORTED_OPERATION"_s));
-                return {};
-            }
-            return JSC::JSValue::encode(jsBoolean(ok == 1));
-        }
-    }
-    return JSC::JSValue::encode(jsBoolean(false));
-}
-
 JSC_DEFINE_HOST_FUNCTION(KeyObject__SymmetricKeySize, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
@@ -2284,8 +2245,6 @@ JSValue createKeyObjectBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, KeyObject__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyDetails"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyDetails"_s, KeyObject_AsymmetricKeyDetails, ImplementationVisibility::Public, NoIntrinsic), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
 

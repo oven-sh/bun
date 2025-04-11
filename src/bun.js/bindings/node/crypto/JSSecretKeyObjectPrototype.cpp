@@ -14,13 +14,15 @@ using namespace WebCore;
 using namespace ncrypto;
 
 JSC_DECLARE_HOST_FUNCTION(jsSecretKeyObjectExport);
-JSC_DECLARE_HOST_FUNCTION(jsToCryptoKey);
+JSC_DECLARE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize);
+JSC_DECLARE_HOST_FUNCTION(jsSecretKeyObjectToCryptoKey);
 
 const JSC::ClassInfo JSSecretKeyObjectPrototype::s_info = { "SecretKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSecretKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSSecretKeyObjectPrototypeTableValues[] = {
     { "export"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectExport, 1 } },
-    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsToCryptoKey, 3 } },
+    { "symmetricKeySize"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSecretKeyObjectSymmetricKeySize, 0 } },
+    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectToCryptoKey, 3 } },
 };
 
 void JSSecretKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -44,7 +46,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsToCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(JSValue::decode(thisValue));
+    if (!secretKeyObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    size_t symmetricKeySize = secretKeyObject->handle().m_symmetricKey.size();
+    return JSValue::encode(jsNumber(symmetricKeySize));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectToCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);

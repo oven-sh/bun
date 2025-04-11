@@ -919,7 +919,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
         ) void {
             var data = all_data;
             const ipc: *IPCData = this.ipc() orelse return;
-            log("onData \"{}\"", .{std.zig.fmtEscapes(data)});
+            log("onData '{'}'", .{std.zig.fmtEscapes(data)});
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.

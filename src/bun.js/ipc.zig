@@ -834,15 +834,29 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
 
     if (!handle.isUndefinedOrNull()) {
         const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
-        const serialized_message = serialized_array.getIndex(globalObject, 0);
-        const serialized_handle = serialized_array.getIndex(globalObject, 1);
-        message = serialized_message;
+        const serialized_handle = serialized_array.getIndex(globalObject, 0);
+        const serialized_message = serialized_array.getIndex(globalObject, 1);
         handle = serialized_handle;
+        message = serialized_message;
     }
 
     if (!handle.isUndefinedOrNull()) {
         // zig side of handling the handle
         // std.log.info("TODO handle handle", .{});
+
+        // - check if it is an instanceof Listener (from socket.zig)
+        if (bun.JSC.API.Listener.fromJS(handle)) |listener| {
+            log("got listener", .{});
+            // this is how it was created
+            // there's also TCPSocket.new but it isn't stored?
+            switch (listener.connection) {
+                .fd => |fd| log("got listener fd: {d}", .{@intFromEnum(fd)}),
+                .unix => |unix| log("got linstener unix: `{s}`", .{unix}),
+                .host => |host| log("got listener host: `{s}`:{d}", .{ host.host, host.port }),
+            }
+        } else {
+            //
+        }
     }
 
     const good = ipc_data.serializeAndSend(globalObject, message, .external);
@@ -905,7 +919,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
         ) void {
             var data = all_data;
             const ipc: *IPCData = this.ipc() orelse return;
-            log("onData {}", .{std.fmt.fmtSliceHexLower(data)});
+            log("onData \"{}\"", .{std.zig.fmtEscapes(data)});
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.

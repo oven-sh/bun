@@ -20,8 +20,12 @@ if (isFlaky && isLinux) {
     const [out, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
     console.log(out);
     console.log(err);
-    expect(exitCode).not.toBe(0);
+    // exit code should indicate failed tests, not abort or anything
+    expect(exitCode).toBe(1);
     expect(out).not.toContain("This should not be printed!");
     expect(err).toContain("killed 1 dangling process");
+    // both tests should have run with the expected result
+    expect(err).toContain("(fail) test timeout kills dangling processes");
+    expect(err).toContain("(pass) slow test after test timeout");
   });
 }

@@ -1310,6 +1310,25 @@ void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& s
 
 } // namespace Bun
 
+extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue causeParam)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto cause = JSC::JSValue::decode(causeParam);
+
+    if (cause.isUndefined()) {
+        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, JSC::JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
+    }
+
+    auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
+    JSC::JSObject* options = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "cause"_s), cause);
+
+    auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
+    return JSC::JSValue::encode(error);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

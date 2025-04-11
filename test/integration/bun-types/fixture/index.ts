@@ -100,9 +100,40 @@ Bun.fetch(new URL("url"), {
 
 Bun.S3Client;
 
-Bun.$.ShellPromise;
+Bun.$`hey`;
 
-new Bun.$.ShellError();
+type b = Bun.$.ShellPromise;
+
+const myShellPromise: Bun.$.ShellPromise = Bun.$`hey`;
+const myShellError: Bun.$.ShellError = new Bun.$.ShellError();
+
+expectType(myShellPromise).is<Bun.$.ShellPromise>();
+expectType(myShellError).is<Bun.$.ShellError>();
+
+const myShellConstructor: typeof Bun.$.Shell = Bun.$.Shell;
+const myShellPromiseConstructor: typeof Bun.$.ShellPromise = Bun.$.ShellPromise;
+const myShellErrorConstructor: typeof Bun.$.ShellError = Bun.$.ShellError;
+
+expectType(myShellConstructor).is<typeof Bun.$.Shell>();
+expectType(myShellPromiseConstructor).is<typeof Bun.$.ShellPromise>();
+expectType(myShellErrorConstructor).is<typeof Bun.$.ShellError>();
+
+const myShellInstance = new Bun.$.Shell();
+await myShellInstance`hey`;
+
+expectType(myShellInstance).is<typeof Bun.$>();
+
+await Bun.$.nothrow().throws(false).env({ TEST: "cool" }).cwd("/")`exit 0`;
+await myShellInstance.nothrow().throws(false).env({ TEST: "cool" }).cwd("/")`exit 0`;
+
+Bun.$;
+
+declare const e: unknown;
+if (e instanceof Bun.$.ShellError) {
+  expectType(e.exitCode).is<number>();
+  expectType(e.stderr).is<Buffer>();
+  expectType(e.stdout).is<Buffer>();
+}
 
 new Promise(resolve => {
   resolve(1);
@@ -400,6 +431,7 @@ serve({
 });
 
 import { s3 } from "bun";
+import { expectType } from "./utilities";
 
 s3.file("");
 

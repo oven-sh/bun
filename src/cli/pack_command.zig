@@ -2171,7 +2171,7 @@ pub const PackCommand = struct {
         glob: CowString,
         flags: Flags,
 
-        const Flags = packed struct {
+        const Flags = packed struct(u8) {
             /// beginning or middle slash (leading slash was trimmed)
             rel_path: bool,
             // can only match directories (had an ending slash, also trimmed)
@@ -2180,6 +2180,8 @@ pub const PackCommand = struct {
             @"leading **/": bool,
             /// true if the pattern starts with `!`
             negated: bool,
+
+            _: u4 = 0,
         };
 
         pub fn fromUTF8(allocator: std.mem.Allocator, pattern: string) OOM!?Pattern {

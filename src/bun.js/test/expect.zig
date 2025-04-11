@@ -80,7 +80,7 @@ pub const Expect = struct {
         return null;
     }
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         // note: keep this struct in sync with C++ implementation (at bindings.cpp)
 
         promise: enum(u2) {

@@ -508,7 +508,7 @@ pub fn loadRoutes(
     this.loaded_routes = true;
 }
 
-pub const TinyPtr = packed struct {
+pub const TinyPtr = packed struct(u32) {
     offset: u16 = 0,
     len: u16 = 0,
 

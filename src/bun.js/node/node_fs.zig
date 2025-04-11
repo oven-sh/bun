@@ -5631,15 +5631,11 @@ pub const NodeFS = struct {
             Maybe(Return.Rmdir).success;
     }
 
-    pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
-        return this.rmAt(bun.toFD(std.fs.cwd().fd), args);
-    }
-
-    pub fn rmAt(this: *NodeFS, fd: bun.FileDescriptor, args: Arguments.Rm) Maybe(Return.Rm) {
+    pub fn rm(this: *NodeFS, args: Arguments.Rm) Maybe(Return.Rm) {
 
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
-            zigDeleteTree(fd.asDir(), args.path.slice(), .file) catch |err| {
+            zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 const errno: E = switch (@as(anyerror, err)) {
                     // error.InvalidHandle => .BADF,

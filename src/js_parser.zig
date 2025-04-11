@@ -3590,9 +3590,6 @@ pub const Parser = struct {
             }
         }
 
-        const did_import_fast_refresh = false;
-        _ = did_import_fast_refresh;
-
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         var force_esm = false;
@@ -3964,7 +3961,13 @@ pub const Parser = struct {
             switch (p.options.module_type) {
                 // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
                 .cjs => {
-                    exports_kind = .cjs;
+                    // There are no commonjs-only features used (require is allowed in ESM)
+                    bun.assert(!uses_exports_ref and
+                        !uses_module_ref and
+                        !p.has_top_level_return and
+                        !p.has_with_scope);
+                    // Use ESM if the file has ES module syntax (import)
+                    exports_kind = if (p.has_es_module_syntax) .esm else .cjs;
                 },
                 .esm => {
                     exports_kind = .esm;
@@ -6640,12 +6643,6 @@ fn NewParser_(
 
         pub fn prepareForVisitPass(p: *P) anyerror!void {
             {
-                var count: usize = 0;
-                for (p.scopes_in_order.items) |item| {
-                    if (item != null) {
-                        count += 1;
-                    }
-                }
                 var i: usize = 0;
                 p.scope_order_to_visit = try p.allocator.alloc(ScopeOrder, p.scopes_in_order.items.len);
                 for (p.scopes_in_order.items) |item| {
@@ -6654,6 +6651,7 @@ fn NewParser_(
                         i += 1;
                     }
                 }
+                p.scope_order_to_visit.len = i;
             }
 
             p.is_file_considered_to_have_esm_exports =

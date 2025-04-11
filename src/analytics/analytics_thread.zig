@@ -128,6 +128,7 @@ pub const Features = struct {
     pub var process_dlopen: usize = 0;
     pub var postgres_connections: usize = 0;
     pub var s3: usize = 0;
+    pub var valkey: usize = 0;
     pub var csrf_verify: usize = 0;
     pub var csrf_generate: usize = 0;
     pub var unsupported_uv_function: usize = 0;

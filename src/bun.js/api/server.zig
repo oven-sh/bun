@@ -3262,7 +3262,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // we use this memory address to disable signals being sent
             signal.clear();
             assert(signal.isDead());
-
+            // we need to render metadata before assignToStream because the stream can call res.end
+            // and this would auto write an 200 status
+            if (!this.flags.has_written_status) {
+                this.renderMetadata();
+            }
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,
@@ -5722,13 +5726,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             JSC.markBinding(@src());
 
             if (this.config.onRequest == .zero) {
-                return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
             }
 
             const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
-                return JSPromise.rejectedPromiseValue(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
             }
 
             var headers: ?*JSC.FetchHeaders = null;
@@ -5749,7 +5753,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = JSC.WebCore.Fetch.fetch_error_blank_url;
-                    return JSPromise.rejectedPromiseValue(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
                 }
 
                 var url = URL.parse(temp_url_str);
@@ -5783,7 +5787,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
-                            return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));
+                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));
                         }
                     }
                 }
@@ -5805,7 +5809,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
 
-                return JSPromise.rejectedPromiseValue(ctx, err);
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, err);
             }
 
             var request = Request.new(existing_request);
@@ -5818,11 +5822,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ) catch |err| this.globalThis.takeException(err);
 
             if (response_value.isAnyError()) {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, response_value);
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, response_value);
             }
 
             if (response_value.isEmptyOrUndefinedOrNull()) {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx));
             }
 
             if (response_value.asAnyPromise() != null) {

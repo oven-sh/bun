@@ -1,15 +1,3 @@
-const bun = @import("root").bun;
-const std = @import("std");
-const uv = bun.windows.libuv;
-const Source = @import("./source.zig").Source;
-
-const ReadState = @import("./pipes.zig").ReadState;
-const FileType = @import("./pipes.zig").FileType;
-
-const PollOrFd = @import("./pipes.zig").PollOrFd;
-
-const Async = bun.Async;
-
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
 const BufferedReaderVTable = struct {
@@ -92,6 +80,8 @@ const PosixBufferedReader = struct {
     _offset: usize = 0,
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
+    count: usize = 0,
+    maxbuf: ?*MaxBuf = null,
 
     const Flags = packed struct {
         is_done: bool = false,
@@ -139,6 +129,7 @@ const PosixBufferedReader = struct {
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         other._offset = 0;
+        MaxBuf.transferToPipereader(&other.maxbuf, &to.maxbuf);
         to.handle.setOwner(to);
 
         // note: the caller is supposed to drain the buffer themselves
@@ -182,14 +173,6 @@ const PosixBufferedReader = struct {
             this.flags.closed_without_reporting = true;
             if (this.flags.close_handle) this.handle.close(this, {});
         }
-    }
-
-    fn _onReadChunk(this: *PosixBufferedReader, chunk: []u8, hasMore: ReadState) bool {
-        if (hasMore == .eof) {
-            this.flags.received_eof = true;
-        }
-
-        return this.vtable.onReadChunk(chunk, hasMore);
     }
 
     pub fn getFd(this: *PosixBufferedReader) bun.FileDescriptor {
@@ -266,6 +249,7 @@ const PosixBufferedReader = struct {
     }
 
     pub fn deinit(this: *PosixBufferedReader) void {
+        MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().clearAndFree();
         this.closeWithoutReporting();
     }
@@ -321,7 +305,7 @@ const PosixBufferedReader = struct {
         return this.start(fd, poll);
     }
 
-    // Exists for consistentcy with Windows.
+    // Exists for consistently with Windows.
     pub fn hasPendingRead(this: *const PosixBufferedReader) bool {
         return this.handle == .poll and this.handle.poll.isRegistered();
     }
@@ -468,6 +452,7 @@ const PosixBufferedReader = struct {
                         parent._offset,
                     )) {
                         .result => |bytes_read| {
+                            if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                             parent._offset += bytes_read;
                             buf = stack_buffer_head[0..bytes_read];
                             stack_buffer_head = stack_buffer_head[bytes_read..];
@@ -560,6 +545,7 @@ const PosixBufferedReader = struct {
 
             switch (sys_fn(fd, buf, parent._offset)) {
                 .result => |bytes_read| {
+                    if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                     parent._offset += bytes_read;
                     buf = buf[0..bytes_read];
                     resizable_buffer.items.len += bytes_read;
@@ -678,6 +664,7 @@ pub const WindowsBufferedReader = struct {
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     // for compatibility with Linux
     flags: Flags = .{},
+    maxbuf: ?*MaxBuf = null,
 
     parent: *anyopaque = undefined,
     vtable: WindowsBufferedReaderVTable = undefined,
@@ -737,6 +724,7 @@ pub const WindowsBufferedReader = struct {
         other._offset = 0;
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         other.source = null;
+        MaxBuf.transferToPipereader(&other.maxbuf, &to.maxbuf);
         to.setParent(parent);
     }
 
@@ -798,6 +786,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn _onReadChunk(this: *WindowsBufferedReader, buf: []u8, hasMore: ReadState) bool {
+        if (this.maxbuf) |m| m.onReadBytes(buf.len);
         this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;
@@ -863,6 +852,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn deinit(this: *WindowsBufferedReader) void {
+        MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
         if (!source.isClosed()) {
@@ -1132,3 +1122,16 @@ else if (bun.Environment.isWindows)
     WindowsBufferedReader
 else
     @compileError("Unsupported platform");
+
+const bun = @import("root").bun;
+const std = @import("std");
+const uv = bun.windows.libuv;
+const Source = @import("./source.zig").Source;
+
+const ReadState = @import("./pipes.zig").ReadState;
+const FileType = @import("./pipes.zig").FileType;
+const MaxBuf = @import("./MaxBuf.zig");
+
+const PollOrFd = @import("./pipes.zig").PollOrFd;
+
+const Async = bun.Async;

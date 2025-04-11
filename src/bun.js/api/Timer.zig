@@ -40,6 +40,8 @@ pub const All = struct {
     /// Incremented when timers are scheduled or rescheduled. See doc comment on
     /// TimerObjectInternals.epoch.
     epoch: u25 = 0,
+    immediate_ref_count: i32 = 0,
+    uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -140,6 +142,39 @@ pub const All = struct {
         all.ensureUVTimer(vm);
     }
 
+    pub fn incrementImmediateRef(this: *All, delta: i32) void {
+        const old = this.immediate_ref_count;
+        const new = old + delta;
+        this.immediate_ref_count = new;
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+
+        if (old <= 0 and new > 0) {
+            if (comptime Environment.isWindows) {
+                if (this.uv_idle.data == null) {
+                    this.uv_idle.init(uv.Loop.get());
+                    this.uv_idle.data = vm;
+                }
+
+                // Matches Node.js behavior
+                this.uv_idle.start(struct {
+                    fn cb(_: *uv.uv_idle_t) callconv(.C) void {
+                        // prevent libuv from polling forever
+                    }
+                }.cb);
+            } else {
+                vm.uwsLoop().ref();
+            }
+        } else if (old > 0 and new <= 0) {
+            if (comptime Environment.isWindows) {
+                if (this.uv_idle.data != null) {
+                    this.uv_idle.stop();
+                }
+            } else {
+                vm.uwsLoop().unref();
+            }
+        }
+    }
+
     pub fn incrementTimerRef(this: *All, delta: i32) void {
         const vm: *JSC.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
 
@@ -175,10 +210,6 @@ pub const All = struct {
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         if (this.active_timer_count == 0) {
             return false;
-        }
-        if (vm.event_loop.immediate_tasks.count > 0 or vm.event_loop.next_immediate_tasks.count > 0) {
-            spec.* = .{ .nsec = 0, .sec = 0 };
-            return true;
         }
 
         var maybe_now: ?timespec = null;
@@ -923,7 +954,7 @@ const TimerObjectInternals = struct {
                 ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
             ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
             const parent: *ImmediateObject = @fieldParentPtr("internals", this);
-            vm.enqueueImmediateTask(JSC.Task.init(parent));
+            vm.enqueueImmediateTask(parent);
             this.setEnableKeepingEventLoopAlive(vm, true);
             // ref'd by event loop
             parent.ref();
@@ -1027,10 +1058,9 @@ const TimerObjectInternals = struct {
         this.flags.is_keeping_event_loop_alive = enable;
         switch (this.flags.kind) {
             .setTimeout, .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
-            // If setImmediate calls ref the event loop, then when the only pending tasks are
-            // immediate callbacks we will still try to check for I/O activity, when really we only
-            // want to run immediate callbacks.
-            .setImmediate => {},
+
+            // setImmediate has slightly different event loop logic
+            .setImmediate => vm.timer.incrementImmediateRef(if (enable) 1 else -1),
         }
     }
 
@@ -1186,6 +1216,8 @@ pub const EventLoopTimer = struct {
         WTFTimer,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        ValkeyConnectionTimeout,
+        ValkeyConnectionReconnect,
         SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
@@ -1202,6 +1234,8 @@ pub const EventLoopTimer = struct {
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
                 .SubprocessTimeout => JSC.Subprocess,
+                .ValkeyConnectionReconnect => JSC.API.Valkey,
+                .ValkeyConnectionTimeout => JSC.API.Valkey,
             };
         }
     } else enum {
@@ -1215,6 +1249,8 @@ pub const EventLoopTimer = struct {
         DNSResolver,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        ValkeyConnectionTimeout,
+        ValkeyConnectionReconnect,
         SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
@@ -1229,6 +1265,8 @@ pub const EventLoopTimer = struct {
                 .DNSResolver => DNSResolver,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
+                .ValkeyConnectionTimeout => JSC.API.Valkey,
+                .ValkeyConnectionReconnect => JSC.API.Valkey,
                 .SubprocessTimeout => JSC.Subprocess,
             };
         }
@@ -1287,6 +1325,8 @@ pub const EventLoopTimer = struct {
         switch (this.tag) {
             .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
             .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
+            .ValkeyConnectionTimeout => return @as(*JSC.API.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .ValkeyConnectionReconnect => return @as(*JSC.API.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
             inline else => |t| {
                 if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
                     @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");

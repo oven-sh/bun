@@ -1527,9 +1527,26 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
-        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run) catch
-            this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved|
-        {
+        const resolution = brk: {
+            const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
+            defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
+            this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main or
+                if (bun.getenvZ("NODE_PRESERVE_SYMLINKS_MAIN")) |env|
+                    bun.strings.eqlComptime(env, "1")
+                else
+                    false;
+            break :brk this_transpiler.resolver.resolve(
+                this_transpiler.fs.top_level_dir,
+                target_name,
+                .entry_point_run,
+            ) catch
+                this_transpiler.resolver.resolve(
+                    this_transpiler.fs.top_level_dir,
+                    try std.mem.join(ctx.allocator, "", &.{ "./", target_name }),
+                    .entry_point_run,
+                );
+        };
+        if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;

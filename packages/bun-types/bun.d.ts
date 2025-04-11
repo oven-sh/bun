@@ -16,7 +16,9 @@
 declare module "bun" {
   type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
-  type ArrayBufferView = NodeJS.TypedArray | DataView;
+  type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
+    | NodeJS.TypedArray<TArrayBuffer>
+    | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
@@ -525,7 +527,7 @@ declare module "bun" {
    *
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    */
-  const env: Env & NodeJS.ProcessEnv;
+  const env: Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
@@ -2591,8 +2593,6 @@ declare module "bun" {
    *
    * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
    *
-   * @category Security
-   *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
@@ -2617,6 +2617,8 @@ declare module "bun" {
    *
    * console.log(verify); // true
    * ```
+   *
+   * @category Security
    */
   const password: {
     /**
@@ -2870,7 +2872,7 @@ declare module "bun" {
    *    outdir: './dist',
    *    env: 'inline'
    *  });
- 
+
    *  // Only include specific env vars
    *  await Bun.build({
    *    entrypoints: ['./src/index.tsx'],
@@ -2896,12 +2898,12 @@ declare module "bun" {
    *  const result = await Bun.build({
    *    entrypoints: ['./src/index.tsx']
    *  });
- 
+
    *  for (const artifact of result.outputs) {
    *    const text = await artifact.text();
    *    const buffer = await artifact.arrayBuffer();
    *    const bytes = await artifact.bytes();
- 
+
    *    new Response(artifact);
    *    await Bun.write(artifact.path, artifact);
    *  }
@@ -5889,10 +5891,18 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
+    readonly remoteFamily: "IPv4" | "IPv6";
+
     /**
      * Remote IP address connected to the socket
      */
     readonly remoteAddress: string;
+
+    readonly remotePort: number;
+
+    readonly localFamily: "IPv4" | "IPv6";
+
+    readonly localAddress: string;
 
     /**
      * local port connected to the socket
@@ -6579,7 +6589,8 @@ declare module "bun" {
       timeout?: number;
 
       /**
-       * The signal to use when killing the process after a timeout or when the AbortSignal is aborted.
+       * The signal to use when killing the process after a timeout, when the AbortSignal is aborted,
+       * or when the process goes over the `maxBuffer` limit.
        *
        * @default "SIGTERM" (signal 15)
        *
@@ -6594,6 +6605,14 @@ declare module "bun" {
        * ```
        */
       killSignal?: string | number;
+
+      /**
+       * The maximum number of bytes the process may output. If the process goes over this limit,
+       * it is killed with signal `killSignal` (defaults to SIGTERM).
+       *
+       * @default undefined (no limit)
+       */
+      maxBuffer?: number;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -6839,7 +6858,8 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
-    exitedDueToTimeout?: true;
+    exitedDueToTimeout?: boolean;
+    exitedDueToMaxBuffer?: boolean;
     pid: number;
   }
 

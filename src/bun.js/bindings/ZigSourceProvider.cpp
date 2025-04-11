@@ -16,8 +16,6 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 
-extern "C" void RefString__free(void*, void*, unsigned);
-
 namespace Zig {
 
 using Base = JSC::SourceProvider;

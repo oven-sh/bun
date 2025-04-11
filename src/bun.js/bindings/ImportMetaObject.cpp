@@ -286,6 +286,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue from = callFrame->argument(1);
     bool isESM = callFrame->argument(2).asBoolean();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
+    JSValue userPathList = callFrame->argument(4);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -339,10 +340,48 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
             }
         }
+
+        if (!userPathList.isUndefinedOrNull()) {
+            if (JSArray* userPathListArray = jsDynamicCast<JSArray*>(userPathList)) {
+                if (!moduleName.isString()) {
+                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "id"_s, "string"_s, moduleName);
+                    scope.release();
+                    return {};
+                }
+
+                JSC::EncodedJSValue result = {};
+                WTF::Vector<BunString> paths;
+                for (size_t i = 0; i < userPathListArray->length(); ++i) {
+                    JSValue path = userPathListArray->getIndex(globalObject, i);
+                    WTF::String pathStr = path.toWTFString(globalObject);
+                    if (scope.exception()) goto cleanup;
+                    paths.append(Bun::toStringRef(pathStr));
+                }
+
+                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.data(), paths.size());
+                if (scope.exception()) goto cleanup;
+
+                if (!JSC::JSValue::decode(result).isString()) {
+                    JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
+                    result = {};
+                    goto cleanup;
+                }
+
+            cleanup:
+                for (auto& path : paths) {
+                    path.deref();
+                }
+                RELEASE_AND_RETURN(scope, result);
+            } else {
+                Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "option.paths"_s, userPathList);
+                scope.release();
+                return {};
+            }
+        }
     }
 
     if (!moduleName.isString()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "id"_s, "string"_s, moduleName);
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, isRequireDotResolve ? "request"_s : "id"_s, "string"_s, moduleName);
         scope.release();
         return {};
     }

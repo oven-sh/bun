@@ -443,53 +443,10 @@ pub const StringHashMapUnowned = struct {
         }
     };
 };
+pub const OffsetList = @import("./baby_list.zig").OffsetList;
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
-pub const OffsetByteList = struct {
-    head: u32 = 0,
-    byte_list: ByteList = .{},
-
-    pub fn init(head: u32, byte_list: ByteList) OffsetByteList {
-        return OffsetByteList{
-            .head = head,
-            .byte_list = byte_list,
-        };
-    }
-
-    pub fn write(self: *OffsetByteList, allocator: std.mem.Allocator, bytes: []const u8) !void {
-        _ = try self.byte_list.write(allocator, bytes);
-    }
-
-    pub fn slice(this: *OffsetByteList) []u8 {
-        return this.byte_list.slice()[0..this.head];
-    }
-
-    pub fn remaining(this: *OffsetByteList) []u8 {
-        return this.byte_list.slice()[this.head..];
-    }
-
-    pub fn consume(self: *OffsetByteList, bytes: u32) void {
-        self.head +|= bytes;
-        if (self.head >= self.byte_list.len) {
-            self.head = 0;
-            self.byte_list.len = 0;
-        }
-    }
-
-    pub fn len(self: *const OffsetByteList) u32 {
-        return self.byte_list.len - self.head;
-    }
-
-    pub fn clear(self: *OffsetByteList) void {
-        self.head = 0;
-        self.byte_list.len = 0;
-    }
-
-    pub fn deinit(self: *OffsetByteList, allocator: std.mem.Allocator) void {
-        self.byte_list.deinitWithAllocator(allocator);
-        self.* = .{};
-    }
-};
+pub const OffsetByteList = OffsetList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.allow_assert) {
@@ -2085,7 +2042,7 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 /// Converts a native file descriptor into a `bun.FileDescriptor`
 ///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-pub inline fn toFD(fd: anytype) FileDescriptor {
+pub fn toFD(fd: anytype) callconv(callconv_inline) FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
@@ -3003,15 +2960,14 @@ pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
 
 pub const heap_breakdown = @import("./heap_breakdown.zig");
 
-/// Globally-allocate a value on the heap.
-///
+/// Globally-allocate a value on the heap. Must free with `bun.destroy`.
 /// Prefer this over `default_allocator.create`
 ///
-/// When used, you must call `bun.destroy` to free the memory.
-/// `default_allocator.destroy` should not be used.
+/// By using this over the default allocator, you gain access to:
+/// - Automatic named heaps on macOS.
+/// - Additional assertions when freeing memory.
 ///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
+/// On macOS, you can use `Bun.unsafe.mimallocDump()` to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const pointer = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
@@ -3030,14 +2986,27 @@ pub inline fn new(comptime T: type, init: T) *T {
     return pointer;
 }
 
-/// Free a globally-allocated a value from `bun.new()`. Using this with
-/// pointers allocated from other means will cause crashes.
+/// Free a globally-allocated a value from `bun.new()`.
+/// For single-item heap pointers, prefer bun.new/destroy over default_allocator
+///
+/// Destruction performs additional safety checks:
+/// - Generic assertions can be added to T.assertMayDeinit()
+/// - Automatic integration with `RefCount`
 pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
         const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
+
+        // If this type implements a RefCount, make sure it is zero.
+        @import("./ptr/ref_count.zig").maybeAssertNoRefs(T, pointer);
+
+        switch (@typeInfo(T)) {
+            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertMayDeinit"))
+                pointer.assertMayDeinit(),
+            else => {},
+        }
     }
 
     if (comptime heap_breakdown.enabled) {
@@ -3789,7 +3758,7 @@ pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
 }
 
-pub const DebugThreadLock = if (Environment.allow_assert)
+pub const DebugThreadLock = if (Environment.isDebug)
     struct {
         owning_thread: ?std.Thread.Id,
         locked_at: crash_handler.StoredTrace,
@@ -4151,3 +4120,4 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
+pub const valkey = @import("./valkey/index.zig");

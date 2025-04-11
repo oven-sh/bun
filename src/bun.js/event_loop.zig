@@ -43,7 +43,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
             var this = This.new(.{
@@ -84,7 +84,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub fn deinit(this: *This) void {
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
     };
 }
@@ -105,11 +105,9 @@ pub fn WorkTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
-        pub usingnamespace bun.New(@This());
-
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
-            var this = This.new(.{
+            var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
@@ -119,6 +117,11 @@ pub fn WorkTask(comptime Context: type) type {
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
+        }
+
+        pub fn deinit(this: *This) void {
+            this.ref.unref(this.event_loop.virtual_machine);
+            bun.destroy(this);
         }
 
         pub fn runFromThreadPool(task: *TaskType) void {
@@ -148,11 +151,6 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn onFinish(this: *This) void {
             this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
-        }
-
-        pub fn deinit(this: *This) void {
-            this.ref.unref(this.event_loop.virtual_machine);
-            this.destroy();
         }
     };
 }
@@ -236,7 +234,7 @@ pub const AnyTaskWithExtraContext = struct {
     pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *AnyTaskWithExtraContext {
         const Ptr = std.meta.Child(@TypeOf(ptr));
         const Wrapper = struct {
-            any_task: AnyTaskWithExtraContext = undefined,
+            any_task: AnyTaskWithExtraContext,
             wrapped: *Ptr,
             pub fn function(this: *anyopaque, extra: *anyopaque) void {
                 const that: *@This() = @ptrCast(@alignCast(this));
@@ -301,6 +299,8 @@ pub const CppTask = opaque {
 };
 
 pub const ConcurrentCppTask = struct {
+    pub const new = bun.TrivialNew(@This());
+
     cpp_task: *EventLoopTaskNoContext,
     workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
 
@@ -320,19 +320,17 @@ pub const ConcurrentCppTask = struct {
     };
 
     pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
-        var this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
+        const this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
         // Extract all the info we need from `this` and `cpp_task` before we call functions that
         // free them
         const cpp_task = this.cpp_task;
         const maybe_vm = cpp_task.getVM();
-        this.destroy();
+        bun.destroy(this);
         cpp_task.run();
         if (maybe_vm) |vm| {
             vm.event_loop.unrefConcurrently();
         }
     }
-
-    pub usingnamespace bun.New(@This());
 
     pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
         JSC.markBinding(@src());
@@ -553,7 +551,8 @@ pub const ConcurrentTask = struct {
     auto_delete: bool = false,
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
+    pub const deinit = bun.TrivialDeinit(@This());
 
     pub const AutoDeinit = enum {
         manual_deinit,
@@ -825,8 +824,8 @@ pub const EventLoop = struct {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    immediate_tasks: Queue = undefined,
-    next_immediate_tasks: Queue = undefined,
+    immediate_tasks: std.ArrayListUnmanaged(*JSC.BunTimer.ImmediateObject) = .{},
+    next_immediate_tasks: std.ArrayListUnmanaged(*JSC.BunTimer.ImmediateObject) = .{},
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSC.JSGlobalObject = undefined,
@@ -1397,7 +1396,34 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        _ = this.tickQueueWithCount(virtual_machine, "immediate_tasks");
+        var global = this.global;
+        const global_vm = global.vm();
+
+        var to_run_now = this.immediate_tasks;
+
+        this.immediate_tasks = this.next_immediate_tasks;
+        this.next_immediate_tasks = .{};
+
+        for (to_run_now.items) |task| {
+            task.runImmediateTask(virtual_machine);
+            this.drainMicrotasksWithGlobal(global, global_vm);
+        }
+
+        if (this.next_immediate_tasks.capacity > 0) {
+            // this would only occur if we were recursively running tickImmediateTasks.
+            @branchHint(.unlikely);
+            this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items) catch bun.outOfMemory();
+            this.next_immediate_tasks.deinit(bun.default_allocator);
+        }
+
+        if (to_run_now.capacity > 1024 * 128) {
+            // once in a while, deinit the array to free up memory
+            to_run_now.clearAndFree(bun.default_allocator);
+        } else {
+            to_run_now.clearRetainingCapacity();
+        }
+
+        this.next_immediate_tasks = to_run_now;
     }
 
     fn tickConcurrent(this: *EventLoop) void {
@@ -1467,7 +1493,7 @@ pub const EventLoop = struct {
         while (iter.next()) |task| {
             if (to_destroy) |dest| {
                 to_destroy = null;
-                dest.destroy();
+                dest.deinit();
             }
 
             if (task.auto_delete) {
@@ -1481,7 +1507,7 @@ pub const EventLoop = struct {
         }
 
         if (to_destroy) |dest| {
-            dest.destroy();
+            dest.deinit();
         }
 
         return this.tasks.count - start_count;
@@ -1496,11 +1522,15 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
+        var ctx = this.virtual_machine;
 
-        this.flushImmediateQueue();
         this.tickImmediateTasks(ctx);
+        if (comptime Environment.isPosix) {
+            if (this.immediate_tasks.items.len > 0) {
+                this.wakeup();
+            }
+        }
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1539,23 +1569,8 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        this.flushImmediateQueue();
         ctx.onAfterEventLoop();
         this.global.handleRejectedPromises();
-    }
-
-    pub fn flushImmediateQueue(this: *EventLoop) void {
-        // If we can get away with swapping the queues, do that rather than copying the data
-        if (this.immediate_tasks.count > 0) {
-            this.immediate_tasks.write(this.next_immediate_tasks.readableSlice(0)) catch unreachable;
-            this.next_immediate_tasks.head = 0;
-            this.next_immediate_tasks.count = 0;
-        } else if (this.next_immediate_tasks.count > 0) {
-            const prev_immediate = this.immediate_tasks;
-            const next_immediate = this.next_immediate_tasks;
-            this.immediate_tasks = next_immediate;
-            this.next_immediate_tasks = prev_immediate;
-        }
     }
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
@@ -1594,8 +1609,13 @@ pub const EventLoop = struct {
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
-        this.flushImmediateQueue();
+
         this.tickImmediateTasks(ctx);
+        if (comptime Environment.isPosix) {
+            if (this.immediate_tasks.items.len > 0) {
+                this.wakeup();
+            }
+        }
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1618,7 +1638,6 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        this.flushImmediateQueue();
         ctx.onAfterEventLoop();
     }
 
@@ -1661,12 +1680,13 @@ pub const EventLoop = struct {
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-        switch (promise.status(this.virtual_machine.jsc)) {
+        const jsc_vm = this.virtual_machine.jsc;
+        switch (promise.status(jsc_vm)) {
             .pending => {
-                while (promise.status(this.virtual_machine.jsc) == .pending) {
+                while (promise.status(jsc_vm) == .pending) {
                     this.tick();
 
-                    if (promise.status(this.virtual_machine.jsc) == .pending) {
+                    if (promise.status(jsc_vm) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1677,12 +1697,13 @@ pub const EventLoop = struct {
 
     pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-        switch (promise.status(this.virtual_machine.jsc)) {
+        const jsc_vm = this.virtual_machine.jsc;
+        switch (promise.status(jsc_vm)) {
             .pending => {
-                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
+                while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
                     this.tick();
 
-                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1692,13 +1713,11 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
-        JSC.markBinding(@src());
         this.tasks.writeItem(task) catch unreachable;
     }
 
-    pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
-        JSC.markBinding(@src());
-        this.next_immediate_tasks.writeItem(task) catch unreachable;
+    pub fn enqueueImmediateTask(this: *EventLoop, task: *JSC.BunTimer.ImmediateObject) void {
+        this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
@@ -2461,7 +2480,7 @@ pub const PosixSignalHandle = struct {
 
     const log = bun.Output.scoped(.PosixSignalHandle, true);
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     /// Called by the signal handler (single producer).
     /// Returns `true` if enqueued successfully, or `false` if the ring is full.
@@ -2539,7 +2558,7 @@ pub const PosixSignalTask = struct {
     number: u8,
     extern "c" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
     pub fn runFromJSThread(number: u8, globalObject: *JSC.JSGlobalObject) void {
         Bun__onSignalForJS(number, globalObject);
     }

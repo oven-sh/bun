@@ -790,13 +790,16 @@ fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
 }
 const FromEnum = enum { subprocess_exited, subprocess, process };
 fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
-    if (from == .process or callback.isFunction()) {
-        const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
+    if (callback.isFunction()) {
+        JSC.Bun__Process__queueNextTick1(globalObject, callback, ex);
+        return .false;
+    }
+    if (from == .process) {
+        const target = JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
         JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
         return .false;
     }
-    // Bun.spawn().send() should throw an error
-    // if callback is passed, call it with the error instead so that child_process.ts can handle it
+    // Bun.spawn().send() should throw an error (unless callback is passed)
     return globalObject.throwValue(ex);
 }
 pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, from: FromEnum) bun.JSError!JSValue {

@@ -20,8 +20,8 @@ pub const WebWorker = struct {
     parent_context_id: u32 = 0,
     parent: *JSC.VirtualMachine,
 
-    /// Already resolved.
-    specifier: []const u8 = "",
+    /// To be resolved on the Worker thread at startup, in spin().
+    unresolved_specifier: []const u8,
     preloads: [][]const u8 = &.{},
     store_fd: bool = false,
     arena: ?bun.MimallocArena = null,
@@ -205,10 +205,6 @@ pub const WebWorker = struct {
 
         const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
-        const path = resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) orelse {
-            return null;
-        };
-
         var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
         for (preload_modules) |module| {
             const utf8_slice = module.toUTF8(bun.default_allocator);
@@ -234,7 +230,7 @@ pub const WebWorker = struct {
             .execution_context_id = this_context_id,
             .mini = mini,
             .eval_mode = eval_mode,
-            .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .unresolved_specifier = (spec_slice.toOwned(bun.default_allocator) catch bun.outOfMemory()).slice(),
             .store_fd = parent.transpiler.resolver.store_fd,
             .name = brk: {
                 if (!name_str.isEmpty()) {
@@ -324,7 +320,7 @@ pub const WebWorker = struct {
     fn deinit(this: *WebWorker) void {
         log("[{d}] deinit", .{this.execution_context_id});
         this.parent_poll_ref.unrefConcurrently(this.parent);
-        bun.default_allocator.free(this.specifier);
+        bun.default_allocator.free(this.unresolved_specifier);
         for (this.preloads) |preload| {
             bun.default_allocator.free(preload);
         }
@@ -410,7 +406,23 @@ pub const WebWorker = struct {
         this.setStatus(.starting);
         vm.preload = this.preloads;
         WebWorker__dispatchOnline(this.cpp_worker, vm.global);
-        var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
+        // resolve entrypoint
+        var resolve_error = bun.String.empty;
+        defer resolve_error.deref();
+        const path = resolveEntryPointSpecifier(vm, this.unresolved_specifier, &resolve_error, vm.log) orelse {
+            vm.exit_handler.exit_code = 1;
+            if (vm.log.errors == 0 and !resolve_error.isEmpty()) {
+                const err = resolve_error.toUTF8(bun.default_allocator);
+                defer err.deinit();
+                vm.log.addError(null, .Empty, err.slice()) catch bun.outOfMemory();
+            }
+            this.flushLogs();
+            this.exitAndDeinit();
+            return;
+        };
+        defer bun.default_allocator.free(path);
+
+        var promise = vm.loadEntryPointForWebWorker(path) catch {
             vm.exit_handler.exit_code = 1;
             this.flushLogs();
             this.exitAndDeinit();

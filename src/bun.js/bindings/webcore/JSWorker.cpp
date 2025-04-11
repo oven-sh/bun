@@ -145,7 +145,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto options = WorkerOptions {};
-    JSValue workerData;
+    JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {

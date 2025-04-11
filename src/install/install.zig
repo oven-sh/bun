@@ -7728,7 +7728,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub const Do = packed struct {
+        pub const Do = packed struct(u16) {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
@@ -7741,9 +7741,10 @@ pub const PackageManager = struct {
             trust_dependencies_from_args: bool = false,
             update_to_latest: bool = false,
             analyze: bool = false,
+            _: u4 = 0,
         };
 
-        pub const Enable = packed struct {
+        pub const Enable = packed struct(u16) {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
@@ -7758,6 +7759,7 @@ pub const PackageManager = struct {
 
             exact_versions: bool = false,
             only_missing: bool = false,
+            _: u7 = 0,
         };
     };
 

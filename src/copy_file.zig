@@ -44,7 +44,7 @@ const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
 ///
 /// on macOS and other platforms, sendfile() only works when one of the ends is a socket
 /// and in general on macOS, it doesn't seem to have much performance impact.
-const LinuxCopyFileState = packed struct {
+const LinuxCopyFileState = packed struct(u8) {
     /// This is the most important flag for reducing the system call count
     /// When copying files from one folder to another, if we see EXDEV once
     /// there's a very good chance we will see it for every file thereafter in that folder.
@@ -53,6 +53,7 @@ const LinuxCopyFileState = packed struct {
     has_ioctl_ficlone_failed: bool = false,
     has_copy_file_range_failed: bool = false,
     has_sendfile_failed: bool = false,
+    _: u4 = 0,
 };
 const EmptyCopyFileState = struct {};
 pub const CopyFileState = if (Environment.isLinux) LinuxCopyFileState else EmptyCopyFileState;

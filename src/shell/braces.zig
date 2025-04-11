@@ -11,7 +11,7 @@ const log = bun.Output.scoped(.BRACES, false);
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
-const ExpansionVariant = packed struct {
+const ExpansionVariant = packed struct(u32) {
     start: u16 = 0,
     end: u16 = 0, // must be >= start
 };

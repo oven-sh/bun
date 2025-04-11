@@ -11,7 +11,6 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const stackFallback = std.heap.stackFallback;
 const assert = std.debug.assert;
-const print = std.debug.print;
 
 /// Comptime diff configuration. Defaults are usually sufficient.
 pub const Options = struct {
@@ -600,9 +599,9 @@ test StrDiffer {
         }
         var d = try StrDiffer.diff(a, actual.items, expected.items);
         defer d.deinit();
-        for (d.items) |diff| {
-            std.debug.print("{}\n", .{diff});
-        }
+        // for (d.items) |diff| {
+        //     std.debug.print("{}\n", .{diff});
+        // }
     }
 }
 

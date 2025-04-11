@@ -61,7 +61,7 @@ pub const WTF = @import("./WTF.zig").WTF;
 pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.zig").ScriptExecutionStatus;
 pub const DeferredError = @import("./DeferredError.zig").DeferredError;
 pub const Sizes = @import("./sizes.zig");
-
+pub const JSRef = @import("./JSRef.zig").JSRef;
 pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type, *JSGlobalObject, []const JSValue) anyerror!JSValue) type {
     return struct {
         pub fn callback(

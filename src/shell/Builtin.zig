@@ -224,11 +224,14 @@ pub const BuiltinIO = struct {
     };
 
     const Blob = struct {
-        ref_count: usize = 1,
-        blob: bun.JSC.WebCore.Blob,
-        pub usingnamespace bun.NewRefCounted(Blob, _deinit, null);
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", @This().deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
 
-        fn _deinit(this: *Blob) void {
+        ref_count: RefCount,
+        blob: bun.JSC.WebCore.Blob,
+
+        fn deinit(this: *Blob) void {
             this.blob.deinit();
             bun.destroy(this);
         }
@@ -422,6 +425,7 @@ pub fn init(
                     defer original_blob.deinit();
 
                     const blob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
+                        .ref_count = .init(),
                         .blob = original_blob.dupe(),
                     });
 
@@ -446,7 +450,10 @@ pub fn init(
                         return .yield;
                     }
 
-                    const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{ .blob = blob.dupe() });
+                    const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
+                        .ref_count = .init(),
+                        .blob = blob.dupe(),
+                    });
 
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();

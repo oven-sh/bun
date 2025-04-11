@@ -767,14 +767,12 @@ node_api_create_external_string_latin1(napi_env env,
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        if (finalize_callback) {
-            NAPI_LOG("latin1 string finalizer");
-            finalize_callback(env, str, hint);
-        }
+        NAPI_LOG("latin1 string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -803,15 +801,14 @@ node_api_create_external_string_utf16(napi_env env,
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
+
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        if (finalize_callback) {
-            NAPI_LOG("utf16 string finalizer");
-            finalize_callback(env, str, hint);
-        }
+        NAPI_LOG("utf16 string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);

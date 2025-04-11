@@ -789,6 +789,16 @@ fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
     return .undefined;
 }
 const FromEnum = enum { subprocess_exited, subprocess, process };
+fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
+    if (from == .process or callback.isFunction()) {
+        const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
+        JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
+        return .false;
+    }
+    // Bun.spawn().send() should throw an error
+    // if callback is passed, call it with the error instead so that child_process.ts can handle it
+    return globalObject.throwValue(ex);
+}
 pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, from: FromEnum) bun.JSError!JSValue {
     var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
@@ -804,17 +814,12 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
     }
 
     const ipc_data = ipc orelse {
-        switch (from) {
-            .process => {
-                const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).toJS();
-                const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
-                JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
-            },
-            // child_process wrapper will catch the error and emit it as an 'error' event or send it to the callback
-            .subprocess => return globalObject.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() can only be used if an IPC channel is open.", .{}).throw(),
-            .subprocess_exited => return globalObject.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw(),
-        }
-        return .false;
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("{s}", .{@as([]const u8, switch (from) {
+            .process => "process.send() can only be used if the IPC channel is open.",
+            .subprocess => "Subprocess.send() can only be used if an IPC channel is open.",
+            .subprocess_exited => "Subprocess.send() cannot be used after the process has exited.",
+        })}).toJS();
+        return doSendErr(globalObject, callback, ex, from);
     };
 
     if (message.isUndefined()) {
@@ -846,14 +851,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
         ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
-        if (from == .process or callback.isFunction()) {
-            const target = if (callback.isFunction()) callback else JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
-            JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
-            return .false;
-        }
-        // Bun.spawn().send() should throw an error
-        // if callback is passed, call it with the error instead so that child_process.ts can handle it
-        return globalObject.throwValue(ex);
+        return doSendErr(globalObject, callback, ex, from);
     }
 
     return .true;

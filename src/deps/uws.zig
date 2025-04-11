@@ -3040,12 +3040,13 @@ pub const ListenSocket = opaque {
         us_listen_socket_close(@intFromBool(ssl), this);
     }
     pub fn getLocalAddress(this: *ListenSocket, ssl: bool, buf: []u8) ![]const u8 {
-        const self: *uws.Socket = @ptrCast(this);
-        return self.localAddress(ssl, buf);
+        return this.getSocket().localAddress(ssl, buf);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
-        const self: *uws.Socket = @ptrCast(this);
-        return self.localPort(ssl);
+        return this.getSocket().localPort(ssl);
+    }
+    pub fn getSocket(this: *ListenSocket) *uws.Socket {
+        return @ptrCast(this);
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;

@@ -305,8 +305,13 @@ pub const Socket = uws.NewSocketHandler(false);
 
 pub const Handle = struct {
     fd: bun.FileDescriptor,
+    js: JSC.JSValue,
+    pub fn init(fd: bun.FileDescriptor, js: JSC.JSValue) @This() {
+        js.protect();
+        return .{ .fd = fd, .js = js };
+    }
     fn deinit(self: *Handle) void {
-        _ = self;
+        self.js.unprotect();
     }
 };
 pub const SendHandle = struct {
@@ -532,12 +537,12 @@ const SocketIPCData = struct {
         }
     }
 
-    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal) bool {
+    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, handle: ?Handle) bool {
         if (Environment.allow_assert) {
             bun.assert(ipc_data.has_written_version == 1);
         }
 
-        const msg = ipc_data.send_queue.startMessage(null);
+        const msg = ipc_data.send_queue.startMessage(handle);
         const start_offset = msg.data.list.items.len;
 
         const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return false;
@@ -840,26 +845,31 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         message = serialized_message;
     }
 
+    var zig_handle: ?Handle = null;
     if (!handle.isUndefinedOrNull()) {
-        // zig side of handling the handle
-        // std.log.info("TODO handle handle", .{});
-
-        // - check if it is an instanceof Listener (from socket.zig)
         if (bun.JSC.API.Listener.fromJS(handle)) |listener| {
             log("got listener", .{});
-            // this is how it was created
-            // there's also TCPSocket.new but it isn't stored?
-            switch (listener.connection) {
-                .fd => |fd| log("got listener fd: {d}", .{@intFromEnum(fd)}),
-                .unix => |unix| log("got linstener unix: `{s}`", .{unix}),
-                .host => |host| log("got listener host: `{s}`:{d}", .{ host.host, host.port }),
+            switch (listener.listener) {
+                .uws => |socket_uws| {
+                    // may need to handle ssl case
+                    const fd = socket_uws.getSocket().getFd();
+                    zig_handle = .init(fd, handle);
+                },
+                .namedPipe => |namedPipe| {
+                    _ = namedPipe;
+                },
+                .none => {},
             }
         } else {
             //
         }
     }
 
-    const good = ipc_data.serializeAndSend(globalObject, message, .external);
+    if (zig_handle) |zig_handle_resolved| {
+        log("sending ipc message with fd: {d}", .{@intFromEnum(zig_handle_resolved.fd)});
+    }
+
+    const good = ipc_data.serializeAndSend(globalObject, message, .external, zig_handle);
 
     if (good) {
         if (callback.isFunction()) {
@@ -1070,6 +1080,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             fd: c_int,
         ) void {
             const ipc: *IPCData = this.ipc() orelse return;
+            log("onFd: {d}", .{fd});
             if (ipc.incoming_fd != null) {
                 log("onFd: incoming_fd already set; overwriting", .{});
             }

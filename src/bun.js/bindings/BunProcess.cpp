@@ -2179,18 +2179,9 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-#endif
-        scope.throwException(globalObject, exception->value());
-        returnedException.clear();
-        return {};
-    }
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
+    scope.assertNoExceptionExceptTermination();
+    CLEAR_AND_RETURN_IF_EXCEPTION(scope, jsUndefined());
 
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
@@ -2245,20 +2236,9 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     args.append(jsNumber(static_cast<int32_t>(fdType)));
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args);
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-#endif
-        scope.throwException(globalObject, exception->value());
-        returnedException.clear();
-        return {};
-    }
-
-    RELEASE_AND_RETURN(scope, result);
+    return result;
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
@@ -2325,19 +2305,8 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         JSC::MarkedArgumentBuffer args;
         JSC::CallData callData = JSC::getCallData(getControl);
 
-        NakedPtr<JSC::Exception> returnedException = nullptr;
-        auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args, returnedException);
+        auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
         RETURN_IF_EXCEPTION(scope, {});
-
-        if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-#endif
-            scope.throwException(globalObject, exception->value());
-            returnedException.clear();
-            return {};
-        }
-
         return result;
     } else {
         return jsUndefined();
@@ -3438,15 +3407,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
     args.append(jsNumber(signal));
     JSC::CallData callData = JSC::getCallData(_killFn);
 
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, _killFn, callData, globalObject->globalThis(), args, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, _killFn, callData, globalObject->globalThis(), args);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (auto* exception = returnedException.get()) {
-        scope.throwException(globalObject, exception->value());
-        returnedException.clear();
-        return {};
-    }
     auto err = result.toInt32(globalObject);
     if (err) {
         throwSystemError(scope, globalObject, "kill"_s, err);

@@ -102,15 +102,24 @@ describe("@types/bun integration test", () => {
     `;
 
     const importantLines = [
+      "globals.ts",
       "error TS2353: Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+
+      "index.ts",
       "error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+
+      "streams.ts",
       "error TS2769: No overload matches this call.",
-      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number", // This line ends early because we've seen TypeScript emit differing messages in different environments
       "ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
+      "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number", // This line truncates because we've seen TypeScript emit differing messages in different environments
       `Type '"direct"' is not assignable to type '"bytes"'`,
       "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",
+
+      "websocket.ts",
       "error TS2353: Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+
+      "worker.ts",
       "error TS2339: Property 'ref' does not exist on type 'Worker'.",
       "error TS2339: Property 'unref' does not exist on type 'Worker'.",
       "error TS2339: Property 'threadId' does not exist on type 'Worker'.",

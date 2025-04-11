@@ -147,10 +147,13 @@ export function serialize(message, handle) {
   const net = require("node:net");
   const dgram = require("node:dgram");
   if (handle instanceof net.Server) {
+    // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
     return [handle._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
   } else if (handle instanceof net.Socket) {
+    // this one needs to have a close function (& fd kept alive). once rejected without retry or acknowledge, close the socket.
     throw new Error("todo serialize net.Socket");
   } else if (handle instanceof dgram.Socket) {
+    // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
     throw new Error("todo serialize dgram.Socket");
   } else {
     throw $ERR_INVALID_HANDLE_TYPE();

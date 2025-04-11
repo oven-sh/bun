@@ -5631,7 +5631,7 @@ pub const NodeFS = struct {
             Maybe(Return.Rmdir).success;
     }
 
-    pub fn rm(this: *NodeFS, args: Arguments.Rm) Maybe(Return.Rm) {
+    pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
 
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {

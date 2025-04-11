@@ -1,4 +1,4 @@
-const uws = @import("../deps/uws.zig");
+const uws = bun.uws;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Global = bun.Global;
@@ -52,7 +52,7 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
-};
+} || bun.OOM;
 
 pub const IPCSerializationError = error{
     /// Value could not be serialized.
@@ -156,8 +156,8 @@ const advanced = struct {
 };
 
 const json = struct {
-    fn jsonIPCDataStringFreeCB(context: *anyopaque, _: *anyopaque, _: u32) callconv(.C) void {
-        @as(*bool, @ptrCast(context)).* = true;
+    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.C) void {
+        context.* = true;
     }
 
     pub fn getVersionPacket() []const u8 {
@@ -176,9 +176,12 @@ const json = struct {
     // ["[{\d\.] is regular
 
     pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
+        // <tag>{ "foo": "bar"} // tag is 1 or 2
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
             var json_data = data[0..idx];
-            if (json_data.len == 0) return IPCDecodeError.NotEnoughBytes;
+            // bounds-check for the following json_data[0]
+            // TODO: should we return NotEnoughBytes?
+            if (json_data.len == 0) return error.InvalidFormat;
 
             var kind: enum { regular, internal } = .regular;
             if (json_data[0] == 2) {
@@ -193,10 +196,16 @@ const json = struct {
             // Use ExternalString to avoid copying data if possible.
             // This is only possible for ascii data, as that fits into latin1
             // otherwise we have to convert it utf-8 into utf16-le.
-            var str = if (is_ascii)
-                bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
-            else
-                bun.String.fromUTF8(json_data);
+            var str = if (is_ascii) ascii: {
+
+                // .dead if `json_data` exceeds max length
+                const s = bun.String.createExternal(*bool, json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB);
+                if (s.tag == .Dead) {
+                    @branchHint(.unlikely);
+                    return IPCDecodeError.OutOfMemory;
+                }
+                break :ascii s;
+            } else bun.String.fromUTF8(json_data);
 
             defer {
                 str.deref();
@@ -926,6 +935,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             socket.close(.failure);
                             return;
                         },
+                        error.OutOfMemory => {
+                            Output.printErrorln("IPC message is too long.", .{});
+                            this.handleIPCClose();
+                            socket.close(.failure);
+                            return;
+                        },
                     };
 
                     skip_handle_message: {
@@ -1011,6 +1026,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
+                        socket.close(.failure);
+                        return;
+                    },
+                    error.OutOfMemory => {
+                        Output.printErrorln("IPC message is too long.", .{});
+                        this.handleIPCClose();
                         socket.close(.failure);
                         return;
                     },
@@ -1140,6 +1161,11 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
+                        ipc.close(false);
+                        return;
+                    },
+                    error.OutOfMemory => {
+                        Output.printErrorln("IPC message is too long.", .{});
                         ipc.close(false);
                         return;
                     },

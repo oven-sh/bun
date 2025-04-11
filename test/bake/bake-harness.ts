@@ -95,6 +95,8 @@ export interface DevServerTest {
 
   /** Starting files */
   files?: FileObject;
+  /** Manually specify which html files to serve */
+  htmlFiles?: string[];
   /**
    * Framework to use. Consider `minimalFramework` if possible.
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
@@ -1490,9 +1492,9 @@ function testImpl<T extends DevServerTest>(
 
     const mainDir = path.resolve(root, options.mainDir ?? ".");
     if (options.files) {
-      const htmlFiles = Object.keys(options.files)
-        .filter(file => file.endsWith(".html"))
-        .map(x => path.join(root, x));
+      const htmlFiles = (options.htmlFiles ?? Object.keys(options.files).filter(file => file.endsWith(".html"))).map(
+        x => path.join(root, x),
+      );
       await writeAll(root, options.files);
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {

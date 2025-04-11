@@ -129,8 +129,9 @@ pub const Socket = opaque {
     }
 
     pub fn write(this: *Socket, ssl: bool, data: []const u8, msg_more: bool) i32 {
-        debug("us_socket_write({d}, {d})", .{ @intFromPtr(this), data.len });
-        return us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        const rc = us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
+        return rc;
     }
 
     pub fn writeFd(this: *Socket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {

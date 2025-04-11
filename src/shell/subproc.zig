@@ -12,7 +12,7 @@ const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Which = @import("../which.zig");
+const Which = bun.which;
 const Async = bun.Async;
 // const IPC = @import("../bun.js/ipc.zig");
 const uws = bun.uws;
@@ -952,6 +952,10 @@ pub const ShellSubprocess = struct {
 const WaiterThread = bun.spawn.WaiterThread;
 
 pub const PipeReader = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     reader: IOReader = undefined,
     process: ?*ShellSubprocess = null,
     event_loop: JSC.EventLoopHandle = undefined,
@@ -964,7 +968,7 @@ pub const PipeReader = struct {
     out_type: bun.shell.subproc.ShellSubprocess.OutKind,
     captured_writer: CapturedWriter = .{},
     buffered_output: BufferedOutput = .{ .bytelist = .{} },
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     const BufferedOutput = union(enum) {
         bytelist: bun.ByteList,
@@ -1012,8 +1016,6 @@ pub const PipeReader = struct {
             }
         }
     };
-
-    pub usingnamespace bun.NewRefCounted(PipeReader, deinit, null);
 
     pub const CapturedWriter = struct {
         dead: bool = true,
@@ -1104,7 +1106,8 @@ pub const PipeReader = struct {
     }
 
     pub fn create(event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, capture: ?*sh.IOWriter, out_type: bun.shell.Subprocess.OutKind) *PipeReader {
-        var this: *PipeReader = PipeReader.new(.{
+        var this: *PipeReader = bun.new(PipeReader, .{
+            .ref_count = .init(),
             .process = process,
             .reader = IOReader.init(@This()),
             .event_loop = event_loop,
@@ -1337,7 +1340,7 @@ pub const PipeReader = struct {
         return this.event_loop.loop();
     }
 
-    pub fn deinit(this: *PipeReader) void {
+    fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
             assert(this.reader.isDone() or this.state == .err);
@@ -1365,7 +1368,7 @@ pub const PipeReader = struct {
         this.buffered_output.deinit();
 
         this.reader.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

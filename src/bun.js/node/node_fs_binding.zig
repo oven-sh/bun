@@ -71,7 +71,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 const signal = args.signal orelse break :check_early_abort;
                 if (signal.reasonIfAborted(globalObject)) |reason| {
                     deinit = true;
-                    return JSC.JSPromise.rejectedPromiseValue(globalObject, reason.toJS(globalObject));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, reason.toJS(globalObject));
                 }
             }
 
@@ -97,7 +97,7 @@ pub const NodeJSFS = struct {
     node_fs: JSC.Node.NodeFS = .{},
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {
         if (this.node_fs.vm) |vm| {
@@ -106,7 +106,7 @@ pub const NodeJSFS = struct {
             }
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

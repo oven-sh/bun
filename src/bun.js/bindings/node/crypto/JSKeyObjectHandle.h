@@ -8,9 +8,7 @@
 #include "ncrypto.h"
 #include "BunClientData.h"
 #include "openssl/ssl.h"
-#include "KeyObjectData.h"
-// #include "JSKeyObject.h"
-// #include "KeyObject2.h"
+#include "KeyObject2.h"
 
 namespace Bun {
 
@@ -26,9 +24,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSKeyObjectHandle* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObjectData&& data)
+    static JSKeyObjectHandle* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObj)
     {
-        JSKeyObjectHandle* instance = new (NotNull, JSC::allocateCell<JSKeyObjectHandle>(vm)) JSKeyObjectHandle(vm, structure, WTFMove(data));
+        JSKeyObjectHandle* instance = new (NotNull, JSC::allocateCell<JSKeyObjectHandle>(vm)) JSKeyObjectHandle(vm, structure, WTFMove(keyObj));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -51,11 +49,11 @@ public:
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
-    KeyObjectData m_data;
+    KeyObject m_data;
 
-    JSKeyObjectHandle(JSC::VM& vm, JSC::Structure* structure, KeyObjectData&& data)
+    JSKeyObjectHandle(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObj)
         : Base(vm, structure)
-        , m_data(WTFMove(data))
+        , m_data(WTFMove(keyObj))
     {
     }
 };

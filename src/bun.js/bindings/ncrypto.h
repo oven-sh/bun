@@ -478,6 +478,8 @@ public:
     const EC_GROUP* getGroup() const;
     int getCurve() const;
 
+    static int GetCurveIdFromName(const char* name);
+
     inline operator bool() const { return ec_ != nullptr; }
     inline operator OSSL3_CONST EC_KEY*() const { return ec_; }
 
@@ -843,6 +845,20 @@ public:
         // ECPrivateKey according to SEC1.
         SEC1,
     };
+
+    static WTF::ASCIILiteral EncodingName(PKEncodingType type)
+    {
+        switch (type) {
+        case PKEncodingType::PKCS1:
+            return "pkcs1"_s;
+        case PKEncodingType::PKCS8:
+            return "pkcs8"_s;
+        case PKEncodingType::SPKI:
+            return "spki"_s;
+        case PKEncodingType::SEC1:
+            return "sec1"_s;
+        }
+    }
 
     enum class PKFormatType {
         DER,

@@ -18,6 +18,7 @@
 namespace Bun {
 
 using namespace JSC;
+using namespace ncrypto;
 
 namespace ExternZigHash {
 struct Hasher;
@@ -781,6 +782,211 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
     Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
     return std::nullopt;
+}
+
+bool isStringOrBuffer(JSValue value)
+{
+    if (value.isString()) {
+        return true;
+    }
+
+    if (jsDynamicCast<JSArrayBufferView*>(value)) {
+        return true;
+    }
+
+    if (jsDynamicCast<JSArrayBuffer*>(value)) {
+        return true;
+    }
+
+    return false;
+}
+
+ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject, ThrowScope& scope, JSValue formatValue, std::optional<EVPKeyPointer::PKFormatType> defaultFormat, WTF::String optionName)
+{
+    if (formatValue.isUndefined() && defaultFormat) {
+        return *defaultFormat;
+    }
+
+    if (formatValue.isString()) {
+        JSString* formatString = formatValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        GCOwnedDataScope<WTF::StringView> formatView = formatString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (formatView == "pem"_s) {
+            return EVPKeyPointer::PKFormatType::PEM;
+        } else if (formatView == "der"_s) {
+            return EVPKeyPointer::PKFormatType::DER;
+        } else if (formatView == "jwk"_s) {
+            return EVPKeyPointer::PKFormatType::JWK;
+        }
+    }
+
+    ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
+    return {};
+}
+
+std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* globalObject, ThrowScope& scope, JSValue typeValue, bool required, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::String optionName)
+{
+    if (typeValue.isUndefined() && !required) {
+        return std::nullopt;
+    }
+
+    WTF::StringView keyTypeView = WTF::nullStringView();
+    if (!keyTypeValue.isUndefined()) {
+        keyTypeView = keyTypeValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+
+    if (typeValue.isString()) {
+        JSString* typeString = typeValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (typeView == "pkcs1"_s) {
+            if (!keyTypeView.isNull() && keyTypeView != "rsa"_s) {
+                ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, typeView, "can only be used for RSA keys"_s);
+                return std::nullopt;
+            }
+            return EVPKeyPointer::PKEncodingType::PKCS1;
+        }
+
+        if (typeView == "spki"_s && (!isPublic || *isPublic != false)) {
+            return EVPKeyPointer::PKEncodingType::SPKI;
+        }
+
+        if (typeView == "pkcs8"_s && (!isPublic || *isPublic != true)) {
+            return EVPKeyPointer::PKEncodingType::PKCS8;
+        }
+
+        if (typeView == "sec1"_s && (!isPublic || *isPublic != true)) {
+            if (!keyTypeView.isNull() && keyTypeView != "ec"_s) {
+                ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, typeView, "can only be used for EC keys"_s);
+                return std::nullopt;
+            }
+            return EVPKeyPointer::PKEncodingType::SEC1;
+        }
+    }
+
+    ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, typeValue);
+    return std::nullopt;
+}
+
+void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, bool isInput, ASCIILiteral objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+{
+    VM& vm = globalObject->vm();
+
+    JSValue formatValue = enc->get(globalObject, Identifier::fromString(vm, "format"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    JSValue typeValue = enc->get(globalObject, Identifier::fromString(vm, "type"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    config.format = parseKeyFormat(globalObject, scope, formatValue, isInput ? std::optional { EVPKeyPointer::PKFormatType::PEM } : std::nullopt, makeString("options."_s, objName, ".format"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    bool isRequired = (!isInput || config.format == EVPKeyPointer::PKFormatType::DER) && config.format != EVPKeyPointer::PKFormatType::JWK;
+    std::optional<EVPKeyPointer::PKEncodingType> maybeKeyType = parseKeyType(globalObject, scope, typeValue, isRequired, keyTypeValue, isPublic, makeString("options."_s, objName, ".type"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    if (maybeKeyType) {
+        config.type = *maybeKeyType;
+    }
+}
+
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, ASCIILiteral objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+{
+    VM& vm = globalObject->vm();
+
+    bool isInput = keyTypeValue.isUndefined();
+
+    parseKeyFormatAndType(globalObject, scope, enc, keyTypeValue, isPublic, isInput, objName, config);
+    RETURN_IF_EXCEPTION(scope, );
+
+    JSValue encodingValue = jsUndefined();
+    JSValue passphraseValue = jsUndefined();
+    JSValue cipherValue = jsUndefined();
+
+    if (!isPublic || *isPublic != true) {
+        cipherValue = enc->get(globalObject, Identifier::fromString(vm, "cipher"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        passphraseValue = enc->get(globalObject, Identifier::fromString(vm, "passphrase"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        encodingValue = enc->get(globalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, );
+
+        if (!isInput) {
+            if (!cipherValue.isUndefinedOrNull()) {
+                if (!cipherValue.isString()) {
+                    ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, objName, ".cipher"_s), cipherValue);
+                    return;
+                }
+                if (config.format == EVPKeyPointer::PKFormatType::DER && (config.type == EVPKeyPointer::PKEncodingType::PKCS1 || config.type == EVPKeyPointer::PKEncodingType::SEC1)) {
+                    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, EVPKeyPointer::EncodingName(config.type), "does not support encryption"_s);
+                    return;
+                }
+            } else if (!passphraseValue.isUndefined()) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, objName, ".cipher"_s), cipherValue);
+            }
+        }
+
+        if ((isInput && !passphraseValue.isUndefined() && !isStringOrBuffer(passphraseValue)) || (!isInput && !cipherValue.isUndefinedOrNull() && !isStringOrBuffer(passphraseValue))) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, objName, ".passphrase"_s), passphraseValue);
+            return;
+        }
+    }
+
+    if (!passphraseValue.isUndefined()) {
+        JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
+        RETURN_IF_EXCEPTION(scope, );
+        config.passphrase = DataPointer::Alloc(passphraseView->byteLength());
+        if (!*config.passphrase) {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        memcpy(config.passphrase->get(), passphraseView->vector(), passphraseView->byteLength());
+    }
+
+    if (config.output_key_object) {
+        if (!isInput) {
+        }
+    } else {
+        // bool needsPassphrase = false;
+
+        if (!isInput) {
+            if (cipherValue.isString()) {
+                JSString* cipherString = cipherValue.toString(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                config.cipher = getCipherByName(cipherView);
+                if (config.cipher == nullptr) {
+                    ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
+                    return;
+                }
+                // needsPassphrase = true;
+            } else {
+                config.cipher = nullptr;
+            }
+        }
+    }
+}
+
+void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, ASCIILiteral objName, EVPKeyPointer::PublicKeyEncodingConfig& config)
+{
+    EVPKeyPointer::PrivateKeyEncodingConfig dummyConfig = {};
+    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, keyTypeValue.pureToBoolean() != TriState::False ? std::optional<bool>(true) : std::nullopt, objName, dummyConfig);
+    RETURN_IF_EXCEPTION(scope, );
+
+    // using private config because it's a super set of public config
+    config.format = dummyConfig.format;
+    config.type = dummyConfig.type;
+    config.output_key_object = dummyConfig.output_key_object;
+}
+
+void parsePrivateKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, ASCIILiteral objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+{
+    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, false, objName, config);
 }
 
 bool isArrayBufferOrView(JSValue value)

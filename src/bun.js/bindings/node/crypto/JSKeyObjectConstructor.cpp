@@ -11,6 +11,7 @@
 #include "openssl/err.h"
 #include "ncrypto.h"
 #include "JSKeyObjectHandle.h"
+#include "JSCryptoKey.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -18,7 +19,18 @@ using namespace ncrypto;
 
 namespace Bun {
 
+JSC_DECLARE_HOST_FUNCTION(callKeyObject);
+JSC_DECLARE_HOST_FUNCTION(constructKeyObject);
+JSC_DECLARE_HOST_FUNCTION(jsKeyObjectConstructor_from);
+
 const JSC::ClassInfo JSKeyObjectConstructor::s_info = { "KeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSKeyObjectConstructor) };
+
+void JSKeyObjectConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
+{
+    Base::finishCreation(vm, 2, "KeyObject"_s);
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectWithoutTransition(vm, Identifier::fromString(vm, "from"_s), JSFunction::create(vm, globalObject, 1, "from"_s, jsKeyObjectConstructor_from, ImplementationVisibility::Public, NoIntrinsic), static_cast<unsigned>(PropertyAttribute::DontDelete));
+}
 
 JSC_DEFINE_HOST_FUNCTION(callKeyObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -69,6 +81,22 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGloba
     // }
 
     // return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue maybeKey = callFrame->argument(0);
+
+    if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(maybeKey)) {
+        // TODO!!!
+        (void)cryptoKey;
+        // cryptoKey->
+    }
+
+    return ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "CryptoKey"_s, maybeKey);
 }
 
 } // namespace Bun

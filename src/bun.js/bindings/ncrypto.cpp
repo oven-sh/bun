@@ -4421,6 +4421,15 @@ int Ec::getCurve() const
     return EC_GROUP_get_curve_name(getGroup());
 }
 
+int Ec::GetCurveIdFromName(const char* name)
+{
+    int nid = EC_curve_nist2nid(name);
+    if (nid == NID_undef) {
+        nid = OBJ_sn2nid(name);
+    }
+    return nid;
+}
+
 // ============================================================================
 
 EVPMDCtxPointer::EVPMDCtxPointer()

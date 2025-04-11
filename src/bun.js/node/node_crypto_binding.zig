@@ -105,12 +105,22 @@ pub const CheckPrimeJob = ExternCryptoJob("CheckPrimeJob");
 pub const GeneratePrimeJob = ExternCryptoJob("GeneratePrimeJob");
 pub const HkdfJob = ExternCryptoJob("HkdfJob");
 pub const SecretKeyJob = ExternCryptoJob("SecretKeyJob");
+pub const RsaKeyPairJob = ExternCryptoJob("RsaKeyPairJob");
+pub const DsaKeyPairJob = ExternCryptoJob("DsaKeyPairJob");
+pub const EcKeyPairJob = ExternCryptoJob("EcKeyPairJob");
+pub const NidKeyPairJob = ExternCryptoJob("NidKeyPairJob");
+pub const DhKeyPairJob = ExternCryptoJob("DhKeyPairJob");
 
 comptime {
     _ = CheckPrimeJob;
     _ = GeneratePrimeJob;
     _ = HkdfJob;
     _ = SecretKeyJob;
+    _ = RsaKeyPairJob;
+    _ = DsaKeyPairJob;
+    _ = EcKeyPairJob;
+    _ = NidKeyPairJob;
+    _ = DhKeyPairJob;
 }
 
 fn CryptoJob(comptime Ctx: type) type {

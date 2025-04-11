@@ -780,6 +780,12 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     return {};
 }
 
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    return {};
+}
+
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
 {
     ASCIILiteral type = String(name).contains('.') ? "property"_s : "argument"_s;
@@ -1186,6 +1192,24 @@ JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JS
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, const char* curveName)
+{
+    WTF::StringBuilder builder;
+    builder.append(message);
+    if (curveName) {
+        builder.append(std::span<const char> { curveName, strlen(curveName) });
+    }
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_KEY_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE, "Unsupported JWK Key Type."_s));
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_JWK, "Invalid JWK data"_s));
@@ -1212,7 +1236,7 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, 
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& receivedKeyEncoding, const WTF::String& expectedOperation)
+JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& receivedKeyEncoding, const WTF::String& expectedOperation)
 {
     WTF::StringBuilder builder;
     builder.append("The selected key encoding "_s);
@@ -1226,6 +1250,15 @@ JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGl
 {
     WTF::StringBuilder builder;
     builder.append("Invalid digest: "_s);
+    builder.append(digest);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, const WTF::StringView& digest)
+{
+    WTF::StringBuilder builder;
+    builder.append(message);
     builder.append(digest);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
     return {};
@@ -1273,6 +1306,28 @@ JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope& throwScope, JSC::
 {
     auto message = "Key generation job failed"_s;
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_KEY_GENERATION_JOB_FAILED, message));
+    return {};
+}
+
+JSC::EncodedJSValue INCOMPATIBLE_OPTION_PAIR(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral opt1, ASCIILiteral opt2)
+{
+    WTF::StringBuilder builder;
+    builder.append("Option \""_s);
+    builder.append(opt1);
+    builder.append("\" cannot be used in combination with option \""_s);
+    builder.append(opt2);
+    builder.append("\""_s);
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INCOMPATIBLE_OPTION_PAIR, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    WTF::StringBuilder builder;
+    builder.append(message);
+    builder.append(" is required"_s);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_OPTION, builder.toString()));
     return {};
 }
 

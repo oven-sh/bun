@@ -13,10 +13,10 @@ public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSKeyObjectConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
+    static JSKeyObjectConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype)
     {
         JSKeyObjectConstructor* constructor = new (NotNull, JSC::allocateCell<JSKeyObjectConstructor>(vm)) JSKeyObjectConstructor(vm, structure);
-        constructor->finishCreation(vm, prototype);
+        constructor->finishCreation(vm, globalObject, prototype);
         return constructor;
     }
 
@@ -39,11 +39,7 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
-    {
-        Base::finishCreation(vm, 2, "KeyObject"_s);
-        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    }
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype);
 };
 
 } // namespace Bun

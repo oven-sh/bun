@@ -13,6 +13,11 @@ SecretKeyJobCtx::SecretKeyJobCtx(size_t length)
 {
 }
 
+SecretKeyJobCtx::SecretKeyJobCtx(SecretKeyJobCtx&& other)
+    : m_length(other.m_length)
+{
+}
+
 extern "C" void Bun__SecretKeyJobCtx__runTask(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
 {
     ctx->runTask(lexicalGlobalObject);
@@ -22,7 +27,9 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     Vector<uint8_t> key;
     key.grow(m_length);
 
-    std::ignore = ncrypto::CSPRNG(key.data(), key.size());
+    if (!ncrypto::CSPRNG(key.data(), key.size())) {
+        return;
+    }
 
     m_result = WTFMove(key);
 }
@@ -172,34 +179,6 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, KeyObject::Type::Secret, WTFMove(result));
 
     return JSValue::encode(secretKey);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-
-    // JSValue typeValue = callFrame->argument(0);
-    // JSValue optionsValue = callFrame->argument(1);
-    // JSValue callbackValue = callFrame->argument(2);
-
-    // if (optionsValue.isCallable()) {
-    //     callbackValue = optionsValue;
-    //     optionsValue = jsUndefined();
-    // }
-
-    // V::validateFunction(scope, lexicalGlobalObject, callbackValue, "callback"_s);
-    // RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

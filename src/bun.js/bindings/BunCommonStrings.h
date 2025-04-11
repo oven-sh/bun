@@ -37,7 +37,26 @@
     macro(OperationFailed, "The operation failed.") \
     macro(strict, "strict") \
     macro(lax, "lax") \
-    macro(none, "none")
+    macro(none, "none") \
+    macro(jwkCrv, "crv") \
+    macro(jwkD, "d") \
+    macro(jwkDp, "dp") \
+    macro(jwkDq, "dq") \
+    macro(jwkDsa, "DSA") \
+    macro(jwkE, "e") \
+    macro(jwkEc, "EC") \
+    macro(jwkG, "g") \
+    macro(jwkK, "k") \
+    macro(jwkP, "p") \
+    macro(jwkQ, "q") \
+    macro(jwkQi, "qi") \
+    macro(jwkKty, "kty") \
+    macro(jwkN, "n") \
+    macro(jwkOct, "oct") \
+    macro(jwkOkp, "OKP") \
+    macro(jwkRsa, "RSA") \
+    macro(jwkX, "x") \
+    macro(jwkY, "y")
 
 // clang-format on
 

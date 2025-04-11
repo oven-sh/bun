@@ -399,6 +399,7 @@ extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, si
 
 extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>

@@ -37,7 +37,7 @@ void setupPublicKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& in
     auto* prototype = JSPublicKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
     auto* constructorStructure = JSKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
-    auto* constructor = JSKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
+    auto* constructor = JSKeyObjectConstructor::create(init.vm, init.global, constructorStructure, prototype);
 
     auto* structure = JSPublicKeyObject::createStructure(init.vm, init.global, prototype);
     init.setPrototype(prototype);

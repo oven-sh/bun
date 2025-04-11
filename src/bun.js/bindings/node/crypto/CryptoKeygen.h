@@ -1,10 +1,11 @@
 #pragma once
 
 #include "root.h"
+#include "ncrypto.h"
 
 struct SecretKeyJobCtx {
     SecretKeyJobCtx(size_t length);
-    SecretKeyJobCtx(SecretKeyJobCtx&&) = default;
+    SecretKeyJobCtx(SecretKeyJobCtx&&);
     ~SecretKeyJobCtx() = default;
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
@@ -12,6 +13,7 @@ struct SecretKeyJobCtx {
     void deinit();
 
     static std::optional<SecretKeyJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue typeValue, JSC::JSValue optionsValue);
+    JSC::JSValue result() const;
 
     size_t m_length;
 
@@ -27,11 +29,7 @@ struct SecretKeyJob {
     void schedule();
 };
 
-struct Rsa
-
-    JSC_DECLARE_HOST_FUNCTION(jsCreatePublicKey);
+JSC_DECLARE_HOST_FUNCTION(jsCreatePublicKey);
 JSC_DECLARE_HOST_FUNCTION(jsCreateSecretKey);
 JSC_DECLARE_HOST_FUNCTION(jsGenerateKey);
 JSC_DECLARE_HOST_FUNCTION(jsGenerateKeySync);
-JSC_DECLARE_HOST_FUNCTION(jsGenerateKeyPair);
-JSC_DECLARE_HOST_FUNCTION(jsGenerateKeyPairSync);

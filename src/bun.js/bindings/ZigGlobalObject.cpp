@@ -981,11 +981,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     });
 
-    // Ensure that the TerminationException singleton is constructed (this doesn't terminate
-    // anything, it just allows the termination mechanism to be used). We need this for Workers and
-    // for bun:test timeouts.
-    vm.ensureTerminationException();
-
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
@@ -1012,6 +1007,11 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
 
+            // Ensure that the TerminationException singleton is constructed. Workers need this so
+            // that we can request their termination from another thread. For the main thread, we
+            // can delay this until we are actually requesting termination (until and unless we ever
+            // do need to request termination from another thread).
+            vm.ensureTerminationException();
             // Make the VM stop sooner once terminated (e.g. microtasks won't run)
             vm.forbidExecutionOnTermination();
         };
@@ -4142,9 +4142,11 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     return false;
 }
 
-extern "C" void JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
+extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
 {
-    JSC::getVM(globalObject).setHasTerminationRequest();
+    auto& vm = JSC::getVM(globalObject);
+    vm.ensureTerminationException();
+    vm.setHasTerminationRequest();
 }
 
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)

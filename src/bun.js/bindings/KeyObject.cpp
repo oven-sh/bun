@@ -81,7 +81,6 @@ JSC_DECLARE_HOST_FUNCTION(KeyObject_AsymmetricKeyDetails);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__SymmetricKeySize);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__Equals);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__Exports);
-JSC_DECLARE_HOST_FUNCTION(KeyObject__createSecretKey);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__createPublicKey);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__createPrivateKey);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__generateKeySync);
@@ -1285,71 +1284,6 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
         return {};
     }
     JSC::throwTypeError(globalObject, scope, "format should be 'pem' or 'der'"_s);
-    return {};
-}
-
-JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-    JSValue bufferArg = callFrame->uncheckedArgument(0);
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* structure = globalObject->JSCryptoKeyStructure();
-
-    if (!bufferArg.isCell()) {
-        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_INVALID_ARG_TYPE: expected Buffer or array-like object"_s));
-        return {};
-    }
-
-    auto bufferArgCell = bufferArg.asCell();
-    auto type = bufferArgCell->type();
-
-    switch (type) {
-    case DataViewType:
-    case Uint8ArrayType:
-    case Uint8ClampedArrayType:
-    case Uint16ArrayType:
-    case Uint32ArrayType:
-    case Int8ArrayType:
-    case Int16ArrayType:
-    case Int32ArrayType:
-    case Float16ArrayType:
-    case Float32ArrayType:
-    case Float64ArrayType:
-    case BigInt64ArrayType:
-    case BigUint64ArrayType: {
-        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
-
-        void* data = view->vector();
-        size_t byteLength = view->length();
-        if (UNLIKELY(!data)) {
-            break;
-        }
-        auto impl = CryptoKeyHMAC::generateFromBytes(data, byteLength, CryptoAlgorithmIdentifier::HMAC, true, CryptoKeyUsageSign | CryptoKeyUsageVerify).releaseNonNull();
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
-    }
-    case ArrayBufferType: {
-        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
-        if (UNLIKELY(!jsBuffer)) {
-            break;
-        }
-        auto* buffer = jsBuffer->impl();
-        void* data = buffer->data();
-        size_t byteLength = buffer->byteLength();
-        if (UNLIKELY(!data)) {
-            break;
-        }
-        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-        auto impl = CryptoKeyHMAC::generateFromBytes(data, byteLength, CryptoAlgorithmIdentifier::HMAC, true, CryptoKeyUsageSign | CryptoKeyUsageVerify).releaseNonNull();
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
-    }
-    default: {
-        break;
-    }
-    }
-
-    throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_INVALID_ARG_TYPE: expected Buffer or array-like object"_s));
     return {};
 }
 
@@ -2639,9 +2573,6 @@ JSValue createKeyObjectBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, KeyObject__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, KeyObject__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);

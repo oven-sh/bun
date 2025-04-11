@@ -909,6 +909,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Werror=unused
       -Wno-unused-function
+      -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
       -Werror
     )
@@ -925,6 +926,7 @@ if(NOT WIN32)
       -Werror=nonnull
       -Werror=move
       -Werror=sometimes-uninitialized
+      -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
       -Werror
     )

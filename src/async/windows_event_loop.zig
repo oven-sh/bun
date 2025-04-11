@@ -392,17 +392,16 @@ pub const Waker = struct {
 };
 
 pub const Closer = struct {
-    io_request: uv.fs_t = std.mem.zeroes(uv.fs_t),
-    pub usingnamespace bun.New(@This());
+    io_request: uv.fs_t,
 
     pub fn close(fd: uv.uv_file, loop: *uv.Loop) void {
-        var closer = Closer.new(.{});
+        const closer = bun.new(Closer, .{ .io_request = std.mem.zeroes(uv.fs_t) });
+
         // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
         closer.io_request.data = closer;
         if (uv.uv_fs_close(loop, &closer.io_request, fd, onClose).errEnum()) |err| {
             Output.debugWarn("libuv close() failed = {}", .{err});
-            closer.destroy();
-            return;
+            bun.destroy(closer);
         }
     }
 
@@ -418,6 +417,6 @@ pub const Closer = struct {
         }
 
         req.deinit();
-        closer.destroy();
+        bun.destroy(closer);
     }
 };

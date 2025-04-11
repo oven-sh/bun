@@ -321,7 +321,7 @@ pub const SavedSourceMap = struct {
                 defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                const result = ParsedSourceMap.new(saved.toMapping(default_allocator, path) catch {
+                const result = bun.new(ParsedSourceMap, saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return .{};
                 });
@@ -1065,8 +1065,8 @@ pub const VirtualMachine = struct {
             // We need to keep running in this case so that immediate tasks get run. But immediates
             // intentionally don't make the event loop _active_ so we need to check for them
             // separately.
-            vm.event_loop.immediate_tasks.count > 0 or
-            vm.event_loop.next_immediate_tasks.count > 0;
+            vm.event_loop.immediate_tasks.items.len > 0 or
+            vm.event_loop.next_immediate_tasks.items.len > 0;
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -1841,7 +1841,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().enqueueTask(task);
     }
 
-    pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: Task) void {
+    pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: *JSC.BunTimer.ImmediateObject) void {
         this.eventLoop().enqueueImmediateTask(task);
     }
 
@@ -1879,8 +1879,6 @@ pub const VirtualMachine = struct {
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
-            this.macro_event_loop.immediate_tasks = EventLoop.Queue.init(default_allocator);
-            this.macro_event_loop.next_immediate_tasks = EventLoop.Queue.init(default_allocator);
             this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
@@ -1970,12 +1968,6 @@ pub const VirtualMachine = struct {
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
-        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
-        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.virtual_machine = vm;
@@ -2099,12 +2091,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
-        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
-        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
+
         vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
@@ -2263,12 +2250,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
-        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
-        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
+
         vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
@@ -2357,12 +2339,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
-        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
-        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
-            default_allocator,
-        );
+
         vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
@@ -4450,12 +4427,13 @@ pub const VirtualMachine = struct {
     };
 
     pub const IPCInstance = struct {
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
+
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
         has_disconnect_called: bool = false,
-
-        pub usingnamespace bun.New(@This());
 
         const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
@@ -4505,7 +4483,7 @@ pub const VirtualMachine = struct {
                 uws.us_socket_context_free(0, this.context);
             }
             vm.channel_ref.disable();
-            this.destroy();
+            this.deinit();
         }
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
@@ -4546,7 +4524,7 @@ pub const VirtualMachine = struct {
                 this.ipc = .{ .initialized = instance };
 
                 const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
-                    instance.destroy();
+                    instance.deinit();
                     this.ipc = null;
                     Output.warn("Unable to start IPC socket", .{});
                     return null;
@@ -4567,7 +4545,7 @@ pub const VirtualMachine = struct {
                 this.ipc = .{ .initialized = instance };
 
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
-                    instance.destroy();
+                    instance.deinit();
                     this.ipc = null;
                     Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
                     return null;

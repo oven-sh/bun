@@ -103,7 +103,7 @@ declare module "bun" {
     /**
      * Disconnect from the Redis server
      */
-    disconnect(): void;
+    close(): void;
 
     /**
      * Send a raw command to the Redis server

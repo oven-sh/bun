@@ -5632,9 +5632,14 @@ pub const NodeFS = struct {
     }
 
     pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
+        return this.rmAt(bun.toFD(std.fs.cwd().fd), args);
+    }
+
+    pub fn rmAt(this: *NodeFS, fd: bun.FileDescriptor, args: Arguments.Rm) Maybe(Return.Rm) {
+
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
-            zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
+            zigDeleteTree(fd.asDir(), args.path.slice(), .file) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 const errno: E = switch (@as(anyerror, err)) {
                     // error.InvalidHandle => .BADF,
@@ -6750,10 +6755,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             continue :process_stack;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :process_stack,
-
-                            // Impossible because we do not pass any path separators.
-                            error.NotDir => unreachable,
-
+                            error.NotDir => if (Environment.isDebug) unreachable else return error.Unexpected,
                             error.IsDir => {
                                 treat_as_dir = true;
                                 continue :handle_entry;
@@ -6911,9 +6913,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             continue :dir_it;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :dir_it,
-
-                            // Impossible because we do not pass any path separators.
-                            error.NotDir => unreachable,
+                            error.NotDir => if (Environment.isDebug) unreachable else return error.Unexpected,
 
                             error.IsDir => {
                                 treat_as_dir = true;

@@ -105,6 +105,11 @@ describe("@types/bun integration test", () => {
       "globals.ts",
       "error TS2353: Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
 
+      "http.ts",
+      `error TS2345: Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | "hey", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.`,
+      `error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | "it works!", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'`,
+      `Type 'AsyncGenerator<Uint8Array<ArrayBuffer> | "it works!", void, unknown>' is missing the following properties from type 'ReadableStream<any>'`,
+
       "index.ts",
       "error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
 

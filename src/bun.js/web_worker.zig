@@ -494,16 +494,15 @@ pub const WebWorker = struct {
         }
     }
 
-    /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
-    /// The termination will actually happen after the next tick of the worker's loop.
-    pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+    /// Request a terminate. Must be called from another thread (i.e. for worker.terminate())
+    pub fn notifyNeedTermination(this: *WebWorker) callconv(.C) void {
         if (this.status.load(.acquire) == .terminated) {
             return;
         }
         if (this.setRequestedTerminate()) {
             return;
         }
-        log("[{d}] requestTerminate", .{this.execution_context_id});
+        log("[{d}] notifyNeedTermination", .{this.execution_context_id});
 
         if (this.vm) |vm| {
             vm.eventLoop().wakeup();
@@ -513,7 +512,7 @@ pub const WebWorker = struct {
 
     /// This handles cleanup, emitting the "close" event, and deinit.
     /// Only call after the VM is initialized AND on the same thread as the worker.
-    /// Otherwise, call `requestTerminate` to cause the event loop to safely terminate after the next tick.
+    /// Otherwise, call `notifyNeedTermination` to cause the event loop to safely terminate.
     pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
         this.setStatus(.terminated);
@@ -557,7 +556,7 @@ pub const WebWorker = struct {
 
     comptime {
         @export(&create, .{ .name = "WebWorker__create" });
-        @export(&requestTerminate, .{ .name = "WebWorker__requestTerminate" });
+        @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
         @export(&setRef, .{ .name = "WebWorker__setRef" });
         _ = WebWorker__updatePtr;
     }

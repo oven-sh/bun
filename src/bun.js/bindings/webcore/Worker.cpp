@@ -69,7 +69,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorker__requestTerminate(
+extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
 
 static Lock allWorkersLock;
@@ -263,7 +263,7 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__requestTerminate(impl_);
+    WebWorker__notifyNeedTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const

@@ -357,7 +357,12 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
+}
 
+void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
+{
+    Locker lock(this->m_pendingTasksMutex);
+    auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
         auto tasks = std::exchange(this->m_pendingTasks, {});
         lock.unlockEarly();
@@ -376,6 +381,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         });
     }
 }
+
 void Worker::dispatchError(WTF::String message)
 {
 
@@ -453,6 +459,11 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
     worker->dispatchOnline(globalObject);
+}
+
+extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)
+{
+    worker->fireEarlyMessages(globalObject);
 }
 
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)

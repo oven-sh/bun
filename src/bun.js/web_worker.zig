@@ -52,7 +52,8 @@ pub const WebWorker = struct {
     };
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *anyopaque, i32) void;
-    extern fn WebWorker__dispatchOnline(this: *anyopaque, *JSC.JSGlobalObject) void;
+    extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *JSC.JSGlobalObject) void;
+    extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *JSC.JSGlobalObject) void;
     extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
 
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
@@ -443,6 +444,7 @@ pub const WebWorker = struct {
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});
+        WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
         this.setStatus(.running);
 
         // don't run the GC if we don't actually need to

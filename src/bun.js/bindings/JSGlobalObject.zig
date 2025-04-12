@@ -28,7 +28,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(err);
     }
 
-    pub const throwTerminationException = JSGlobalObject__throwTerminationException;
+    pub const requestTermination = JSGlobalObject__requestTermination;
     pub const clearTerminationException = JSGlobalObject__clearTerminationException;
 
     pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool {
@@ -739,7 +739,7 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
-    extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+    extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
     extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
     pub fn create(

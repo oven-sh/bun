@@ -695,3 +695,20 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   // DH_generate_parameters_ex
   expect(dhg.verifyError).toBe(8);
 });
+it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
+  const key = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(16);
+  expect(() => {
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    cipher.setAAD("0123456789abcdef0123456789abcdef", {
+      encoding: undefined,
+    });
+  }).not.toThrow();
+
+  expect(() => {
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    cipher.setAAD("0123456789abcdef0123456789abcdef", {
+      plaintextLength: undefined,
+    });
+  }).not.toThrow();
+});

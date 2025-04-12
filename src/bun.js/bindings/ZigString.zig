@@ -355,6 +355,10 @@ pub const ZigString = extern struct {
             };
         }
 
+        pub fn byteLength(this: *const Slice) usize {
+            return this.len;
+        }
+
         pub fn toZigString(this: Slice) ZigString {
             if (this.isAllocated())
                 return ZigString.initUTF8(this.ptr[0..this.len]);
@@ -419,7 +423,7 @@ pub const ZigString = extern struct {
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
-        pub fn slice(this: Slice) []const u8 {
+        pub fn slice(this: *const Slice) []const u8 {
             return this.ptr[0..this.len];
         }
 

@@ -89,10 +89,14 @@ pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
 pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
 
 pub const SBlockList = struct {
-    pub usingnamespace bun.NewThreadSafeRefCounted(@This(), deinit, null);
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+    pub const new = bun.TrivialNew(@This());
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     pub usingnamespace JSC.Codegen.JSBlockList;
 
-    ref_count: std.atomic.Value(u32) = .init(1),
+    ref_count: RefCount = .init(),
     globalThis: *JSC.JSGlobalObject,
     da_rules: std.ArrayList(Rule),
     mutex: std.Thread.Mutex = .{},
@@ -118,7 +122,7 @@ pub const SBlockList = struct {
 
     pub fn deinit(this: *@This()) void {
         this.da_rules.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn isBlockList(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -148,7 +152,7 @@ pub const SBlockList = struct {
             try validators.validateString(globalThis, family_js, "family", .{});
             break :blk try SocketAddress.createFromAddrFamily(globalThis, address_js, family_js);
         };
-        defer if (new_address) address.destroy();
+        defer if (new_address) bun.destroy(address);
         try this.da_rules.insert(0, .{ .addr = address._addr });
         return .jsUndefined();
     }
@@ -167,14 +171,14 @@ pub const SBlockList = struct {
             try validators.validateString(globalThis, family_js, "family", .{});
             break :blk try SocketAddress.createFromAddrFamily(globalThis, start_js, family_js);
         };
-        defer if (new_start) start.destroy();
+        defer if (new_start) bun.destroy(start);
         const end = end_js.as(SocketAddress) orelse blk: {
             new_end = true;
             try validators.validateString(globalThis, end_js, "end", .{});
             try validators.validateString(globalThis, family_js, "family", .{});
             break :blk try SocketAddress.createFromAddrFamily(globalThis, end_js, family_js);
         };
-        defer if (new_end) end.destroy();
+        defer if (new_end) bun.destroy(end);
         if (_compare(start._addr, end._addr)) |ord| {
             if (ord.compare(.gt)) {
                 return globalThis.throwInvalidArgumentValueCustom("start", start_js, "must come before end");
@@ -197,7 +201,7 @@ pub const SBlockList = struct {
             try validators.validateString(globalThis, family_js, "family", .{});
             break :blk try SocketAddress.createFromAddrFamily(globalThis, network_js, family_js);
         };
-        defer if (new_network) network.destroy();
+        defer if (new_network) bun.destroy(network);
         var prefix: u8 = 0;
         switch (network._addr.sin.family) {
             std.posix.AF.INET => prefix = @intCast(try validators.validateInt32(globalThis, prefix_js, "prefix", .{}, 0, 32)),
@@ -225,7 +229,7 @@ pub const SBlockList = struct {
                 return .jsBoolean(false);
             };
         };
-        defer if (new_address) address.destroy();
+        defer if (new_address) bun.destroy(address);
         for (this.da_rules.items) |item| {
             switch (item) {
                 .addr => |a| {

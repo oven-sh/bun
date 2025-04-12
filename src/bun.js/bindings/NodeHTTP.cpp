@@ -561,19 +561,17 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::string_view fullURLStdStr = request->getFullUrl();
     String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length() });
 
     // Get the URL.
-    {
-        args.append(jsString(vm, fullURL));
-    }
+    args.append(jsString(vm, fullURL));
 
     // Get the method.
-    {
+    if (UNLIKELY(methodString.isUndefinedOrNull())) {
         std::string_view methodView = request->getMethod();
         WTF::String methodString;
         switch (methodView.length()) {
@@ -658,6 +656,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
         }
 
         args.append(jsString(vm, methodString));
+    } else {
+        args.append(methodString);
     }
 
     size_t size = 0;
@@ -938,6 +938,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     Zig::GlobalObject* globalObject,
     JSValue thisValue,
     JSValue callback,
+    JSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<isSSL>* response,
     void* upgrade_ctx,
@@ -950,7 +951,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     MarkedArgumentBuffer args;
     args.append(thisValue);
 
-    assignHeadersFromUWebSocketsForCall(request, args, globalObject, vm);
+    assignHeadersFromUWebSocketsForCall(request, methodString, args, globalObject, vm);
     if (scope.exception()) {
         auto* exception = scope.exception();
         response->endWithoutBody();
@@ -1185,12 +1186,22 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     Zig::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
+    EncodedJSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<false>* response,
     void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
-    return NodeHTTPServer__onRequest<false>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<false>(
+        any_server,
+        globalObject,
+        JSValue::decode(thisValue),
+        JSValue::decode(callback),
+        JSValue::decode(methodString),
+        request,
+        response,
+        upgrade_ctx,
+        nodeHttpResponsePtr);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
@@ -1198,12 +1209,22 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     Zig::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
+    EncodedJSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<true>* response,
     void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
-    return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<true>(
+        any_server,
+        globalObject,
+        JSValue::decode(thisValue),
+        JSValue::decode(callback),
+        JSValue::decode(methodString),
+        request,
+        response,
+        upgrade_ctx,
+        nodeHttpResponsePtr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))

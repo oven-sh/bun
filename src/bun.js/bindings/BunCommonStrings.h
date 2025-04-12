@@ -11,33 +11,68 @@
 // These ones don't need to be in BunBuiltinNames.h
 // If we don't use it as an identifier name, but we want to avoid allocating the string frequently, put it in this list.
 #define BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(macro) \
-    macro(systemError, "SystemError") \
-    macro(s3Error, "S3Error") \
-    macro(utf8, "utf8") \
-    macro(ucs2, "ucs2") \
-    macro(utf16le, "utf16le") \
-    macro(latin1, "latin1") \
+    macro(ACL, "ACL") \
+    macro(BIND, "BIND") \
+    macro(CHECKOUT, "CHECKOUT") \
+    macro(CONNECT, "CONNECT") \
+    macro(COPY, "COPY") \
+    macro(ConnectionWasClosed, "The connection was closed.") \
+    macro(DELETE, "DELETE") \
+    macro(GET, "GET") \
+    macro(HEAD, "HEAD") \
+    macro(IN4Loopback, "127.0.0.1") \
+    macro(IN6Any, "::") \
+    macro(IPv4, "IPv4") \
+    macro(IPv6, "IPv6") \
+    macro(LINK, "LINK") \
+    macro(LOCK, "LOCK") \
+    macro(MERGE, "MERGE") \
+    macro(MKACTIVITY, "MKACTIVITY") \
+    macro(MKCALENDAR, "MKCALENDAR") \
+    macro(MKCOL, "MKCOL") \
+    macro(MOVE, "MOVE") \
+    macro(MSEARCH, "M_SEARCH") \
+    macro(NOTIFY, "NOTIFY") \
+    macro(OPTIONS, "OPTIONS") \
+    macro(OperationFailed, "The operation failed.") \
+    macro(OperationTimedOut, "The operation timed out.") \
+    macro(OperationWasAborted, "The operation was aborted.") \
+    macro(PATCH, "PATCH") \
+    macro(POST, "POST") \
+    macro(PROPFIND, "PROPFIND") \
+    macro(PROPPATCH, "PROPPATCH") \
+    macro(PURGE, "PURGE") \
+    macro(PUT, "PUT") \
+    macro(QUERY, "QUERY") \
+    macro(REBIND, "REBIND") \
+    macro(REPORT, "REPORT") \
+    macro(SEARCH, "SEARCH") \
+    macro(SOURCE, "SOURCE") \
+    macro(SUBSCRIBE, "SUBSCRIBE") \
+    macro(TRACE, "TRACE") \
+    macro(UNBIND, "UNBIND") \
+    macro(UNLINK, "UNLINK") \
+    macro(UNLOCK, "UNLOCK") \
+    macro(UNSUBSCRIBE, "UNSUBSCRIBE") \
     macro(ascii, "ascii") \
     macro(base64, "base64") \
     macro(base64url, "base64url") \
-    macro(hex, "hex") \
     macro(buffer, "buffer") \
+    macro(ec, "ec") \
+    macro(ed25519, "ed25519") \
+    macro(hex, "hex") \
+    macro(latin1, "latin1") \
+    macro(lax, "lax") \
+    macro(none, "none") \
     macro(rsa, "rsa") \
     macro(rsaPss, "rsa-pss") \
-    macro(ec, "ec") \
-    macro(x25519, "x25519") \
-    macro(ed25519, "ed25519") \
-    macro(IPv4, "IPv4") \
-    macro(IPv6, "IPv6") \
-    macro(IN4Loopback, "127.0.0.1") \
-    macro(IN6Any, "::") \
-    macro(OperationWasAborted, "The operation was aborted.") \
-    macro(OperationTimedOut, "The operation timed out.") \
-    macro(ConnectionWasClosed, "The connection was closed.") \
-    macro(OperationFailed, "The operation failed.") \
+    macro(s3Error, "S3Error") \
     macro(strict, "strict") \
-    macro(lax, "lax") \
-    macro(none, "none")
+    macro(systemError, "SystemError") \
+    macro(ucs2, "ucs2") \
+    macro(utf16le, "utf16le") \
+    macro(utf8, "utf8") \
+    macro(x25519, "x25519")
 
 // clang-format on
 

@@ -352,7 +352,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return bun.String.static(@tagName(this.method)).toJS(globalThis);
+        return this.method.toJS(globalThis);
     }
 
     pub fn getMode(

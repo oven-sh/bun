@@ -131,7 +131,7 @@ const Handlers = struct {
     is_server: bool = false,
     promise: JSC.Strong = .empty,
 
-    protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
+    protection_count: bun.DebugOnly(u32) = if (Environment.isDebug) 0,
 
     pub fn markActive(this: *Handlers) void {
         Listener.log("markActive", .{});

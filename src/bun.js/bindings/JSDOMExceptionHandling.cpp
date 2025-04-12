@@ -182,6 +182,9 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::InvalidURLError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_URL, message.isEmpty() ? "Invalid URL"_s : message);
 
+    case ExceptionCode::CryptoOperationFailedError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message.isEmpty() ? "Crypto operation failed"_s : message);
+
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
         // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:

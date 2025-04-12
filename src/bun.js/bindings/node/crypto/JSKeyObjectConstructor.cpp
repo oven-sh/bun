@@ -12,16 +12,27 @@
 #include "ncrypto.h"
 #include "JSKeyObjectHandle.h"
 #include "JSCryptoKey.h"
-
+#include "JSSecretKeyObject.h"
+#include "JSPublicKeyObject.h"
+#include "JSPrivateKeyObject.h"
+#include "ZigGlobalObject.h"
+#include "CryptoKeyAES.h"
+#include "CryptoKeyHMAC.h"
+#include "CryptoKeyRaw.h"
+#include "CryptoKey.h"
+#include "CryptoKeyType.h"
+#include "AsymmetricKeyValue.h"
 using namespace JSC;
 using namespace WebCore;
 using namespace ncrypto;
 
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(callKeyObject);
-JSC_DECLARE_HOST_FUNCTION(constructKeyObject);
 JSC_DECLARE_HOST_FUNCTION(jsKeyObjectConstructor_from);
+
+static const JSC::HashTableValue JSKeyObjectConstructorTableValues[] = {
+    { "from"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsKeyObjectConstructor_from, 1 } },
+};
 
 const JSC::ClassInfo JSKeyObjectConstructor::s_info = { "KeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSKeyObjectConstructor) };
 
@@ -29,7 +40,7 @@ void JSKeyObjectConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject
 {
     Base::finishCreation(vm, 2, "KeyObject"_s);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    putDirectWithoutTransition(vm, Identifier::fromString(vm, "from"_s), JSFunction::create(vm, globalObject, 1, "from"_s, jsKeyObjectConstructor_from, ImplementationVisibility::Public, NoIntrinsic), static_cast<unsigned>(PropertyAttribute::DontDelete));
+    reifyStaticProperties(vm, JSKeyObjectConstructor::info(), JSKeyObjectConstructorTableValues, *this);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callKeyObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -83,20 +94,53 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGloba
     // return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
+    VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    JSValue maybeKey = callFrame->argument(0);
+    // 1. Validate Input Argument
+    JSValue keyValue = callFrame->argument(0);
+    JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(keyValue);
 
-    if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(maybeKey)) {
-        // TODO!!!
-        (void)cryptoKey;
-        // cryptoKey->
+    if (!cryptoKey) {
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "CryptoKey"_s, keyValue);
     }
 
-    return ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "CryptoKey"_s, maybeKey);
+    WebCore::CryptoKey& wrappedKey = cryptoKey->wrapped();
+
+    auto keyObjectResult = KeyObject::create(wrappedKey);
+    if (UNLIKELY(keyObjectResult.hasException())) {
+        WebCore::propagateException(*lexicalGlobalObject, scope, keyObjectResult.releaseException());
+        return JSValue::encode({});
+    }
+
+    // 2. Determine Key Type and Extract Material
+    switch (wrappedKey.type()) {
+    case CryptoKeyType::Secret: {
+        auto* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(globalObject);
+        JSSecretKeyObject* instance = JSSecretKeyObject::create(vm, structure, globalObject, keyObjectResult.releaseReturnValue());
+        RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+    }
+
+    case CryptoKeyType::Public: {
+        auto* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(globalObject);
+        JSPublicKeyObject* instance = JSPublicKeyObject::create(vm, structure, globalObject, keyObjectResult.releaseReturnValue());
+        RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+    }
+
+    case CryptoKeyType::Private: {
+        auto* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(globalObject);
+        JSPrivateKeyObject* instance = JSPrivateKeyObject::create(vm, structure, globalObject, keyObjectResult.releaseReturnValue());
+        RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+    }
+    }
+
+    ASSERT_NOT_REACHED();
+
+    // Should not be reached
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 } // namespace Bun

@@ -6,7 +6,16 @@
 #include "CryptoUtil.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
+#include "AsymmetricKeyValue.h"
+#include "CryptoKeyAES.h"
+#include "CryptoKeyHMAC.h"
+#include "CryptoKeyRaw.h"
+#include "CryptoKey.h"
+#include "CryptoKeyType.h"
+
 // #include <JavaScriptCore/JSBigInt.h>
+
+namespace Bun {
 
 using namespace Bun;
 using namespace JSC;
@@ -608,4 +617,68 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
         return ok == 1;
     }
     }
+}
+
+static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::CryptoKey& key)
+{
+    switch (key.keyClass()) {
+    case WebCore::CryptoKeyClass::AES:
+        return &downcast<CryptoKeyAES>(key).key();
+    case WebCore::CryptoKeyClass::HMAC:
+        return &downcast<CryptoKeyHMAC>(key).key();
+    case WebCore::CryptoKeyClass::Raw:
+        return &downcast<CryptoKeyRaw>(key).key();
+    default: {
+        return std::nullopt;
+    }
+    }
+}
+
+WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
+{
+    // Determine Key Type and Extract Material
+    switch (key.type()) {
+    case WebCore::CryptoKeyType::Secret: {
+        // Extract symmetric key data
+        std::optional<const Vector<uint8_t>*> keyData = getSymmetricKey(key);
+        if (!keyData) {
+            return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract secret key material"_s };
+        }
+
+        WTF::FixedVector<uint8_t> keyDataVec = WTF::FixedVector<uint8_t>(keyData.value()->begin(), keyData.value()->end());
+        return KeyObject(WTFMove(keyDataVec));
+    }
+
+    case WebCore::CryptoKeyType::Public: {
+        // Extract asymmetric public key data
+        AsymmetricKeyValue keyValue(key);
+        if (!keyValue.key) {
+            return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract public key material"_s };
+        }
+
+        // Increment ref count because KeyObject will own a reference
+        EVP_PKEY_up_ref(keyValue.key);
+        ncrypto::EVPKeyPointer keyPtr(keyValue.key);
+
+        return KeyObject(Type::Public, WTFMove(keyPtr));
+    }
+
+    case WebCore::CryptoKeyType::Private: {
+        // Extract asymmetric private key data
+        AsymmetricKeyValue keyValue(key);
+        if (!keyValue.key) {
+            return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract private key material"_s };
+        }
+
+        // Increment ref count because KeyObject will own a reference
+        EVP_PKEY_up_ref(keyValue.key);
+        ncrypto::EVPKeyPointer keyPtr(keyValue.key);
+
+        return KeyObject(Type::Private, WTFMove(keyPtr));
+    }
+    }
+
+    return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Unknown key type"_s };
+}
+
 }

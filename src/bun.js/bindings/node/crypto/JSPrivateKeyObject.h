@@ -23,6 +23,13 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    static JSPrivateKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
+    {
+        JSPrivateKeyObject* instance = new (NotNull, JSC::allocateCell<JSPrivateKeyObject>(vm)) JSPrivateKeyObject(vm, structure, WTFMove(keyObject));
+        instance->finishCreation(vm, globalObject);
+        return instance;
+    }
+
     static JSPrivateKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
     {
         JSPrivateKeyObject* instance = new (NotNull, JSC::allocateCell<JSPrivateKeyObject>(vm)) JSPrivateKeyObject(vm, structure, type, WTFMove(keyPtr));
@@ -52,6 +59,11 @@ public:
 
     JSPrivateKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
         : Base(vm, structure, type, WTFMove(keyPtr))
+    {
+    }
+
+    JSPrivateKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
+        : Base(vm, structure, WTFMove(keyObject))
     {
     }
 };

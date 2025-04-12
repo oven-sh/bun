@@ -4,6 +4,8 @@
 #include "ncrypto.h"
 #include "KeyObject2.h"
 
+namespace Bun {
+
 JSC_DECLARE_HOST_FUNCTION(jsGenerateKeyPair);
 JSC_DECLARE_HOST_FUNCTION(jsGenerateKeyPairSync);
 
@@ -30,3 +32,5 @@ public:
     // keyObj is set after work is done
     KeyObject m_keyObj;
 };
+
+}

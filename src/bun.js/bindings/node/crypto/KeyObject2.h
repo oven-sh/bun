@@ -2,6 +2,13 @@
 
 #include "root.h"
 #include "ncrypto.h"
+#include "ExceptionOr.h"
+
+namespace WebCore {
+class CryptoKey;
+}
+
+namespace Bun {
 
 class KeyObject {
     WTF_MAKE_TZONE_ALLOCATED(KeyObject);
@@ -21,11 +28,19 @@ public:
     {
     }
 
+    KeyObject(WTF::FixedVector<uint8_t>&& key)
+        : m_type(Type::Secret)
+        , m_symmetricKey(WTFMove(key))
+    {
+    }
+
     KeyObject(Type type, ncrypto::EVPKeyPointer&& key)
         : m_type(type)
         , m_asymmetricKey(WTFMove(key))
     {
     }
+
+    static WebCore::ExceptionOr<KeyObject> create(WebCore::CryptoKey&);
 
     JSC::JSValue exportJWKEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType);
     JSC::JSValue exportJWKEcKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType);
@@ -58,3 +73,5 @@ private:
     WTF::FixedVector<uint8_t> m_symmetricKey;
     ncrypto::EVPKeyPointer m_asymmetricKey;
 };
+
+}

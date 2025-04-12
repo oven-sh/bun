@@ -31,6 +31,13 @@ public:
         return instance;
     }
 
+    static JSPublicKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
+    {
+        JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, WTFMove(keyObject));
+        instance->finishCreation(vm, globalObject);
+        return instance;
+    }
+
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -53,6 +60,11 @@ public:
 
     JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
         : Base(vm, structure, type, WTFMove(keyPtr))
+    {
+    }
+
+    JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
+        : Base(vm, structure, WTFMove(keyObject))
     {
     }
 };

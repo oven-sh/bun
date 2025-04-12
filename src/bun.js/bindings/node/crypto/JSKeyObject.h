@@ -32,6 +32,13 @@ public:
     //     return instance;
     // }
 
+    static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
+    {
+        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTFMove(keyObject));
+        instance->finishCreation(vm, globalObject);
+        return instance;
+    }
+
     static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, WTF::Vector<uint8_t>&& keyData)
     {
         JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTFMove(keyData));
@@ -57,6 +64,12 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSKeyObject = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSKeyObject.get(); },
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSKeyObject = std::forward<decltype(space)>(space); });
+    }
+
+    JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
+        : Base(vm, structure)
+        , m_handle(WTFMove(keyObject))
+    {
     }
 
     JSKeyObject(JSC::VM& vm, JSC::Structure* structure, WTF::Vector<uint8_t>&& keyData)

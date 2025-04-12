@@ -24,13 +24,8 @@ const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
-const {
-  SocketAddress,
-  addServerName,
-  upgradeDuplexToTLS,
-  isNamedPipeSocket,
-  normalizedArgsSymbol,
-} = require("internal/net");
+const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket] = $zig("socket.zig", "createNodeTLSBinding");
+const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener, SocketHandler, Socket } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
@@ -42,6 +37,7 @@ const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoS
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
 const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
 const BlockList = $zig("node_net_binding.zig", "BlockList");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;

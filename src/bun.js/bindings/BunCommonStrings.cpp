@@ -47,48 +47,49 @@ template void CommonStrings::visit(JSC::SlotVisitor&);
 
 // Must be kept in sync with method.zig
 enum class HTTPMethod : uint8_t {
-    ACL = 0,
-    BIND = 1,
-    CHECKOUT = 2,
-    CONNECT = 3,
-    COPY = 4,
-    DELETE = 5,
-    GET = 6,
-    HEAD = 7,
-    LINK = 8,
-    LOCK = 9,
-    MSEARCH = 10,
-    MERGE = 11,
-    MKACTIVITY = 12,
-    MKCALENDAR = 13,
-    MKCOL = 14,
-    MOVE = 15,
-    NOTIFY = 16,
-    OPTIONS = 17,
-    PATCH = 18,
-    POST = 19,
-    PROPFIND = 20,
-    PROPPATCH = 21,
-    PURGE = 22,
-    PUT = 23,
-    QUERY = 24,
-    REBIND = 25,
-    REPORT = 26,
-    SEARCH = 27,
-    SOURCE = 28,
-    SUBSCRIBE = 29,
-    TRACE = 30,
-    UNBIND = 31,
-    UNLINK = 32,
-    UNLOCK = 33,
-    UNSUBSCRIBE = 34,
+    httpACL = 0,
+    httpBIND = 1,
+    httpCHECKOUT = 2,
+    httpCONNECT = 3,
+    httpCOPY = 4,
+    // "DELETE" is defined in one of the windows headers
+    httpDELETE = 5,
+    httpGET = 6,
+    httpHEAD = 7,
+    httpLINK = 8,
+    httpLOCK = 9,
+    httpMSEARCH = 10,
+    httpMERGE = 11,
+    httpMKACTIVITY = 12,
+    httpMKCALENDAR = 13,
+    httpMKCOL = 14,
+    httpMOVE = 15,
+    httpNOTIFY = 16,
+    httpOPTIONS = 17,
+    httpPATCH = 18,
+    httpPOST = 19,
+    httpPROPFIND = 20,
+    httpPROPPATCH = 21,
+    httpPURGE = 22,
+    httpPUT = 23,
+    httpQUERY = 24,
+    httpREBIND = 25,
+    httpREPORT = 26,
+    httpSEARCH = 27,
+    httpSOURCE = 28,
+    httpSUBSCRIBE = 29,
+    httpTRACE = 30,
+    httpUNBIND = 31,
+    httpUNLINK = 32,
+    httpUNLOCK = 33,
+    httpUNSUBSCRIBE = 34,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
 {
-#define FOR_EACH_METHOD(method) \
-    case HTTPMethod::method:    \
-        return globalObject->commonStrings().method##String(globalObject);
+#define FOR_EACH_METHOD(method)    \
+    case HTTPMethod::http##method: \
+        return globalObject->commonStrings().http##method##String(globalObject);
 
     switch (method) {
         FOR_EACH_METHOD(ACL)

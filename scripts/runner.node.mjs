@@ -7,7 +7,7 @@
 // - It cannot use Bun APIs, since it is run using Node.js.
 // - It does not import dependencies, so it's faster to start.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -59,6 +59,7 @@ const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 const napiTimeout = 10 * 60_000;
+const vendorTimeout = 10_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
@@ -137,6 +138,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: isBuildkite,
     },
+    ["update-regressions"]: {
+      type: "boolean",
+      default: false,
+    },
   },
 });
 
@@ -200,8 +205,14 @@ async function runTests() {
    */
   const runTest = async (title, fn) => {
     const index = ++i;
+    const isVendor = title.startsWith("vendor/");
 
-    let result, failure, flaky;
+    /** @type {TestResult} */
+    let result;
+    /** @type {TestResult | undefined} */
+    let failure;
+    /** @type {boolean} */
+    let flaky;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
@@ -239,25 +250,95 @@ async function runTests() {
       }
     }
 
-    if (!failure) {
+    /** @type {TestEntry[]} */
+    const regressions = [];
+    /** @type {TestEntry[]} */
+    const regressionsFixed = [];
+    if (isVendor) {
+      const { tests, error, testPath } = result;
+      if (error && !error.endsWith("failing")) {
+        tests.push({ file: testPath, test: error, status: "fail" });
+      }
+
+      const errors = tests.filter(({ status }) => status === "fail").map(({ file, test }) => `${file} > ${test}`);
+      if (errors.length) {
+        const knownErrors =
+          vendorTests?.flatMap(({ testFailures }) => testFailures)?.filter(error => error.startsWith(testPath)) || [];
+
+        const regressedErrors = tests.filter(
+          ({ status, file, test }) => status === "fail" && !knownErrors.includes(`${file} > ${test}`),
+        );
+        for (const error of regressedErrors) {
+          regressions.push(error);
+        }
+
+        const fixedErrors = knownErrors.filter(error => !errors.includes(error));
+        for (const error of fixedErrors) {
+          const [file, ...labels] = error.split(" > ");
+          regressionsFixed.push({
+            file,
+            test: labels.join(" > "),
+            status: "pass",
+          });
+        }
+      }
+
+      if (options["update-regressions"]) {
+        const testFailures = regressions.map(({ file, test }) => `${file} > ${test}`);
+        const vendorPath = join(cwd, "test", "vendor.json");
+        /** @type {Vendor[]} */
+        const vendorJson = JSON.parse(readFileSync(vendorPath, "utf-8"));
+        const [, vendorName] = title.split("/");
+        const vendorPackage = vendorJson.find(({ package: name }) => name === vendorName);
+        if (vendorPackage) {
+          const existingTestFailures = vendorPackage.testFailures || [];
+          const updatedTestFailures = Array.from(
+            new Set([...existingTestFailures.filter(error => !error.startsWith(title)), ...testFailures]),
+          ).sort();
+          const vendorIndex = vendorJson.findIndex(({ package: name }) => name === vendorName);
+          const vendorUpdatedPackage = {
+            ...vendorPackage,
+            testFailures: updatedTestFailures?.length ? updatedTestFailures : undefined,
+          };
+          if (vendorIndex === -1) {
+            vendorJson.push(vendorUpdatedPackage);
+          } else {
+            vendorJson[vendorIndex] = vendorUpdatedPackage;
+          }
+          writeFileSync(vendorPath, JSON.stringify(vendorJson, null, 2));
+        }
+      }
+    }
+
+    if (isBuildkite && regressionsFixed.length) {
+      const content = formatTestToMarkdown(
+        { ...result, tests: regressionsFixed, testPath: title },
+        { includeOk: true },
+      );
+      reportAnnotationToBuildKite({ context: "regressions", label: title, content, style: "info" });
+    }
+
+    if (!failure || (isVendor && !regressions.length)) {
       return result;
     }
 
     if (isBuildkite) {
-      // Group flaky tests together, regardless of the title
-      const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const context = flaky && !isVendor ? "flaky" : title;
+      const style = flaky || isVendor ? "warning" : "error";
 
-      if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title });
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
+      let content;
+      if (isVendor) {
+        if (regressions.length) {
+          content = formatTestToMarkdown({ ...failure, tests: regressions, testPath: title });
+        } else {
+          content = formatTestToMarkdown({ ...failure, testPath: title });
         }
       } else {
-        const content = formatTestToMarkdown(failure);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
+        content = formatTestToMarkdown(failure);
+      }
+
+      if (content) {
+        reportAnnotationToBuildKite({ context, label: title, content, style });
       }
     }
 
@@ -267,7 +348,7 @@ async function runTests() {
         const longMarkdown = formatTestToMarkdown(failure);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(failure, true);
+      const shortMarkdown = formatTestToMarkdown(failure, { concise: true });
       appendFileSync("comment.md", shortMarkdown);
     }
 
@@ -556,7 +637,7 @@ async function spawnSafe(options) {
   };
   await new Promise(resolve => {
     try {
-      subprocess = spawn(command, args, {
+      subprocess = nodeSpawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout,
         cwd,
@@ -668,6 +749,19 @@ async function spawnSafe(options) {
 }
 
 /**
+ * @param {SpawnOptions} options
+ * @returns {Promise<SpawnResult>}
+ */
+async function spawn(options) {
+  const result = await spawnSafe(options);
+  const { error, stdout } = result;
+  if (error) {
+    throw new Error(`Command failed: ${error}`, { cause: stdout });
+  }
+  return result;
+}
+
+/**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
@@ -769,10 +863,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
-  const timeout = getTestTimeout(testPath);
+  const isVendor = options.cwd?.includes("vendor");
+  const timeout = isVendor ? vendorTimeout : getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(options["cwd"], testPath);
-  const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
+  const isReallyTest = isTestStrict(testPath) || isVendor;
   const args = options["args"] ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
@@ -1072,9 +1167,6 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
-/** Files with these extensions are not treated as test cases */
-const IGNORED_EXTENSIONS = new Set([".md"]);
-
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -1084,9 +1176,8 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
-      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
+      if (isHidden(filename)) {
         continue;
       }
       if (entry.isFile() && isTest(filename)) {
@@ -1105,10 +1196,9 @@ function getTests(cwd) {
  * @property {string} repository
  * @property {string} tag
  * @property {string} [packageManager]
- * @property {string} [testPath]
  * @property {string} [testRunner]
- * @property {string[]} [testExtensions]
- * @property {boolean | Record<string, boolean | string>} [skipTests]
+ * @property {string[]} [testPatterns]
+ * @property {string[]} [testFailures]
  */
 
 /**
@@ -1117,6 +1207,7 @@ function getTests(cwd) {
  * @property {string} packageManager
  * @property {string} testRunner
  * @property {string[]} testPaths
+ * @property {string[]} testFailures
  */
 
 /**
@@ -1151,73 +1242,83 @@ async function getVendorTests(cwd) {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({ package: name, repository, tag, testPatterns, testFailures, testRunner, packageManager }) => {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
-          await spawnSafe({
+          await spawn({
             command: "git",
             args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
             timeout: testTimeout,
             cwd,
           });
-        }
 
-        await spawnSafe({
-          command: "git",
-          args: ["fetch", "--depth", "1", "origin", "tag", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
-        });
+          await spawn({
+            command: "git",
+            args: ["fetch", "--depth", "1", "origin", "tag", tag],
+            timeout: testTimeout,
+            cwd: vendorPath,
+          });
+        }
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {
           throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
         }
 
-        const testPathPrefix = testPath || "test";
-        const testParentPath = join(vendorPath, testPathPrefix);
-        if (!existsSync(testParentPath)) {
-          throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
-        }
-
-        const isTest = path => {
-          if (!isJavaScriptTest(path)) {
-            return false;
-          }
-
-          if (typeof skipTests === "boolean") {
-            return !skipTests;
-          }
-
-          if (typeof skipTests === "object") {
-            for (const [glob, reason] of Object.entries(skipTests)) {
-              const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
-              if (pattern.test(path) && reason) {
-                return false;
-              }
+        const testParentPaths = new Set();
+        if (testPatterns?.length) {
+          for (const pattern of testPatterns) {
+            const endOfPath = pattern.lastIndexOf("/");
+            const endOfGlob = pattern.lastIndexOf("*");
+            if (endOfPath === -1 || endOfGlob < endOfPath) {
+              continue;
+            }
+            const testPath = pattern.substring(0, endOfPath);
+            if (existsSync(join(vendorPath, testPath))) {
+              testParentPaths.add(testPath);
             }
           }
+        } else if (existsSync(join(vendorPath, "test"))) {
+          testParentPaths.add("test");
+        }
 
-          return true;
+        if (!testParentPaths.size) {
+          throw new Error(
+            `Could not find test directory for vendor '${name}' (hint: set 'testPatterns' in vendor.json)`,
+          );
+        }
+
+        const isMatch = (filename, glob) => {
+          const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
+          return pattern.test(filename);
         };
 
-        const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
-          .filter(filename =>
-            testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
-          )
-          .map(filename => join(testPathPrefix, filename))
-          .filter(
-            filename =>
-              !filters?.length ||
-              filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
-          );
+        const testPaths = Array.from(testParentPaths).flatMap(testParentPath =>
+          readdirSync(join(vendorPath, testParentPath), { encoding: "utf-8", recursive: true })
+            .filter(filename =>
+              testPatterns?.length
+                ? testPatterns.some(pattern => isMatch(join(testParentPath, filename).replace(/\\/g, "/"), pattern))
+                : isJavaScriptTest(filename),
+            )
+            .map(filename => join(testParentPath, filename))
+            .filter(
+              filename =>
+                !filters?.length ||
+                filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
+            ),
+        );
+
+        if (!testPaths.length && !filters?.length) {
+          throw new Error(`Could not find test files for vendor '${name}' (hint: set 'testPatterns' in vendor.json)`);
+        }
 
         return {
           cwd: vendorPath,
           packageManager: packageManager || "bun",
           testRunner: testRunner || "bun",
           testPaths,
+          testFailures: testFailures || [],
         };
       },
     ),
@@ -1319,7 +1420,7 @@ function getExecPath(bunExe) {
   let execPath;
   let error;
   try {
-    const { error, stdout } = spawnSync(bunExe, ["--print", "process.argv[0]"], {
+    const { error, stdout } = nodeSpawnSync(bunExe, ["--print", "process.argv[0]"], {
       encoding: "utf-8",
       timeout: spawnTimeout,
       env: {
@@ -1405,7 +1506,7 @@ async function getExecPathFromBuildKite(target, buildId) {
  */
 function getRevision(execPath) {
   try {
-    const { error, stdout } = spawnSync(execPath, ["--revision"], {
+    const { error, stdout } = nodeSpawnSync(execPath, ["--revision"], {
       encoding: "utf-8",
       timeout: spawnTimeout,
       env: {
@@ -1443,10 +1544,13 @@ function getTestLabel() {
 
 /**
  * @param  {TestResult | TestResult[]} result
- * @param  {boolean} concise
+ * @param  {object} options
+ * @param  {boolean} options.concise
+ * @param  {boolean} options.includeOk
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise) {
+function formatTestToMarkdown(result, options = {}) {
+  const { concise = false, includeOk = false } = options;
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -1454,7 +1558,7 @@ function formatTestToMarkdown(result, concise) {
 
   let markdown = "";
   for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
-    if (ok || error === "SIGTERM") {
+    if ((ok && !includeOk) || error === "SIGTERM") {
       continue;
     }
 
@@ -1486,6 +1590,8 @@ function formatTestToMarkdown(result, concise) {
     }
     if (error) {
       markdown += ` - ${error}`;
+    } else if (ok) {
+      markdown += ` - ok`;
     }
     if (platform) {
       markdown += ` on ${platform}`;
@@ -1513,7 +1619,7 @@ function formatTestToMarkdown(result, concise) {
  * @param {string} glob
  */
 function uploadArtifactsToBuildKite(glob) {
-  spawn("buildkite-agent", ["artifact", "upload", glob], {
+  nodeSpawnSync("buildkite-agent", ["artifact", "upload", glob], {
     stdio: ["ignore", "ignore", "ignore"],
     timeout: spawnTimeout,
     cwd,
@@ -1538,7 +1644,7 @@ function listArtifactsFromBuildKite(glob, step) {
   if (step) {
     args.push("--step", step);
   }
-  const { error, status, signal, stdout, stderr } = spawnSync("buildkite-agent", args, {
+  const { error, status, signal, stdout, stderr } = nodeSpawnSync("buildkite-agent", args, {
     stdio: ["ignore", "ignore", "ignore"],
     encoding: "utf-8",
     timeout: spawnTimeout,
@@ -2006,10 +2112,13 @@ export async function main() {
   // It also appears to hang on 1.1.1.1, which could explain this issue:
   // https://github.com/oven-sh/bun/issues/11136
   if (isWindows && isCI) {
-    await spawn("pwsh", [
-      "-Command",
-      "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
-    ]);
+    await spawn({
+      command: "pwsh",
+      args: [
+        "-Command",
+        "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
+      ],
+    });
   }
 
   const results = await runTests();

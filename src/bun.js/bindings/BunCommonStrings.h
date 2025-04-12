@@ -31,7 +31,7 @@
     macro(httpMKCALENDAR, "MKCALENDAR") \
     macro(httpMKCOL, "MKCOL") \
     macro(httpMOVE, "MOVE") \
-    macro(httpMSEARCH, "M_SEARCH") \
+    macro(httpMSEARCH, "M-SEARCH") \
     macro(httpNOTIFY, "NOTIFY") \
     macro(httpOPTIONS, "OPTIONS") \
     macro(OperationFailed, "The operation failed.") \

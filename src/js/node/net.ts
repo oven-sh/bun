@@ -513,8 +513,9 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const kConnect = Symbol("kConnect");
-class TcpSocketHandle {
+const kConnectTcp = Symbol("kConnectTcp");
+const kConnectPipe = Symbol("kConnectPipe");
+class SocketHandle {
   #promise: Promise<Socket<undefined>> | null;
   #socket: Socket<undefined> | null;
 
@@ -523,7 +524,7 @@ class TcpSocketHandle {
     this.#socket = null;
   }
 
-  [kConnect](self, addressType, req, address, port) {
+  [kConnectTcp](self, addressType, req, address, port) {
     $assert(this.#promise == null);
     $assert(this.#socket == null);
     const that = this;
@@ -531,6 +532,70 @@ class TcpSocketHandle {
       hostname: address,
       port,
       ipv6Only: addressType === 6,
+      allowHalfOpen: self.allowHalfOpen,
+      socket: {
+        open(socket) {
+          self._handle = that;
+          socket[owner_symbol] = self;
+          that.#socket = socket;
+          that.#promise = null;
+          req.oncomplete(0, self._handle, req, true, true);
+        },
+        data(socket, buffer) {
+          self.bytesRead += buffer.length;
+          if (!self.push(buffer)) socket.pause();
+        },
+        drain(socket) {
+          const callback = self[kwriteCallback];
+          self.connecting = false;
+          if (callback) {
+            const writeChunk = self._pendingData;
+            if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+              self._pendingData = self[kwriteCallback] = null;
+              callback(null);
+            } else {
+              self._pendingData = null;
+            }
+            self[kBytesWritten] = socket.bytesWritten;
+          }
+        },
+        end(socket) {
+          if (self[kended]) return;
+          self[kended] = true;
+          if (!self.allowHalfOpen) self.write = writeAfterFIN;
+          self.push(null);
+          self.read(0);
+        },
+        close(socket, err) {
+          if (self[kclosed]) return;
+          self[kclosed] = true;
+          that.#socket = null;
+          if (self[kended]) return;
+          self[kended] = true;
+          if (!self.allowHalfOpen) self.write = writeAfterFIN;
+          self.push(null);
+          self.read(0);
+        },
+      },
+    }).then(sock => {
+      that.#socket = sock;
+      that.#promise = null;
+    });
+    if ($isPromiseRejected(this.#promise)) {
+      throw Bun.peek(this.#promise).errno;
+    }
+    this.#promise.catch(reason => {
+      if (!self.destroyed) destroyNT(self, reason);
+    });
+    return 0;
+  }
+  [kConnectPipe](self, req, address) {
+    $assert(this.#promise == null);
+    $assert(this.#socket == null);
+    const that = this;
+    this.#promise = Bun.connect({
+      hostname: address,
+      unix: address,
       allowHalfOpen: self.allowHalfOpen,
       socket: {
         open(socket) {
@@ -648,125 +713,6 @@ class TcpSocketHandle {
   }
   get remotePort() {
     return this.#socket?.remotePort;
-  }
-}
-
-class PipeSocketHandle {
-  #promise: Promise<Socket<undefined>> | null;
-  #socket: Socket<undefined> | null;
-
-  constructor() {
-    this.#promise = null;
-    this.#socket = null;
-  }
-
-  [kConnect](self, req, address) {
-    $assert(this.#promise == null);
-    $assert(this.#socket == null);
-    const that = this;
-    this.#promise = Bun.connect({
-      hostname: address,
-      unix: address,
-      allowHalfOpen: self.allowHalfOpen,
-      socket: {
-        open(socket) {
-          self._handle = that;
-          socket[owner_symbol] = self;
-          that.#socket = socket;
-          that.#promise = null;
-          req.oncomplete(0, self._handle, req, true, true);
-        },
-        data(socket, buffer) {
-          self.bytesRead += buffer.length;
-          if (!self.push(buffer)) socket.pause();
-        },
-        drain(socket) {
-          const callback = self[kwriteCallback];
-          self.connecting = false;
-          if (callback) {
-            const writeChunk = self._pendingData;
-            if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
-              self._pendingData = self[kwriteCallback] = null;
-              callback(null);
-            } else {
-              self._pendingData = null;
-            }
-            self[kBytesWritten] = socket.bytesWritten;
-          }
-        },
-        end(socket) {
-          if (self[kended]) return;
-          self[kended] = true;
-          if (!self.allowHalfOpen) self.write = writeAfterFIN;
-          self.push(null);
-          self.read(0);
-        },
-        close(socket, err) {
-          if (self[kclosed]) return;
-          self[kclosed] = true;
-          that.#socket = null;
-          if (self[kended]) return;
-          self[kended] = true;
-          if (!self.allowHalfOpen) self.write = writeAfterFIN;
-          self.push(null);
-          self.read(0);
-        },
-      },
-    }).then(sock => {
-      that.#socket = sock;
-      that.#promise = null;
-    });
-    if ($isPromiseRejected(this.#promise)) {
-      throw Bun.peek(this.#promise).errno;
-    }
-    this.#promise.catch(reason => {
-      if (!self.destroyed) destroyNT(self, reason);
-    });
-    return 0;
-  }
-  setNoDelay(arg) {
-    $assert(this.#socket != null);
-    return this.#socket.setNoDelay(arg);
-  }
-  setKeepAlive(arg0, arg1) {
-    $assert(this.#socket != null);
-    return this.#socket.setKeepAlive(arg0, arg1);
-  }
-  resume() {
-    return this.#socket?.resume();
-  }
-  pause() {
-    return this.#socket?.pause();
-  }
-  write() {
-    $assert(this.#socket != null);
-    return this.#socket.$write.$apply(this.#socket, arguments);
-  }
-  end() {
-    $assert(this.#socket != null);
-    return this.#socket.end.$apply(this.#socket, arguments);
-  }
-  close(cb) {
-    this.#socket?.close();
-    if (typeof cb === "function") process.nextTick(cb);
-  }
-  reset(cb) {
-    if (this.#socket == null) {
-      return;
-    }
-    this.#socket.close();
-    process.nextTick(cb);
-  }
-  ref() {
-    $assert(this.#socket != null);
-    return this.#socket.ref();
-  }
-  unref() {
-    $assert(this.#socket != null);
-    return this.#socket.unref();
-  }
-  get bytesWritten() {
-    return this.#socket?.bytesWritten;
   }
 }
 
@@ -984,7 +930,7 @@ Socket.prototype.connect = function connect(...args) {
 
   if (!this._handle) {
     // this._handle = pipe ? new Pipe(PipeConstants.SOCKET) : new TCP(TCPConstants.SOCKET);
-    this._handle = pipe ? new PipeSocketHandle() : new TcpSocketHandle();
+    this._handle = new SocketHandle();
     initSocketHandle(this);
   }
 
@@ -1386,14 +1332,14 @@ function writeGeneric(socket, data, encoding) {
     case "ucs-2":
     case "utf16le":
     case "utf-16le": {
-      if (!(socket instanceof TcpSocketHandle || socket instanceof PipeSocketHandle)) {
+      if (!(socket instanceof SocketHandle)) {
         // temp
         return socket.$write(data, encoding);
       }
       return socket.write(data, encoding);
     }
     default: {
-      if (!(socket instanceof TcpSocketHandle || socket instanceof PipeSocketHandle)) {
+      if (!(socket instanceof SocketHandle)) {
         // temp
         return socket.$write(Buffer.from(data, encoding));
       }
@@ -1657,14 +1603,14 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
     req.localPort = localPort;
     req.addressType = addressType;
 
-    err = self._handle[kConnect](self, addressType, req, address, port);
+    err = self._handle[kConnectTcp](self, addressType, req, address, port);
   } else {
     // const req = new PipeConnectWrap();
     const req = {};
     req.address = address;
     req.oncomplete = afterConnect;
 
-    err = self._handle[kConnect](self, req, address);
+    err = self._handle[kConnectPipe](self, req, address);
   }
 
   if (err) {
@@ -1698,7 +1644,7 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
-    self[kReinitializeHandle](new TcpSocketHandle());
+    self[kReinitializeHandle](new SocketHandle());
   }
 
   const { localPort, port, flags } = context;
@@ -1753,7 +1699,7 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
-  err = self._handle[kConnect](self, addressType, req, address, port);
+  err = self._handle[kConnectTcp](self, addressType, req, address, port);
 
   if (err) {
     const ex = new ExceptionWithHostPort(err, "connect", address, port);

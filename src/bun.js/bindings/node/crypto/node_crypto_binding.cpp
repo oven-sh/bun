@@ -54,6 +54,7 @@
 #include "CryptoUtil.h"
 #include "CryptoKeygen.h"
 #include "CryptoGenKeyPair.h"
+#include "CryptoKeys.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -475,6 +476,9 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 3, "generateKeyPair"_s, jsGenerateKeyPair, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generateKeyPairSync"_s)),
         JSFunction::create(vm, globalObject, 2, "generateKeyPairSync"_s, jsGenerateKeyPairSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, Identifier::fromString(vm, "X509Certificate"_s),
+        globalObject->m_JSX509CertificateClassStructure.constructor(globalObject));
 
     return obj;
 }

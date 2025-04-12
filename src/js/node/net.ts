@@ -516,11 +516,13 @@ class SocketHandle {
   #socket: Socket<undefined> | null;
 
   constructor() {
+    $debug("new SocketHandle");
     this.#promise = null;
     this.#socket = null;
   }
 
   [kConnectTcp](self, addressType, req, address, port) {
+    $debug("SocketHandle.kConnectTcp");
     $assert(this.#promise == null);
     $assert(this.#socket == null);
     const that = this;
@@ -585,10 +587,12 @@ class SocketHandle {
         },
       },
     }).then(sock => {
+      $debug("Bun.Socket then");
       that.#socket = sock;
       that.#promise = null;
     });
     if ($isPromiseRejected(this.#promise)) {
+      $debug("Bun.Socket rejected");
       throw Bun.peek(this.#promise).errno;
     }
     this.#promise.catch(reason => {
@@ -598,6 +602,7 @@ class SocketHandle {
     return 0;
   }
   [kConnectPipe](self, req, address) {
+    $debug("SocketHandle.kConnectPipe");
     $assert(this.#promise == null);
     $assert(this.#socket == null);
     const that = this;
@@ -662,31 +667,39 @@ class SocketHandle {
     return 0;
   }
   setNoDelay(arg) {
+    $debug("SocketHandle.setNoDelay");
     $assert(this.#socket != null);
     return this.#socket.setNoDelay(arg);
   }
   setKeepAlive(arg0, arg1) {
+    $debug("SocketHandle.setKeepAlive");
     $assert(this.#socket != null);
     return this.#socket.setKeepAlive(arg0, arg1);
   }
   resume() {
+    $debug("SocketHandle.resume");
     return this.#socket?.resume();
   }
   pause() {
+    $debug("SocketHandle.pause");
     return this.#socket?.pause();
   }
   write() {
+    $debug("SocketHandle.write");
     $assert(this.#socket != null);
     return this.#socket.$write.$apply(this.#socket, arguments);
   }
   end() {
+    $debug("SocketHandle.end");
     return this.#socket?.end.$apply(this.#socket, arguments);
   }
   close(cb) {
+    $debug("SocketHandle.close");
     this.#socket?.close();
     if (typeof cb === "function") process.nextTick(cb);
   }
   reset(cb) {
+    $debug("SocketHandle.reset");
     if (this.#socket == null) {
       return;
     }
@@ -694,10 +707,12 @@ class SocketHandle {
     process.nextTick(cb);
   }
   ref() {
+    $debug("SocketHandle.ref");
     $assert(this.#socket != null);
     return this.#socket.ref();
   }
   unref() {
+    $debug("SocketHandle.unref");
     $assert(this.#socket != null);
     return this.#socket.unref();
   }
@@ -1085,6 +1100,7 @@ Socket.prototype._read = function _read(size) {
 };
 
 Socket.prototype._reset = function _reset() {
+  $debug("reset connection");
   this.resetAndClosing = true;
   return this.destroy();
 };

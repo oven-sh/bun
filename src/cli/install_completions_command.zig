@@ -252,6 +252,35 @@ pub const InstallCompletionsCommand = struct {
 
             switch (shell) {
                 .fish => {
+                    // First try using pkg-config to find the vendor directory
+                    outer: {
+                        const result = std.process.Child.run(.{
+                            .allocator = allocator,
+                            .argv = &[_][]const u8{ "pkg-config", "--variable=completionsdir", "fish" },
+                        }) catch break :outer;
+                        defer {
+                            allocator.free(result.stdout);
+                            allocator.free(result.stderr);
+                        }
+
+                        // Check if command was successful
+                        if (result.term.Exited == 0 and result.stdout.len > 0) {
+                            // Trim whitespace/newlines from the result
+                            const trimmed = std.mem.trim(u8, result.stdout, &std.ascii.whitespace);
+                            if (trimmed.len > 0) {
+                                completions_dir = trimmed;
+                                break :found std.fs.openDirAbsolute(trimmed, .{}) catch break :outer;
+                            }
+                        }
+                    }
+
+                    // Check the standard vendor completions directory
+                    outer: {
+                        completions_dir = "/usr/share/fish/vendor_completions.d";
+                        break :found std.fs.openDirAbsolute("/usr/share/fish/vendor_completions.d", .{}) catch break :outer;
+                    }
+
+                    // Fall back to user directories if vendor directories are not available
                     if (bun.getenvZ("XDG_CONFIG_HOME")) |config_dir| {
                         outer: {
                             var paths = [_]string{ config_dir, "./fish/completions" };

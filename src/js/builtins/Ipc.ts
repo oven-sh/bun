@@ -177,7 +177,8 @@ export function parseHandle(target, serialized, fd) {
         // node does this too though so that's okay.
         // which is weird. we should check if that is actually true:
         // - send(server), send({message}), watch the event order
-        emit(target, serialized, server);
+        console.log("listen at fd", fd);
+        emit(target, serialized.message, server);
         // interestingly, internal messages can be nested in node. maybe for cluster?
         // emit is:
         // handleMessage(message.msg, handle, isInternal(message.msg))

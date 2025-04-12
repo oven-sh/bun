@@ -55,7 +55,7 @@ declare module "bun" {
      *
      * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
      *
-     * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
+     * This is to avoid type conflicts between lib.dom.d.ts and \@types/bun.
      *
      * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
      * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
@@ -558,7 +558,6 @@ declare module "bun" {
    *
    * @returns The width of the string in columns
    *
-   * ## Examples
    * @example
    * ```ts
    * import { stringWidth } from "bun";
@@ -569,7 +568,6 @@ declare module "bun" {
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: false })); // 5
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: true })); // 13
    * ```
-   *
    */
   function stringWidth(
     /**

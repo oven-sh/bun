@@ -159,6 +159,20 @@ declare module "bun:sqlite" {
      *
      * This does not cache the query, so if you want to run a query multiple times, you should use {@link prepare} instead.
      *
+     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
+     *
+     * The following types can be used when binding parameters:
+     *
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
+     *
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
@@ -187,20 +201,6 @@ declare module "bun:sqlite" {
      * @param bindings Optional bindings for the query
      *
      * @returns `Database` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
-     *
-     *  The following types can be used when binding parameters:
-     *
-     * | JavaScript type | SQLite type            |
-     * | --------------- | ---------------------- |
-     * | `string`        | `TEXT`                 |
-     * | `number`        | `INTEGER` or `DECIMAL` |
-     * | `boolean`       | `INTEGER` (1 or 0)     |
-     * | `Uint8Array`    | `BLOB`                 |
-     * | `Buffer`        | `BLOB`                 |
-     * | `bigint`        | `INTEGER`              |
-     * | `null`          | `NULL`                 |
      */
     run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
     /**

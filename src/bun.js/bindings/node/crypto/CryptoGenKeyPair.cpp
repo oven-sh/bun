@@ -72,7 +72,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
         JSValue::encode(privateKeyValue));
 }
 
-KeyEncodingConfig parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyTypeValue, JSValue optionsValue)
+KeyEncodingConfig parseKeyEncodingConfig(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyTypeValue, JSValue optionsValue)
 {
     ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicKeyEncoding = {};
     ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privateKeyEncoding = {};
@@ -136,7 +136,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
     V::validateString(scope, globalObject, typeValue, "type"_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    KeyEncodingConfig config = parseKeyEncoding(globalObject, scope, typeValue, optionsValue);
+    KeyEncodingConfig config = parseKeyEncodingConfig(globalObject, scope, typeValue, optionsValue);
 
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, globalObject, optionsValue, "options"_s);
@@ -199,7 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
     V::validateString(scope, globalObject, typeValue, "type"_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    KeyEncodingConfig config = parseKeyEncoding(globalObject, scope, typeValue, optionsValue);
+    KeyEncodingConfig config = parseKeyEncodingConfig(globalObject, scope, typeValue, optionsValue);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     if (!optionsValue.isUndefined()) {

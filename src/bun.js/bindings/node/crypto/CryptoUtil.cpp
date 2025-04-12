@@ -10,7 +10,6 @@
 #include "JSCryptoKey.h"
 #include "CryptoKeyRSA.h"
 #include "AsymmetricKeyValue.h"
-#include "KeyObject.h"
 #include "JSVerify.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include "CryptoKeyRaw.h"
@@ -616,15 +615,15 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
                 return std::nullopt;
             }
         } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
-            auto dataBuf = KeyObject__GetBuffer(maybeKey);
-            if (dataBuf.hasException()) {
+            auto dataBuf = getBuffer(maybeKey);
+            if (!dataBuf) {
                 return std::nullopt;
             }
 
             ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
             config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
 
-            auto buffer = dataBuf.releaseReturnValue();
+            auto buffer = dataBuf.value();
             ncrypto::Buffer<const unsigned char> ncryptoBuf {
                 .data = buffer.data(),
                 .len = buffer.size(),
@@ -719,8 +718,8 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
                     return std::nullopt;
                 }
             } else if (keyCellType >= Int8ArrayType && keyCellType <= DataViewType) {
-                auto dataBuf = KeyObject__GetBuffer(key);
-                if (dataBuf.hasException()) {
+                auto dataBuf = getBuffer(key);
+                if (!dataBuf) {
                     return std::nullopt;
                 }
 
@@ -739,11 +738,12 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
                 RETURN_IF_EXCEPTION(scope, std::nullopt);
                 config.type = keyType.value_or(ncrypto::EVPKeyPointer::PKEncodingType::PKCS1);
 
-                auto buffer = dataBuf.releaseReturnValue();
-                ncrypto::Buffer<const unsigned char> ncryptoBuf {
-                    .data = buffer.data(),
-                    .len = buffer.size(),
-                };
+                auto buffer = dataBuf.value();
+                ncrypto::Buffer<const unsigned char>
+                    ncryptoBuf {
+                        .data = buffer.data(),
+                        .len = buffer.size(),
+                    };
 
                 auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
                 if (!res) {
@@ -782,6 +782,28 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
     }
 
     Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
+    return std::nullopt;
+}
+
+std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
+{
+    if (auto* view = jsDynamicCast<JSArrayBufferView*>(maybeBuffer)) {
+        if (view->isDetached()) {
+            return std::nullopt;
+        }
+
+        return view->span();
+    }
+
+    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(maybeBuffer)) {
+        auto* buffer = arrayBuffer->impl();
+        if (buffer->isDetached()) {
+            return std::nullopt;
+        }
+
+        return buffer->span();
+    }
+
     return std::nullopt;
 }
 

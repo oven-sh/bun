@@ -282,13 +282,13 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
         return nullptr;
     }
 
-    return create(vm, structure, globalObject, std::move(result.value));
+    return create(vm, structure, globalObject, WTFMove(result.value));
 }
 
 JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::X509Pointer&& cert)
 {
     auto* certificate = create(vm, structure);
-    certificate->m_x509 = std::move(cert);
+    certificate->m_x509 = WTFMove(cert);
     size_t size = i2d_X509(certificate->m_x509.get(), nullptr);
     certificate->m_extraMemorySizeForGC = size;
     vm.heap.reportExtraMemoryAllocated(certificate, size);

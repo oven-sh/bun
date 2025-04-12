@@ -12,13 +12,14 @@
 #include "CryptoKeyRaw.h"
 #include "CryptoKey.h"
 #include "CryptoKeyType.h"
-
-// #include <JavaScriptCore/JSBigInt.h>
+#include "JSCryptoKey.h"
+#include "CryptoGenKeyPair.h"
 
 namespace Bun {
 
 using namespace Bun;
 using namespace JSC;
+using namespace ncrypto;
 
 JSValue encodeBignum(JSGlobalObject* globalObject, ThrowScope& scope, const BIGNUM* bn, int size)
 {
@@ -646,8 +647,9 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
             return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract secret key material"_s };
         }
 
-        WTF::FixedVector<uint8_t> keyDataVec = WTF::FixedVector<uint8_t>(keyData.value()->begin(), keyData.value()->end());
-        return create(WTFMove(keyDataVec));
+        WTF::Vector<uint8_t> copy;
+        copy.appendVector(*keyData.value());
+        return create(WTFMove(copy));
     }
 
     case WebCore::CryptoKeyType::Public: {
@@ -680,6 +682,155 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
     }
 
     return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Unknown key type"_s };
+}
+
+void getKeyObjectFromHandle(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, KeyObject& handle, KeyObject::PrepareAsymmetricKeyMode mode)
+{
+    if (mode == KeyObject::PrepareAsymmetricKeyMode::CreatePrivate) {
+        ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string, ArrayBuffer, Buffer, TypedArray, or DataView"_s, keyValue);
+        return;
+    }
+
+    if (handle.type() != KeyObjectType::Private) {
+        if (mode == KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate || mode == KeyObject::PrepareAsymmetricKeyMode::CreatePublic) {
+            ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "private"_s);
+            return;
+        }
+        if (handle.type() != KeyObjectType::Public) {
+            ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "private or public"_s);
+            return;
+        }
+    }
+}
+
+KeyObject getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyData, KeyObject::PrepareAsymmetricKeyMode mode)
+{
+    return {};
+}
+
+KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, KeyObjectType type, PrepareAsymmetricKeyMode mode)
+{
+    VM& vm = globalObject->vm();
+
+    if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(keyValue)) {
+        auto& handle = keyObject->handle();
+        getKeyObjectFromHandle(globalObject, scope, keyValue, handle, mode);
+        RETURN_IF_EXCEPTION(scope, {});
+        return handle;
+    }
+
+    if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(keyValue)) {
+        auto& key = cryptoKey->wrapped();
+        auto keyObject = create(key);
+        if (UNLIKELY(keyObject.hasException())) {
+            WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
+        }
+        KeyObject handle = keyObject.releaseReturnValue();
+        getKeyObjectFromHandle(globalObject, scope, keyValue, handle, mode);
+        RETURN_IF_EXCEPTION(scope, {});
+        return handle;
+    }
+
+    if (keyValue.isString()) {
+        auto* keyString = keyValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto keyView = keyString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // EVPKeyPointer::AsymmetricKeyEncodingConfig config = {};
+        // config.format = EVPKeyPointer::PKFormatType::PEM;
+    }
+
+    if (auto* view = jsDynamicCast<JSArrayBufferView*>(keyValue)) {
+        auto buffer = view->span();
+        (void)buffer;
+    }
+
+    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(keyValue)) {
+        auto* buffer = arrayBuffer->impl();
+        auto data = buffer->span();
+        (void)data;
+    }
+
+    if (JSObject* keyObj = jsDynamicCast<JSObject*>(keyValue)) {
+        JSValue dataValue = keyObj->get(globalObject, Identifier::fromString(vm, "key"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue encodingValue = keyObj->get(globalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue formatValue = keyObj->get(globalObject, Identifier::fromString(vm, "format"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(dataValue)) {
+            auto& handle = keyObject->handle();
+            getKeyObjectFromHandle(globalObject, scope, dataValue, handle, mode);
+            RETURN_IF_EXCEPTION(scope, {});
+            return handle;
+        }
+
+        if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(dataValue)) {
+            auto& key = cryptoKey->wrapped();
+            auto keyObject = create(key);
+            if (UNLIKELY(keyObject.hasException())) {
+                WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
+            }
+            KeyObject handle = keyObject.releaseReturnValue();
+            getKeyObjectFromHandle(globalObject, scope, dataValue, handle, mode);
+            RETURN_IF_EXCEPTION(scope, {});
+            return handle;
+        }
+
+        auto* formatString = formatValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto formatView = formatString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (formatView == "jwk"_s) {
+            V::validateObject(scope, globalObject, dataValue, "key.key"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            KeyObject keyObject = getKeyObjectHandleFromJwk(globalObject, scope, dataValue.getObject(), mode);
+            return keyObject;
+        }
+
+        std::optional<bool> isPublic = mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePrivate
+            ? std::optional<bool>(false)
+            : std::nullopt;
+        (void)isPublic;
+
+        if (dataValue.isString()) {
+            auto* dataString = dataValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto dataView = dataString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        if (auto* view = jsDynamicCast<JSArrayBufferView*>(dataValue)) {
+            auto buffer = view->span();
+            (void)buffer;
+        }
+
+        if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(dataValue)) {
+            auto* buffer = arrayBuffer->impl();
+            auto data = buffer->span();
+            (void)data;
+
+            auto config = parseKeyEncodingConfig(globalObject, scope, formatValue, encodingValue);
+        }
+
+        if (mode != PrepareAsymmetricKeyMode::CreatePrivate) {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or string"_s, dataValue);
+        } else {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or string"_s, dataValue);
+        }
+        return {};
+    }
+
+    if (mode != PrepareAsymmetricKeyMode::CreatePrivate) {
+        ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or string"_s, keyValue);
+    } else {
+        ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or string"_s, keyValue);
+    }
+
+    return {};
 }
 
 }

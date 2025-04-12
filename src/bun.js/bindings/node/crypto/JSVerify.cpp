@@ -9,7 +9,6 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JSBufferEncodingType.h"
-#include "KeyObject.h"
 #include "JSCryptoKey.h"
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
@@ -711,12 +710,12 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
             }
         } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
             // Handle buffer input directly
-            auto dataBuf = KeyObject__GetBuffer(maybeKey);
-            if (dataBuf.hasException()) {
+            auto dataBuf = getBuffer(maybeKey);
+            if (!dataBuf) {
                 return std::nullopt;
             }
 
-            auto buffer = dataBuf.releaseReturnValue();
+            auto buffer = dataBuf.value();
             ncrypto::Buffer<const unsigned char> ncryptoBuf {
                 .data = buffer.data(),
                 .len = buffer.size(),
@@ -812,12 +811,12 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
                 }
             } else if (keyCellType >= Int8ArrayType && keyCellType <= DataViewType) {
                 // Handle buffer in key property
-                auto dataBuf = KeyObject__GetBuffer(key);
-                if (dataBuf.hasException()) {
+                auto dataBuf = getBuffer(key);
+                if (!dataBuf) {
                     return std::nullopt;
                 }
 
-                auto buffer = dataBuf.releaseReturnValue();
+                auto buffer = dataBuf.value();
                 ncrypto::Buffer<const unsigned char> ncryptoBuf {
                     .data = buffer.data(),
                     .len = buffer.size(),
@@ -1406,7 +1405,7 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
         return false;
     }
 
-    if (!asn1_sig.setParams(std::move(r), std::move(s))) {
+    if (!asn1_sig.setParams(WTFMove(r), WTFMove(s))) {
         return false;
     }
 

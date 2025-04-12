@@ -19,11 +19,6 @@ enum class KeyObjectType : uint8_t {
 struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
     WTF_MAKE_TZONE_ALLOCATED(KeyObjectData);
 
-    KeyObjectData(WTF::FixedVector<uint8_t>&& symmetricKey)
-        : symmetricKey(WTFMove(symmetricKey))
-    {
-    }
-
     KeyObjectData(WTF::Vector<uint8_t>&& symmetricKey)
         : symmetricKey(WTFMove(symmetricKey))
     {
@@ -37,11 +32,6 @@ struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
 public:
     ~KeyObjectData() = default;
 
-    static RefPtr<KeyObjectData> create(WTF::FixedVector<uint8_t>&& symmetricKey)
-    {
-        return adoptRef(*new KeyObjectData(WTFMove(symmetricKey)));
-    }
-
     static RefPtr<KeyObjectData> create(WTF::Vector<uint8_t>&& symmetricKey)
     {
         return adoptRef(*new KeyObjectData(WTFMove(symmetricKey)));
@@ -52,7 +42,7 @@ public:
         return adoptRef(*new KeyObjectData(WTFMove(asymmetricKey)));
     }
 
-    WTF::FixedVector<uint8_t> symmetricKey;
+    WTF::Vector<uint8_t> symmetricKey;
     ncrypto::EVPKeyPointer asymmetricKey;
 };
 
@@ -70,11 +60,6 @@ public:
     ~KeyObject() = default;
 
     static WebCore::ExceptionOr<KeyObject> create(WebCore::CryptoKey&);
-    static KeyObject create(WTF::FixedVector<uint8_t>&& symmetricKey)
-    {
-        RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
-        return KeyObject(KeyObjectType::Secret, WTFMove(data));
-    }
     static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey)
     {
         RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
@@ -85,6 +70,15 @@ public:
         RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(asymmetricKey));
         return KeyObject(type, WTFMove(data));
     }
+
+    enum class PrepareAsymmetricKeyMode {
+        ConsumePublic,
+        ConsumePrivate,
+        CreatePublic,
+        CreatePrivate,
+    };
+
+    static KeyObject prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, KeyObjectType type, PrepareAsymmetricKeyMode mode);
 
     JSC::JSValue exportJWKEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType exportType);
     JSC::JSValue exportJWKEcKey(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType exportType);
@@ -109,7 +103,7 @@ public:
 
     inline KeyObjectType type() const { return m_type; }
 
-    const WTF::FixedVector<uint8_t>& symmetricKey() const { return m_data->symmetricKey; }
+    const WTF::Vector<uint8_t>& symmetricKey() const { return m_data->symmetricKey; }
     const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_data->asymmetricKey; }
     RefPtr<KeyObjectData> data() const { return m_data; }
 

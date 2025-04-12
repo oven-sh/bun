@@ -1,7 +1,6 @@
 #include "CryptoHkdf.h"
 #include "NodeValidator.h"
 #include "CryptoUtil.h"
-#include "KeyObject.h"
 #include "JSCryptoKey.h"
 #include "CryptoKey.h"
 #include "AsymmetricKeyValue.h"

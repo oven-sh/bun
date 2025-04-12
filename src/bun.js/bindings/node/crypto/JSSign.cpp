@@ -8,7 +8,6 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JSBufferEncodingType.h"
-#include "KeyObject.h"
 #include "JSCryptoKey.h"
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"

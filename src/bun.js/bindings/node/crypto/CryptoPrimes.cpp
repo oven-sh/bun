@@ -1,5 +1,4 @@
 #include "CryptoPrimes.h"
-#include "KeyObject.h"
 #include "ErrorCode.h"
 #include "helpers.h"
 #include "CryptoUtil.h"

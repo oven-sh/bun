@@ -1,5 +1,4 @@
 #include "node_crypto_binding.h"
-#include "KeyObject.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -60,61 +59,6 @@
 using namespace JSC;
 
 namespace Bun {
-
-// JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     auto scope = DECLARE_THROW_SCOPE(vm);
-
-//     if (callFrame->argumentCount() < 2) {
-//         return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "requires 2 arguments"_s);
-//     }
-
-//     auto* privateKeyObj = JSC::jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
-//     auto* publicKeyObj = JSC::jsDynamicCast<JSCryptoKey*>(callFrame->argument(1));
-
-//     if (!privateKeyObj || !publicKeyObj) {
-//         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "diffieHellman"_s, "CryptoKey"_s, !privateKeyObj ? callFrame->argument(0) : callFrame->argument(1));
-//     }
-
-//     auto& privateKey = privateKeyObj->wrapped();
-//     auto& publicKey = publicKeyObj->wrapped();
-
-//     // Create AsymmetricKeyValue objects to access the EVP_PKEY pointers
-//     WebCore::AsymmetricKeyValue ourKeyValue(privateKey);
-//     WebCore::AsymmetricKeyValue theirKeyValue(publicKey);
-
-//     // Get the EVP_PKEY from both keys
-//     EVP_PKEY* ourKey = ourKeyValue.key;
-//     EVP_PKEY* theirKey = theirKeyValue.key;
-
-//     if (!ourKey || !theirKey) {
-//         return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key"_s, jsUndefined(), "is invalid"_s);
-//     }
-
-//     // Create EVPKeyPointers to wrap the keys
-//     ncrypto::EVPKeyPointer ourKeyPtr(ourKey);
-//     ncrypto::EVPKeyPointer theirKeyPtr(theirKey);
-
-//     // Use DHPointer::stateless to compute the shared secret
-//     auto secret = ncrypto::DHPointer::stateless(ourKeyPtr, theirKeyPtr).release();
-
-//     // These are owned by AsymmetricKeyValue, not by EVPKeyPointer.
-//     ourKeyPtr.release();
-//     theirKeyPtr.release();
-
-//     auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(secret.data), secret.len }, createSharedTask<void(void*)>([](void* p) {
-//         OPENSSL_free(p);
-//     }));
-//     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-//     auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, secret.len);
-//     RETURN_IF_EXCEPTION(scope, {});
-//     if (!result) {
-//         return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "failed to allocate result buffer"_s);
-//     }
-
-//     return JSC::JSValue::encode(result);
-// }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -188,12 +132,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto input = KeyObject__GetBuffer(callFrame->argument(0));
-    if (input.hasException()) {
+    auto input = getBuffer(callFrame->argument(0));
+    if (!input) {
         return JSValue::encode(jsUndefined());
     }
 
-    auto buffer = input.releaseReturnValue();
+    auto buffer = input.value();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -207,12 +151,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto input = KeyObject__GetBuffer(callFrame->argument(0));
-    if (input.hasException()) {
+    auto input = getBuffer(callFrame->argument(0));
+    if (!input) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.releaseReturnValue();
+    auto buffer = input.value();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -236,12 +180,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto input = KeyObject__GetBuffer(callFrame->argument(0));
-    if (input.hasException()) {
+    auto input = getBuffer(callFrame->argument(0));
+    if (!input) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.releaseReturnValue();
+    auto buffer = input.value();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }

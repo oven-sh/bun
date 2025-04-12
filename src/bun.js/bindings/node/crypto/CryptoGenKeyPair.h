@@ -33,4 +33,6 @@ public:
     KeyObject m_keyObj;
 };
 
+KeyEncodingConfig parseKeyEncodingConfig(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyTypeValue, JSC::JSValue optionsValue);
+
 } // namespace Bun

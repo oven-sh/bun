@@ -1241,7 +1241,9 @@ JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope,
     WTF::StringBuilder builder;
     builder.append("The selected key encoding "_s);
     builder.append(receivedKeyEncoding);
-    builder.append(" does not support "_s);
+    builder.append(' ');
+    builder.append(expectedOperation);
+    builder.append('.');
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS, builder.toString()));
     return {};
 }

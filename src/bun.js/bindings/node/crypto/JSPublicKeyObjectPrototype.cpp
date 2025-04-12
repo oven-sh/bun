@@ -13,13 +13,16 @@ using namespace JSC;
 using namespace WebCore;
 using namespace ncrypto;
 
-// Declare host function prototypes
-// JSC_DECLARE_HOST_FUNCTION(jsPublicKeyObjectUpdate);
+JSC_DECLARE_HOST_FUNCTION(jsPublicKeyObjectPrototype_export);
+JSC_DECLARE_CUSTOM_GETTER(jsPublicKeyObjectPrototype_asymmetricKeyType);
+JSC_DECLARE_CUSTOM_GETTER(jsPublicKeyObjectPrototype_asymmetricKeyDetails);
 
 const JSC::ClassInfo JSPublicKeyObjectPrototype::s_info = { "PublicKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPublicKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSPublicKeyObjectPrototypeTableValues[] = {
-    // { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, JSPublicKeyObjectUpdate, 2 } },
+    { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsPublicKeyObjectPrototype_asymmetricKeyType, 0 } },
+    { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsPublicKeyObjectPrototype_asymmetricKeyDetails, 0 } },
+    { "export"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPublicKeyObjectPrototype_export, 1 } },
 };
 
 void JSPublicKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -29,7 +32,46 @@ void JSPublicKeyObjectPrototype::finishCreation(JSC::VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-// JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectUpdate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-// {
-//     return JSValue::encode(jsUndefined());
-// }
+JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_export, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(callFrame->thisValue());
+    if (!publicKeyObject) {
+        throwThisTypeError(*globalObject, scope, "PublicKeyObject"_s, "export"_s);
+        return JSValue::encode({});
+    }
+
+    KeyObject& handle = publicKeyObject->handle();
+    JSValue optionsValue = callFrame->argument(0);
+    return JSValue::encode(handle.exportAsymmetric(globalObject, scope, optionsValue, KeyObject::Type::Public));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyType, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(JSValue::decode(thisValue));
+    if (!publicKeyObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    KeyObject& handle = publicKeyObject->handle();
+    return JSValue::encode(handle.asymmetricKeyType(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyDetails, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(JSValue::decode(thisValue));
+    if (!publicKeyObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    KeyObject& handle = publicKeyObject->handle();
+    return JSValue::encode(handle.asymmetricKeyDetails(globalObject, scope));
+}

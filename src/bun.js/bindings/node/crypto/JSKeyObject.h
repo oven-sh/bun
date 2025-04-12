@@ -32,9 +32,9 @@ public:
     //     return instance;
     // }
 
-    static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, WTF::Vector<uint8_t>&& keyData)
+    static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, WTF::Vector<uint8_t>&& keyData)
     {
-        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, type, WTFMove(keyData));
+        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTFMove(keyData));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -59,24 +59,16 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSKeyObject = std::forward<decltype(space)>(space); });
     }
 
-    // JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, JSKeyObjectHandle* handle)
-    //     : Base(vm, structure)
-    // {
-    //     fprintf(stderr, "DO SOMETHING WITH HANDLE!! AND TYPE!!!\n");
-    // }
-
-    JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, WTF::Vector<uint8_t>&& keyData)
+    JSKeyObject(JSC::VM& vm, JSC::Structure* structure, WTF::Vector<uint8_t>&& keyData)
         : Base(vm, structure)
+        , m_handle(WTFMove(keyData))
     {
-        // m_handle = KeyObject::create(type, keyData);
-        fprintf(stderr, "DO SOMETHING WITH KEYDATA!! AND TYPE!!!\n");
     }
 
     JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
         : Base(vm, structure)
+        , m_handle(type, WTFMove(keyPtr))
     {
-        // m_handle = KeyObject::create(type, keyPtr);
-        fprintf(stderr, "DO SOMETHING WITH KEYPTR!! AND TYPE!!!\n");
     }
 
     KeyObject& handle() { return m_handle; }

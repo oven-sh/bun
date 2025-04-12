@@ -23,16 +23,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    // static JSSecretKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, JSKeyObjectHandle* handle)
-    // {
-    //     JSSecretKeyObject* instance = new (NotNull, JSC::allocateCell<JSSecretKeyObject>(vm)) JSSecretKeyObject(vm, structure, type, handle);
-    //     instance->finishCreation(vm, globalObject);
-    //     return instance;
-    // }
-
-    static JSSecretKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, WTF::Vector<uint8_t>&& keyData)
+    static JSSecretKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, WTF::Vector<uint8_t>&& keyData)
     {
-        JSSecretKeyObject* instance = new (NotNull, JSC::allocateCell<JSSecretKeyObject>(vm)) JSSecretKeyObject(vm, structure, type, WTFMove(keyData));
+        JSSecretKeyObject* instance = new (NotNull, JSC::allocateCell<JSSecretKeyObject>(vm)) JSSecretKeyObject(vm, structure, WTFMove(keyData));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -55,13 +48,8 @@ public:
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
-    // JSSecretKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, JSKeyObjectHandle* handle)
-    //     : Base(vm, structure, type, handle)
-    // {
-    // }
-
-    JSSecretKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, WTF::Vector<uint8_t>&& keyData)
-        : Base(vm, structure, type, std::move(keyData))
+    JSSecretKeyObject(JSC::VM& vm, JSC::Structure* structure, WTF::Vector<uint8_t>&& keyData)
+        : Base(vm, structure, WTFMove(keyData))
     {
     }
 };

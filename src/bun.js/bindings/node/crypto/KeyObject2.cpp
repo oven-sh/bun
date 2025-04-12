@@ -5,6 +5,7 @@
 #include "ZigGlobalObject.h"
 #include "CryptoUtil.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 
 using namespace Bun;
 using namespace JSC;
@@ -339,6 +340,144 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     }
 
     return toJS(lexicalGlobalObject, scope, res.value, config);
+}
+
+JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& scope, JSValue optionsValue, Type exportType)
+{
+    VM& vm = globalObject->vm();
+
+    ASSERT(m_type != Type::Secret);
+
+    if (JSObject* options = jsDynamicCast<JSObject*>(optionsValue)) {
+        JSValue formatValue = options->get(globalObject, Identifier::fromString(vm, "format"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (formatValue.isString()) {
+            auto* formatString = formatValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto formatView = formatString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (exportType == Type::Private) {
+                JSValue passphraseValue = options->get(globalObject, Identifier::fromString(vm, "passphrase"_s));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!passphraseValue.isUndefined()) {
+                    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "jwk"_s, "does not support encryption"_s);
+                    return {};
+                }
+            }
+
+            return exportJWK(globalObject, scope, exportType, false);
+        }
+
+        JSValue keyType = asymmetricKeyType(globalObject);
+        if (exportType == Type::Public) {
+            ncrypto::EVPKeyPointer::PublicKeyEncodingConfig config;
+            parsePublicKeyEncoding(globalObject, scope, options, keyType, WTF::nullStringView(), config);
+            RETURN_IF_EXCEPTION(scope, {});
+            return exportPublic(globalObject, scope, config);
+        }
+
+        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
+        parsePrivateKeyEncoding(globalObject, scope, options, keyType, WTF::nullStringView(), config);
+        RETURN_IF_EXCEPTION(scope, {});
+        return exportPrivate(globalObject, scope, config);
+    }
+
+    // This would hit validateObject in `parseKeyEncoding`
+    ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsValue);
+    return {};
+}
+
+JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue optionsValue)
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    if (!optionsValue.isUndefined()) {
+        V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSObject* options = jsDynamicCast<JSObject*>(optionsValue);
+        bool jwk = false;
+
+        JSValue formatValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (formatValue.isString()) {
+            auto* formatString = formatValue.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto formatView = formatString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (formatView != "buffer"_s && formatView != "jwk"_s) {
+                jwk = true;
+                ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "options.format"_s, formatValue, "must be one of: undefined, 'buffer', 'jwk'"_s);
+                return {};
+            }
+
+        } else if (!formatValue.isUndefined()) {
+            ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "options.format"_s, formatValue, "must be one of: undefined, 'buffer', 'jwk'"_s);
+            return {};
+        }
+
+        if (jwk) {
+            return exportJWK(lexicalGlobalObject, scope, KeyObject::Type::Secret, false);
+        }
+    }
+
+    auto symmetricKey = m_symmetricKey.span();
+
+    RefPtr<ArrayBuffer> buf = JSC::ArrayBuffer::tryCreateUninitialized(symmetricKey.size(), 1);
+    if (!buf) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+    memcpy(buf->data(), symmetricKey.data(), symmetricKey.size());
+
+    Structure* structure = globalObject->m_JSBufferClassStructure.get(lexicalGlobalObject);
+    return JSUint8Array::create(lexicalGlobalObject, structure, WTFMove(buf), 0, buf->byteLength());
+}
+
+JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+
+    if (m_type == Type::Secret) {
+        return jsUndefined();
+    }
+
+    switch (m_asymmetricKey.id()) {
+    case EVP_PKEY_RSA:
+        return jsNontrivialString(vm, "rsa"_s);
+    case EVP_PKEY_RSA_PSS:
+        return jsNontrivialString(vm, "rsa-pss"_s);
+    case EVP_PKEY_DSA:
+        return jsNontrivialString(vm, "dsa"_s);
+    case EVP_PKEY_DH:
+        return jsNontrivialString(vm, "dh"_s);
+    case EVP_PKEY_EC:
+        return jsNontrivialString(vm, "ec"_s);
+    case EVP_PKEY_ED25519:
+        return jsNontrivialString(vm, "ed25519"_s);
+    case EVP_PKEY_ED448:
+        return jsNontrivialString(vm, "ed448"_s);
+    case EVP_PKEY_X25519:
+        return jsNontrivialString(vm, "x25519"_s);
+    case EVP_PKEY_X448:
+        return jsNontrivialString(vm, "x448"_s);
+    default:
+        return jsUndefined();
+    }
+}
+
+JSValue KeyObject::asymmetricKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    // VM& vm = globalObject->vm();
+
+    if (m_type == Type::Secret) {
+        return jsUndefined();
+    }
+
+    return jsUndefined();
 }
 
 // returns std::nullopt for "unsupported crypto operation"

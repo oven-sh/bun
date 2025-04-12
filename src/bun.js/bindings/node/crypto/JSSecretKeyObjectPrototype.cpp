@@ -43,7 +43,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
         return JSValue::encode({});
     }
 
-    return JSValue::encode(jsUndefined());
+    KeyObject& handle = secretKeyObject->handle();
+    JSValue optionsValue = callFrame->argument(0);
+
+    return JSValue::encode(handle.exportSecret(globalObject, scope, optionsValue));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName propertyName))

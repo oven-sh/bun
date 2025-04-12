@@ -14,11 +14,13 @@ using namespace WebCore;
 using namespace ncrypto;
 
 JSC_DECLARE_HOST_FUNCTION(jsKeyObjectPrototype_equals);
+JSC_DECLARE_CUSTOM_GETTER(jsKeyObjectPrototype_type);
 
 const JSC::ClassInfo JSKeyObjectPrototype::s_info = { "KeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSKeyObjectPrototypeTableValues[] = {
     { "equals"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsKeyObjectPrototype_equals, 1 } },
+    { "type"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsKeyObjectPrototype_type, 0 } },
 };
 
 void JSKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -54,4 +56,26 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectPrototype_equals, (JSGlobalObject * globalOb
     }
 
     return JSValue::encode(jsBoolean(*result));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(JSValue::decode(thisValue));
+    if (!keyObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    KeyObject& handle = keyObject->handle();
+
+    switch (handle.m_type) {
+    case KeyObject::Type::Secret:
+        return JSValue::encode(jsNontrivialString(vm, "secret"_s));
+    case KeyObject::Type::Public:
+        return JSValue::encode(jsNontrivialString(vm, "public"_s));
+    case KeyObject::Type::Private:
+        return JSValue::encode(jsNontrivialString(vm, "private"_s));
+    }
 }

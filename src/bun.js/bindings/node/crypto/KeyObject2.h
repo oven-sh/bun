@@ -33,10 +33,13 @@ public:
     JSC::JSValue exportJWKSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&);
     JSC::JSValue exportJWKAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType, bool handleRsaPss);
     JSC::JSValue exportJWK(JSC::JSGlobalObject*, JSC::ThrowScope&, Type type, bool handleRsaPss);
-
     JSC::JSValue exportPublic(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
     JSC::JSValue exportPrivate(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
+    JSC::JSValue exportAsymmetric(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue, Type exportType);
+    JSC::JSValue exportSecret(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue);
 
+    JSC::JSValue asymmetricKeyType(JSC::JSGlobalObject*);
+    JSC::JSValue asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
     std::optional<bool> equals(const KeyObject& other) const;
 
     Type m_type;

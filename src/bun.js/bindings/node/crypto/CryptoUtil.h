@@ -59,8 +59,8 @@ void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<ui
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 
 // For output encoding
-void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, ASCIILiteral objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
-void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, ASCIILiteral objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
+void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
+void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
 
 // Modified version of ByteSource from node
 //

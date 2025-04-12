@@ -13,9 +13,9 @@
 #include "CryptoGenNidKeyPair.h"
 #include "CryptoGenDhKeyPair.h"
 
-using namespace Bun;
 using namespace JSC;
-// using namespace WebCore;
+
+namespace Bun {
 
 void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& keyCtx)
 {
@@ -285,3 +285,5 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
     result->putDirect(vm, Identifier::fromString(vm, "privateKey"_s), privateKeyValue);
     return JSValue::encode(result);
 }
+
+} // namespace Bun

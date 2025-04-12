@@ -4,6 +4,8 @@
 #include "ncrypto.h"
 #include "CryptoGenKeyPair.h"
 
+namespace Bun {
+
 struct DsaKeyPairJobCtx : KeyPairJobCtx {
 
     DsaKeyPairJobCtx(uint32_t modulusLength, std::optional<int32_t> divisorLength, const KeyEncodingConfig& config)
@@ -26,3 +28,5 @@ struct DsaKeyPairJob {
     static void createAndSchedule(JSC::JSGlobalObject*, DsaKeyPairJobCtx&&, JSC::JSValue callback);
     void schedule();
 };
+
+} // namespace Bun

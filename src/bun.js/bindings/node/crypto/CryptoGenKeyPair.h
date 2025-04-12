@@ -33,4 +33,4 @@ public:
     KeyObject m_keyObj;
 };
 
-}
+} // namespace Bun

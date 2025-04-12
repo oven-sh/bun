@@ -4,6 +4,8 @@
 #include "ncrypto.h"
 #include "CryptoGenKeyPair.h"
 
+namespace Bun {
+
 struct DhKeyPairJobCtx : KeyPairJobCtx {
 
     DhKeyPairJobCtx(ncrypto::DHPointer&& group, const KeyEncodingConfig& config)
@@ -38,3 +40,5 @@ struct DhKeyPairJob {
     static void createAndSchedule(JSC::JSGlobalObject*, DhKeyPairJobCtx&&, JSC::JSValue callback);
     void schedule();
 };
+
+} // namespace Bun

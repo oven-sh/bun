@@ -6,8 +6,9 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 
-using namespace Bun;
 using namespace JSC;
+
+namespace Bun {
 
 JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -43,3 +44,5 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
 
     return JSValue::encode(jsUndefined());
 }
+
+} // namespace Bun

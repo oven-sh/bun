@@ -4,6 +4,8 @@
 #include "ncrypto.h"
 #include "CryptoGenKeyPair.h"
 
+namespace Bun {
+
 struct NidKeyPairJobCtx : KeyPairJobCtx {
 
     NidKeyPairJobCtx(int id, const KeyEncodingConfig& config)
@@ -24,3 +26,5 @@ struct NidKeyPairJob {
     static void createAndSchedule(JSC::JSGlobalObject*, NidKeyPairJobCtx&&, JSC::JSValue callback);
     void schedule();
 };
+
+} // namespace Bun

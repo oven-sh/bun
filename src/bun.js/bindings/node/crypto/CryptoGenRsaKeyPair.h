@@ -4,6 +4,8 @@
 #include "ncrypto.h"
 #include "CryptoGenKeyPair.h"
 
+namespace Bun {
+
 enum class RsaKeyVariant {
     RSA_SSA_PKCS1_v1_5,
     RSA_PSS,
@@ -62,3 +64,5 @@ struct RsaKeyPairJob {
     static void createAndSchedule(JSC::JSGlobalObject*, RsaKeyPairJobCtx&&, JSC::JSValue callback);
     void schedule();
 };
+
+} // namespace Bun

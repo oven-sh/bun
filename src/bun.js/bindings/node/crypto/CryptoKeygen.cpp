@@ -4,9 +4,10 @@
 #include "helpers.h"
 #include "NodeValidator.h"
 
-using namespace Bun;
 using namespace JSC;
 using namespace WebCore;
+
+namespace Bun {
 
 SecretKeyJobCtx::SecretKeyJobCtx(size_t length)
     : m_length(length)
@@ -172,3 +173,5 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
 
     return JSValue::encode(secretKey);
 }
+
+} // namespace Bun

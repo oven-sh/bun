@@ -70,6 +70,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kCorked = Symbol("corked");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -471,6 +472,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
+  get writableHighWaterMark() {
+    return getPlatformHighWaterMark();
+  }
   get remoteAddress() {
     return this.address()?.address;
   }
@@ -1825,7 +1829,7 @@ const OutgoingMessagePrototype = {
   },
 
   get writableHighWaterMark() {
-    return 16 * 1024;
+    return getPlatformHighWaterMark();
   },
 
   get writableNeedDrain() {
@@ -1836,8 +1840,20 @@ const OutgoingMessagePrototype = {
     return this.finished;
   },
 
+  get writableCorked() {
+    return this[kCorked];
+  },
+
   get writableFinished() {
     return this.finished && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
+  },
+  cork() {
+    this[kCorked]++;
+    // corking is actually handled internally in the socket/handler
+  },
+  uncork() {
+    this[kCorked]--;
+    // uncorking is actually handled internally in the socket/handler
   },
 
   _send(data, encoding, callback, byteLength) {
@@ -1847,6 +1863,7 @@ const OutgoingMessagePrototype = {
     return this.write(data, encoding, callback);
   },
   end(chunk, encoding, callback) {
+    this[kCorked] = 0;
     return this;
   },
   destroy(err?: Error) {
@@ -1993,6 +2010,20 @@ function allowWritesToContinue() {
   this._callPendingCallbacks();
   this.emit("drain");
 }
+function getPlatformHighWaterMark() {
+  // 256kb is for macOS
+  // this is not quite correct, but it's close enough for now
+  switch (process.platform) {
+    case "darwin":
+      return 256 * 1024;
+    case "win32":
+    // unix
+    default:
+      // just a high enough number that will hit backpressure
+      // 4MB was enought for musl but not for x64
+      return 16 * 1024 * 1024;
+  }
+}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -2053,6 +2084,7 @@ const ServerResponsePrototype = {
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
+    this[kCorked] = 0;
     if (handle?.aborted) {
       return this;
     }
@@ -2277,7 +2309,7 @@ const ServerResponsePrototype = {
   },
 
   get writableHighWaterMark() {
-    return 64 * 1024;
+    return getPlatformHighWaterMark();
   },
 
   get closed() {

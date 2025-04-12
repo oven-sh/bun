@@ -997,6 +997,9 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             };
 
                             // ipc_parse will call the callback which calls handleIPCMessage()
+                            // we have sent the ack already so the next message could arrive at any time. maybe even before
+                            // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
+                            // so hopefully ours won't either.
                             return;
                         } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
                             ipc.send_queue.onAckNack(globalThis, socket, .ack);

@@ -16,6 +16,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGeneratedClasses.h"
+#include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
 
@@ -446,25 +447,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsKeyObject,
 {
     GET_FIRST_CELL
 
-    if (!cell->isObject()) {
-        return JSValue::encode(jsBoolean(false));
-    }
-
-    auto* object = cell->getObject();
-
-    auto& vm = JSC::getVM(globalObject);
-    const auto& names = WebCore::builtinNames(vm);
-
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    if (auto val = object->getIfPropertyExists(globalObject,
-            names.bunNativePtrPrivateName())) {
-        if (val.isCell() && val.inherits<WebCore::JSCryptoKey>())
-            return JSValue::encode(jsBoolean(true));
-    }
-
-    if (scope.exception()) {
-        scope.clearException();
+    if (jsDynamicCast<Bun::JSKeyObject*>(cell)) {
+        return JSValue::encode(jsBoolean(true));
     }
 
     return JSValue::encode(jsBoolean(false));

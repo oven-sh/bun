@@ -14,6 +14,7 @@
 #include "JSVerify.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include "CryptoKeyRaw.h"
+#include "JSKeyObject.h"
 
 namespace Bun {
 
@@ -1038,45 +1039,16 @@ bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& pri
 // - none matched, throw error for INVALID_ARG_TYPE
 void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key, JSValue encodingValue, bool bufferOnly)
 {
-    VM& vm = globalObject->vm();
-
     // Handle KeyObject (if not bufferOnly)
     if (!bufferOnly && key.isObject()) {
-        JSObject* obj = key.getObject();
-        auto& names = WebCore::builtinNames(vm);
-
-        // Check for BunNativePtr on the object
-        if (auto val = obj->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
-            if (auto* cryptoKey = jsDynamicCast<JSCryptoKey*>(val.asCell())) {
-
-                JSValue typeValue = obj->get(globalObject, Identifier::fromString(vm, "type"_s));
-                RETURN_IF_EXCEPTION(scope, );
-
-                auto wrappedKey = cryptoKey->protectedWrapped();
-
-                if (!typeValue.isString()) {
-                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-                    return;
-                }
-
-                WTF::String typeString = typeValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, );
-
-                if (wrappedKey->type() != CryptoKeyType::Secret || typeString != "secret"_s) {
-                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-                    return;
-                }
-
-                auto keyData = getSymmetricKey(wrappedKey);
-
-                if (UNLIKELY(!keyData)) {
-                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-                    return;
-                }
-
-                out.append(keyData.value());
-                return;
+        if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
+            auto& handle = keyObject->handle();
+            if (handle.type() != KeyObject::Type::Secret) {
+                ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.asymmetricKeyType(globalObject), "secret"_s);
             }
+
+            out.append(handle.symmetricKey().span());
+            return;
         }
     }
 

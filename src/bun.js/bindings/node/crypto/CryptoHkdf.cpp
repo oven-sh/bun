@@ -134,50 +134,10 @@ void prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>
 {
 
     if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
-        KeyObject& handle = keyObject->handle();
-        out.append(handle.m_symmetricKey.span());
+        const KeyObject& handle = keyObject->handle();
+        out.append(handle.symmetricKey().span());
         return;
     }
-
-    // // Handle KeyObject (if not bufferOnly)
-    // if (key.isObject()) {
-    //     JSObject* obj = key.getObject();
-    //     auto& names = WebCore::builtinNames(vm);
-
-    //     // Check for BunNativePtr on the object
-    //     if (auto val = obj->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
-    //         if (auto* cryptoKey = jsDynamicCast<JSCryptoKey*>(val.asCell())) {
-
-    //             JSValue typeValue = obj->get(globalObject, vm.propertyNames->type);
-    //             RETURN_IF_EXCEPTION(scope, );
-
-    //             auto wrappedKey = cryptoKey->protectedWrapped();
-
-    //             if (!typeValue.isString()) {
-    //                 Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-    //                 return;
-    //             }
-
-    //             WTF::String typeString = typeValue.toWTFString(globalObject);
-    //             RETURN_IF_EXCEPTION(scope, );
-
-    //             if (wrappedKey->type() != CryptoKeyType::Secret || typeString != "secret"_s) {
-    //                 Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-    //                 return;
-    //             }
-
-    //             auto keyData = getSymmetricKey(wrappedKey);
-
-    //             if (UNLIKELY(!keyData)) {
-    //                 Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-    //                 return;
-    //             }
-
-    //             out.append(keyData.value());
-    //             return;
-    //         }
-    //     }
-    // }
 
     // Handle string or buffer
     if (key.isString()) {

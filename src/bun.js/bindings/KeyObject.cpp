@@ -361,26 +361,4 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     }
 }
 
-std::optional<std::span<const uint8_t>> getSymmetricKey(const WebCore::CryptoKey& key)
-{
-    auto id = key.keyClass();
-    switch (id) {
-    case CryptoKeyClass::HMAC: {
-        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(key);
-        return hmac.key().span();
-    }
-    case CryptoKeyClass::AES: {
-        const auto& aes = downcast<WebCore::CryptoKeyAES>(key);
-        return aes.key().span();
-    }
-    case CryptoKeyClass::Raw: {
-        const auto& raw = downcast<WebCore::CryptoKeyRaw>(key);
-        return raw.key().span();
-    }
-    default: {
-        return std::nullopt;
-    }
-    }
-}
-
 } // namespace WebCore

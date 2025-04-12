@@ -1,9 +1,9 @@
 declare module "bun" {
   namespace __internal {
-    type NodeWorkerThreadsWorker = import("worker_threads").Worker;
+    type NodeWorkerThreadsWorker = import("node:worker_threads").Worker;
     type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
 
-    type NodePerfHooksPerformance = import("perf_hooks").Performance;
+    type NodePerfHooksPerformance = import("node:perf_hooks").Performance;
     type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
       "Performance",
       NodePerfHooksPerformance
@@ -12,27 +12,29 @@ declare module "bun" {
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
 
-    type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("util").TextEncoder;
+    type LibEmptyOrWSWebSocket = LibDomIsLoaded extends true ? {} : import("ws").WebSocket;
 
-    type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("util").TextDecoder;
+    type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
 
-    type LibEmptyOrNodeReadableStream<T = any> = LibDomIsLoaded extends true
+    type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("node:util").TextDecoder;
+
+    type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true
       ? {}
-      : import("stream/web").ReadableStream<T>;
+      : import("node:stream/web").ReadableStream<T>;
 
-    type LibEmptyOrNodeWritableStream<T = any> = LibDomIsLoaded extends true
+    type LibEmptyOrNodeWritableStream<T> = LibDomIsLoaded extends true
       ? {}
-      : import("stream/web").WritableStream<T>;
+      : import("node:stream/web").WritableStream<T>;
 
-    type LibEmptyOrNodeTransformStream<I = any, O = any> = LibDomIsLoaded extends true
+    type LibEmptyOrNodeTransformStream<I, O> = LibDomIsLoaded extends true
       ? {}
-      : import("stream/web").TransformStream<I, O>;
+      : import("node:stream/web").TransformStream<I, O>;
 
-    type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("worker_threads").MessagePort;
+    type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort;
   }
 }
 
-interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream {}
+interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
@@ -42,7 +44,7 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream {}
+interface WritableStream<W = any> extends Bun.__internal.LibEmptyOrNodeWritableStream<W> {}
 declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   "WritableStream",
   {
@@ -66,6 +68,7 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface WebSocket extends Bun.__internal.LibEmptyOrWSWebSocket {}
 /**
  * A WebSocket client implementation
  *
@@ -75,12 +78,23 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
  */
 declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
 
-interface Crypto {}
+interface Crypto {
+  readonly subtle: SubtleCrypto;
+
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/getRandomValues) */
+  getRandomValues<T extends ArrayBufferView | null>(array: T): T;
+
+  /**
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/randomUUID)
+   */
+  randomUUID(): `${string}-${string}-${string}-${string}-${string}`;
+
+  timingSafeEqual: typeof import("node:crypto").timingSafeEqual;
+}
 declare var Crypto: {
   prototype: Crypto;
   new (): Crypto;
 };
-
 declare var crypto: Crypto;
 
 /**
@@ -861,7 +875,29 @@ declare class BuildMessage {
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 
+interface ErrorOptions {
+  /**
+   * The cause of the error.
+   */
+  cause?: unknown;
+}
+
+interface Error {
+  /**
+   * The cause of the error.
+   */
+  cause?: unknown;
+}
+
 interface ErrorConstructor {
+  new (message?: string, options?: ErrorOptions): Error;
+
+  /**
+   * Check if a value is an instance of Error
+   *
+   * @param value - The value to check
+   * @returns True if the value is an instance of Error, false otherwise
+   */
   isError(value: unknown): value is Error;
 
   /**
@@ -1102,6 +1138,10 @@ interface Console {
 
 declare var console: Console;
 
+interface ImportMetaEnv {
+  [key: string]: string | undefined;
+}
+
 interface ImportMeta {
   /**
    * `file://` url string for the current module.
@@ -1134,7 +1174,7 @@ interface ImportMeta {
    * import.meta.env === process.env
    * ```
    */
-  readonly env: Bun.Env;
+  readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
    * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
@@ -1750,6 +1790,8 @@ interface BunFetchRequestInit extends RequestInit {
    * Override the default S3 options
    */
   s3?: Bun.S3Options;
+
+  unix?: string;
 }
 
 /**

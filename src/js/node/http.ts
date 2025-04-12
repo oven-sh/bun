@@ -431,7 +431,32 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {}
+  #resumeSocket() {
+    const handle = this[kHandle];
+    const response = handle?.response;
+    if (response) {
+      const resumed = response.resume();
+      if (resumed && resumed !== true) {
+        const bodyReadState = handle.hasBody;
+
+        const message = this._httpMessage;
+        const req = message?.req;
+
+        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+          emitServerSocketEOFNT(this, req);
+        }
+        if (req) {
+          req.push(resumed);
+        }
+        this.push(resumed);
+      }
+    }
+  }
+
+  _read(size) {
+    // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+    this.#resumeSocket();
+  }
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -492,22 +517,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _write(chunk, encoding, callback) {}
 
   pause() {
-    const message = this._httpMessage;
     const handle = this[kHandle];
     const response = handle?.response;
-    if (response && message) {
+    if (response) {
       response.pause();
     }
     return super.pause();
   }
 
   resume() {
-    const message = this._httpMessage;
-    const handle = this[kHandle];
-    const response = handle?.response;
-    if (response && message) {
-      response.resume();
-    }
+    this.#resumeSocket();
     return super.resume();
   }
 
@@ -953,7 +972,9 @@ const ServerPrototype = {
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
           // start buffering data if any, the user will need to resume() or .on("data") to read it
-          handle.pause();
+          if (hasBody) {
+            handle.pause();
+          }
           drainMicrotasks();
 
           let capturedError;
@@ -984,14 +1005,15 @@ const ServerPrototype = {
           }
 
           socket[kRequest] = http_req;
-
-          if (canUseInternalAssignSocket) {
-            // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-            assignSocketInternal(http_res, socket);
-          } else {
-            http_res.assignSocket(socket);
+          const is_upgrade = http_req.headers.upgrade;
+          if (!is_upgrade) {
+            if (canUseInternalAssignSocket) {
+              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+              assignSocketInternal(http_res, socket);
+            } else {
+              http_res.assignSocket(socket);
+            }
           }
-
           function onClose() {
             didFinish = true;
             resolveFunction && resolveFunction();
@@ -1003,8 +1025,16 @@ const ServerPrototype = {
             http_res.writeHead(503);
             http_res.end();
             socket.destroy();
-          } else if (http_req.headers.upgrade) {
+          } else if (is_upgrade) {
             server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            if (!socket._httpMessage) {
+              if (canUseInternalAssignSocket) {
+                // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+                assignSocketInternal(http_res, socket);
+              } else {
+                http_res.assignSocket(socket);
+              }
+            }
           } else if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
               server.emit("checkContinue", http_req, http_res);
@@ -1195,6 +1225,21 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
+function emitServerSocketEOF(self, req) {
+  self.push(null);
+  if (req) {
+    req.push(null);
+    req.complete = true;
+  }
+}
+
+function emitServerSocketEOFNT(self, req) {
+  if (req) {
+    req[eofInProgress] = true;
+  }
+  process.nextTick(emitServerSocketEOF, self);
+}
+
 function hasServerResponseFinished(self, chunk, callback) {
   const finished = self.finished;
 
@@ -1367,6 +1412,12 @@ const IncomingMessagePrototype = {
     if (!this._consuming) {
       this._readableState.readingMore = false;
       this._consuming = true;
+    }
+
+    const socket = this.socket;
+    if (socket && socket.readable) {
+      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+      socket.resume();
     }
 
     if (this[eofInProgress]) {
@@ -2753,8 +2804,10 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      // no body and not finished
+      const isDuplex = customBody === undefined && !this.finished;
 
-      if (customBody === undefined) {
+      if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
@@ -2763,7 +2816,7 @@ function ClientRequest(input, options, cb) {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
-        } else {
+        } else if (isDuplex) {
           fetchOptions.body = async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();

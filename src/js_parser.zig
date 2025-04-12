@@ -89,7 +89,7 @@ const SkipTypeParameterResult = enum {
     definitely_type_parameters,
 };
 
-const TypeParameterFlag = packed struct {
+const TypeParameterFlag = packed struct(u8) {
     /// TypeScript 4.7
     allow_in_out_variance_annotations: bool = false,
 
@@ -98,6 +98,8 @@ const TypeParameterFlag = packed struct {
 
     /// Allow "<>" without any type parameters
     allow_empty_type_parameters: bool = false,
+
+    _: u5 = 0,
 };
 
 const JSXImport = enum {
@@ -2436,11 +2438,12 @@ const AsyncPrefixExpression = enum(u2) {
     }
 };
 
-const IdentifierOpts = packed struct {
+const IdentifierOpts = packed struct(u8) {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
     is_call_target: bool = false,
+    _padding: u3 = 0,
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {
@@ -3159,7 +3162,7 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+        const parse_tracer = bun.perf.trace("JSParser.parse");
 
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
@@ -3197,7 +3200,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        const visit_tracer = bun.perf.trace("JSParser.visit");
         try p.prepareForVisitPass();
 
         var parts = ListManaged(js_ast.Part).init(p.allocator);
@@ -3206,7 +3209,7 @@ pub const Parser = struct {
         try p.appendPart(&parts, stmts);
         visit_tracer.end();
 
-        const analyze_tracer = bun.tracy.traceNamed(@src(), "JSParser.analyze");
+        const analyze_tracer = bun.perf.trace("JSParser.analyze");
         try callback(context, &p, parts.items);
         analyze_tracer.end();
     }
@@ -3292,7 +3295,7 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+        const parse_tracer = bun.perf.trace("JSParser.parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -3324,7 +3327,7 @@ pub const Parser = struct {
 
         bun.crash_handler.current_action = .{ .visit = self.source.path.text };
 
-        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        const visit_tracer = bun.perf.trace("JSParser.visit");
         try p.prepareForVisitPass();
 
         var before = ListManaged(js_ast.Part).init(p.allocator);
@@ -3531,7 +3534,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
+        const postvisit_tracer = bun.perf.trace("JSParser.postvisit");
         defer postvisit_tracer.end();
 
         var uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
@@ -3589,9 +3592,6 @@ pub const Parser = struct {
                 uses_filename = false;
             }
         }
-
-        const did_import_fast_refresh = false;
-        _ = did_import_fast_refresh;
 
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
@@ -3964,7 +3964,13 @@ pub const Parser = struct {
             switch (p.options.module_type) {
                 // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
                 .cjs => {
-                    exports_kind = .cjs;
+                    // There are no commonjs-only features used (require is allowed in ESM)
+                    bun.assert(!uses_exports_ref and
+                        !uses_module_ref and
+                        !p.has_top_level_return and
+                        !p.has_with_scope);
+                    // Use ESM if the file has ES module syntax (import)
+                    exports_kind = if (p.has_es_module_syntax) .esm else .cjs;
                 },
                 .esm => {
                     exports_kind = .esm;
@@ -6640,12 +6646,6 @@ fn NewParser_(
 
         pub fn prepareForVisitPass(p: *P) anyerror!void {
             {
-                var count: usize = 0;
-                for (p.scopes_in_order.items) |item| {
-                    if (item != null) {
-                        count += 1;
-                    }
-                }
                 var i: usize = 0;
                 p.scope_order_to_visit = try p.allocator.alloc(ScopeOrder, p.scopes_in_order.items.len);
                 for (p.scopes_in_order.items) |item| {
@@ -6654,6 +6654,7 @@ fn NewParser_(
                         i += 1;
                     }
                 }
+                p.scope_order_to_visit.len = i;
             }
 
             p.is_file_considered_to_have_esm_exports =

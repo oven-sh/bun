@@ -90,7 +90,7 @@ pub const S3Client = struct {
     const log = bun.Output.scoped(.S3Client, false);
     pub usingnamespace JSC.Codegen.JSS3Client;
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
     credentials: *S3Credentials,
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
@@ -238,6 +238,18 @@ pub const S3Client = struct {
         });
     }
 
+    pub fn listObjects(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.argumentsAsArray(2);
+
+        const object_keys = args[0];
+        const options = args[1];
+
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, .{ .string = bun.PathString.empty }, options, ptr.credentials, ptr.options, null, null);
+
+        defer blob.detach();
+        return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
+    }
+
     pub fn unlink(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
@@ -254,7 +266,7 @@ pub const S3Client = struct {
 
     pub fn deinit(this: *@This()) void {
         this.credentials.deref();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn finalize(
@@ -298,5 +310,19 @@ pub const S3Client = struct {
     }
     pub fn staticStat(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         return S3File.stat(globalThis, callframe);
+    }
+
+    pub fn staticListObjects(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.argumentsAsArray(2);
+        const object_keys = args[0];
+        const options = args[1];
+
+        // get credentials from env
+        const existing_credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
+
+        var blob = try S3File.constructS3FileWithS3Credentials(globalThis, .{ .string = bun.PathString.empty }, options, existing_credentials);
+
+        defer blob.detach();
+        return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
     }
 };

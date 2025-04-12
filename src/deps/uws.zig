@@ -572,11 +572,12 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     current_timeout: u32 = 0,
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         disconnected: bool = true,
         is_closed: bool = false,
         is_client: bool = false,
         is_ssl: bool = false,
+        _: u4 = 0,
     };
     pub const Handlers = struct {
         ctx: *anyopaque,
@@ -1649,6 +1650,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn localPort(this: ThisSocket) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.localPort(is_ssl),
+                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+            };
+        }
+
+        pub fn remotePort(this: ThisSocket) i32 {
+            return switch (this.socket) {
+                .connected => |socket| socket.remotePort(is_ssl),
                 .pipe, .upgradedDuplex, .connecting, .detached => 0,
             };
         }
@@ -3006,6 +3014,10 @@ pub const Request = opaque {
 pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@intFromBool(ssl), this);
+    }
+    pub fn getLocalAddress(this: *ListenSocket, ssl: bool, buf: []u8) ![]const u8 {
+        const self: *uws.Socket = @ptrCast(this);
+        return self.localAddress(ssl, buf);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
         const self: *uws.Socket = @ptrCast(this);

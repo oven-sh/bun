@@ -1800,10 +1800,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             pub fn deinit(task: *@This()) void {
                 bun.default_allocator.free(task.bytes);
-                task.destroy();
+                bun.destroy(task);
             }
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn run(task: *@This()) ?anyerror {
                 const src = task.src;
@@ -2140,8 +2140,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     //
 
                     const UninstallTask = struct {
+                        pub const new = bun.TrivialNew(@This());
+
                         absolute_path: []const u8,
                         task: JSC.WorkPoolTask = .{ .callback = &run },
+
                         pub fn run(task: *JSC.WorkPoolTask) void {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
@@ -2179,10 +2182,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                         pub fn deinit(uninstall_task: *@This()) void {
                             bun.default_allocator.free(uninstall_task.absolute_path);
-                            uninstall_task.destroy();
+                            bun.destroy(uninstall_task);
                         }
-
-                        pub usingnamespace bun.New(@This());
                     };
                     var task = UninstallTask.new(.{
                         .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
@@ -2394,18 +2395,29 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
-            const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-            if (comptime kind == .regular) return result;
-            if (result == .fail) return result;
-            const fd = bun.toFD(destination_dir.fd);
-            const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
-            const tag_fd = switch (bun.sys.openat(fd, subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
-                .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
-                .result => |f| f,
-            };
-            defer _ = bun.sys.close(tag_fd);
+            switch (comptime kind) {
+                .regular => {
+                    const tracer = bun.perf.trace("PackageInstaller.install");
+                    defer tracer.end();
+                    return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+                },
+                .patch => {
+                    const tracer = bun.perf.trace("PackageInstaller.installPatch");
+                    defer tracer.end();
 
-            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
+                    const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+                    if (result == .fail) return result;
+                    const fd = bun.toFD(destination_dir.fd);
+                    const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
+                    const tag_fd = switch (bun.sys.openat(fd, subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
+                        .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
+                        .result => |f| f,
+                    };
+                    defer _ = bun.sys.close(tag_fd);
+                    if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
+                    return result;
+                },
+            }
         }
 
         pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
@@ -7716,7 +7728,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub const Do = packed struct {
+        pub const Do = packed struct(u16) {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
@@ -7729,9 +7741,10 @@ pub const PackageManager = struct {
             trust_dependencies_from_args: bool = false,
             update_to_latest: bool = false,
             analyze: bool = false,
+            _: u4 = 0,
         };
 
-        pub const Enable = packed struct {
+        pub const Enable = packed struct(u16) {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
@@ -7746,6 +7759,7 @@ pub const PackageManager = struct {
 
             exact_versions: bool = false,
             only_missing: bool = false,
+            _: u7 = 0,
         };
     };
 
@@ -13689,7 +13703,7 @@ pub const PackageManager = struct {
                             );
                             if (Environment.isDebug) {
                                 var t = cause.debug_trace;
-                                bun.crash_handler.dumpStackTrace(t.trace());
+                                bun.crash_handler.dumpStackTrace(t.trace(), .{});
                             }
                             this.summary.fail += 1;
                         }

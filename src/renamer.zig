@@ -454,7 +454,7 @@ pub const StableSymbolCount = struct {
     }
 };
 
-const SlotAndCount = packed struct {
+const SlotAndCount = packed struct(u64) {
     slot: u32,
     count: u32,
 

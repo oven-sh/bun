@@ -1,9 +1,10 @@
 import path from "path";
-import { bunExe } from "harness";
+import { bunExe, tempDirWithFiles } from "harness";
 import { $ } from "bun";
 import { fail } from "assert";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures");
+
 describe("test.failing", () => {
   it("is a function", () => {
     expect(test.failing).toBeFunction();
@@ -41,5 +42,27 @@ describe("test.failing", () => {
     }
     expect(stderr).toContain(" 1 fail\n");
     expect(stderr).toMatch(/timed out after \d+ms/i);
+  });
+
+  describe("when using a done() callback", () => {
+    it("when a test throws, times out, or passes an error to done(), the test passes", async () => {
+      const result = await $.cwd(
+        fixtureDir,
+      ).nothrow()`${bunExe()} test ./failing-test-done-test-succeeds.fixture.ts`.quiet();
+      const stderr = result.stderr.toString();
+      expect(stderr).toContain("0 fail");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("when the test doesn't throw or otherwise fail, the test does not pass", async () => {
+      const result = await $.cwd(
+        fixtureDir,
+      ).nothrow()`${bunExe()} test ./failing-test-done-test-fails.fixture.ts`.quiet();
+      const stderr = result.stderr.toString();
+      if (result.exitCode === 0) {
+        fail("Expected exit code to be non-zero\n\n" + stderr);
+      }
+      expect(stderr).toContain("0 pass");
+    });
   });
 });

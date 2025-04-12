@@ -113,53 +113,9 @@ pub const Version = struct {
         return strings.eqlComptime(this.tag, current_version);
     }
 
-    comptime {
-        _ = Bun__githubURL;
-    }
-};
-
-pub const UpgradeCheckerThread = struct {
-    pub fn spawn(env_loader: *DotEnv.Loader) void {
-        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
-            env_loader.map.get("CI") != null or
-            strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
-            return;
-        var update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
-        update_checker_thread.detach();
-    }
-
-    fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
-        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
-        std.time.sleep(std.time.ns_per_ms * delay);
-
-        Output.Source.configureThread();
-        HTTP.HTTPThread.init(&.{});
-
-        defer {
-            js_ast.Expr.Data.Store.deinit();
-            js_ast.Stmt.Data.Store.deinit();
-        }
-
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
-
-        if (!version.isCurrent()) {
-            if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
-                Output.flush();
-            }
-        }
-
-        version.buf.deinit();
-    }
-
-    fn run(env_loader: *DotEnv.Loader) void {
-        _run(env_loader) catch |err| {
-            if (Environment.isDebug) {
-                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
-                Output.flush();
-            }
-        };
+    pub fn @"export"() void {
+        _ = &Bun__githubURL;
+        _ = &Bun__githubBaselineURL;
     }
 };
 
@@ -656,14 +612,14 @@ pub const UpgradeCommand = struct {
                     const powershell_path =
                         bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                        const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
-                        const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
-                        if (bun.sys.exists(hardcoded_system_powershell)) {
-                            break :hardcoded_system_powershell hardcoded_system_powershell;
-                        }
-                        Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
-                        Global.exit(1);
-                    };
+                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                            if (bun.sys.exists(hardcoded_system_powershell)) {
+                                break :hardcoded_system_powershell hardcoded_system_powershell;
+                            }
+                            Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                            Global.exit(1);
+                        };
 
                     var unzip_argv = [_]string{
                         powershell_path,
@@ -1058,3 +1014,8 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 };
+
+pub fn @"export"() void {
+    _ = &upgrade_js_bindings;
+    Version.@"export"();
+}

@@ -952,7 +952,7 @@ pub const FetchTasklet = struct {
                 error.INVALID_CALL => bun.String.static("Invalid certificate verification context"),
                 error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
                 error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
-                error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
+                error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
                 else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
                     @errorName(e),
@@ -1426,7 +1426,7 @@ fn dataURLResponse(
 
     const data = data_url.decodeData(allocator) catch {
         const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
-        return JSPromise.rejectedPromiseValue(globalThis, err);
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     };
     var blob = Blob.init(data, allocator, globalThis);
 
@@ -1546,7 +1546,7 @@ pub fn Bun__fetch_(
 
     if (arguments.len == 0) {
         const err = JSC.toTypeError(.ERR_MISSING_ARGS, fetch_error_no_args, .{}, ctx);
-        return JSPromise.rejectedPromiseValue(globalThis, err);
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
     var headers: ?Headers = null;
@@ -1690,7 +1690,7 @@ pub fn Bun__fetch_(
     if (url_str.isEmpty()) {
         is_error = true;
         const err = JSC.toTypeError(.ERR_INVALID_URL, fetch_error_blank_url, .{}, ctx);
-        return JSPromise.rejectedPromiseValue(globalThis, err);
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
     if (url_str.hasPrefixComptime("data:")) {
@@ -1700,7 +1700,7 @@ pub fn Bun__fetch_(
         var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
             const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
             is_error = true;
-            return JSPromise.rejectedPromiseValue(globalThis, err);
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         };
 
         data_url.url = url_str;
@@ -1710,7 +1710,7 @@ pub fn Bun__fetch_(
     url = ZigURL.fromString(allocator, url_str) catch {
         const err = JSC.toTypeError(.ERR_INVALID_URL, "fetch() URL is invalid", .{}, ctx);
         is_error = true;
-        return JSPromise.rejectedPromiseValue(
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
             globalThis,
             err,
         );
@@ -1728,7 +1728,7 @@ pub fn Bun__fetch_(
 
         var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
             const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
-            return JSPromise.rejectedPromiseValue(globalThis, err);
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         };
         data_url.url = url_str;
 
@@ -2009,7 +2009,7 @@ pub fn Bun__fetch_(
                         if (href.tag == .Dead) {
                             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                             is_error = true;
-                            return JSPromise.rejectedPromiseValue(globalThis, err);
+                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }
                         defer href.deref();
                         const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
@@ -2248,7 +2248,7 @@ pub fn Bun__fetch_(
     if (proxy != null and unix_socket_path.length() > 0) {
         is_error = true;
         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_proxy_unix, .{}, ctx);
-        return JSPromise.rejectedPromiseValue(globalThis, err);
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
     if (globalThis.hasException()) {
@@ -2292,7 +2292,7 @@ pub fn Bun__fetch_(
                         url_path_decoded,
                     }, ctx);
                     is_error = true;
-                    return JSPromise.rejectedPromiseValue(globalThis, err);
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                 }
             }
 
@@ -2365,14 +2365,14 @@ pub fn Bun__fetch_(
         if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
             is_error = true;
-            return JSPromise.rejectedPromiseValue(globalThis, err);
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
     }
 
     if (!method.hasRequestBody() and body.hasBody()) {
         const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
         is_error = true;
-        return JSPromise.rejectedPromiseValue(globalThis, err);
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
     if (headers == null and body.hasBody() and body.hasContentTypeFromUser()) {
@@ -2394,7 +2394,7 @@ pub fn Bun__fetch_(
                 body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
                 break :prepare_body;
             }
-            const rejected_value = JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
+            const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
             body.detach();
 
             return rejected_value;
@@ -2409,7 +2409,7 @@ pub fn Bun__fetch_(
 
             const opened_fd = switch (opened_fd_res) {
                 .err => |err| {
-                    const rejected_value = JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                     is_error = true;
                     return rejected_value;
                 },
@@ -2481,7 +2481,7 @@ pub fn Bun__fetch_(
             switch (res) {
                 .err => |err| {
                     is_error = true;
-                    const rejected_value = JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                     body.detach();
 
                     return rejected_value;
@@ -2525,7 +2525,7 @@ pub fn Bun__fetch_(
                 url_proxy_buffer: []const u8,
                 global: *JSC.JSGlobalObject,
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                     const global = self.global;
@@ -2565,11 +2565,11 @@ pub fn Bun__fetch_(
                         },
                     }
                     bun.default_allocator.free(self.url_proxy_buffer);
-                    self.destroy();
+                    bun.destroy(self);
                 }
             };
             if (method != .PUT and method != .POST) {
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
             }
             const promise = JSC.JSPromise.Strong.init(globalThis);
 
@@ -2606,9 +2606,9 @@ pub fn Bun__fetch_(
         var result = credentialsWithOptions.credentials.signRequest(.{
             .path = url.s3Path(),
             .method = method,
-        }, null) catch |sign_err| {
+        }, false, null) catch |sign_err| {
             is_error = true;
-            return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, s3.getJSSignError(sign_err, globalThis));
         };
         defer result.deinit();
         if (proxy) |proxy_| {

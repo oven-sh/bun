@@ -10,7 +10,7 @@ const C = bun.C;
 
 const AddressableSize = u49;
 
-pub const TaggedPointer = packed struct {
+pub const TaggedPointer = packed struct(u64) {
     _ptr: AddressableSize,
     data: Tag,
 

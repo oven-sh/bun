@@ -24,7 +24,7 @@ const StatsBig = bun.JSC.Node.StatsBig;
 
 const log = bun.Output.scoped(.StatWatcher, false);
 
-fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
+fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
         return StatsBig.init(stats).toJS(globalThis);
     } else {
@@ -334,18 +334,14 @@ pub const StatWatcher = struct {
         watcher: *StatWatcher,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
-        pub usingnamespace bun.New(@This());
-
-        pub fn createAndSchedule(
-            watcher: *StatWatcher,
-        ) void {
-            const task = InitialStatTask.new(.{ .watcher = watcher });
+        pub fn createAndSchedule(watcher: *StatWatcher) void {
+            const task = bun.new(InitialStatTask, .{ .watcher = watcher });
             JSC.WorkPool.schedule(&task.task);
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
-            defer initial_stat_task.destroy();
+            defer bun.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
@@ -376,7 +372,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
@@ -389,7 +385,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
@@ -428,7 +424,7 @@ pub const StatWatcher = struct {
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
         _ = StatWatcher.listenerGetCached(this.js_this).?.call(

@@ -366,7 +366,7 @@ pub const S3BlobStatTask = struct {
     global: *JSC.JSGlobalObject,
     store: *Blob.Store,
 
-    usingnamespace bun.New(S3BlobStatTask);
+    pub const new = bun.TrivialNew(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
@@ -469,7 +469,7 @@ pub const S3BlobStatTask = struct {
     pub fn deinit(this: *S3BlobStatTask) void {
         this.store.deref();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -510,7 +510,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
-    }, .{ .expires = expires }) catch |sign_err| {
+    }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();

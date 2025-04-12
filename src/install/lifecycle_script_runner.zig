@@ -45,7 +45,7 @@ pub const LifecycleScriptSubprocess = struct {
         return a.started_at < b.started_at;
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const min_milliseconds_to_log = 500;
 
@@ -460,7 +460,7 @@ pub const LifecycleScriptSubprocess = struct {
             this.stderr.deinit();
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {

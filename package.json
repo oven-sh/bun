@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.8",
+  "version": "1.2.10",
   "workspaces": [
     "./packages/bun-types"
   ],
@@ -57,6 +57,9 @@
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
     "banned": "bun test test/internal/ban-words.test.ts",
     "zig": "vendor/zig/zig.exe",
+    "zig:test": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DBUN_TEST=ON -B build/debug",
+    "zig:test:release": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUNTEST=ON -B build/release",
+    "zig:test:ci": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_TEST=ON -DZIG_OPTIMIZE=ReleaseSafe -DCMAKE_VERBOSE_MAKEFILE=ON -DCI=true -B build/release-ci --verbose --fresh",
     "zig:fmt": "bun run zig-format",
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
@@ -76,6 +79,7 @@
     "prettier:check": "bun run analysis:no-llvm --target prettier-check",
     "prettier:extra": "bun run analysis:no-llvm --target prettier-extra",
     "prettier:diff": "bun run analysis:no-llvm --target prettier-diff",
-    "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests "
+    "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
+    "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true"
   }
 }

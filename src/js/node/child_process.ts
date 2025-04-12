@@ -1522,8 +1522,8 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #emitIpcMessage(message) {
-    this.emit("message", message);
+  #emitIpcMessage(message, _, handle) {
+    this.emit("message", message, handle);
   }
 
   #send(message, handle, options, callback) {

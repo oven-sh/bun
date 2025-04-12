@@ -172,20 +172,14 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen(fd, () => {
-        // means the message might arrive out of order.
-        // node does this too though so that's okay.
-        // which is weird. we should check if that is actually true:
-        // - send(server), send({message}), watch the event order
-        console.log("listen at fd", fd);
-        emit(target, serialized.message, server);
-        // interestingly, internal messages can be nested in node. maybe for cluster?
-        // emit is:
-        // handleMessage(message.msg, handle, isInternal(message.msg))
-
-        // in node, the messages seem to always arrive in order. maybe due to luck given that the ack response
-        // is sent immediately.
-      });
+      server.listen(
+        {
+          [Symbol.for("::bun-fd::")]: fd,
+        },
+        () => {
+          emit(target, serialized.message, server);
+        },
+      );
       throw new Error("TODO case net.Server");
     }
     case "net.Socket": {

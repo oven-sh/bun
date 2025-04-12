@@ -414,7 +414,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, 
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     msg.msg_control = cmsgbuf;
-    msg.msg_controllen = sizeof(cmsgbuf);
+    msg.msg_controllen = CMSG_SPACE(sizeof(int));
     
     struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
     cmsg->cmsg_level = SOL_SOCKET;

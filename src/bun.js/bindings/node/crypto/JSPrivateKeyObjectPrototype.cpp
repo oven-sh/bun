@@ -20,9 +20,9 @@ JSC_DECLARE_CUSTOM_GETTER(jsPrivateKeyObjectPrototype_asymmetricKeyDetails);
 const JSC::ClassInfo JSPrivateKeyObjectPrototype::s_info = { "PrivateKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPrivateKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSPrivateKeyObjectPrototypeTableValues[] = {
-    { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyType, 0 } },
-    { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyDetails, 0 } },
-    { "export"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_export, 1 } },
+    { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyType, 0 } },
+    { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyDetails, 0 } },
+    { "export"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_export, 1 } },
 };
 
 void JSPrivateKeyObjectPrototype::finishCreation(JSC::VM& vm)

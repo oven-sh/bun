@@ -20,9 +20,9 @@ JSC_DECLARE_HOST_FUNCTION(jsSecretKeyObjectToCryptoKey);
 const JSC::ClassInfo JSSecretKeyObjectPrototype::s_info = { "SecretKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSecretKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSSecretKeyObjectPrototypeTableValues[] = {
-    { "export"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectExport, 1 } },
-    { "symmetricKeySize"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSecretKeyObjectSymmetricKeySize, 0 } },
-    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectToCryptoKey, 3 } },
+    { "export"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectExport, 1 } },
+    { "symmetricKeySize"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsSecretKeyObjectSymmetricKeySize, 0 } },
+    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSecretKeyObjectToCryptoKey, 3 } },
 };
 
 void JSSecretKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -56,7 +56,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JS
         return JSValue::encode(jsUndefined());
     }
 
-    size_t symmetricKeySize = secretKeyObject->handle().m_symmetricKey.size();
+    size_t symmetricKeySize = secretKeyObject->handle().symmetricKey().size();
     return JSValue::encode(jsNumber(symmetricKeySize));
 }
 

@@ -19,8 +19,8 @@ JSC_DECLARE_CUSTOM_GETTER(jsKeyObjectPrototype_type);
 const JSC::ClassInfo JSKeyObjectPrototype::s_info = { "KeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSKeyObjectPrototypeTableValues[] = {
-    { "equals"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsKeyObjectPrototype_equals, 1 } },
-    { "type"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsKeyObjectPrototype_type, 0 } },
+    { "equals"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsKeyObjectPrototype_equals, 1 } },
+    { "type"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsKeyObjectPrototype_type, 0 } },
 };
 
 void JSKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -70,7 +70,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
 
     KeyObject& handle = keyObject->handle();
 
-    switch (handle.m_type) {
+    switch (handle.type()) {
     case KeyObject::Type::Secret:
         return JSValue::encode(jsNontrivialString(vm, "secret"_s));
     case KeyObject::Type::Public:

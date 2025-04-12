@@ -7,10 +7,10 @@ class KeyObject {
     WTF_MAKE_TZONE_ALLOCATED(KeyObject);
 
 public:
-    enum class Type {
+    enum class Type : uint8_t {
         Secret = 0,
-        Public,
-        Private,
+        Public = 1,
+        Private = 2,
     };
 
     KeyObject() = default;
@@ -48,7 +48,13 @@ public:
 
     std::optional<bool> equals(const KeyObject& other) const;
 
-    Type m_type;
+    inline Type type() const { return m_type; }
+
+    const WTF::FixedVector<uint8_t>& symmetricKey() const { return m_symmetricKey; }
+    const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_asymmetricKey; }
+
+private:
+    Type m_type = Type::Secret;
     WTF::FixedVector<uint8_t> m_symmetricKey;
     ncrypto::EVPKeyPointer m_asymmetricKey;
 };

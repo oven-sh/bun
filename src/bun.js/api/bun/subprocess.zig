@@ -2564,6 +2564,7 @@ const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");
 pub fn handleIPCMessage(
     this: *Subprocess,
     message: IPC.DecodedIPCMessage,
+    handle: JSC.JSValue,
 ) void {
     IPClog("Subprocess#handleIPCMessage", .{});
     switch (message) {
@@ -2583,7 +2584,7 @@ pub fn handleIPCMessage(
                         cb,
                         globalThis,
                         this_jsvalue,
-                        &[_]JSValue{ data, this_jsvalue },
+                        &[_]JSValue{ data, this_jsvalue, handle },
                     );
                 }
             }

@@ -165,18 +165,19 @@ export function serialize(message, handle) {
  * @param {(handle: Handle) => void} emit
  * @returns {void}
  */
-export function parseHandle(serialized, handle, emit) {
+export function parseHandle(target, serialized, fd) {
+  const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen(handle, () => {
+      server.listen(fd, () => {
         // means the message might arrive out of order.
         // node does this too though so that's okay.
         // which is weird. we should check if that is actually true:
         // - send(server), send({message}), watch the event order
-        emit(server);
+        emit(target, serialized, server);
         // interestingly, internal messages can be nested in node. maybe for cluster?
         // emit is:
         // handleMessage(message.msg, handle, isInternal(message.msg))

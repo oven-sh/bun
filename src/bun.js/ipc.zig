@@ -886,6 +886,19 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
 
 pub const IPCData = if (Environment.isWindows) NamedPipeIPCData else SocketIPCData;
 
+pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const target, const message, const handle = callframe.argumentsAsArray(3);
+    if (target.isNull()) {
+        const ipc = globalThis.bunVM().getIPCInstance() orelse return .undefined;
+        ipc.handleIPCMessage(.{ .data = message }, handle);
+    } else {
+        if (!target.isCell()) return .undefined;
+        const subprocess = bun.JSC.Subprocess.fromJSDirect(target) orelse return .undefined;
+        subprocess.handleIPCMessage(.{ .data = message }, handle);
+    }
+    return .undefined;
+}
+
 /// Used on POSIX
 fn NewSocketIPCHandler(comptime Context: type) type {
     return struct {
@@ -920,6 +933,83 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             ipc.disconnected = true;
 
             this.handleIPCClose();
+        }
+
+        fn handleIPCMessage(this: *Context, message: DecodedIPCMessage, socket: anytype, globalThis: *JSC.JSGlobalObject) void {
+            const ipc: *IPCData = this.ipc() orelse return;
+            if (message == .data) handle_message: {
+                // TODO: get property 'cmd' from the message, read as a string
+                // to skip this property lookup (and simplify the code significantly)
+                // we could make three new message types:
+                // - data_with_handle
+                // - ack
+                // - nack
+                // This would make the IPC not interoperable with node
+                // - advanced ipc already is completely different in bun. bun uses
+                // - json ipc is the same as node in bun
+                const msg_data = message.data;
+                if (msg_data.isObject()) {
+                    const cmd = msg_data.fastGet(globalThis, .cmd) orelse {
+                        if (globalThis.hasException()) _ = globalThis.takeException(bun.JSError.JSError);
+                        break :handle_message;
+                    };
+                    if (cmd.isString()) {
+                        if (!cmd.isCell()) break :handle_message;
+                        const cmd_str = bun.String.fromJS(cmd, globalThis) catch |e| {
+                            _ = globalThis.takeException(e);
+                            break :handle_message;
+                        };
+                        if (cmd_str.eqlComptime("NODE_HANDLE")) {
+                            // Handle NODE_HANDLE message
+                            const ack = ipc.incoming_fd != null;
+
+                            const packet = if (ack) getAckPacket(ipc) else getNackPacket(ipc);
+                            var handle = SendHandle{ .data = .{}, .handle = null, .is_ack_nack = true };
+                            handle.data.write(packet) catch bun.outOfMemory();
+
+                            // Insert at appropriate position in send queue
+                            if (ipc.send_queue.queue.items.len == 0 or ipc.send_queue.queue.items[0].data.cursor == 0) {
+                                ipc.send_queue.queue.insert(0, handle) catch bun.outOfMemory();
+                            } else {
+                                ipc.send_queue.queue.insert(1, handle) catch bun.outOfMemory();
+                            }
+
+                            // Send if needed
+                            ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
+
+                            if (!ack) return;
+
+                            // Get file descriptor and clear it
+                            const fd = ipc.incoming_fd.?;
+                            ipc.incoming_fd = null;
+
+                            const target: bun.JSC.JSValue = switch (Context) {
+                                bun.JSC.Subprocess => @as(*bun.JSC.Subprocess, this).toJS(globalThis),
+                                bun.JSC.VirtualMachine.IPCInstance => bun.JSC.JSValue.null,
+                                else => @compileError("Unsupported context type: " ++ @typeName(Context)),
+                            };
+
+                            _ = ipcParse(globalThis, target, msg_data, bun.JSC.JSValue.jsNumberFromInt32(@intFromEnum(fd))) catch |e| {
+                                // ack written already, that's okay.
+                                const emit_error_fn = JSC.JSFunction.create(globalThis, "", emitProcessErrorEvent, 1, .{});
+                                JSC.Bun__Process__queueNextTick1(globalThis, emit_error_fn, globalThis.takeException(e));
+                                return;
+                            };
+
+                            // ipc_parse will call the callback which calls handleIPCMessage()
+                            return;
+                        } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
+                            ipc.send_queue.onAckNack(globalThis, socket, .ack);
+                            return;
+                        } else if (cmd_str.eqlComptime("NODE_HANDLE_NACK")) {
+                            ipc.send_queue.onAckNack(globalThis, socket, .nack);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            this.handleIPCMessage(message, .undefined);
         }
 
         pub fn onData(
@@ -968,67 +1058,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         },
                     };
 
-                    skip_handle_message: {
-                        if (result.message == .data) handle_message: {
-                            // TODO: get property 'cmd' from the message, read as a string
-                            // to skip this property lookup (and simplify the code significantly)
-                            // we could make three new message types:
-                            // - data_with_handle
-                            // - ack
-                            // - nack
-                            // This would make the IPC not interoperable with node
-                            // - advanced ipc already is completely different in bun. bun uses
-                            // - json ipc is the same as node in bun
-                            const msg_data = result.message.data;
-                            if (msg_data.isObject()) {
-                                const cmd = msg_data.fastGet(globalThis, .cmd) orelse {
-                                    if (globalThis.hasException()) _ = globalThis.takeException(bun.JSError.JSError);
-                                    break :handle_message;
-                                };
-                                if (cmd.isString()) {
-                                    const cmd_str = bun.String.fromJS(cmd, globalThis) catch |e| {
-                                        _ = globalThis.takeException(e);
-                                        break :handle_message;
-                                    };
-                                    if (cmd_str.eqlComptime("NODE_HANDLE")) {
-                                        // Handle NODE_HANDLE message
-                                        const ack = ipc.incoming_fd != null;
-
-                                        const packet = if (ack) getAckPacket(ipc) else getNackPacket(ipc);
-                                        var handle = SendHandle{ .data = .{}, .handle = null, .is_ack_nack = true };
-                                        handle.data.write(packet) catch bun.outOfMemory();
-
-                                        // Insert at appropriate position in send queue
-                                        if (ipc.send_queue.queue.items.len == 0 or ipc.send_queue.queue.items[0].data.cursor == 0) {
-                                            ipc.send_queue.queue.insert(0, handle) catch bun.outOfMemory();
-                                        } else {
-                                            ipc.send_queue.queue.insert(1, handle) catch bun.outOfMemory();
-                                        }
-
-                                        // Send if needed
-                                        ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
-
-                                        if (!ack) break :skip_handle_message;
-
-                                        // Get file descriptor and clear it
-                                        const fd = ipc.incoming_fd.?;
-                                        ipc.incoming_fd = null;
-                                        _ = fd;
-
-                                        @panic("TODO: decode handle, decode message, call handleIPCMessage() with the resolved handle");
-                                    } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
-                                        ipc.send_queue.onAckNack(globalThis, socket, .ack);
-                                        break :skip_handle_message;
-                                    } else if (cmd_str.eqlComptime("NODE_HANDLE_NACK")) {
-                                        ipc.send_queue.onAckNack(globalThis, socket, .nack);
-                                        break :skip_handle_message;
-                                    }
-                                }
-                            }
-                        }
-
-                        this.handleIPCMessage(result.message);
-                    }
+                    handleIPCMessage(this, result.message, socket, globalThis);
 
                     if (result.bytes_consumed < data.len) {
                         data = data[result.bytes_consumed..];
@@ -1062,7 +1092,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                     },
                 };
 
-                this.handleIPCMessage(result.message);
+                handleIPCMessage(this, result.message, socket, globalThis);
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];
@@ -1197,7 +1227,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     },
                 };
 
-                this.handleIPCMessage(result.message);
+                this.handleIPCMessage(result.message, .undefined);
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];
@@ -1228,10 +1258,18 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 /// }
 pub const NewIPCHandler = if (Environment.isWindows) NewNamedPipeIPCHandler else NewSocketIPCHandler;
 
-extern "c" fn IPCSerialize(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) JSC.JSValue;
+extern "C" fn IPCSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) JSC.JSValue;
 
 pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
     const result = IPCSerialize(globalObject, message, handle);
+    if (result == .zero) return error.JSError;
+    return result;
+}
+
+extern "C" fn IPCParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) JSC.JSValue;
+
+pub fn ipcParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) bun.JSError!JSC.JSValue {
+    const result = IPCParse(globalObject, target, serialized, fd);
     if (result == .zero) return error.JSError;
     return result;
 }

@@ -4356,7 +4356,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
+    extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue, handle: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
     pub extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
@@ -4388,7 +4388,7 @@ pub const VirtualMachine = struct {
             return this.globalThis;
         }
 
-        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
+        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) void {
             JSC.markBinding(@src());
             const globalThis = this.globalThis orelse return;
             const event_loop = JSC.VirtualMachine.get().eventLoop();
@@ -4403,7 +4403,7 @@ pub const VirtualMachine = struct {
                     IPC.log("Received IPC message from parent", .{});
                     event_loop.enter();
                     defer event_loop.exit();
-                    Process__emitMessageEvent(globalThis, data);
+                    Process__emitMessageEvent(globalThis, data, handle);
                 },
                 .internal => |data| {
                     IPC.log("Received IPC internal message from parent", .{});

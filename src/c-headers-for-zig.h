@@ -42,3 +42,8 @@
 #include <sys/socket.h>
 #include <linux/fs.h>
 #endif
+
+#if __has_include(<libarchive/archive.h>)
+#include <libarchive/archive.h>
+#include <libarchive/archive_entry.h>
+#endif

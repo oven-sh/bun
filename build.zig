@@ -461,6 +461,7 @@ fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.buil
         const str, const value = entry;
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
+    translate_c.addIncludePath(b.path("vendor/libarchive"));
     return translate_c;
 }
 

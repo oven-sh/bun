@@ -131,7 +131,7 @@
 
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
-
+#include "BunString.h"
 #if OS(DARWIN)
 #if BUN_DEBUG
 #if !__has_feature(address_sanitizer)
@@ -3043,8 +3043,13 @@ JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSG
 
     auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-        global->vm(), WTFMove(ref))));
+    if (isStringEligibleForEarlyFree(*ref.impl())) {
+        return JSC::JSValue::encode(jsStringFreeEarly(global->vm(), WTFMove(ref)));
+    }
+
+    auto* str = JSC::jsString(global->vm(), WTFMove(ref));
+
+    return JSC::JSValue::encode(JSC::JSValue(str));
 }
 // This must be a globally allocated string
 JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
@@ -3055,17 +3060,16 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
 
-    if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
+    auto ref = Zig::isTaggedUTF16Ptr(str.ptr)
+        ? String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string))
+        : String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
 
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(), WTFMove(ref))));
-    } else {
-        auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(),
-            WTFMove(ref))));
+    if (!ref.isEmpty() && isStringEligibleForEarlyFree(*ref.impl())) {
+        return JSC::JSValue::encode(jsStringFreeEarly(arg1->vm(), WTFMove(ref)));
     }
+
+    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
+        arg1->vm(), WTFMove(ref))));
 }
 
 VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0)
@@ -3109,17 +3113,18 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
 
 JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
 {
-    ZigString str
-        = *arg0;
-    if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
-    } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
+    ZigString str = *arg0;
+    auto ref = Zig::isTaggedUTF16Ptr(str.ptr)
+        ? String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))
+        : String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, arg2, ArgFn3));
+
+    if (!ref.isEmpty() && isStringEligibleForEarlyFree(*ref.impl())) {
+        return JSC::JSValue::encode(jsStringFreeEarly(arg1->vm(), WTFMove(ref)));
     }
+
+    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
+        arg1->vm(),
+        WTFMove(ref))));
 }
 
 JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__JSGlobalObject* arg1, void (*ArgFn2)(void* arg2, void* arg0, size_t arg1))
@@ -3127,15 +3132,15 @@ JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__
 
     ZigString str
         = *arg0;
-    if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
-    } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
+    auto ref = Zig::isTaggedUTF16Ptr(str.ptr)
+        ? String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))
+        : String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, nullptr, ArgFn2));
+
+    if (!ref.isEmpty() && isStringEligibleForEarlyFree(*ref.impl())) {
+        return JSC::JSValue::encode(jsStringFreeEarly(arg1->vm(), WTFMove(ref)));
     }
+
+    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
 }
 
 JSC__JSValue ZigString__toErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)

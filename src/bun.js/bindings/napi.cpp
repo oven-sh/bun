@@ -75,7 +75,7 @@
 #include <JavaScriptCore/BuiltinNames.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "AsyncContextFrame.h"
-
+#include "BunString.h"
 using namespace JSC;
 using namespace Zig;
 
@@ -772,7 +772,14 @@ node_api_create_external_string_latin1(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
+    auto& vm = JSC::getVM(globalObject);
+
+    JSString* out;
+    if (isStringEligibleForEarlyFree(impl)) {
+        out = jsStringFreeEarly(vm, WTF::String(WTFMove(impl)));
+    } else {
+        out = JSC::jsString(vm, WTF::String(WTFMove(impl)));
+    }
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -807,8 +814,14 @@ node_api_create_external_string_utf16(napi_env env,
         env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = JSC::getVM(globalObject);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
+    JSString* out;
+    if (isStringEligibleForEarlyFree(impl)) {
+        out = jsStringFreeEarly(vm, WTF::String(WTFMove(impl)));
+    } else {
+        out = JSC::jsString(vm, WTF::String(WTFMove(impl)));
+    }
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);

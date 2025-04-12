@@ -94,6 +94,7 @@ public:
 
     void drainEvents();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
+    // Fire a 'message' event in the Worker for messages that were sent before the Worker started running
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
     void dispatchError(WTF::String message);
     void dispatchExit(int32_t exitCode);

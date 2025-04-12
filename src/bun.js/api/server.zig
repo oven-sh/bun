@@ -2413,7 +2413,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             ctxLog("deinit<d> ({*})<r>", .{this});
-            if (comptime Environment.allow_assert)
+            if (comptime Environment.isDebug)
                 assert(this.flags.has_finalized);
 
             this.request_body_buf.clearAndFree(this.allocator);
@@ -2824,7 +2824,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.server != null);
             const globalThis = this.server.?.globalThis;
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }

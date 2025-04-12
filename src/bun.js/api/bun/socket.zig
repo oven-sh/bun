@@ -275,7 +275,7 @@ const Handlers = struct {
             return;
         }
 
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
         }
@@ -291,7 +291,7 @@ const Handlers = struct {
     }
 
     pub fn protect(this: *Handlers) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             this.protection_count += 1;
         }
         this.onOpen.protect();

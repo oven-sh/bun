@@ -423,8 +423,10 @@ pub const WebWorker = struct {
         };
         defer bun.default_allocator.free(path);
 
-        var promise = vm.loadEntryPointForWebWorker(path) catch {
-            vm.exit_handler.exit_code = 1;
+        var promise = vm.loadEntryPointForWebWorker(path) catch |e| {
+            if (e != error.WorkerTerminated) {
+                vm.exit_handler.exit_code = 1;
+            }
             this.flushLogs();
             this.exitAndDeinit();
             return;

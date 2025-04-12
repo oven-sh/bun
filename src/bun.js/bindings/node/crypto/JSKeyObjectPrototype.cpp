@@ -20,7 +20,7 @@ const JSC::ClassInfo JSKeyObjectPrototype::s_info = { "KeyObject"_s, &Base::s_in
 
 static const JSC::HashTableValue JSKeyObjectPrototypeTableValues[] = {
     { "equals"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsKeyObjectPrototype_equals, 1 } },
-    { "type"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsKeyObjectPrototype_type, 0 } },
+    { "type"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsKeyObjectPrototype_type, 0 } },
 };
 
 void JSKeyObjectPrototype::finishCreation(JSC::VM& vm)

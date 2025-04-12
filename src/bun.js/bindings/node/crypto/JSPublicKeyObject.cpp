@@ -25,6 +25,7 @@ void JSPublicKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSPublicKeyObject* thisObject = jsCast<JSPublicKeyObject*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_keyDetails);
 }
 
 DEFINE_VISIT_CHILDREN(JSPublicKeyObject);

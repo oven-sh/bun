@@ -72,6 +72,14 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyDetails, (JSGl
         return JSValue::encode(jsUndefined());
     }
 
+    if (auto* keyDetails = privateKeyObject->m_keyDetails.get()) {
+        return JSValue::encode(keyDetails);
+    }
+
     KeyObject& handle = privateKeyObject->handle();
-    return JSValue::encode(handle.asymmetricKeyDetails(globalObject, scope));
+    JSObject* keyDetails = handle.asymmetricKeyDetails(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    privateKeyObject->m_keyDetails.set(vm, privateKeyObject, keyDetails);
+    return JSValue::encode(keyDetails);
 }

@@ -24,13 +24,6 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    // static JSPublicKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, JSKeyObjectHandle* handle)
-    // {
-    //     JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, type, handle);
-    //     instance->finishCreation(vm, globalObject);
-    //     return instance;
-    // }
-
     static JSPublicKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
     {
         JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, type, WTFMove(keyPtr));
@@ -54,12 +47,9 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    JSC::WriteBarrier<JSC::JSObject> m_keyDetails;
 
-    // JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, JSKeyObjectHandle* handle)
-    //     : Base(vm, structure, type, handle)
-    // {
-    // }
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
         : Base(vm, structure, type, WTFMove(keyPtr))

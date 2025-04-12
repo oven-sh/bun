@@ -38,8 +38,14 @@ public:
     JSC::JSValue exportAsymmetric(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue, Type exportType);
     JSC::JSValue exportSecret(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue);
 
+    void getRsaKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
+    void getDsaKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
+    void getEcKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
+    // void getDhKeyDetails(JSC::JSGlobalObject* , JSC::ThrowScope& , JSC::JSObject* result);
+
     JSC::JSValue asymmetricKeyType(JSC::JSGlobalObject*);
-    JSC::JSValue asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
+    JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
+
     std::optional<bool> equals(const KeyObject& other) const;
 
     Type m_type;

@@ -6,6 +6,7 @@
 #include "CryptoUtil.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
+// #include <JavaScriptCore/JSBigInt.h>
 
 using namespace Bun;
 using namespace JSC;
@@ -469,15 +470,111 @@ JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
     }
 }
 
-JSValue KeyObject::asymmetricKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope)
+void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* result)
 {
-    // VM& vm = globalObject->vm();
+    VM& vm = globalObject->vm();
 
-    if (m_type == Type::Secret) {
-        return jsUndefined();
+    const auto& pkey = m_asymmetricKey;
+    const ncrypto::Rsa rsa = pkey;
+    if (!rsa) {
+        return;
     }
 
-    return jsUndefined();
+    auto pubKey = rsa.getPublicKey();
+
+    result->putDirect(vm, Identifier::fromString(vm, "modulusLength"_s), jsNumber(ncrypto::BignumPointer::GetBitCount(pubKey.n)));
+
+    Vector<uint8_t> publicExponentBuf;
+    if (!publicExponentBuf.tryGrow(ncrypto::BignumPointer::GetByteCount(pubKey.e))) {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    ncrypto::BignumPointer::EncodePaddedInto(pubKey.e, publicExponentBuf.data(), publicExponentBuf.size());
+
+    // TODO: this probably is broken!
+    JSValue publicExponent = JSBigInt::parseInt(globalObject, vm, publicExponentBuf.span(), 1, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+    if (!publicExponent) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create public exponent"_s);
+        return;
+    }
+
+    result->putDirect(vm, Identifier::fromString(vm, "publicExponent"_s), publicExponent);
+
+    if (pkey.id() == EVP_PKEY_RSA_PSS) {
+        auto maybeParams = rsa.getPssParams();
+        if (maybeParams.has_value()) {
+            auto& params = maybeParams.value();
+            result->putDirect(vm, Identifier::fromString(vm, "hashAlgorithm"_s), jsString(vm, params.digest));
+
+            if (params.mgf1_digest.has_value()) {
+                auto digest = params.mgf1_digest.value();
+                result->putDirect(vm, Identifier::fromString(vm, "mgf1HashAlgorithm"_s), jsString(vm, digest));
+            }
+
+            result->putDirect(vm, Identifier::fromString(vm, "saltLength"_s), jsNumber(params.salt_length));
+        }
+    }
+}
+
+void KeyObject::getDsaKeyDetails(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* result)
+{
+    VM& vm = globalObject->vm();
+
+    const ncrypto::Dsa dsa = m_asymmetricKey;
+    if (!dsa) {
+        return;
+    }
+
+    size_t modulusLength = dsa.getModulusLength();
+    size_t divisorLength = dsa.getDivisorLength();
+
+    result->putDirect(vm, Identifier::fromString(vm, "modulusLength"_s), jsNumber(modulusLength));
+    result->putDirect(vm, Identifier::fromString(vm, "divisorLength"_s), jsNumber(divisorLength));
+}
+
+void KeyObject::getEcKeyDetails(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* result)
+{
+    VM& vm = globalObject->vm();
+
+    const auto& pkey = m_asymmetricKey;
+    ASSERT(pkey.id() == EVP_PKEY_EC);
+    const EC_KEY* ec = pkey;
+
+    const auto group = ncrypto::ECKeyPointer::GetGroup(ec);
+    int nid = EC_GROUP_get_curve_name(group);
+
+    String namedCurve = String::fromUTF8(OBJ_nid2sn(nid));
+
+    result->putDirect(vm, Identifier::fromString(vm, "namedCurve"_s), jsString(vm, namedCurve));
+}
+
+JSObject* KeyObject::asymmetricKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+
+    if (m_type == Type::Secret) {
+        return result;
+    }
+
+    switch (m_asymmetricKey.id()) {
+    case EVP_PKEY_RSA:
+    case EVP_PKEY_RSA_PSS:
+        getRsaKeyDetails(globalObject, scope, result);
+        RETURN_IF_EXCEPTION(scope, {});
+        break;
+    case EVP_PKEY_DSA:
+        getDsaKeyDetails(globalObject, scope, result);
+        RETURN_IF_EXCEPTION(scope, {});
+        break;
+    case EVP_PKEY_EC: {
+        getEcKeyDetails(globalObject, scope, result);
+        RETURN_IF_EXCEPTION(scope, {});
+        break;
+    }
+    default:
+    }
+
+    return result;
 }
 
 // returns std::nullopt for "unsupported crypto operation"

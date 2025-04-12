@@ -535,6 +535,7 @@ class SocketHandle {
       allowHalfOpen: self.allowHalfOpen,
       socket: {
         open(socket) {
+          $debug("Bun.Socket open");
           self._handle = that;
           socket[owner_symbol] = self;
           that.#socket = socket;
@@ -542,10 +543,12 @@ class SocketHandle {
           req.oncomplete(0, self._handle, req, true, true);
         },
         data(socket, buffer) {
+          $debug("Bun.Socket data");
           self.bytesRead += buffer.length;
           if (!self.push(buffer)) socket.pause();
         },
         drain(socket) {
+          $debug("Bun.Socket drain");
           const callback = self[kwriteCallback];
           self.connecting = false;
           if (callback) {
@@ -560,6 +563,7 @@ class SocketHandle {
           }
         },
         end(socket) {
+          $debug("Bun.Socket end");
           if (self[kended]) return;
           self[kended] = true;
           if (!self.allowHalfOpen) self.write = writeAfterFIN;
@@ -567,6 +571,7 @@ class SocketHandle {
           self.read(0);
         },
         close(socket, err) {
+          $debug("Bun.Socket close");
           if (self[kclosed]) return;
           self[kclosed] = true;
           that.#socket = null;
@@ -575,6 +580,12 @@ class SocketHandle {
           if (!self.allowHalfOpen) self.write = writeAfterFIN;
           self.push(null);
           self.read(0);
+        },
+        error() {
+          $debug("Bun.Socket error");
+        },
+        timeout() {
+          $debug("Bun.Socket timeout");
         },
       },
     }).then(sock => {
@@ -585,6 +596,7 @@ class SocketHandle {
       throw Bun.peek(this.#promise).errno;
     }
     this.#promise.catch(reason => {
+      $debug("Bun.Socket catch");
       if (!self.destroyed) destroyNT(self, reason);
     });
     return 0;

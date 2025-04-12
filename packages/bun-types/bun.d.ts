@@ -160,12 +160,6 @@ declare module "bun" {
     open: Event;
   }
 
-  interface EventInit {
-    bubbles?: boolean;
-    cancelable?: boolean;
-    composed?: boolean;
-  }
-
   interface EventListenerOptions {
     /** Not directly used by Node.js. Added for API completeness. Default: `false`. */
     capture?: boolean;

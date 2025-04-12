@@ -423,7 +423,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, 
     
     *(int *)CMSG_DATA(cmsg) = fd;
     
-    int sent = sendmsg(us_poll_fd(&s->p), &msg, 0);
+    int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
     
     if (sent != length) {
         s->context->loop->data.last_write_failed = 1;

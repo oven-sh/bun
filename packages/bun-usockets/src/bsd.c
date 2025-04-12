@@ -795,6 +795,18 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
     }
 }
 
+ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
+    while (1) {
+        ssize_t rc = sendmsg(fd, msg, flags);
+
+        if (UNLIKELY(IS_EINTR(rc))) {
+            continue;
+        }
+
+        return rc;
+    }
+}
+
 int bsd_would_block() {
 #ifdef _WIN32
     return WSAGetLastError() == WSAEWOULDBLOCK;

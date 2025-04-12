@@ -121,7 +121,6 @@ function endNT(socket, callback, err) {
   callback(err);
 }
 function emitCloseNT(self, hasError) {
-  console.log("emitCloseNT", hasError);
   if (hasError) {
     self.emit("close", hasError);
   } else {
@@ -189,7 +188,6 @@ function onConnectEnd() {
 
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
-    // console.log(">>c", "close");
     const self = socket.data;
     if (!self || self[kclosed]) return;
     self[kclosed] = true;
@@ -199,7 +197,6 @@ const SocketHandlers: SocketHandler = {
     self.data = null;
   },
   data(socket, buffer) {
-    // console.log(">>c", "data");
     const { data: self } = socket;
     if (!self) return;
 
@@ -209,7 +206,6 @@ const SocketHandlers: SocketHandler = {
     }
   },
   drain(socket) {
-    // console.log(">>c", "drain");
     const self = socket.data;
     if (!self) return;
     const callback = self[kwriteCallback];
@@ -227,7 +223,6 @@ const SocketHandlers: SocketHandler = {
     }
   },
   end(socket) {
-    // console.log(">>c", "end");
     const self = socket.data;
     if (!self) return;
 
@@ -235,7 +230,6 @@ const SocketHandlers: SocketHandler = {
     SocketEmitEndNT(self);
   },
   error(socket, error, ignoreHadError) {
-    // console.log(">>c", "error");
     const self = socket.data;
     if (!self) return;
     if (self._hadError && !ignoreHadError) return;
@@ -249,7 +243,6 @@ const SocketHandlers: SocketHandler = {
     self.emit("error", error);
   },
   open(socket) {
-    // console.log(">>c", "open");
     const self = socket.data;
     if (!self) return;
     socket.timeout(Math.ceil(self.timeout / 1000));
@@ -284,7 +277,6 @@ const SocketHandlers: SocketHandler = {
     SocketHandlers.drain(socket);
   },
   handshake(socket, success, verifyError) {
-    // console.log(">>c", "handshake");
     const { data: self } = socket;
     if (!self) return;
     if (!success && verifyError?.code === "ECONNRESET") {
@@ -321,7 +313,6 @@ const SocketHandlers: SocketHandler = {
     self.removeListener("end", onConnectEnd);
   },
   timeout(socket) {
-    // console.log(">>c", "timeout");
     const self = socket.data;
     if (!self) return;
 
@@ -346,7 +337,6 @@ const SocketEmitEndNT = (self, err?) => {
 
 const ServerHandlers: SocketHandler = {
   data(socket, buffer) {
-    // console.log("<<s", "data");
     const { data: self } = socket;
     if (!self) return;
 
@@ -356,7 +346,6 @@ const ServerHandlers: SocketHandler = {
     }
   },
   close(socket, err) {
-    // console.log("<<s", "close");
     const data = this.data;
     if (!data) return;
 
@@ -374,11 +363,9 @@ const ServerHandlers: SocketHandler = {
     data.server._emitCloseIfDrained();
   },
   end(socket) {
-    // console.log("<<s", "end");
     SocketHandlers.end(socket);
   },
   open(socket) {
-    // console.log("<<s", "open");
     const self = this.data;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
@@ -441,7 +428,6 @@ const ServerHandlers: SocketHandler = {
     }
   },
   handshake(socket, success, verifyError) {
-    // console.log("<<s", "handshake");
     const { data: self } = socket;
     if (!success && verifyError?.code === "ECONNRESET") {
       const err = new ConnResetException("socket hang up");
@@ -488,7 +474,6 @@ const ServerHandlers: SocketHandler = {
     }
   },
   error(socket, error) {
-    // console.log("<<s", "error");
     const data = this.data;
     if (!data) return;
 
@@ -520,11 +505,9 @@ const ServerHandlers: SocketHandler = {
     data.server.emit("clientError", error, data);
   },
   timeout(socket) {
-    // console.log("<<s", "timeout");
     SocketHandlers.timeout(socket);
   },
   drain(socket) {
-    // console.log("<<s", "drain");
     SocketHandlers.drain(socket);
   },
   binaryType: "buffer",
@@ -541,7 +524,6 @@ class TcpSocketHandle {
   }
 
   [kConnect](self, addressType, req, address, port) {
-    console.log("TcpSocketHandle connect");
     $assert(this.#promise == null);
     $assert(this.#socket == null);
     const that = this;
@@ -552,7 +534,6 @@ class TcpSocketHandle {
       allowHalfOpen: self.allowHalfOpen,
       socket: {
         open(socket) {
-          console.log("BUN TcpSocketHandle open", req.oncomplete);
           self._handle = that;
           socket[owner_symbol] = self;
           that.#socket = socket;
@@ -560,12 +541,10 @@ class TcpSocketHandle {
           req.oncomplete(0, self._handle, req, true, true);
         },
         data(socket, buffer) {
-          console.log("BUN TcpSocketHandle data", buffer);
           self.bytesRead += buffer.length;
           if (!self.push(buffer)) socket.pause();
         },
         drain(socket) {
-          console.log("BUN TcpSocketHandle drain");
           const callback = self[kwriteCallback];
           self.connecting = false;
           if (callback) {
@@ -578,13 +557,8 @@ class TcpSocketHandle {
             }
             self[kBytesWritten] = socket.bytesWritten;
           }
-          console.log("BUN TcpSocketHandle drain fin");
-        },
-        timeout(socket) {
-          console.log("BUN TcpSocketHandle timeout");
         },
         end(socket) {
-          console.log("BUN TcpSocketHandle end");
           if (self[kended]) return;
           self[kended] = true;
           if (!self.allowHalfOpen) self.write = writeAfterFIN;
@@ -592,7 +566,6 @@ class TcpSocketHandle {
           self.read(0);
         },
         close(socket, err) {
-          console.log("BUN TcpSocketHandle close");
           if (self[kclosed]) return;
           self[kclosed] = true;
           that.#socket = null;
@@ -601,10 +574,6 @@ class TcpSocketHandle {
           if (!self.allowHalfOpen) self.write = writeAfterFIN;
           self.push(null);
           self.read(0);
-        },
-        error(socket, err) {
-          console.log("BUN TcpSocketHandle error");
-          console.error(err);
         },
       },
     }).then(sock => {
@@ -615,62 +584,47 @@ class TcpSocketHandle {
       throw Bun.peek(this.#promise).errno;
     }
     this.#promise.catch(reason => {
-      console.error("TcpSocketHandle connect catch");
       if (!self.destroyed) destroyNT(self, reason);
     });
     return 0;
   }
   setNoDelay(arg) {
-    console.log("TcpSocketHandle setNoDelay");
     $assert(this.#socket != null);
     return this.#socket.setNoDelay(arg);
   }
   setKeepAlive(arg0, arg1) {
-    console.log("TcpSocketHandle setKeepAlive");
     $assert(this.#socket != null);
     return this.#socket.setKeepAlive(arg0, arg1);
   }
   resume() {
-    console.log("TcpSocketHandle resume");
     return this.#socket?.resume();
   }
   pause() {
-    console.log("TcpSocketHandle pause");
     return this.#socket?.pause();
   }
   write() {
-    console.log("TcpSocketHandle write");
     $assert(this.#socket != null);
     return this.#socket.$write.$apply(this.#socket, arguments);
   }
   end() {
-    console.log("TcpSocketHandle end");
     return this.#socket?.end.$apply(this.#socket, arguments);
   }
   close(cb) {
-    console.log("TcpSocketHandle close");
-    if (this.#socket == null) {
-      console.warn("this.#socket == null");
-    }
     this.#socket?.close();
     if (typeof cb === "function") process.nextTick(cb);
   }
   reset(cb) {
-    console.log("TcpSocketHandle reset");
     if (this.#socket == null) {
-      console.warn("this.#socket == null");
       return;
     }
     this.#socket.close();
     process.nextTick(cb);
   }
   ref() {
-    console.log("TcpSocketHandle ref");
     $assert(this.#socket != null);
     return this.#socket.ref();
   }
   unref() {
-    console.log("TcpSocketHandle unref");
     $assert(this.#socket != null);
     return this.#socket.unref();
   }
@@ -707,7 +661,6 @@ class PipeSocketHandle {
   }
 
   [kConnect](self, req, address) {
-    console.log("PipeSocketHandle connect");
     $assert(this.#promise == null);
     $assert(this.#socket == null);
     const that = this;
@@ -717,7 +670,6 @@ class PipeSocketHandle {
       allowHalfOpen: self.allowHalfOpen,
       socket: {
         open(socket) {
-          console.log("BUN PipeSocketHandle open", req.oncomplete);
           self._handle = that;
           socket[owner_symbol] = self;
           that.#socket = socket;
@@ -725,12 +677,10 @@ class PipeSocketHandle {
           req.oncomplete(0, self._handle, req, true, true);
         },
         data(socket, buffer) {
-          console.log("BUN PipeSocketHandle data", buffer);
           self.bytesRead += buffer.length;
           if (!self.push(buffer)) socket.pause();
         },
         drain(socket) {
-          console.log("BUN PipeSocketHandle drain");
           const callback = self[kwriteCallback];
           self.connecting = false;
           if (callback) {
@@ -743,13 +693,8 @@ class PipeSocketHandle {
             }
             self[kBytesWritten] = socket.bytesWritten;
           }
-          console.log("BUN PipeSocketHandle drain fin");
-        },
-        timeout(socket) {
-          console.log("BUN PipeSocketHandle timeout");
         },
         end(socket) {
-          console.log("BUN PipeSocketHandle end");
           if (self[kended]) return;
           self[kended] = true;
           if (!self.allowHalfOpen) self.write = writeAfterFIN;
@@ -757,7 +702,6 @@ class PipeSocketHandle {
           self.read(0);
         },
         close(socket, err) {
-          console.log("BUN PipeSocketHandle close");
           if (self[kclosed]) return;
           self[kclosed] = true;
           that.#socket = null;
@@ -766,10 +710,6 @@ class PipeSocketHandle {
           if (!self.allowHalfOpen) self.write = writeAfterFIN;
           self.push(null);
           self.read(0);
-        },
-        error(socket, err) {
-          console.log("BUN PipeSocketHandle error");
-          console.error(err);
         },
       },
     }).then(sock => {
@@ -780,63 +720,48 @@ class PipeSocketHandle {
       throw Bun.peek(this.#promise).errno;
     }
     this.#promise.catch(reason => {
-      console.error("PipeSocketHandle connect catch");
       if (!self.destroyed) destroyNT(self, reason);
     });
     return 0;
   }
   setNoDelay(arg) {
-    console.log("PipeSocketHandle setNoDelay");
     $assert(this.#socket != null);
     return this.#socket.setNoDelay(arg);
   }
   setKeepAlive(arg0, arg1) {
-    console.log("PipeSocketHandle setKeepAlive");
     $assert(this.#socket != null);
     return this.#socket.setKeepAlive(arg0, arg1);
   }
   resume() {
-    console.log("PipeSocketHandle resume");
     return this.#socket?.resume();
   }
   pause() {
-    console.log("PipeSocketHandle pause");
     return this.#socket?.pause();
   }
   write() {
-    console.log("PipeSocketHandle write");
     $assert(this.#socket != null);
     return this.#socket.$write.$apply(this.#socket, arguments);
   }
   end() {
-    console.log("PipeSocketHandle end");
     $assert(this.#socket != null);
     return this.#socket.end.$apply(this.#socket, arguments);
   }
   close(cb) {
-    console.log("PipeSocketHandle close");
-    if (this.#socket == null) {
-      console.warn("this.#socket == null");
-    }
     this.#socket?.close();
     if (typeof cb === "function") process.nextTick(cb);
   }
   reset(cb) {
-    console.log("PipeSocketHandle reset");
     if (this.#socket == null) {
-      console.warn("this.#socket == null");
       return;
     }
     this.#socket.close();
     process.nextTick(cb);
   }
   ref() {
-    console.log("PipeSocketHandle ref");
     $assert(this.#socket != null);
     return this.#socket.ref();
   }
   unref() {
-    console.log("PipeSocketHandle unref");
     $assert(this.#socket != null);
     return this.#socket.unref();
   }
@@ -1685,7 +1610,6 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
 
 function internalConnect(self, path);
 function internalConnect(self, address, port, addressType, localAddress, localPort, flags?) {
-  console.log("internalConnect");
   // TODO return promise from Socket.prototype.connect which wraps _connectReq.
 
   $assert(self.connecting);
@@ -1750,7 +1674,6 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
 }
 
 function internalConnectMultiple(context, canceled?) {
-  console.log("internalConnectMultiple");
   clearTimeout(context[kTimeout]);
   const self = context.socket;
 
@@ -1775,7 +1698,6 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
-    console.log("kReinitializeHandle");
     self[kReinitializeHandle](new TcpSocketHandle());
   }
 
@@ -1831,8 +1753,6 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
-  console.log("startM Bun.connect", addressType, address, port); //
-  console.log(Object.keys(context));
   err = self._handle[kConnect](self, addressType, req, address, port);
 
   if (err) {
@@ -1867,7 +1787,6 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
-  console.log("afterConnect");
   const self = handle[owner_symbol];
 
   // Callback may come after call to destroy

@@ -29,7 +29,9 @@ void JSSecretKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSSecretKeyObjectPrototype::info(), JSSecretKeyObjectPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    // intentionally inherit KeyObject's toStringTag
+    // https://github.com/nodejs/node/blob/95b0f9d448832eeb75586c89fab0777a1a4b0610/lib/internal/crypto/keys.js#L146
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject, CallFrame* callFrame))

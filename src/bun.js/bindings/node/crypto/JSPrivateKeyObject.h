@@ -30,13 +30,6 @@ public:
         return instance;
     }
 
-    static JSPrivateKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
-    {
-        JSPrivateKeyObject* instance = new (NotNull, JSC::allocateCell<JSPrivateKeyObject>(vm)) JSPrivateKeyObject(vm, structure, type, WTFMove(keyPtr));
-        instance->finishCreation(vm, globalObject);
-        return instance;
-    }
-
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -56,11 +49,6 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_keyDetails;
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-
-    JSPrivateKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
-        : Base(vm, structure, type, WTFMove(keyPtr))
-    {
-    }
 
     JSPrivateKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
         : Base(vm, structure, WTFMove(keyObject))

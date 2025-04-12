@@ -10,47 +10,91 @@ class CryptoKey;
 
 namespace Bun {
 
+enum class KeyObjectType : uint8_t {
+    Secret = 0,
+    Public = 1,
+    Private = 2,
+};
+
+struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
+    WTF_MAKE_TZONE_ALLOCATED(KeyObjectData);
+
+    KeyObjectData(WTF::FixedVector<uint8_t>&& symmetricKey)
+        : symmetricKey(WTFMove(symmetricKey))
+    {
+    }
+
+    KeyObjectData(WTF::Vector<uint8_t>&& symmetricKey)
+        : symmetricKey(WTFMove(symmetricKey))
+    {
+    }
+
+    KeyObjectData(ncrypto::EVPKeyPointer&& asymmetricKey)
+        : asymmetricKey(WTFMove(asymmetricKey))
+    {
+    }
+
+public:
+    ~KeyObjectData() = default;
+
+    static RefPtr<KeyObjectData> create(WTF::FixedVector<uint8_t>&& symmetricKey)
+    {
+        return adoptRef(*new KeyObjectData(WTFMove(symmetricKey)));
+    }
+
+    static RefPtr<KeyObjectData> create(WTF::Vector<uint8_t>&& symmetricKey)
+    {
+        return adoptRef(*new KeyObjectData(WTFMove(symmetricKey)));
+    }
+
+    static RefPtr<KeyObjectData> create(ncrypto::EVPKeyPointer&& asymmetricKey)
+    {
+        return adoptRef(*new KeyObjectData(WTFMove(asymmetricKey)));
+    }
+
+    WTF::FixedVector<uint8_t> symmetricKey;
+    ncrypto::EVPKeyPointer asymmetricKey;
+};
+
 class KeyObject {
     WTF_MAKE_TZONE_ALLOCATED(KeyObject);
 
-public:
-    enum class Type : uint8_t {
-        Secret = 0,
-        Public = 1,
-        Private = 2,
-    };
-
-    KeyObject() = default;
-
-    KeyObject(WTF::Vector<uint8_t>&& key)
-        : m_type(Type::Secret)
-        , m_symmetricKey(WTFMove(key))
-    {
-    }
-
-    KeyObject(WTF::FixedVector<uint8_t>&& key)
-        : m_type(Type::Secret)
-        , m_symmetricKey(WTFMove(key))
-    {
-    }
-
-    KeyObject(Type type, ncrypto::EVPKeyPointer&& key)
+    KeyObject(KeyObjectType type, RefPtr<KeyObjectData> data)
         : m_type(type)
-        , m_asymmetricKey(WTFMove(key))
+        , m_data(data)
     {
     }
+
+public:
+    KeyObject() = default;
+    ~KeyObject() = default;
 
     static WebCore::ExceptionOr<KeyObject> create(WebCore::CryptoKey&);
+    static KeyObject create(WTF::FixedVector<uint8_t>&& symmetricKey)
+    {
+        RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
+        return KeyObject(KeyObjectType::Secret, WTFMove(data));
+    }
+    static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey)
+    {
+        RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
+        return KeyObject(KeyObjectType::Secret, WTFMove(data));
+    }
+    static KeyObject create(KeyObjectType type, ncrypto::EVPKeyPointer&& asymmetricKey)
+    {
+        RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(asymmetricKey));
+        return KeyObject(type, WTFMove(data));
+    }
 
-    JSC::JSValue exportJWKEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType);
-    JSC::JSValue exportJWKEcKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType);
-    JSC::JSValue exportJWKRsaKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType);
+    JSC::JSValue exportJWKEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType exportType);
+    JSC::JSValue exportJWKEcKey(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType exportType);
+    JSC::JSValue exportJWKRsaKey(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType exportType);
     JSC::JSValue exportJWKSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&);
-    JSC::JSValue exportJWKAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, Type exportType, bool handleRsaPss);
-    JSC::JSValue exportJWK(JSC::JSGlobalObject*, JSC::ThrowScope&, Type type, bool handleRsaPss);
+    JSC::JSValue exportJWKAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType exportType, bool handleRsaPss);
+    JSC::JSValue exportJWK(JSC::JSGlobalObject*, JSC::ThrowScope&, KeyObjectType type, bool handleRsaPss);
     JSC::JSValue exportPublic(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
     JSC::JSValue exportPrivate(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
-    JSC::JSValue exportAsymmetric(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue, Type exportType);
+    JSC::JSValue exportAsymmetric(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue, KeyObjectType exportType);
     JSC::JSValue exportSecret(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue optionsValue);
 
     void getRsaKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
@@ -63,15 +107,15 @@ public:
 
     std::optional<bool> equals(const KeyObject& other) const;
 
-    inline Type type() const { return m_type; }
+    inline KeyObjectType type() const { return m_type; }
 
-    const WTF::FixedVector<uint8_t>& symmetricKey() const { return m_symmetricKey; }
-    const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_asymmetricKey; }
+    const WTF::FixedVector<uint8_t>& symmetricKey() const { return m_data->symmetricKey; }
+    const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_data->asymmetricKey; }
+    RefPtr<KeyObjectData> data() const { return m_data; }
 
 private:
-    Type m_type = Type::Secret;
-    WTF::FixedVector<uint8_t> m_symmetricKey;
-    ncrypto::EVPKeyPointer m_asymmetricKey;
+    KeyObjectType m_type = KeyObjectType::Secret;
+    RefPtr<KeyObjectData> m_data = nullptr;
 };
 
 }

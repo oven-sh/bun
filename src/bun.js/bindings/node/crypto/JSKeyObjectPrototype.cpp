@@ -71,11 +71,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
     KeyObject& handle = keyObject->handle();
 
     switch (handle.type()) {
-    case KeyObject::Type::Secret:
+    case KeyObjectType::Secret:
         return JSValue::encode(jsNontrivialString(vm, "secret"_s));
-    case KeyObject::Type::Public:
+    case KeyObjectType::Public:
         return JSValue::encode(jsNontrivialString(vm, "public"_s));
-    case KeyObject::Type::Private:
+    case KeyObjectType::Private:
         return JSValue::encode(jsNontrivialString(vm, "private"_s));
     }
 }

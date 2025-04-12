@@ -24,13 +24,6 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSPublicKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
-    {
-        JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, type, WTFMove(keyPtr));
-        instance->finishCreation(vm, globalObject);
-        return instance;
-    }
-
     static JSPublicKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
     {
         JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, WTFMove(keyObject));
@@ -57,11 +50,6 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_keyDetails;
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-
-    JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
-        : Base(vm, structure, type, WTFMove(keyPtr))
-    {
-    }
 
     JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
         : Base(vm, structure, WTFMove(keyObject))

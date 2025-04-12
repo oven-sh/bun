@@ -25,30 +25,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    // static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, JSKeyObjectHandle* handle)
-    // {
-    //     JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, type, handle);
-    //     instance->finishCreation(vm, globalObject);
-    //     return instance;
-    // }
-
     static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
     {
         JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTFMove(keyObject));
-        instance->finishCreation(vm, globalObject);
-        return instance;
-    }
-
-    static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, WTF::Vector<uint8_t>&& keyData)
-    {
-        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTFMove(keyData));
-        instance->finishCreation(vm, globalObject);
-        return instance;
-    }
-
-    static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
-    {
-        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, type, WTFMove(keyPtr));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -69,18 +48,6 @@ public:
     JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
         : Base(vm, structure)
         , m_handle(WTFMove(keyObject))
-    {
-    }
-
-    JSKeyObject(JSC::VM& vm, JSC::Structure* structure, WTF::Vector<uint8_t>&& keyData)
-        : Base(vm, structure)
-        , m_handle(WTFMove(keyData))
-    {
-    }
-
-    JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject::Type type, ncrypto::EVPKeyPointer&& keyPtr)
-        : Base(vm, structure)
-        , m_handle(type, WTFMove(keyPtr))
     {
     }
 

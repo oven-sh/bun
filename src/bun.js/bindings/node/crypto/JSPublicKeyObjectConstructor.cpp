@@ -31,21 +31,10 @@ JSC_DEFINE_HOST_FUNCTION(constructPublicKeyObject, (JSC::JSGlobalObject * lexica
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    // auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     JSValue handleValue = callFrame->argument(0);
     // constructing a PublicKeyObject is impossible
     return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
-
-    // JSKeyObjectHandle* handle = jsDynamicCast<JSKeyObjectHandle*>(handleValue);
-    // if (!handle) {
-    //     return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
-    // }
-
-    // Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject);
-    // JSPublicKeyObject* instance = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, KeyObject::Type::Public, handle);
-
-    // return JSValue::encode(instance);
 }
 
 } // namespace Bun

@@ -51,8 +51,10 @@ void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValu
         return;
     }
 
+    KeyObject keyObject = KeyObject::create(WTFMove(*m_result));
+
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(*m_result));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
 
     Bun__EventLoop__runCallback2(lexicalGlobalObject,
         JSValue::encode(callback),
@@ -168,8 +170,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     auto& result = ctx->m_result.value();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
+    KeyObject keyObject = KeyObject::create(WTFMove(result));
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(result));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
 
     return JSValue::encode(secretKey);
 }

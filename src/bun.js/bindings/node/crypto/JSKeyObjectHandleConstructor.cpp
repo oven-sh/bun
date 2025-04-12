@@ -43,13 +43,13 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObjectHandle, (JSC::JSGlobalObject * lexica
 
     auto typeNumber = typeValue.asNumber();
 
-    KeyObject::Type type;
+    KeyObjectType type;
     if (typeNumber == 0) {
-        type = KeyObject::Type::Secret;
+        type = KeyObjectType::Secret;
     } else if (typeNumber == 1) {
-        type = KeyObject::Type::Public;
+        type = KeyObjectType::Public;
     } else if (typeNumber == 2) {
-        type = KeyObject::Type::Private;
+        type = KeyObjectType::Private;
     } else {
         return ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "type"_s, typeValue, "0, 1, or 2"_s);
     }
@@ -57,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObjectHandle, (JSC::JSGlobalObject * lexica
     JSValue dataValue = callFrame->argument(1);
 
     switch (type) {
-    case KeyObject::Type::Secret: {
+    case KeyObjectType::Secret: {
         WTF::Vector<uint8_t> symmetricKey;
 
         // should already be a validated buffer
@@ -73,8 +73,8 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObjectHandle, (JSC::JSGlobalObject * lexica
 
         break;
     }
-    case KeyObject::Type::Public:
-    case KeyObject::Type::Private: {
+    case KeyObjectType::Public:
+    case KeyObjectType::Private: {
         break;
     }
     }

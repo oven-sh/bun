@@ -1043,7 +1043,7 @@ void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<ui
     if (!bufferOnly && key.isObject()) {
         if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
             auto& handle = keyObject->handle();
-            if (handle.type() != KeyObject::Type::Secret) {
+            if (handle.type() != KeyObjectType::Secret) {
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.asymmetricKeyType(globalObject), "secret"_s);
             }
 

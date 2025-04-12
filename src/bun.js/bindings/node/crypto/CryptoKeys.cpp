@@ -24,7 +24,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobal
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(symmetricKey));
+
+    KeyObject keyObject = KeyObject::create(WTFMove(symmetricKey));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
 
     return JSValue::encode(secretKey);
 }

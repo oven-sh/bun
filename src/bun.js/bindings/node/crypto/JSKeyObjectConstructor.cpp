@@ -39,7 +39,7 @@ const JSC::ClassInfo JSKeyObjectConstructor::s_info = { "KeyObject"_s, &Base::s_
 void JSKeyObjectConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
     Base::finishCreation(vm, 2, "KeyObject"_s);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     reifyStaticProperties(vm, JSKeyObjectConstructor::info(), JSKeyObjectConstructorTableValues, *this);
 }
 
@@ -59,7 +59,6 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGloba
 
     JSValue typeValue = callFrame->argument(0);
 
-    // KeyObject::Type type;
     if (!typeValue.isString()) {
         // always INVALID_ARG_VALUE
         // https://github.com/nodejs/node/blob/e1fabe4f58722af265d11081b91ce287f90738f4/lib/internal/crypto/keys.js#L108
@@ -71,27 +70,13 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGloba
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    if (typeView == "secret"_s) {
-        // type = KeyObject::Type::Secret;
-    } else if (typeView == "public"_s) {
-        // type = KeyObject::Type::Public;
-    } else if (typeView == "private"_s) {
-        // type = KeyObject::Type::Private;
-    } else {
+    if (typeView != "secret"_s && typeView != "public"_s && typeView != "private"_s) {
         return ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "type"_s, typeValue);
     }
 
     JSValue handleValue = callFrame->argument(1);
     // constructing a KeyObject is impossible
     return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
-
-    // if (JSKeyObjectHandle* handle = jsDynamicCast<JSKeyObjectHandle*>(handleValue)) {
-    //     Structure* structure = globalObject->m_JSKeyObjectClassStructure.get(lexicalGlobalObject);
-    //     JSKeyObject* instance = JSKeyObject::create(vm, structure, lexicalGlobalObject, type, handle);
-    //     return JSValue::encode(instance);
-    // }
-
-    // return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -105,7 +90,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(keyValue);
 
     if (!cryptoKey) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "CryptoKey"_s, keyValue);
+        return ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "key"_s, "CryptoKey"_s, keyValue);
     }
 
     WebCore::CryptoKey& wrappedKey = cryptoKey->wrapped();

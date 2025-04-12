@@ -34,10 +34,10 @@ const {
   privateEncrypt,
   privateDecrypt,
 
-  KeyObject: KeyObject2,
-  SecretKeyObject: SecretKeyObject2,
-  PublicKeyObject: PublicKeyObject2,
-  PrivateKeyObject: PrivateKeyObject2,
+  KeyObject,
+  SecretKeyObject,
+  PublicKeyObject,
+  PrivateKeyObject,
 
   createSecretKey,
   createPublicKey,
@@ -71,7 +71,7 @@ const {
 
 const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
 
-const { validateObject, validateString } = require("internal/validators");
+const { validateString } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
 
@@ -103,7 +103,7 @@ var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding?) {
-  if (buffer instanceof KeyObject2) {
+  if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
       const error = new TypeError(
         `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
@@ -136,10 +136,10 @@ var crypto_exports: any = {};
 crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
 crypto_exports.constants = $processBindingConstants.crypto;
 
-crypto_exports.KeyObject2 = KeyObject2;
-crypto_exports.SecretKeyObject2 = SecretKeyObject2;
-crypto_exports.PublicKeyObject2 = PublicKeyObject2;
-crypto_exports.PrivateKeyObject2 = PrivateKeyObject2;
+crypto_exports.KeyObject = KeyObject;
+// crypto_exports.SecretKeyObject = SecretKeyObject;
+// crypto_exports.PublicKeyObject = PublicKeyObject;
+// crypto_exports.PrivateKeyObject = PrivateKeyObject;
 
 crypto_exports.generateKey = generateKey;
 crypto_exports.generateKeySync = generateKeySync;
@@ -149,8 +149,6 @@ crypto_exports.generateKeyPairSync = generateKeyPairSync;
 crypto_exports.createSecretKey = createSecretKey;
 crypto_exports.createPublicKey = createPublicKey;
 crypto_exports.createPrivateKey = createPrivateKey;
-
-crypto_exports.KeyObject = KeyObject2;
 
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;

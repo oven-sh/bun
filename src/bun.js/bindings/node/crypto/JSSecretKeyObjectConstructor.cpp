@@ -45,7 +45,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSecretKeyObject, (JSC::JSGlobalObject * lexica
     // }
 
     // Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    // JSSecretKeyObject* instance = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, KeyObject::Type::Secret, handle);
+    // JSSecretKeyObject* instance = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, KeyObjectType::Secret, handle);
 
     // return JSValue::encode(instance);
 }

@@ -28,6 +28,7 @@
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
+#include "KeyObject2.h"
 
 namespace WTF {
 template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
@@ -665,6 +666,22 @@ JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::
     return {};
 }
 
+JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::StringBuilder builder;
+    builder.append("The \""_s);
+    builder.append(arg_name);
+    builder.append("\" argument must be an instance of "_s);
+    builder.append(expected_instance_types);
+    builder.append(". Received "_s);
+    determineSpecificType(vm, globalObject, builder, val_actual_value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    return {};
+}
+
 // When you want INVALID_ARG_TYPE to say "The argument must be an instance of X. Received Y." instead of "The argument must be of type X. Received Y."
 JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
@@ -1232,6 +1249,28 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, 
 
     builder.append(". Expected "_s);
     builder.append(expected);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, KeyObjectType receivedType, ASCIILiteral expected)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid key object type "_s);
+    switch (receivedType) {
+    case KeyObjectType::Private:
+        builder.append("private"_s);
+        break;
+    case KeyObjectType::Public:
+        builder.append("public"_s);
+        break;
+    case KeyObjectType::Secret:
+        builder.append("secret"_s);
+        break;
+    }
+    builder.append(", expected "_s);
+    builder.append(expected);
+    builder.append('.');
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
     return {};
 }

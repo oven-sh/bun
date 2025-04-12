@@ -30,13 +30,6 @@ public:
         return instance;
     }
 
-    static JSSecretKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, WTF::Vector<uint8_t>&& keyData)
-    {
-        JSSecretKeyObject* instance = new (NotNull, JSC::allocateCell<JSSecretKeyObject>(vm)) JSSecretKeyObject(vm, structure, WTFMove(keyData));
-        instance->finishCreation(vm, globalObject);
-        return instance;
-    }
-
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -54,11 +47,6 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-
-    JSSecretKeyObject(JSC::VM& vm, JSC::Structure* structure, WTF::Vector<uint8_t>&& keyData)
-        : Base(vm, structure, WTFMove(keyData))
-    {
-    }
 
     JSSecretKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
         : Base(vm, structure, WTFMove(keyObject))

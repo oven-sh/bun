@@ -11,9 +11,10 @@
 #include "JSKeyObject.h"
 
 using namespace JSC;
-using namespace Bun;
 using namespace WebCore;
 using namespace ncrypto;
+
+namespace Bun {
 
 HkdfJobCtx::HkdfJobCtx(Digest digest, size_t length, WTF::Vector<uint8_t>&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt)
     : m_digest(digest)
@@ -282,3 +283,5 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdfSync, (JSGlobalObject * lexicalGlobalObject, JSC:
 
     return JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull()));
 }
+
+} // namespace Bun

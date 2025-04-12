@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "KeyObject2.h"
+#include "KeyObject.h"
 #include "CryptoUtil.h"
 
 namespace Bun {

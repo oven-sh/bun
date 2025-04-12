@@ -2,7 +2,7 @@
 
 #include "root.h"
 #include "ncrypto.h"
-#include "KeyObject2.h"
+#include "KeyObject.h"
 
 namespace Bun {
 

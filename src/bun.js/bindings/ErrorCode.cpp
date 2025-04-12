@@ -28,7 +28,7 @@
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
-#include "KeyObject2.h"
+#include "KeyObject.h"
 
 namespace WTF {
 template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {

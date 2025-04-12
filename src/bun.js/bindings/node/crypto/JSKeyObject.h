@@ -8,7 +8,7 @@
 #include "ncrypto.h"
 #include "BunClientData.h"
 #include "openssl/ssl.h"
-#include "KeyObject2.h"
+#include "KeyObject.h"
 #include "JSKeyObjectHandle.h"
 
 namespace Bun {

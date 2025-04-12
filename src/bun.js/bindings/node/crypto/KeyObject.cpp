@@ -1,4 +1,4 @@
-#include "KeyObject2.h"
+#include "KeyObject.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "helpers.h"

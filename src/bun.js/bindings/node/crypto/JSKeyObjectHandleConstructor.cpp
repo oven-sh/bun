@@ -10,7 +10,7 @@
 #include "openssl/bn.h"
 #include "openssl/err.h"
 #include "ncrypto.h"
-#include "KeyObject2.h"
+#include "KeyObject.h"
 
 using namespace JSC;
 using namespace WebCore;

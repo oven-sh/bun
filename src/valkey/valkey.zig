@@ -5,7 +5,7 @@
 pub const ValkeyContext = @import("ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct {
+pub const ConnectionFlags = packed struct(u8) {
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
     enable_offline_queue: bool = true,

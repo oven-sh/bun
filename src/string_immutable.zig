@@ -629,7 +629,7 @@ pub const StringOrTinyString = struct {
     const Buffer = [Max]u8;
 
     remainder_buf: Buffer = undefined,
-    meta: packed struct {
+    meta: packed struct(u8) {
         remainder_len: u7 = 0,
         is_tiny_string: u1 = 0,
     } = .{},
@@ -5220,7 +5220,7 @@ pub const PackedCodepointIterator = struct {
 
     pub const ZeroValue = zeroValue;
 
-    pub const Cursor = packed struct {
+    pub const Cursor = packed struct(u64) {
         i: u32 = 0,
         c: u29 = zeroValue,
         width: u3 = 0,

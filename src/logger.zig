@@ -394,7 +394,7 @@ pub const Data = struct {
     }
 };
 
-pub const BabyString = packed struct {
+pub const BabyString = packed struct(u32) {
     offset: u16,
     len: u16,
 

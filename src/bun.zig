@@ -449,15 +449,15 @@ pub const ByteList = BabyList(u8);
 pub const OffsetByteList = OffsetList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
-    if (comptime Environment.allow_assert) {
+    if (comptime Environment.isDebug) {
         return Type;
     }
 
     return void;
 }
 
-pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @TypeOf(val) else void {
-    if (comptime Environment.allow_assert) {
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
+    if (comptime Environment.isDebug) {
         return val;
     }
 
@@ -1582,19 +1582,19 @@ comptime {
 pub fn DebugOnlyDisabler(comptime Type: type) type {
     return struct {
         const T = Type;
-        threadlocal var disable_create_in_debug: if (Environment.allow_assert) usize else u0 = 0;
+        threadlocal var disable_create_in_debug: if (Environment.isDebug) usize else u0 = 0;
         pub inline fn disable() void {
-            if (comptime !Environment.allow_assert) return;
+            if (comptime !Environment.isDebug) return;
             disable_create_in_debug += 1;
         }
 
         pub inline fn enable() void {
-            if (comptime !Environment.allow_assert) return;
+            if (comptime !Environment.isDebug) return;
             disable_create_in_debug -= 1;
         }
 
         pub inline fn assert() void {
-            if (comptime !Environment.allow_assert) return;
+            if (comptime !Environment.isDebug) return;
             if (disable_create_in_debug > 0) {
                 Output.panic(comptime "[" ++ @typeName(T) ++ "] called while disabled (did you forget to call enable?)", .{});
             }

@@ -2749,6 +2749,12 @@ pub const HardcodedModule = enum {
     @"node:_stream_wrap",
     @"node:_stream_writable",
     @"node:_tls_common",
+    @"node:_http_common",
+    @"node:_http_agent",
+    @"node:_http_server",
+    @"node:_http_client",
+    @"node:_http_outgoing",
+    @"node:_http_incoming",
     /// This is gated behind '--expose-internals'
     @"bun:internal-for-testing",
 
@@ -2827,6 +2833,12 @@ pub const HardcodedModule = enum {
         .{ "node:_stream_wrap", .@"node:_stream_wrap" },
         .{ "node:_stream_writable", .@"node:_stream_writable" },
         .{ "node:_tls_common", .@"node:_tls_common" },
+        .{ "node:_http_common", .@"node:_http_common" },
+        .{ "node:_http_agent", .@"node:_http_agent" },
+        .{ "node:_http_client", .@"node:_http_client" },
+        .{ "node:_http_server", .@"node:_http_server" },
+        .{ "node:_http_incoming", .@"node:_http_incoming" },
+        .{ "node:_http_outgoing", .@"node:_http_outgoing" },
 
         .{ "node-fetch", HardcodedModule.@"node-fetch" },
         .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -2922,6 +2934,12 @@ pub const HardcodedModule = enum {
             nodeEntry("node:wasi"),
             nodeEntry("node:worker_threads"),
             nodeEntry("node:zlib"),
+            nodeEntry("node:_http_common"),
+            nodeEntry("node:_http_agent"),
+            nodeEntry("node:_http_client"),
+            nodeEntry("node:_http_server"),
+            nodeEntry("node:_http_incoming"),
+            nodeEntry("node:_http_outgoing"),
             // New Node.js builtins only resolve from the prefixed one.
             nodeEntryOnlyPrefix("node:test"),
 
@@ -2977,41 +2995,20 @@ pub const HardcodedModule = enum {
             nodeEntry("wasi"),
             nodeEntry("worker_threads"),
             nodeEntry("zlib"),
+            nodeEntry("_http_common"),
+            nodeEntry("_http_agent"),
+            nodeEntry("_http_client"),
+            nodeEntry("_http_server"),
+            nodeEntry("_http_incoming"),
+            nodeEntry("_http_outgoing"),
 
             // sys is a deprecated alias for util
             .{ "sys", .{ .path = "node:util", .node_builtin = true } },
             .{ "node:sys", .{ .path = "node:util", .node_builtin = true } },
 
-            // These are returned in builtinModules, but probably not many
-            // packages use them so we will just alias them.
-            .{ "node:_http_agent", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_client", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_common", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_incoming", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_server", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
-            .{ "node:_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
-            .{ "node:_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
-            .{ "node:_stream_transform", .{ .path = "node:_stream_transform", .node_builtin = true } },
-            .{ "node:_stream_wrap", .{ .path = "node:_stream_wrap", .node_builtin = true } },
-            .{ "node:_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
+            // we alias these
             .{ "node:_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
-            .{ "node:_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
-            .{ "_http_agent", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_client", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_common", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_incoming", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_server", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
-            .{ "_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
-            .{ "_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
-            .{ "_stream_transform", .{ .path = "node:_stream_transform", .node_builtin = true } },
-            .{ "_stream_wrap", .{ .path = "node:_stream_wrap", .node_builtin = true } },
-            .{ "_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
             .{ "_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
-            .{ "_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
         };
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{

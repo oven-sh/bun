@@ -704,7 +704,7 @@ pub const Transpiler = struct {
                         );
                 }
 
-                const buffer_writer = try js_printer.BufferWriter.init(transpiler.allocator);
+                const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (transpiler.options.target) {

@@ -11012,7 +11012,7 @@ pub const PackageManager = struct {
             manager.update_requests = cloned;
         }
 
-        var buffer_writer = try JSPrinter.BufferWriter.init(manager.allocator);
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
@@ -11089,7 +11089,7 @@ pub const PackageManager = struct {
                     stuff.patch_key,
                     stuff.patchfile_path,
                 );
-                var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+                var buffer_writer2 = JSPrinter.BufferWriter.init(manager.allocator);
                 try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
                 buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
                 var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
@@ -11152,7 +11152,7 @@ pub const PackageManager = struct {
                     },
                 );
             }
-            var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
+            var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =
                 preserve_trailing_newline_at_eof_for_package_json;

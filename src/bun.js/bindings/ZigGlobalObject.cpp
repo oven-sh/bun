@@ -173,7 +173,7 @@
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 #include "ProcessBindingFs.h"
-
+#include <JavaScriptCore/GCActivityCallback.h>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -891,6 +891,10 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
+
+    // We're going to create the timers ourselves.
+    JSC::GCActivityCallback::s_shouldCreateGCTimer = false;
+
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
     if (UNLIKELY(!vmPtr)) {
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
@@ -925,7 +929,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // Every JS VM's RunLoop should use Bun's RunLoop implementation
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
-    WebCore::JSVMClientData::create(&vm, Bun__getVM());
+    WebCore::JSVMClientData::create(vm, Bun__getVM(), heapSize);
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1)) {

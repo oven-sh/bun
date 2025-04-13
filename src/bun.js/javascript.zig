@@ -75,6 +75,7 @@ const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const GCController = @import("./GCController.zig").GCController;
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -887,7 +888,7 @@ pub const VirtualMachine = struct {
 
     module_loader: ModuleLoader = .{},
 
-    gc_controller: JSC.GarbageCollectionController = .{},
+    gc_controller: *GCController = undefined,
     worker: ?*JSC.WebWorker = null,
     ipc: ?IPCInstanceUnion = null,
 
@@ -1368,7 +1369,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
+    pub inline fn eventLoop(this: *const VirtualMachine) *EventLoop {
         return this.event_loop;
     }
 

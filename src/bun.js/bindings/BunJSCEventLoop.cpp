@@ -26,15 +26,8 @@ extern "C" void Bun__JSC_onAfterWait(JSC::VM* _Nonnull vm, bool hasMoreEventLoop
 {
     vm->heap.acquireAccess();
     drop_all_locks.reset();
-
-    if (hasMoreEventLoopWorkToDo) {
-        auto& gcController = WebCore::clientData(*vm)->gcController();
-        gcController.setHasMoreEventLoopWorkToDo(true);
-    }
 }
 
 extern "C" void Bun__JSC_onDidRunCallbacks(JSC::VM* _Nonnull vm)
 {
-    auto& gcController = WebCore::clientData(*vm)->gcController();
-    gcController.setHasMoreEventLoopWorkToDo(false);
 }

@@ -52,7 +52,6 @@ JSVMClientData::JSVMClientData(VM& vm, void* bunVM, RefPtr<SourceProvider> sourc
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
-    , m_gcController(vm, bunVM, heapType)
     , bunVM(bunVM)
 {
 }

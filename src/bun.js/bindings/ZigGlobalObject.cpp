@@ -813,17 +813,8 @@ static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>&
     return result;
 }
 
-extern "C" void Bun__GlobalObject__memoryPressureCheckerDuringMicrotask(void* bunVM);
-
-static void memoryPressureCheckerDuringMicrotask(JSC::VM& vm)
-{
-    auto* bunVM = WebCore::clientData(vm)->bunVM;
-    Bun__GlobalObject__memoryPressureCheckerDuringMicrotask(bunVM);
-}
-
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
-    memoryPressureCheckerDuringMicrotask(vm);
 
     auto* globalObject = defaultGlobalObject();
     if (auto nextTickQueueValue = globalObject->m_nextTickQueue.get()) {
@@ -835,7 +826,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
-    memoryPressureCheckerDuringMicrotask(vm);
+
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
@@ -843,7 +834,7 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         checkIfNextTickWasCalledDuringMicrotask(vm);
     } else {
-        vm.setOnEachMicrotaskTick(&memoryPressureCheckerDuringMicrotask);
+        vm.setOnEachMicrotaskTick(nullptr);
     }
 }
 
@@ -889,7 +880,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
         if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(&memoryPressureCheckerDuringMicrotask);
+            vm.setOnEachMicrotaskTick(nullptr);
         } else {
             vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         }
@@ -987,8 +978,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        memoryPressureCheckerDuringMicrotask(vm);
-
         auto* globalObject = defaultGlobalObject();
         if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();

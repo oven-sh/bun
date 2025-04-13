@@ -24,7 +24,7 @@ class DOMWrapperWorld;
 #include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
-#include "BunGCController.h"
+
 namespace Zig {
 }
 
@@ -114,8 +114,6 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
-    Bun::GCController& gcController() { return m_gcController; }
-
 private:
     explicit JSVMClientData(JSC::VM&, void* bunVM, RefPtr<JSC::SourceProvider>, JSC::HeapType heapType);
 
@@ -135,7 +133,6 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
-    Bun::GCController m_gcController;
 };
 
 } // namespace WebCore

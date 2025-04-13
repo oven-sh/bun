@@ -675,13 +675,6 @@ pub const EventLoop = struct {
         }
     }
 
-    pub export fn Bun__GlobalObject__memoryPressureCheckerDuringMicrotask(bunVM: *VirtualMachine) void {
-        const loop = bunVM.eventLoop();
-        if (!loop.runImminentGCTimer()) {
-            loop.performGC();
-        }
-    }
-
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
         JSC.markBinding(@src());
@@ -1400,9 +1393,7 @@ pub const EventLoop = struct {
         ctx.onAfterEventLoop();
     }
 
-    pub fn processGCTimer(this: *EventLoop) void {
-        this.virtual_machine.gc_controller.performOpportunisticGC();
-    }
+    pub fn processGCTimer(_: *EventLoop) void {}
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
@@ -1507,9 +1498,7 @@ pub const EventLoop = struct {
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
-    pub fn performGC(this: *EventLoop) void {
-        this.virtual_machine.gc_controller.performGC();
-    }
+    pub fn performGC(_: *EventLoop) void {}
 
     pub fn wakeup(this: *EventLoop) void {
         if (comptime Environment.isWindows) {

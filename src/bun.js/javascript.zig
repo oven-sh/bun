@@ -75,7 +75,6 @@ const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
-const GCController = @import("./GCController.zig").GCController;
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -888,7 +887,6 @@ pub const VirtualMachine = struct {
 
     module_loader: ModuleLoader = .{},
 
-    gc_controller: *GCController = undefined,
     worker: ?*JSC.WebWorker = null,
     ipc: ?IPCInstanceUnion = null,
 

@@ -42,7 +42,6 @@ pub fn main() anyerror!void {
             .loose,
         );
         joined_buf[joined.len] = 0;
-        const os = std.posix;
         const joined_z: [:0]const u8 = joined_buf[0..joined.len :0];
         const O_PATH = if (@hasDecl(bun.O, "PATH")) bun.O.PATH else 0;
 

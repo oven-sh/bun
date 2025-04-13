@@ -435,7 +435,8 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, cal
         if (status_code_value != .undefined) {
             break :brk globalObject.validateIntegerRange(status_code_value, i32, 200, .{
                 .min = 100,
-                .max = 599,
+                .max = 999,
+                .field_name = "statusCode",
             }) catch return error.JSError;
         }
 

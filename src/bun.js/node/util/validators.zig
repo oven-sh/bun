@@ -185,10 +185,11 @@ pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime nam
     return value.asBoolean();
 }
 
-pub const ValidateObjectOptions = packed struct {
+pub const ValidateObjectOptions = packed struct(u8) {
     allow_nullable: bool = false,
     allow_array: bool = false,
     allow_function: bool = false,
+    _: u5 = 0,
 };
 
 pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime options: ValidateObjectOptions) bun.JSError!void {

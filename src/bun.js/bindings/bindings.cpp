@@ -6187,6 +6187,11 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
     }
 }
 
+extern "C" void JSC__VM__reportAbandonedObjectGraph(JSC__VM* vm)
+{
+    vm->heap.reportAbandonedObjectGraph();
+}
+
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC__VM* vm, double until)
 {
     vm->performOpportunisticallyScheduledTasks(MonotonicTime::now() + Seconds(until), {});

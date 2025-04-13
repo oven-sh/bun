@@ -1349,7 +1349,6 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
-        this.processGCTimer();
         loop.tick();
 
         ctx.onAfterEventLoop();
@@ -1393,7 +1392,9 @@ pub const EventLoop = struct {
         ctx.onAfterEventLoop();
     }
 
-    pub fn processGCTimer(_: *EventLoop) void {}
+    pub fn processGCTimer(this: *EventLoop) void {
+        this.virtual_machine.jsc.reportAbandonedObjectGraph();
+    }
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());

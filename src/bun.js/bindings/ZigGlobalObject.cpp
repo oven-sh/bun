@@ -3957,21 +3957,6 @@ extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalO
     return JSValue::encode(JSValue::JSUndefined);
 }
 
-#define IMPL_GET_COMMON_STRING(name)                                                                         \
-    extern "C" EncodedJSValue JSC__JSGlobalObject__commonStrings__get##name(Zig::GlobalObject* globalObject) \
-    {                                                                                                        \
-        JSC::JSString* value = globalObject->commonStrings().name##String(globalObject);                     \
-        ASSERT(value != nullptr);                                                                            \
-        return JSValue::encode(value);                                                                       \
-    }
-
-IMPL_GET_COMMON_STRING(IPv4)
-IMPL_GET_COMMON_STRING(IPv6)
-IMPL_GET_COMMON_STRING(IN4Loopback)
-IMPL_GET_COMMON_STRING(IN6Any)
-
-#undef IMPL_GET_COMMON_STRING
-
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

@@ -443,10 +443,11 @@ pub const ShellSubprocess = struct {
         }
     };
 
-    pub const Flags = packed struct(u3) {
+    pub const Flags = packed struct(u8) {
         is_sync: bool = false,
         killed: bool = false,
         waiting_for_onexit: bool = false,
+        _: u5 = 0,
     };
     pub const SignalCode = bun.SignalCode;
 

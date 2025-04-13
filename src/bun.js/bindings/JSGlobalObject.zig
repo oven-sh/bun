@@ -652,6 +652,9 @@ pub const JSGlobalObject = opaque {
             }
         }
         const field_name = comptime range.field_name;
+        if (comptime field_name.len == 0) {
+            @compileError("field_name must not be empty");
+        }
         const always_allow_zero = comptime range.always_allow_zero;
         const min = range.min;
         const max = range.max;

@@ -1431,7 +1431,7 @@ pub const CreateCommand = struct {
 
                 const file = package_json_file.?;
 
-                var buffer_writer = try JSPrinter.BufferWriter.init(bun.default_allocator);
+                var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
                 buffer_writer.append_newline = true;
                 var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 

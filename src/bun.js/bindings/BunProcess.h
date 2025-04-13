@@ -18,6 +18,7 @@ extern "C" int getRSS(size_t* rss);
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
 
+    LazyProperty<Process, Structure> m_nextTickQueueEntryStructure;
     LazyProperty<Process, Structure> m_cpuUsageStructure;
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
@@ -51,6 +52,8 @@ public:
     void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue, JSValue);
+
+    Structure* nextTickQueueEntryStructure() { return m_nextTickQueueEntryStructure.getInitializedOnMainThread(this); }
 
     template<size_t NumArgs>
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);

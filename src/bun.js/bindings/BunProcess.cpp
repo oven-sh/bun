@@ -2751,6 +2751,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
+    thisObject->m_nextTickQueueEntryStructure.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -3620,6 +3621,10 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+
+    m_nextTickQueueEntryStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
+        init.set(createNextTickQueueEntryStructure(init.vm, init.owner->globalObject()));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

@@ -264,11 +264,14 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       var tock;
       do {
         while ((tock = queue.shift()) !== null) {
-          var callback = tock.callback;
-          var args = tock.args;
-          var frame = tock.frame;
+          var callback = $getInternalField(tock, 0);
+          var args = $getInternalField(tock, 1);
+          var frame = $getInternalField(tock, 2);
+          var prevQueueEntry = $getInternalField(nextTickQueue, 3);
+          $putInternalField(nextTickQueue, 3, tock);
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
+
           try {
             if (args === undefined) {
               callback();
@@ -294,6 +297,8 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
           } catch (e) {
             reportUncaughtException(e);
           } finally {
+            $putInternalField(tock, 3, undefined);
+            $putInternalField(nextTickQueue, 3, prevQueueEntry);
             $putInternalField($asyncContext, 0, restore);
           }
         }
@@ -308,7 +313,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     setup = undefined;
   };
 
-  function nextTick(cb, ...args) {
+  const createNextTickQueueEntry = $newCppFunction("JSNextTickQueue.cpp", "jsFunctionCreateNextTickQueueEntry", 1);
+
+  function nextTick(cb) {
     validateFunction(cb, "callback");
     if (setup) {
       setup();
@@ -316,13 +323,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     }
     if (process._exiting) return;
 
-    queue.push({
-      callback: cb,
-      // We want to avoid materializing the args if there are none because it's
-      // a waste of memory and Array.prototype.slice shows up in profiling.
-      args: $argumentCount() > 1 ? args : undefined,
-      frame: $getInternalField($asyncContext, 0),
-    });
+    queue.push(createNextTickQueueEntry());
     $putInternalField(nextTickQueue, 0, 1);
   }
 

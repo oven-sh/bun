@@ -8,9 +8,11 @@
 namespace Bun {
 using namespace JSC;
 
-class JSNextTickQueue : public JSC::JSInternalFieldObjectImpl<3> {
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateNextTickQueueEntry);
+
+class JSNextTickQueue : public JSC::JSInternalFieldObjectImpl<4> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<3>;
+    using Base = JSC::JSInternalFieldObjectImpl<4>;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
@@ -25,6 +27,7 @@ public:
             jsNumber(-1),
             jsUndefined(),
             jsUndefined(),
+            jsUndefined(),
         } };
     }
 
@@ -37,4 +40,7 @@ public:
     bool isEmpty();
     void drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 };
+
+Structure* createNextTickQueueEntryStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+
 }

@@ -84,7 +84,7 @@ pub const TLS = union(enum) {
 
 /// Connection options for Valkey client
 pub const Options = struct {
-    idle_timeout_ms: u32 = 30000,
+    idle_timeout_ms: u32 = 0,
     connection_timeout_ms: u32 = 10000,
     enable_auto_reconnect: bool = true,
     max_retries: u32 = 20,

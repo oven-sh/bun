@@ -179,10 +179,7 @@ pub const TransformTask = struct {
             return;
         }
 
-        var buffer_writer = JSPrinter.BufferWriter.init(allocator) catch |err| {
-            this.err = err;
-            return;
-        };
+        var buffer_writer = JSPrinter.BufferWriter.init(allocator);
         buffer_writer.buffer.list.ensureTotalCapacity(allocator, 512) catch unreachable;
         buffer_writer.reset();
 
@@ -1035,9 +1032,7 @@ pub fn transformSync(
     }
 
     var buffer_writer = this.buffer_writer orelse brk: {
-        var writer = JSPrinter.BufferWriter.init(arena.backingAllocator()) catch {
-            return globalThis.throw("Failed to create BufferWriter", .{});
-        };
+        var writer = JSPrinter.BufferWriter.init(arena.backingAllocator());
 
         writer.buffer.growIfNeeded(code.len) catch unreachable;
         writer.buffer.list.expandToCapacity();

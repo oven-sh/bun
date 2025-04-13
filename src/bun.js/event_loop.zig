@@ -812,6 +812,10 @@ pub const EventLoop = struct {
         if (comptime bun.Environment.isDebug) {
             this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
         }
+
+        if (!this.runImminentGCTimer()) {
+            this.performGC();
+        }
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {
@@ -1336,10 +1340,12 @@ pub const EventLoop = struct {
         }
     }
 
-    pub fn runImminentGCTimer(this: *EventLoop) void {
+    pub fn runImminentGCTimer(this: *EventLoop) bool {
         if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
             timer.run(this.virtual_machine);
+            return true;
         }
+        return false;
     }
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
@@ -1351,7 +1357,7 @@ pub const EventLoop = struct {
             }
         }
 
-        this.runImminentGCTimer();
+        _ = this.runImminentGCTimer();
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1426,7 +1432,7 @@ pub const EventLoop = struct {
             }
         }
 
-        this.runImminentGCTimer();
+        _ = this.runImminentGCTimer();
 
         if (loop.isActive()) {
             enterActiveLoop(loop, ctx);

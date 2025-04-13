@@ -813,8 +813,16 @@ static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>&
     return result;
 }
 
+static void memoryPressureCheckerDuringMicrotask(JSC::VM& vm)
+{
+    auto& gcController = WebCore::clientData(vm)->gcController();
+    gcController.performOpportunisticGC();
+}
+
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
+    memoryPressureCheckerDuringMicrotask(vm);
+
     auto* globalObject = defaultGlobalObject();
     if (auto nextTickQueueValue = globalObject->m_nextTickQueue.get()) {
         auto* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueueValue);
@@ -825,6 +833,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
+    memoryPressureCheckerDuringMicrotask(vm);
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
@@ -832,7 +841,7 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         checkIfNextTickWasCalledDuringMicrotask(vm);
     } else {
-        vm.setOnEachMicrotaskTick(nullptr);
+        vm.setOnEachMicrotaskTick(&memoryPressureCheckerDuringMicrotask);
     }
 }
 
@@ -878,7 +887,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
         if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(nullptr);
+            vm.setOnEachMicrotaskTick(&memoryPressureCheckerDuringMicrotask);
         } else {
             vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         }

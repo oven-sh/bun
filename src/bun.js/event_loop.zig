@@ -798,6 +798,13 @@ pub const EventLoop = struct {
         }
     }
 
+    pub export fn Bun__GlobalObject__memoryPressureCheckerDuringMicrotask(bunVM: *VirtualMachine) void {
+        const loop = bunVM.eventLoop();
+        if (!loop.runImminentGCTimer()) {
+            loop.performGC();
+        }
+    }
+
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
         JSC.markBinding(@src());

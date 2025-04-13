@@ -813,10 +813,12 @@ static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>&
     return result;
 }
 
+extern "C" void Bun__GlobalObject__memoryPressureCheckerDuringMicrotask(void* bunVM);
+
 static void memoryPressureCheckerDuringMicrotask(JSC::VM& vm)
 {
-    auto& gcController = WebCore::clientData(vm)->gcController();
-    gcController.performOpportunisticGC();
+    auto* bunVM = WebCore::clientData(vm)->bunVM;
+    Bun__GlobalObject__memoryPressureCheckerDuringMicrotask(bunVM);
 }
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
@@ -985,6 +987,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
+        memoryPressureCheckerDuringMicrotask(vm);
+
         auto* globalObject = defaultGlobalObject();
         if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();

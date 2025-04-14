@@ -4256,11 +4256,11 @@ declare module "bun" {
   type WebSocketOptionsTLS = { tls?: { rejectUnauthorized?: boolean } };
   type WebSocketOptionsHeaders = { headers?: import("node:http").OutgoingHttpHeaders };
 
-  type WebSocketOptions = WebSocketOptionsProtocolOrProtocols & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
 
   class WebSocket extends EventTarget {
-    constructor(url: string | URL, protocols?: string | string[]);
-    constructor(url: string | URL, options?: WebSocketOptions);
+    public constructor(url: string | URL, protocols?: string | string[]);
+    public constructor(url: string | URL, options?: WebSocketOptions);
   }
 
   /**

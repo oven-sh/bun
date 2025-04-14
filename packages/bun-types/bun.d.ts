@@ -57,7 +57,7 @@ declare module "bun" {
      *
      * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
      *
-     * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
+     * This is to avoid type conflicts between lib.dom.d.ts and \@types/bun.
      *
      * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
      * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
@@ -160,12 +160,6 @@ declare module "bun" {
     error: Event;
     message: MessageEvent;
     open: Event;
-  }
-
-  interface EventInit {
-    bubbles?: boolean;
-    cancelable?: boolean;
-    composed?: boolean;
   }
 
   interface AddEventListenerOptions extends EventListenerOptions {
@@ -555,7 +549,6 @@ declare module "bun" {
    *
    * @returns The width of the string in columns
    *
-   * ## Examples
    * @example
    * ```ts
    * import { stringWidth } from "bun";
@@ -566,7 +559,6 @@ declare module "bun" {
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: false })); // 5
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: true })); // 13
    * ```
-   *
    */
   function stringWidth(
     /**
@@ -861,8 +853,7 @@ declare module "bun" {
    * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
    *
-   * ## Multipart form data example
-   *
+   * @example Multipart form data example
    * ```ts
    * // without dashes
    * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
@@ -871,8 +862,8 @@ declare module "bun" {
    * const formData = await Bun.readableStreamToFormData(stream, boundary);
    * formData.get("foo"); // "bar"
    * ```
-   * ## URL-encoded form data example
    *
+   * @example URL-encoded form data example
    * ```ts
    * const stream = new Response("hello=123").body;
    * const formData = await Bun.readableStreamToFormData(stream);
@@ -1677,22 +1668,6 @@ declare module "bun" {
      */
     maxAge?: number;
   }
-  interface CSRF {
-    /**
-     * Generate a CSRF token.
-     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
-     * @param options The options for the token.
-     * @returns The generated token.
-     */
-    generate(secret?: string, options?: CSRFGenerateOptions): string;
-    /**
-     * Verify a CSRF token.
-     * @param token The token to verify.
-     * @param options The options for the token.
-     * @returns True if the token is valid, false otherwise.
-     */
-    verify(token: string, options?: CSRFVerifyOptions): boolean;
-  }
 
   /**
    * SQL client
@@ -1720,7 +1695,23 @@ declare module "bun" {
    *
    * @category Security
    */
-  var CSRF: CSRF;
+  var CSRF: {
+    /**
+     * Generate a CSRF token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param options The options for the token.
+     * @returns The generated token.
+     */
+    generate(secret?: string, options?: CSRFGenerateOptions): string;
+
+    /**
+     * Verify a CSRF token.
+     * @param token The token to verify.
+     * @param options The options for the token.
+     * @returns True if the token is valid, false otherwise.
+     */
+    verify(token: string, options?: CSRFVerifyOptions): boolean;
+  };
 
   /**
    *   This lets you use macros as regular imports
@@ -2083,6 +2074,7 @@ declare module "bun" {
      * @see {@link publicPath} to customize the base url of linked source maps
      */
     sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -2111,6 +2103,7 @@ declare module "bun" {
      * ```
      */
     env?: "inline" | "disable" | `${string}*`;
+
     /**
      * Whether to enable minification.
      *
@@ -2126,16 +2119,19 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+
     /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
      */
     ignoreDCEAnnotations?: boolean;
+
     /**
      * Force emitting @__PURE__ annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
+
     // treeshaking?: boolean;
 
     // jsx?:
@@ -2162,10 +2158,12 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
     /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
+
     /**
      * Add a footer to the bundled code such as a comment block like
      *
@@ -2196,10 +2194,9 @@ declare module "bun" {
    * @category Security
    */
   namespace Password {
-    type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
-
     interface Argon2Algorithm {
       algorithm: "argon2id" | "argon2d" | "argon2i";
+
       /**
        * Memory cost, which defines the memory usage, given in kibibytes.
        */
@@ -2213,11 +2210,14 @@ declare module "bun" {
 
     interface BCryptAlgorithm {
       algorithm: "bcrypt";
+
       /**
        * A number between 4 and 31. The default is 10.
        */
       cost?: number;
     }
+
+    type AlgorithmLabel = (BCryptAlgorithm | Argon2Algorithm)["algorithm"];
   }
 
   /**
@@ -2228,7 +2228,7 @@ declare module "bun" {
    * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -2320,9 +2320,9 @@ declare module "bun" {
        */
       password: Bun.StringOrBuffer,
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): Promise<string>;
@@ -2333,7 +2333,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -2358,7 +2358,13 @@ declare module "bun" {
      * ```
      */
     verifySync(
+      /**
+       * The password to verify.
+       */
       password: Bun.StringOrBuffer,
+      /**
+       * The hash to verify against.
+       */
       hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm will be inferred from the hash.
@@ -2372,7 +2378,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -2404,10 +2410,11 @@ declare module "bun" {
        * mistake to hash an empty password.
        */
       password: Bun.StringOrBuffer,
+
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;
@@ -5703,6 +5710,12 @@ declare module "bun" {
      */
     shutdown(halfClose?: boolean): void;
 
+    // -1 = detached
+    // 0 = closed
+    // 1 = open
+    // -2 = closing
+    // 2 = everything else
+    // positive = open
     readonly readyState: "open" | "closing" | "closed";
 
     /**
@@ -6046,68 +6059,159 @@ declare module "bun" {
   }
 
   interface SocketOptions<Data = unknown> {
+    /**
+     * Handlers for socket events
+     */
     socket: SocketHandler<Data>;
+    /**
+     * The per-instance data context
+     */
     data?: Data;
   }
-  // interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
-  //   hostname: string;
-  //   port: number;
-  // }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to listen on
+     */
     hostname: string;
+    /**
+     * The port to listen on
+     */
     port: number;
+    /**
+     * The TLS configuration object with which to create the server
+     */
     tls?: TLSOptions;
+    /**
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
+     */
     exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
+     */
     allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to connect to
+     */
     hostname: string;
+    /**
+     * The port to connect to
+     */
     port: number;
+    /**
+     * TLS Configuration with which to create the socket
+     */
     tls?: boolean;
+    /**
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
+     */
     exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
+     */
     allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
-    tls?: TLSOptions;
+    /**
+     * The unix socket to listen on or connect to
+     */
     unix: string;
+    /**
+     * TLS Configuration with which to create the socket
+     */
+    tls?: TLSOptions;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * TLS Configuration with which to create the socket
+     */
     tls?: TLSOptions;
+    /**
+     * The file descriptor to connect to
+     */
     fd: number;
   }
 
   /**
-   * Create a TCP client that connects to a server
+   * Create a TCP client that connects to a server via a TCP socket
    *
-   * @param options The options to use when creating the client
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
+  /**
+   * Create a TCP client that connects to a server via a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function connect<Data = undefined>(options: UnixSocketOptions<Data>): Promise<Socket<Data>>;
 
   /**
    * Create a TCP server that listens on a port
    *
-   * @param options The options to use when creating the server
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
+  /**
+   * Create a TCP server that listens on a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  /**
+   * @category HTTP & Networking
+   */
   namespace udp {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
@@ -6185,6 +6289,8 @@ declare module "bun" {
    * @param options.port The port to listen on
    * @param options.binaryType The binary type to use for the socket
    * @param options.connect The hostname and port to connect to
+   *
+   * @category HTTP & Networking
    */
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
     options: udp.SocketOptions<DataBinaryType>,

@@ -13,15 +13,15 @@
  *
  * The following types can be used when binding parameters:
  *
- * | JavaScript type | SQLite type |
- * | -------------- | ----------- |
- * | `string` | `TEXT` |
- * | `number` | `INTEGER` or `DECIMAL` |
- * | `boolean` | `INTEGER` (1 or 0) |
- * | `Uint8Array` | `BLOB` |
- * | `Buffer` | `BLOB` |
- * | `bigint` | `INTEGER` |
- * | `null` | `NULL` |
+ * | JavaScript type | SQLite type            |
+ * | --------------- | ---------------------- |
+ * | `string`        | `TEXT`                 |
+ * | `number`        | `INTEGER` or `DECIMAL` |
+ * | `boolean`       | `INTEGER` (1 or 0)     |
+ * | `Uint8Array`    | `BLOB`                 |
+ * | `Buffer`        | `BLOB`                 |
+ * | `bigint`        | `INTEGER`              |
+ * | `null`          | `NULL`                 |
  */
 declare module "bun:sqlite" {
   /**
@@ -159,6 +159,20 @@ declare module "bun:sqlite" {
      *
      * This does not cache the query, so if you want to run a query multiple times, you should use {@link prepare} instead.
      *
+     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
+     *
+     * The following types can be used when binding parameters:
+     *
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
+     *
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
@@ -184,30 +198,15 @@ declare module "bun:sqlite" {
      * - `CREATE TEMPORARY TABLE`
      *
      * @param sql The SQL query to run
-     *
      * @param bindings Optional bindings for the query
      *
      * @returns `Database` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
-     *
-     *  * The following types can be used when binding parameters:
-     *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
     /**
-        This is an alias of {@link Database.prototype.run}
+     * This is an alias of {@link Database.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -215,6 +214,8 @@ declare module "bun:sqlite" {
      *
      * This **does not execute** the query, but instead prepares it for later
      * execution and caches the compiled query if possible.
+     *
+     * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -228,20 +229,18 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     *
      * @returns `Statment` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
      */
     query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
-      sqlQuery: string,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+      sql: string,
+    ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
      *
      * This does not cache the compiled query and does not execute the query.
+     *
+     * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -254,15 +253,12 @@ declare module "bun:sqlite" {
      * @param sql The SQL query to compile
      * @param params Optional bindings for the query
      *
-     * @returns `Statment` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
+     * @returns A {@link Statement} instance
      */
     prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
-      sqlQuery: string,
+      sql: string,
       params?: ParamsType,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Is the database in a transaction?
@@ -646,15 +642,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     get(...params: ParamsType): ReturnType | null;
 
@@ -687,15 +683,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     run(...params: ParamsType): Changes;
 
@@ -727,15 +723,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | ---------------|-------------|
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 

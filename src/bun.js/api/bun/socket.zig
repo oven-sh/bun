@@ -757,6 +757,12 @@ pub const Listener = struct {
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
+        if (try opts.getTruthy(globalObject, "fd")) |fd_| {
+            if (fd_.isNumber()) {
+                const fd = fd_.asFileDescriptor();
+                connection = .{ .fd = fd };
+            }
+        }
         var errno: c_int = 0;
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
@@ -784,7 +790,10 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
-                .fd => unreachable,
+                .fd => |file_descriptor| {
+                    if (ssl_enabled) return globalObject.throw("TODO listen ssl with fd", .{});
+                    break :brk uws.us_socket_context_listen_fd(@intFromBool(ssl_enabled), socket_context, @intFromEnum(file_descriptor), socket_flags, 8, &errno);
+                },
             }
         } orelse {
             defer {

@@ -3770,6 +3770,76 @@ pub const Blob = struct {
             return value;
         }
 
+        pub fn deleteObjects(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, object_keys: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
+            if (!object_keys.isArray()) {
+                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument", .{});
+            }
+
+            const Wrapper = struct {
+                promise: JSC.JSPromise.Strong,
+                store: *Store,
+                global: *JSC.JSGlobalObject,
+                req_body: bun.BabyList(u8),
+
+                pub fn resolve(result: S3.S3DeleteObjectsResult, opaque_self: *anyopaque) void {
+                    const self: *@This() = @ptrCast(@alignCast(opaque_self));
+                    defer self.deinit();
+                    const globalObject = self.global;
+
+                    switch (result) {
+                        .success => |_result| {
+                            self.promise.resolve(globalObject, _result.toJS(globalObject));
+                            _result.deinit();
+                        },
+
+                        inline .not_found, .failure => |err| {
+                            self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        },
+                    }
+                }
+
+                fn deinit(self: *@This()) void {
+                    self.req_body.deinitWithAllocator(self.store.allocator);
+                    self.store.deref();
+                    self.promise.deinit();
+                    self.destroy();
+                }
+
+                pub inline fn destroy(self: *@This()) void {
+                    bun.destroy(self);
+                }
+            };
+
+            const promise = JSC.JSPromise.Strong.init(globalThis);
+            const value = promise.value();
+            const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = if (proxy_url) |url| url.href else null;
+
+            const delete_objects_request_body = try S3.getS3DeleteObjectsOptionsFromJs(store.allocator, globalThis, object_keys, extra_options);
+
+            var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
+            defer aws_options.deinit();
+
+            store.ref();
+            S3.deleteObjects(
+                &aws_options.credentials,
+                delete_objects_request_body.slice(),
+                @ptrCast(&Wrapper.resolve),
+                bun.new(
+                    Wrapper,
+                    .{
+                        .promise = promise,
+                        .store = store, // store is needed in case of not found error
+                        .global = globalThis,
+                        .req_body = delete_objects_request_body,
+                    },
+                ),
+                proxy,
+            );
+
+            return value;
+        }
+
         pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3Store {
             credentials.ref();
             return .{

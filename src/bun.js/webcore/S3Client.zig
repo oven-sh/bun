@@ -254,14 +254,26 @@ pub const S3Client = struct {
         const arguments = callframe.arguments_old(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-            return globalThis.ERR_MISSING_ARGS("Expected a path to unlink", .{}).throw();
-        };
-        errdefer path.deinit();
-        const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
-        defer blob.detach();
-        return blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
+
+        if (try JSC.Node.PathLike.fromJS(globalThis, &args)) |path| {
+            errdefer path.deinit();
+            const options = args.nextEat();
+            var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+            defer blob.detach();
+            return blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
+        }
+
+        const objects = args.nextEat();
+
+        if (objects) |object_keys| {
+            const options = args.nextEat();
+            var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, .{ .string = bun.PathString.empty }, options, ptr.credentials, ptr.options, null, null);
+
+            defer blob.detach();
+            return blob.store.?.data.s3.deleteObjects(blob.store.?, globalThis, object_keys, options);
+        }
+
+        return globalThis.ERR_MISSING_ARGS("Expected a path(s) to unlink", .{}).throw();
     }
 
     pub fn deinit(this: *@This()) void {
@@ -294,6 +306,21 @@ pub const S3Client = struct {
     }
 
     pub fn staticUnlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.argumentsAsArray(2);
+        const object_keys = args[0];
+
+        if (object_keys.isArray()) {
+            const options = args[1];
+
+            // get credentials from env
+            const existing_credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
+
+            var blob = try S3File.constructS3FileWithS3Credentials(globalThis, .{ .string = bun.PathString.empty }, options, existing_credentials);
+
+            defer blob.detach();
+            return blob.store.?.data.s3.deleteObjects(blob.store.?, globalThis, object_keys, options);
+        }
+
         return S3File.unlink(globalThis, callframe);
     }
 

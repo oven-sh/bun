@@ -94,6 +94,8 @@ void SecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, S
 
 std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue typeValue, JSC::JSValue optionsValue)
 {
+    VM& vm = globalObject->vm();
+
     V::validateString(scope, globalObject, typeValue, "type"_s);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
@@ -107,14 +109,18 @@ std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* glob
 
     if (typeView == "hmac"_s) {
         int32_t length;
-        V::validateInteger(scope, globalObject, optionsValue, "options.length"_s, jsNumber(8), jsNumber(std::numeric_limits<int32_t>::max()), &length);
+        JSValue lengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "length"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        V::validateInteger(scope, globalObject, lengthValue, "options.length"_s, jsNumber(8), jsNumber(std::numeric_limits<int32_t>::max()), &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         return SecretKeyJobCtx(length);
     }
 
     if (typeView == "aes"_s) {
         int32_t length;
-        V::validateOneOf(scope, globalObject, "options.length"_s, optionsValue, { 128, 192, 256 }, &length);
+        JSValue lengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "length"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        V::validateOneOf(scope, globalObject, "options.length"_s, lengthValue, { 128, 192, 256 }, &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         return SecretKeyJobCtx(length);
     }
@@ -141,7 +147,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKey, (JSC::JSGlobalObject * lexicalGlobalObje
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
-    ASSERT(ctx.has_value() == !!scope.exception());
+    ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callbackValue);
@@ -158,7 +164,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     JSValue optionsValue = callFrame->argument(1);
 
     std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
-    ASSERT(ctx.has_value() == !!scope.exception());
+    ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     ctx->runTask(lexicalGlobalObject);

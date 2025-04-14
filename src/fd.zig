@@ -285,7 +285,7 @@ pub const FD = packed struct(backing_int) {
         if (Environment.isDebug) {
             if (result) |err| {
                 if (err.errno == @intFromEnum(E.BADF)) {
-                    bun.Output.debugWarn("close({s}) = EBADF. fd is an indication of a file descriptor UAF", .{fd_fmt});
+                    bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{fd_fmt});
                 } else {
                     log("close({s}) = {}", .{ fd_fmt, err });
                 }
@@ -453,8 +453,23 @@ pub const FD = packed struct(backing_int) {
                 try writer.print("{d}", .{fd_native});
                 if (Environment.isDebug and fd_native >= 3) print_with_path: {
                     var path_buf: bun.PathBuffer = undefined;
-                    const path = fd.getFdPath(&path_buf) catch
-                        break :print_with_path;
+                    // NOTE: Bun's `fd.getFdPath`, while supporting some
+                    // situations the standard library does not, hits EINVAL
+                    // instead of gracefully handling invalid file descriptors.
+                    // It is assumed that debug builds are ran on systems that
+                    // support the standard library functions (since they would
+                    // likely have run the Zig compiler, and it's not the end of
+                    // the world if this fails.
+                    const path = std.os.getFdPath(fd_native, &path_buf) catch |err| switch (err) {
+                        error.FileNotFound => {
+                            try writer.writeAll("[BADF]");
+                            break :print_with_path;
+                        },
+                        else => |e| {
+                            try writer.print("[unknown: error.{s}]", .{@errorName(e)});
+                            break :print_with_path;
+                        },
+                    };
                     try writer.print("[{s}]", .{path});
                 }
             },
@@ -579,6 +594,35 @@ pub const FD = packed struct(backing_int) {
             bun.assert(@as(FD, @bitCast(@as(u64, 512))).value.as_system == 512);
         }
     }
+};
+
+const Debug = struct {
+    next_file_id: i32 = 0,
+    var singleton: Debug = null;
+
+    pub const max_free_tracking = 2048 - 1;
+
+    fn nextId() i32 {
+        const id = singleton.next_file_id;
+        if (id == std.math.maxInt(i32)) {
+            @panic("File Descriptor tracking does not support more than 2,147,483,647 total file opens.");
+        }
+        singleton.next_file_id += 1;
+        return id;
+    }
+
+    pub const Open = struct {
+        id: i32,
+        allocated_at: StoredTrace,
+        len: usize,
+    };
+
+    pub const Close = struct {
+        allocated_at: StoredTrace,
+        freed_at: StoredTrace,
+    };
+
+    const StoredTrace = bun.crash_handler.StoredTrace;
 };
 
 fn isStdioHandle(id: std.os.windows.DWORD, handle: HANDLE) bool {

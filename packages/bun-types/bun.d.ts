@@ -168,11 +168,6 @@ declare module "bun" {
     composed?: boolean;
   }
 
-  interface EventListenerOptions {
-    /** Not directly used by Node.js. Added for API completeness. Default: `false`. */
-    capture?: boolean;
-  }
-
   interface AddEventListenerOptions extends EventListenerOptions {
     /** When `true`, the listener is automatically removed when it is first invoked. Default: `false`. */
     once?: boolean;
@@ -4255,6 +4250,17 @@ declare module "bun" {
      * Whether to compact the output
      */
     compact?: boolean;
+  }
+
+  type WebSocketOptionsProtocolsOrProtocol = { protocols?: string | string[] } | { protocol?: string };
+  type WebSocketOptionsTLS = { tls?: { rejectUnauthorized?: boolean } };
+  type WebSocketOptionsHeaders = { headers?: import("node:http").OutgoingHttpHeaders };
+
+  type WebSocketOptions = WebSocketOptionsProtocolOrProtocols & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+
+  class WebSocket extends EventTarget {
+    constructor(url: string | URL, protocols?: string | string[]);
+    constructor(url: string | URL, options?: WebSocketOptions);
   }
 
   /**

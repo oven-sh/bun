@@ -572,11 +572,12 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     current_timeout: u32 = 0,
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         disconnected: bool = true,
         is_closed: bool = false,
         is_client: bool = false,
         is_ssl: bool = false,
+        _: u4 = 0,
     };
     pub const Handlers = struct {
         ctx: *anyopaque,

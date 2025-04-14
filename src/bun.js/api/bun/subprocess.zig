@@ -46,12 +46,13 @@ stdout_maxbuf: ?*MaxBuf = null,
 stderr_maxbuf: ?*MaxBuf = null,
 exited_due_to_maxbuf: ?MaxBuf.Kind = null,
 
-pub const Flags = packed struct {
+pub const Flags = packed struct(u8) {
     is_sync: bool = false,
     killed: bool = false,
     has_stdin_destructor_called: bool = false,
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
+    _: u3 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;

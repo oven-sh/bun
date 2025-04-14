@@ -1125,9 +1125,10 @@ pub const HTTPThread = struct {
     const WriteMessage = struct {
         data: []const u8,
         async_http_id: u32,
-        flags: packed struct {
+        flags: packed struct(u8) {
             is_tls: bool,
             ended: bool,
+            _: u6 = 0,
         },
     };
     const ShutdownMessage = struct {
@@ -2032,13 +2033,14 @@ pub const InternalState = struct {
     response_stage: HTTPStage = .pending,
     certificate_info: ?CertificateInfo = null,
 
-    pub const InternalStateFlags = packed struct {
+    pub const InternalStateFlags = packed struct(u8) {
         allow_keepalive: bool = true,
         received_last_chunk: bool = false,
         did_set_content_encoding: bool = false,
         is_redirect_pending: bool = false,
         is_libdeflate_fast_path_disabled: bool = false,
         resend_request_body_on_redirect: bool = false,
+        _padding: u2 = 0,
     };
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
@@ -2221,7 +2223,7 @@ pub const HTTPVerboseLevel = enum {
     curl,
 };
 
-pub const Flags = packed struct {
+pub const Flags = packed struct(u16) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
     disable_decompression: bool = false,
@@ -2233,6 +2235,7 @@ pub const Flags = packed struct {
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
+    _padding: u5 = 0,
 };
 
 // TODO: reduce the size of this struct

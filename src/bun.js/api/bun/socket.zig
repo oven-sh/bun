@@ -131,7 +131,7 @@ const Handlers = struct {
     is_server: bool = false,
     promise: JSC.Strong = .empty,
 
-    protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
+    protection_count: bun.DebugOnly(u32) = if (Environment.isDebug) 0,
 
     pub fn markActive(this: *Handlers) void {
         Listener.log("markActive", .{});
@@ -275,7 +275,7 @@ const Handlers = struct {
             return;
         }
 
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
         }
@@ -291,7 +291,7 @@ const Handlers = struct {
     }
 
     pub fn protect(this: *Handlers) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             this.protection_count += 1;
         }
         this.onOpen.protect();
@@ -1398,7 +1398,7 @@ fn NewSocket(comptime ssl: bool) type {
                 total: usize = 0,
             },
         };
-        const Flags = packed struct {
+        const Flags = packed struct(u16) {
             is_active: bool = false,
             /// Prevent onClose from calling into JavaScript while we are finalizing
             finalizing: bool = false,
@@ -1409,6 +1409,7 @@ fn NewSocket(comptime ssl: bool) type {
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,
+            _: u7 = 0,
         };
 
         pub usingnamespace if (!ssl)

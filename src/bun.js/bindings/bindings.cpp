@@ -2559,6 +2559,7 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
 {
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
@@ -2590,19 +2591,13 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
     if (callData.type == JSC::CallData::Type::None)
         return JSC::JSValue::encode(JSC::JSValue());
 
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (returnedException.get()) {
-        scope.throwException(globalObject, returnedException.get());
-        return JSC::JSValue::encode({});
-    }
-
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
 }
 

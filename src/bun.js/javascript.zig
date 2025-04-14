@@ -1105,7 +1105,7 @@ pub const VirtualMachine = struct {
     fn ensureSourceCodePrinter(this: *VirtualMachine) void {
         if (source_code_printer == null) {
             const allocator = if (bun.heap_breakdown.enabled) bun.heap_breakdown.namedAllocator("SourceCode") else this.allocator;
-            const writer = try js_printer.BufferWriter.init(allocator);
+            const writer = js_printer.BufferWriter.init(allocator);
             source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
             source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
             source_code_printer.?.ctx.append_null_byte = false;

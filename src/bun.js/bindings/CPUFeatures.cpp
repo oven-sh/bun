@@ -20,10 +20,6 @@ enum class AArch64CPUFeature : uint8_t {
 #if CPU(X86_64)
 #include <stdint.h>
 
-uint8_t features = 0;
-// Use CPUID for robust CPU feature detection
-uint32_t eax, ebx, ecx, edx;
-
 namespace cpuid_bit {
 // Can be found on Intel ISA Reference for CPUID
 // Thisis copypasta from SIMDUTF, mostly.
@@ -91,6 +87,9 @@ static inline void cpuid(uint32_t* eax, uint32_t* ebx, uint32_t* ecx,
 
 static uint8_t x86_cpu_features()
 {
+    uint8_t features = 0;
+    // Use CPUID for robust CPU feature detection
+    uint32_t eax, ebx, ecx, edx;
 
     // Check for SSE4.2 and POPCNT (CPUID leaf 1)
     eax = 1;

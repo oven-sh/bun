@@ -4367,9 +4367,8 @@ declare module "bun" {
 
     /**
      * The type of binary data being received.
-     * Valid values are "blob" or "arraybuffer"
      */
-    binaryType: "blob" | "arraybuffer";
+    binaryType: "blob" | "arraybuffer" | "nodebuffer";
 
     /**
      * Event handler for open event

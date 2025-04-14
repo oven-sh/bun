@@ -322,7 +322,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = bun.FD.stderr();
+        const fd = bun.FD.fromUV(2);
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -354,7 +354,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = bun.FD.stdout();
+        const fd = bun.FD.fromUV(1);
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -384,7 +384,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = bun.FD.stdin();
+        const fd = bun.FD.fromUV(0);
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {

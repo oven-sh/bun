@@ -3,10 +3,9 @@ declare module "bun" {
     type NodeWorkerThreadsWorker = import("node:worker_threads").Worker;
     type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
 
-    type NodePerfHooksPerformance = import("node:perf_hooks").Performance;
     type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
       "Performance",
-      NodePerfHooksPerformance
+      import("perf_hooks").Performance
     >;
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
@@ -25,10 +24,6 @@ declare module "bun" {
     type LibEmptyOrNodeWritableStream<T> = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").WritableStream<T>;
-
-    type LibEmptyOrNodeTransformStream<I, O> = LibDomIsLoaded extends true
-      ? {}
-      : import("node:stream/web").TransformStream<I, O>;
 
     type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort;
   }
@@ -225,26 +220,24 @@ interface File extends Blob {
   readonly lastModified: number;
   readonly name: string;
 }
-
-declare var File: typeof globalThis extends { onabort: any }
-  ? typeof globalThis extends { File: infer T }
-    ? T
-    : never
-  : {
-      prototype: File;
-      /**
-       * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-       *
-       * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-       * @param `name` - The name of the file
-       * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-       */
-      new (
-        parts: Bun.BlobPart[],
-        name: string,
-        options?: BlobPropertyBag & { lastModified?: Date | number | undefined },
-      ): File;
-    };
+declare var File: Bun.__internal.UseLibDomIfAvailable<
+  "File",
+  {
+    prototype: File;
+    /**
+     * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     *
+     * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param `name` - The name of the file
+     * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     */
+    new (
+      parts: Bun.BlobPart[],
+      name: string,
+      options?: BlobPropertyBag & { lastModified?: Date | number | undefined },
+    ): File;
+  }
+>;
 
 /**
  * ShadowRealms are a distinct global environment, with its own global object
@@ -1361,7 +1354,7 @@ interface Blob {
   /**
    * Returns a readable stream of the blob's contents
    */
-  stream(): ReadableStream;
+  stream(): ReadableStream<Uint8Array>;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<

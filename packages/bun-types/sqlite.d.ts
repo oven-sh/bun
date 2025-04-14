@@ -6,7 +6,7 @@
  * ```ts
  * import { Database } from 'bun:sqlite';
  *
- * var db = new Database('app.db');
+ * const db = new Database('app.db');
  * db.query('SELECT * FROM users WHERE name = ?').all('John');
  * // => [{ id: 1, name: 'John' }]
  * ```
@@ -24,40 +24,44 @@
  * | `null` | `NULL` |
  */
 declare module "bun:sqlite" {
+  /**
+   * A SQLite3 database
+   *
+   * @example
+   * ```ts
+   * const db = new Database("mydb.sqlite");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open an in-memory database
+   *
+   * ```ts
+   * const db = new Database(":memory:");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open read-only
+   *
+   * ```ts
+   * const db = new Database("mydb.sqlite", {readonly: true});
+   * ```
+   *
+   * @category Database
+   */
   export class Database implements Disposable {
     /**
      * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
-     *
-     * @example
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open an in-memory database
-     *
-     * ```ts
-     * const db = new Database(":memory:");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open read-only
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite", {readonly: true});
-     * ```
      */
     constructor(
       filename?: string,
@@ -478,6 +482,79 @@ declare module "bun:sqlite" {
     static deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, isReadOnly?: boolean): Database;
 
     /**
+     * Load a serialized SQLite3 database. This version enables you to specify
+     * additional options such as `strict` to put the database into strict mode.
+     *
+     * Internally, this calls `sqlite3_deserialize`.
+     *
+     * @param serialized Data to load
+     * @returns `Database` instance
+     *
+     * @example
+     * ```ts
+     * test("supports serialize/deserialize", () => {
+     *     const db = Database.open(":memory:");
+     *     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+     *     db.exec('INSERT INTO test (name) VALUES ("Hello")');
+     *     db.exec('INSERT INTO test (name) VALUES ("World")');
+     *
+     *     const input = db.serialize();
+     *     const db2 = Database.deserialize(input, { strict: true });
+     *
+     *     const stmt = db2.prepare("SELECT * FROM test");
+     *     expect(JSON.stringify(stmt.get())).toBe(
+     *       JSON.stringify({
+     *         id: 1,
+     *         name: "Hello",
+     *       }),
+     *     );
+     *
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *       ]),
+     *     );
+     *     db2.exec("insert into test (name) values ($foo)", { foo: "baz" });
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *         {
+     *           id: 3,
+     *           name: "baz",
+     *         },
+     *       ]),
+     *     );
+     *
+     *     const db3 = Database.deserialize(input, { readonly: true, strict: true });
+     *     try {
+     *       db3.exec("insert into test (name) values ($foo)", { foo: "baz" });
+     *       throw new Error("Expected error");
+     *     } catch (e) {
+     *       expect(e.message).toBe("attempt to write a readonly database");
+     *     }
+     * });
+     * ```
+     */
+    static deserialize(
+      serialized: NodeJS.TypedArray | ArrayBufferLike,
+      options?: { readonly?: boolean; strict?: boolean; safeIntegers?: boolean },
+    ): Database;
+
+    /**
      * See `sqlite3_file_control` for more information.
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
@@ -493,6 +570,8 @@ declare module "bun:sqlite" {
    * A prepared statement.
    *
    * This is returned by {@link Database.prepare} and {@link Database.query}.
+   *
+   * @category Database
    *
    * @example
    * ```ts

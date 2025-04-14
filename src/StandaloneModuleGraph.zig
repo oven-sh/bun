@@ -254,7 +254,7 @@ pub const StandaloneModuleGraph = struct {
                     stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none };
                     stored.is_standalone_module_graph = true;
 
-                    const parsed = stored.new(); // allocate this on the heap
+                    const parsed = bun.new(SourceMap.ParsedSourceMap, stored);
                     parsed.ref(); // never free
                     this.* = .{ .parsed = parsed };
                     return parsed;
@@ -326,7 +326,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format) ![]u8 {
-        var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
+        var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
         var entry_point_id: ?usize = null;
@@ -466,11 +466,7 @@ pub const StandaloneModuleGraph = struct {
         return output_bytes;
     }
 
-    const page_size = if (Environment.isLinux and Environment.isAarch64)
-        // some linux distros do 64 KB pages on aarch64
-        64 * 1024
-    else
-        std.mem.page_size;
+    const page_size = std.heap.page_size_max;
 
     pub const InjectOptions = struct {
         windows_hide_console: bool = false,

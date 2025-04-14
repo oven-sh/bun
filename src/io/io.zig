@@ -306,7 +306,8 @@ pub const Loop = struct {
             timespec.sec = @intCast(sec);
             timespec.nsec = @intCast(nsec);
         } else {
-            std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC, timespec) catch {};
+            const updated = std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC) catch return;
+            timespec.* = updated;
         }
     }
 };
@@ -693,3 +694,4 @@ pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
 pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
 pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
 pub const FileType = @import("./pipes.zig").FileType;
+pub const MaxBuf = @import("./MaxBuf.zig");

@@ -508,7 +508,7 @@ pub fn loadRoutes(
     this.loaded_routes = true;
 }
 
-pub const TinyPtr = packed struct {
+pub const TinyPtr = packed struct(u32) {
     offset: u16 = 0,
     len: u16 = 0,
 
@@ -1027,7 +1027,6 @@ pub const Test = struct {
     }
 
     pub fn make(comptime testName: string, data: anytype) !Router {
-        std.testing.refAllDecls(@import("./bun.js/bindings/exports.zig"));
         try makeTest(testName, data);
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);

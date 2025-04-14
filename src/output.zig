@@ -702,7 +702,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = comptime brk: {
+    const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
             else => tag,
@@ -723,7 +723,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             pub inline fn isVisible() bool {
                 return false;
             }
-            pub inline fn log(comptime _: string, _: anytype) void {}
+            pub fn log(comptime _: string, _: anytype) callconv(bun.callconv_inline) void {}
         };
     }
 
@@ -870,7 +870,7 @@ pub const color_map = ComptimeStringMap(string, .{
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     if (comptime bun.fast_debug_build_mode)
-        return fmt;
+        return fmt ++ "\x00";
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
@@ -1173,10 +1173,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;

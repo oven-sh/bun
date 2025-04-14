@@ -9,13 +9,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
 
 const validators = @import("./validators.zig");
-const validateArray = validators.validateArray;
-const validateBoolean = validators.validateBoolean;
-const validateBooleanArray = validators.validateBooleanArray;
-const validateObject = validators.validateObject;
-const validateString = validators.validateString;
-const validateStringArray = validators.validateStringArray;
-const validateStringEnum = validators.validateStringEnum;
 
 const utils = @import("./parse_args_utils.zig");
 const OptionValueType = utils.OptionValueType;
@@ -298,12 +291,13 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
 }
 
 fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
-    try validateObject(globalThis, options_obj, "options", .{}, .{});
+    try validators.validateObject(globalThis, options_obj, "options", .{}, .{});
 
-    var iter = try JSC.JSPropertyIterator(.{
-        .skip_empty_name = false,
-        .include_value = true,
-    }).init(globalThis, options_obj);
+    var iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(
+        globalThis,
+        // SAFETY: validateObject ensures it's an object
+        options_obj.getObject().?,
+    );
     defer iter.deinit();
 
     while (try iter.next()) |long_option| {
@@ -312,14 +306,14 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
         };
 
         const obj: JSValue = iter.value;
-        try validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
+        try validators.validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
 
         // type field is required
         const option_type = obj.getOwn(globalThis, "type") orelse JSValue.undefined;
-        option.type = try validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
+        option.type = try validators.validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
 
         if (obj.getOwn(globalThis, "short")) |short_option| {
-            try validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
+            try validators.validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
             var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
@@ -330,7 +324,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 
         if (obj.getOwn(globalThis, "multiple")) |multiple_value| {
             if (!multiple_value.isUndefined()) {
-                option.multiple = try validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
+                option.multiple = try validators.validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
             }
         }
 
@@ -339,16 +333,16 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
                 switch (option.type) {
                     .string => {
                         if (option.multiple) {
-                            _ = try validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         } else {
-                            try validateString(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            try validators.validateString(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         }
                     },
                     .boolean => {
                         if (option.multiple) {
-                            _ = try validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         } else {
-                            _ = try validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         }
                     },
                 }
@@ -662,14 +656,14 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
 
     const config = if (config_obj.isUndefinedOrNull()) null else config_obj;
     if (config) |c| {
-        try validateObject(globalThis, c, "config", .{}, .{});
+        try validators.validateObject(globalThis, c, "config", .{}, .{});
     }
 
     // Phase 0.A: Get and validate type of input args
     var args: ArgsSlice = undefined;
     const config_args_or_null: ?JSValue = if (config) |c| c.getOwn(globalThis, "args") else null;
     if (config_args_or_null) |config_args| {
-        try validateArray(globalThis, config_args, "args", .{}, null);
+        try validators.validateArray(globalThis, config_args, "args", .{}, null);
         args = .{
             .array = config_args,
             .start = 0,
@@ -686,14 +680,14 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
     const config_return_tokens: JSValue = (if (config) |c| c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
     const config_options_obj: ?JSValue = if (config) |c| c.getOwn(globalThis, "options") else null;
 
-    const strict = try validateBoolean(globalThis, config_strict, "strict", .{});
+    const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
     var allow_positionals = !strict;
     if (config_allow_positionals) |config_allow_positionals_value| {
-        allow_positionals = try validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
+        allow_positionals = try validators.validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
     }
 
-    const return_tokens = try validateBoolean(globalThis, config_return_tokens, "tokens", .{});
+    const return_tokens = try validators.validateBoolean(globalThis, config_return_tokens, "tokens", .{});
 
     // Phase 0.C: Parse the options definitions
 

@@ -8,7 +8,6 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
@@ -25,7 +24,6 @@ const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -41,16 +39,13 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("./base.zig").JSError;
-const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
-const NewClass = @import("./base.zig").NewClass;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const ZigException = bun.JSC.ZigException;
 const ZigStackTrace = bun.JSC.ZigStackTrace;
@@ -59,7 +54,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
-const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
@@ -74,17 +68,17 @@ const VirtualMachine = bun.JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
 const Async = bun.Async;
 const String = bun.String;
+const ModuleType = options.ModuleType;
 
 const debug = Output.scoped(.ModuleLoader, true);
 const panic = std.debug.panic;
 
-inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
+inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
         .allocator = null,
         .source_code = bun.String.empty,
         .specifier = specifier,
         .source_url = bun.String.static(@tagName(name)),
-        .hash = 0,
         .tag = name,
         .source_code_needs_deref = false,
     };
@@ -244,10 +238,26 @@ pub const RuntimeTranspilerStore = struct {
         path: Fs.Path,
         referrer: bun.String,
         loader: bun.options.Loader,
+        package_json: ?*const PackageJSON,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
+
+        // NOTE: DirInfo should already be cached since module loading happens
+        // after module resolution, so this should be cheap
+        var resolved_source = ResolvedSource{};
+        if (package_json) |pkg| {
+            switch (pkg.module_type) {
+                .cjs => {
+                    resolved_source.tag = .package_json_type_commonjs;
+                    resolved_source.is_commonjs_module = true;
+                },
+                .esm => resolved_source.tag = .package_json_type_module,
+                .unknown => {},
+            }
+        }
+
         job.* = TranspilerJob{
             .non_threadsafe_input_specifier = input_specifier,
             .path = owned_path,
@@ -261,6 +271,7 @@ pub const RuntimeTranspilerStore = struct {
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
             },
+            .resolved_source = resolved_source,
         };
         if (comptime Environment.allow_assert)
             debug("transpile({s}, {s}, async)", .{ path.text, @tagName(job.loader) });
@@ -344,24 +355,6 @@ pub const RuntimeTranspilerStore = struct {
                 resolved_source.source_url = out.createIfDifferent(this.path.text);
                 resolved_source.specifier = out.dupeRef();
                 break :brk out;
-            };
-
-            resolved_source.tag = brk: {
-                if (resolved_source.is_commonjs_module) {
-                    const actual_package_json: *PackageJSON = brk2: {
-                        // this should already be cached virtually always so it's fine to do this
-                        const dir_info = (vm.transpiler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
-                            break :brk .javascript;
-
-                        break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
-                    } orelse break :brk .javascript;
-
-                    if (actual_package_json.module_type == .esm) {
-                        break :brk ResolvedSource.Tag.package_json_type_module;
-                    }
-                }
-
-                break :brk ResolvedSource.Tag.javascript;
             };
 
             const parse_error = this.parse_error;
@@ -462,6 +455,12 @@ pub const RuntimeTranspilerStore = struct {
                 vm.main_hash == hash and
                 strings.eqlLong(vm.main, path.text, false);
 
+            const module_type: ModuleType = switch (this.resolved_source.tag) {
+                .package_json_type_commonjs => .cjs,
+                .package_json_type_module => .esm,
+                else => .unknown,
+            };
+
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -483,6 +482,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .module_type = module_type,
                 .allow_bytecode_cache = true,
             };
 
@@ -568,8 +568,8 @@ pub const RuntimeTranspilerStore = struct {
                             break :brk result;
                         },
                     },
-                    .hash = 0,
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .tag = this.resolved_source.tag,
                 };
 
                 return;
@@ -581,10 +581,10 @@ pub const RuntimeTranspilerStore = struct {
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .already_bundled = true,
-                    .hash = 0,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                    .tag = this.resolved_source.tag,
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -593,7 +593,7 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, transpiler.options.target)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;
@@ -628,7 +628,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (source_code_printer == null) {
-                const writer = try js_printer.BufferWriter.init(bun.default_allocator);
+                const writer = js_printer.BufferWriter.init(bun.default_allocator);
                 source_code_printer = bun.default_allocator.create(js_printer.BufferPrinter) catch unreachable;
                 source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
                 source_code_printer.?.ctx.append_null_byte = false;
@@ -682,7 +682,7 @@ pub const RuntimeTranspilerStore = struct {
                 .allocator = null,
                 .source_code = source_code,
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-                .hash = 0,
+                .tag = this.resolved_source.tag,
             };
         }
     };
@@ -1444,8 +1444,6 @@ pub const ModuleLoader = struct {
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-
-                .hash = 0,
             };
         }
 
@@ -1488,6 +1486,7 @@ pub const ModuleLoader = struct {
         input_specifier: String,
         path: Fs.Path,
         loader: options.Loader,
+        module_type: options.ModuleType,
         log: *logger.Log,
         virtual_source: ?*const logger.Source,
         promise_ptr: ?*?*JSC.JSInternalPromise,
@@ -1505,7 +1504,6 @@ pub const ModuleLoader = struct {
                     .source_code = bun.String.empty,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .hash = 0,
                 };
             }
         }
@@ -1609,6 +1607,12 @@ pub const ModuleLoader = struct {
                 //
                 var should_close_input_file_fd = fd == null;
 
+                // We don't want cjs wrappers around non-js files
+                const module_type_only_for_wrappables = switch (loader) {
+                    .js, .jsx, .ts, .tsx => module_type,
+                    else => .unknown,
+                };
+
                 var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
                 var parse_options = Transpiler.ParseOptions{
                     .allocator = allocator,
@@ -1624,6 +1628,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
+                    .module_type = module_type_only_for_wrappables,
                     .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,
@@ -1690,6 +1695,7 @@ pub const ModuleLoader = struct {
                         input_specifier,
                         path,
                         .wasm,
+                        .unknown, // cjs/esm don't make sense for wasm
                         log,
                         &parse_result.source,
                         promise_ptr,
@@ -1729,8 +1735,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createUTF8(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-
-                        .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
                     };
                 }
@@ -1745,7 +1749,6 @@ pub const ModuleLoader = struct {
                         },
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                     };
                 }
 
@@ -1755,7 +1758,6 @@ pub const ModuleLoader = struct {
                             .allocator = null,
                             .specifier = input_specifier,
                             .source_url = input_specifier.createIfDifferent(path.text),
-                            .hash = 0,
                             .jsvalue_for_export = JSValue.createEmptyObject(jsc_vm.global, 0),
                             .tag = .exports_object,
                         };
@@ -1765,7 +1767,6 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                         .tag = .exports_object,
                     };
@@ -1779,9 +1780,8 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
-                        .hash = 0,
                         .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
-                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .bytecode_cache_size = bytecode_slice.len,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
@@ -1798,7 +1798,6 @@ pub const ModuleLoader = struct {
                             .specifier = input_specifier,
                             .source_url = input_specifier.createIfDifferent(path.text),
                             .is_commonjs_module = true,
-                            .hash = 0,
                             .tag = .javascript,
                         };
                     }
@@ -1827,7 +1826,6 @@ pub const ModuleLoader = struct {
                         },
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .is_commonjs_module = entry.metadata.module_type == .cjs,
                         .tag = brk: {
                             if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
@@ -1929,22 +1927,18 @@ pub const ModuleLoader = struct {
                 }
 
                 // Pass along package.json type "module" if set.
-                const tag = brk: {
-                    if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
-                        const actual_package_json: *PackageJSON = package_json orelse brk2: {
-                            // this should already be cached virtually always so it's fine to do this
-                            const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
-                                break :brk .javascript;
+                const tag: ResolvedSource.Tag = switch (loader) {
+                    .json, .jsonc => .json_for_object_loader,
+                    .js, .jsx, .ts, .tsx => brk: {
+                        const module_type_ = if (package_json) |pkg| pkg.module_type else module_type;
 
-                            break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
-                        } orelse break :brk .javascript;
-
-                        if (actual_package_json.module_type == .esm) {
-                            break :brk ResolvedSource.Tag.package_json_type_module;
-                        }
-                    }
-
-                    break :brk ResolvedSource.Tag.javascript;
+                        break :brk switch (module_type_) {
+                            .esm => .package_json_type_module,
+                            .cjs => .package_json_type_commonjs,
+                            else => .javascript,
+                        };
+                    },
+                    else => .javascript,
                 };
 
                 return .{
@@ -1962,7 +1956,6 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-                    .hash = 0,
                     .tag = tag,
                 };
             },
@@ -2005,7 +1998,6 @@ pub const ModuleLoader = struct {
             //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
             //         .specifier = ZigString.init(specifier),
             //         .source_url = input_specifier.createIfDifferent(path.text),
-            //         .hash = 0,
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
             // },
@@ -2031,7 +2023,6 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
-                        .hash = 0,
                     };
                 }
 
@@ -2042,6 +2033,7 @@ pub const ModuleLoader = struct {
                     input_specifier,
                     path,
                     .file,
+                    .unknown, // cjs/esm don't make sense for wasm
                     log,
                     virtual_source,
                     promise_ptr,
@@ -2090,7 +2082,6 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,
-                    .hash = 0,
                 };
             },
 
@@ -2101,7 +2092,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.empty,
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .tag = .esm,
                     };
                 }
@@ -2116,7 +2106,6 @@ pub const ModuleLoader = struct {
                     .jsvalue_for_export = html_bundle.toJS(globalObject.?),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .hash = 0,
                     .tag = .export_default_object,
                 };
             },
@@ -2128,7 +2117,6 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.empty,
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .hash = 0,
                         .tag = .esm,
                     };
                 }
@@ -2200,11 +2188,32 @@ pub const ModuleLoader = struct {
                     .jsvalue_for_export = value,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .hash = 0,
                     .tag = .export_default_object,
                 };
             },
         }
+    }
+
+    pub export fn Bun__resolveAndFetchBuiltinModule(
+        jsc_vm: *VirtualMachine,
+        specifier: *bun.String,
+        ret: *JSC.ErrorableResolvedSource,
+    ) bool {
+        JSC.markBinding(@src());
+        var log = logger.Log.init(jsc_vm.transpiler.allocator);
+        defer log.deinit();
+
+        const alias = HardcodedModule.Alias.bun_aliases.getWithEql(specifier.*, bun.String.eqlComptime) orelse
+            return false;
+        const hardcoded = HardcodedModule.map.get(alias.path) orelse {
+            bun.debugAssert(false);
+            return false;
+        };
+        ret.* = .ok(
+            getHardcodedModule(jsc_vm, specifier.*, hardcoded) orelse
+                return false,
+        );
+        return true;
     }
 
     pub export fn Bun__fetchBuiltinModule(
@@ -2236,6 +2245,8 @@ pub const ModuleLoader = struct {
         }
     }
 
+    const always_sync_modules = .{"reflect-metadata"};
+
     pub export fn Bun__transpileFile(
         jsc_vm: *VirtualMachine,
         globalObject: *JSGlobalObject,
@@ -2244,6 +2255,8 @@ pub const ModuleLoader = struct {
         type_attribute: ?*const bun.String,
         ret: *JSC.ErrorableResolvedSource,
         allow_promise: bool,
+        is_commonjs_require: bool,
+        force_loader_type: bun.options.Loader.Optional,
     ) ?*anyopaque {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.transpiler.allocator);
@@ -2261,11 +2274,70 @@ pub const ModuleLoader = struct {
 
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
-        const lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
+        var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
             ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
             return null;
         };
         defer if (blob_to_deinit) |*blob| blob.deinit();
+
+        if (force_loader_type.unwrap()) |loader_type| {
+            @branchHint(.unlikely);
+            bun.assert(!is_commonjs_require);
+            lr.loader = loader_type;
+        } else if (is_commonjs_require and jsc_vm.has_mutated_built_in_extensions > 0) {
+            @branchHint(.unlikely);
+            if (node_module_module.findLongestRegisteredExtension(jsc_vm, _specifier.slice())) |entry| {
+                switch (entry) {
+                    .loader => |loader| {
+                        lr.loader = loader;
+                    },
+                    .custom => |index| {
+                        ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
+                            .allocator = null,
+                            .source_code = bun.String.empty,
+                            .specifier = .empty,
+                            .source_url = .empty,
+                            .cjs_custom_extension_index = index,
+                            .tag = .common_js_custom_extension,
+                        });
+                        return null;
+                    },
+                }
+            }
+        }
+
+        const module_type: options.ModuleType = brk: {
+            const ext = lr.path.name.ext;
+            // regular expression /.[cm][jt]s$/
+            if (ext.len == ".cjs".len) {
+                if (strings.eqlComptimeIgnoreLen(ext, ".cjs"))
+                    break :brk .cjs;
+                if (strings.eqlComptimeIgnoreLen(ext, ".mjs"))
+                    break :brk .esm;
+                if (strings.eqlComptimeIgnoreLen(ext, ".cts"))
+                    break :brk .cjs;
+                if (strings.eqlComptimeIgnoreLen(ext, ".mts"))
+                    break :brk .esm;
+            }
+            // regular expression /.[jt]s$/
+            if (ext.len == ".ts".len) {
+                if (strings.eqlComptimeIgnoreLen(ext, ".js") or
+                    strings.eqlComptimeIgnoreLen(ext, ".ts"))
+                {
+                    // Use the package.json module type if it exists
+                    break :brk if (lr.package_json) |pkg|
+                        pkg.module_type
+                    else
+                        .unknown;
+                }
+            }
+            // For JSX TSX and other extensions, let the file contents.
+            break :brk .unknown;
+        };
+        const pkg_name: ?[]const u8 = if (lr.package_json) |pkg|
+            if (pkg.name.len > 0) pkg.name else null
+        else
+            null;
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2273,14 +2345,48 @@ pub const ModuleLoader = struct {
         //   Import Statements (import 'foo')
         //   Import Expressions (import('foo'))
         //
-        if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            const concurrent_loader = lr.loader orelse .file;
-            if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
-                // Plugins make this complicated,
-                // TODO: allow running concurrently when no onLoad handlers match a plugin.
-                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
-            {
-                if (!lr.is_main) {
+        transpile_async: {
+            if (comptime bun.FeatureFlags.concurrent_transpiler) {
+                const concurrent_loader = lr.loader orelse .file;
+                if (blob_to_deinit == null and
+                    allow_promise and
+                    (jsc_vm.has_loaded or jsc_vm.is_in_preload) and
+                    concurrent_loader.isJavaScriptLike() and
+                    !lr.is_main and
+                    // Plugins make this complicated,
+                    // TODO: allow running concurrently when no onLoad handlers match a plugin.
+                    jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
+                {
+                    // This absolutely disgusting hack is a workaround in cases
+                    // where an async import is made to a CJS file with side
+                    // effects that other modules depend on, without incurring
+                    // the cost of transpiling/loading CJS modules synchronously.
+                    //
+                    // The cause of this comes from the fact that we immediately
+                    // and synchronously evaluate CJS modules after they've been
+                    // transpiled, but transpiling (which, for async imports,
+                    // happens in a thread pool), can resolve in whatever order.
+                    // This messes up module execution order.
+                    //
+                    // This is only _really_ important for
+                    // import("some-polyfill") cases, the most impactful of
+                    // which is `reflect-metadata`. People could also use
+                    // require or just preload their polyfills, but they aren't
+                    // doing this. This hack makes important polyfills work without
+                    // incurring the cost of transpiling/loading CJS modules
+                    // synchronously. The proper fix is to evaluate CJS modules
+                    // at the same time as ES modules. This is blocked by the
+                    // fact that we need exports from CJS modules and our parser
+                    // doesn't record them.
+                    if (pkg_name) |pkg_name_| {
+                        inline for (always_sync_modules) |always_sync_specifier| {
+                            if (bun.strings.eqlComptime(pkg_name_, always_sync_specifier)) {
+                                break :transpile_async;
+                            }
+                        }
+                    }
+
+                    // TODO: check if the resolved source must be transpiled synchronously
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,
                         globalObject,
@@ -2288,24 +2394,54 @@ pub const ModuleLoader = struct {
                         lr.path,
                         referrer.dupeRef(),
                         concurrent_loader,
+                        lr.package_json,
                     );
                 }
             }
         }
 
-        const synchronous_loader = lr.loader orelse loader: {
+        const synchronous_loader: options.Loader = lr.loader orelse loader: {
             if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
                 // Extensionless files in this context are treated as the JS loader
                 if (lr.path.name.ext.len == 0) {
-                    break :loader options.Loader.tsx;
+                    break :loader .tsx;
                 }
 
                 // Unknown extensions are to be treated as file loader
-                break :loader options.Loader.file;
+                if (is_commonjs_require) {
+                    if (jsc_vm.commonjs_custom_extensions.entries.len > 0 and
+                        jsc_vm.has_mutated_built_in_extensions == 0)
+                    {
+                        @branchHint(.unlikely);
+                        if (node_module_module.findLongestRegisteredExtension(jsc_vm, lr.path.text)) |entry| {
+                            switch (entry) {
+                                .loader => |loader| break :loader loader,
+                                .custom => |index| {
+                                    ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
+                                        .allocator = null,
+                                        .source_code = bun.String.empty,
+                                        .specifier = .empty,
+                                        .source_url = .empty,
+                                        .cjs_custom_extension_index = index,
+                                        .tag = .common_js_custom_extension,
+                                    });
+                                    return null;
+                                },
+                            }
+                        }
+                    }
+
+                    // For Node.js compatibility, requiring a file with an
+                    // unknown extension will be treated as a JS file
+                    break :loader .ts;
+                }
+
+                // For ESM, Bun treats unknown extensions as file loader
+                break :loader .file;
             } else {
                 // Unless it's potentially the main module
                 // This is important so that "bun run ./foo-i-have-no-extension" works
-                break :loader options.Loader.tsx;
+                break :loader .tsx;
             }
         };
 
@@ -2323,6 +2459,7 @@ pub const ModuleLoader = struct {
                 specifier_ptr.*,
                 lr.path,
                 synchronous_loader,
+                module_type,
                 &log,
                 lr.virtual_source,
                 if (allow_promise) &promise else null,
@@ -2368,128 +2505,48 @@ pub const ModuleLoader = struct {
             return JSValue.zero;
     }
 
-    pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
-        if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
-            return ResolvedSource{
+    fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
+        Analytics.Features.builtin_modules.insert(hardcoded);
+        return switch (hardcoded) {
+            .@"bun:main" => .{
+                .allocator = null,
+                .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
+                .specifier = specifier,
+                .source_url = specifier,
+                .tag = .esm,
+                .source_code_needs_deref = true,
+            },
+            .@"bun:internal-for-testing" => {
+                if (!Environment.isDebug) {
+                    if (!is_allowed_to_use_internal_testing_apis)
+                        return null;
+                }
+                return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
+            },
+            .@"bun:wrap" => .{
                 .allocator = null,
                 .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
-                .hash = Runtime.Runtime.versionHash(),
-            };
-        } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
-            Analytics.Features.builtin_modules.insert(hardcoded);
+            },
+            inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier),
+        };
+    }
 
-            switch (hardcoded) {
-                .@"bun:main" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
-                        .specifier = specifier,
-                        .source_url = specifier,
-                        .hash = 0,
-                        .tag = .esm,
-                        .source_code_needs_deref = true,
-                    };
-                },
+    pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
+        if (HardcodedModule.map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
+            return getHardcodedModule(jsc_vm, specifier, hardcoded);
+        }
 
-                // Native modules
-                .bun => return jsSyntheticModule(.bun, specifier),
-                .@"node:buffer" => return jsSyntheticModule(.@"node:buffer", specifier),
-                .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder", specifier),
-                .@"node:module" => return jsSyntheticModule(.@"node:module", specifier),
-                .@"node:process" => return jsSyntheticModule(.@"node:process", specifier),
-                .@"node:tty" => return jsSyntheticModule(.@"node:tty", specifier),
-                .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
-                .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
-                .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
-                .@"bun:test" => return jsSyntheticModule(.@"bun:test", specifier),
-
-                .@"bun:internal-for-testing" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-
-                    return jsSyntheticModule(.InternalForTesting, specifier);
-                },
-
-                // These are defined in src/js/*
-                .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
-
-                .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
-                .@"detect-libc" => return jsSyntheticModule(if (!Environment.isLinux) .@"detect-libc" else if (!Environment.isMusl) .@"detect-libc/linux" else .@"detect-libc/musl", specifier),
-                .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
-                .@"node:assert/strict" => return jsSyntheticModule(.@"node:assert/strict", specifier),
-                .@"node:async_hooks" => return jsSyntheticModule(.@"node:async_hooks", specifier),
-                .@"node:child_process" => return jsSyntheticModule(.@"node:child_process", specifier),
-                .@"node:cluster" => return jsSyntheticModule(.@"node:cluster", specifier),
-                .@"node:console" => return jsSyntheticModule(.@"node:console", specifier),
-                .@"node:crypto" => return jsSyntheticModule(.@"node:crypto", specifier),
-                .@"node:dgram" => return jsSyntheticModule(.@"node:dgram", specifier),
-                .@"node:diagnostics_channel" => return jsSyntheticModule(.@"node:diagnostics_channel", specifier),
-                .@"node:dns" => return jsSyntheticModule(.@"node:dns", specifier),
-                .@"node:dns/promises" => return jsSyntheticModule(.@"node:dns/promises", specifier),
-                .@"node:domain" => return jsSyntheticModule(.@"node:domain", specifier),
-                .@"node:events" => return jsSyntheticModule(.@"node:events", specifier),
-                .@"node:fs" => return jsSyntheticModule(.@"node:fs", specifier),
-                .@"node:fs/promises" => return jsSyntheticModule(.@"node:fs/promises", specifier),
-                .@"node:http" => return jsSyntheticModule(.@"node:http", specifier),
-                .@"node:http2" => return jsSyntheticModule(.@"node:http2", specifier),
-                .@"node:https" => return jsSyntheticModule(.@"node:https", specifier),
-                .@"node:inspector" => return jsSyntheticModule(.@"node:inspector", specifier),
-                .@"node:net" => return jsSyntheticModule(.@"node:net", specifier),
-                .@"node:os" => return jsSyntheticModule(.@"node:os", specifier),
-                .@"node:path" => return jsSyntheticModule(.@"node:path", specifier),
-                .@"node:path/posix" => return jsSyntheticModule(.@"node:path/posix", specifier),
-                .@"node:path/win32" => return jsSyntheticModule(.@"node:path/win32", specifier),
-                .@"node:punycode" => return jsSyntheticModule(.@"node:punycode", specifier),
-                .@"node:perf_hooks" => return jsSyntheticModule(.@"node:perf_hooks", specifier),
-                .@"node:querystring" => return jsSyntheticModule(.@"node:querystring", specifier),
-                .@"node:readline" => return jsSyntheticModule(.@"node:readline", specifier),
-                .@"node:readline/promises" => return jsSyntheticModule(.@"node:readline/promises", specifier),
-                .@"node:repl" => return jsSyntheticModule(.@"node:repl", specifier),
-                .@"node:stream" => return jsSyntheticModule(.@"node:stream", specifier),
-                .@"node:stream/consumers" => return jsSyntheticModule(.@"node:stream/consumers", specifier),
-                .@"node:stream/promises" => return jsSyntheticModule(.@"node:stream/promises", specifier),
-                .@"node:stream/web" => return jsSyntheticModule(.@"node:stream/web", specifier),
-                .@"node:test" => return jsSyntheticModule(.@"node:test", specifier),
-                .@"node:timers" => return jsSyntheticModule(.@"node:timers", specifier),
-                .@"node:timers/promises" => return jsSyntheticModule(.@"node:timers/promises", specifier),
-                .@"node:tls" => return jsSyntheticModule(.@"node:tls", specifier),
-                .@"node:trace_events" => return jsSyntheticModule(.@"node:trace_events", specifier),
-                .@"node:url" => return jsSyntheticModule(.@"node:url", specifier),
-                .@"node:util" => return jsSyntheticModule(.@"node:util", specifier),
-                .@"node:v8" => return jsSyntheticModule(.@"node:v8", specifier),
-                .@"node:vm" => return jsSyntheticModule(.@"node:vm", specifier),
-                .@"node:wasi" => return jsSyntheticModule(.@"node:wasi", specifier),
-                .@"node:worker_threads" => return jsSyntheticModule(.@"node:worker_threads", specifier),
-                .@"node:zlib" => return jsSyntheticModule(.@"node:zlib", specifier),
-                .@"isomorphic-fetch" => return jsSyntheticModule(.@"isomorphic-fetch", specifier),
-                .@"node-fetch" => return jsSyntheticModule(.@"node-fetch", specifier),
-                .@"@vercel/fetch" => return jsSyntheticModule(.vercel_fetch, specifier),
-                .@"utf-8-validate" => return jsSyntheticModule(.@"utf-8-validate", specifier),
-                .@"abort-controller" => return jsSyntheticModule(.@"abort-controller", specifier),
-                .undici => return jsSyntheticModule(.undici, specifier),
-                .ws => return jsSyntheticModule(.ws, specifier),
-                .@"node:_stream_duplex" => return jsSyntheticModule(.@"node:_stream_duplex", specifier),
-                .@"node:_stream_passthrough" => return jsSyntheticModule(.@"node:_stream_passthrough", specifier),
-                .@"node:_stream_readable" => return jsSyntheticModule(.@"node:_stream_readable", specifier),
-                .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
-                .@"node:_stream_wrap" => return jsSyntheticModule(.@"node:_stream_wrap", specifier),
-                .@"node:_stream_writable" => return jsSyntheticModule(.@"node:_stream_writable", specifier),
-                .@"node:_tls_common" => return jsSyntheticModule(.@"node:_tls_common", specifier),
-            }
-        } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
+        if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
             defer spec.deinit();
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
-                return ResolvedSource{
+                return .{
                     .allocator = null,
                     .source_code = bun.String.createUTF8(entry.source.contents),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
-                    .hash = 0,
                 };
             }
         } else if (jsc_vm.standalone_module_graph) |graph| {
@@ -2506,22 +2563,20 @@ pub const ModuleLoader = struct {
                         \\export const __esModule = true;
                         \\export default db;
                     ;
-                    return ResolvedSource{
+                    return .{
                         .allocator = null,
                         .source_code = bun.String.static(code),
                         .specifier = specifier,
                         .source_url = specifier.dupeRef(),
-                        .hash = 0,
                         .source_code_needs_deref = false,
                     };
                 }
 
-                return ResolvedSource{
+                return .{
                     .allocator = null,
                     .source_code = file.toWTFString(),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
-                    .hash = 0,
                     .source_code_needs_deref = false,
                     .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                     .bytecode_cache_size = file.bytecode.len,
@@ -2579,6 +2634,7 @@ pub const ModuleLoader = struct {
                 specifier_ptr.*,
                 path,
                 loader,
+                .unknown,
                 &log,
                 &virtual_source,
                 null,
@@ -2625,8 +2681,8 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
+    @"bun:wrap",
     @"bun:sqlite",
-    @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
     @"node:async_hooks",
@@ -2676,9 +2732,8 @@ pub const HardcodedModule = enum {
     ws,
     @"isomorphic-fetch",
     @"node-fetch",
-    @"@vercel/fetch",
+    vercel_fetch,
     @"utf-8-validate",
-    // These are all not implemented yet, but are stubbed
     @"node:v8",
     @"node:trace_events",
     @"node:repl",
@@ -2687,9 +2742,6 @@ pub const HardcodedModule = enum {
     @"node:diagnostics_channel",
     @"node:dgram",
     @"node:cluster",
-    // these are gated behind '--expose-internals'
-    @"bun:internal-for-testing",
-    //
     @"node:_stream_duplex",
     @"node:_stream_passthrough",
     @"node:_stream_readable",
@@ -2697,253 +2749,269 @@ pub const HardcodedModule = enum {
     @"node:_stream_wrap",
     @"node:_stream_writable",
     @"node:_tls_common",
+    /// This is gated behind '--expose-internals'
+    @"bun:internal-for-testing",
 
-    /// Already resolved modules go in here.
-    /// This does not remap the module name, it is just a hash table.
-    /// Do not put modules that have aliases in here
-    /// Put those in Aliases
-    pub const Map = bun.ComptimeStringMap(
-        HardcodedModule,
-        .{
-            .{ "bun", HardcodedModule.bun },
-            .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
-            .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
-            .{ "bun:main", HardcodedModule.@"bun:main" },
-            .{ "bun:test", HardcodedModule.@"bun:test" },
-            .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
-            .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
-            .{ "detect-libc", HardcodedModule.@"detect-libc" },
-            .{ "node-fetch", HardcodedModule.@"node-fetch" },
-            .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
+    /// The module loader first uses `Aliases` to get a single string during
+    /// resolution, then maps that single string to the actual module.
+    /// Do not include aliases here; Those go in `Aliases`.
+    pub const map = bun.ComptimeStringMap(HardcodedModule, [_]struct { []const u8, HardcodedModule }{
+        // Bun
+        .{ "bun", .bun },
+        .{ "bun:ffi", .@"bun:ffi" },
+        .{ "bun:jsc", .@"bun:jsc" },
+        .{ "bun:main", .@"bun:main" },
+        .{ "bun:test", .@"bun:test" },
+        .{ "bun:sqlite", .@"bun:sqlite" },
+        .{ "bun:wrap", .@"bun:wrap" },
+        .{ "bun:internal-for-testing", .@"bun:internal-for-testing" },
+        // Node.js
+        .{ "node:assert", .@"node:assert" },
+        .{ "node:assert/strict", .@"node:assert/strict" },
+        .{ "node:async_hooks", .@"node:async_hooks" },
+        .{ "node:buffer", .@"node:buffer" },
+        .{ "node:child_process", .@"node:child_process" },
+        .{ "node:cluster", .@"node:cluster" },
+        .{ "node:console", .@"node:console" },
+        .{ "node:constants", .@"node:constants" },
+        .{ "node:crypto", .@"node:crypto" },
+        .{ "node:dgram", .@"node:dgram" },
+        .{ "node:diagnostics_channel", .@"node:diagnostics_channel" },
+        .{ "node:dns", .@"node:dns" },
+        .{ "node:dns/promises", .@"node:dns/promises" },
+        .{ "node:domain", .@"node:domain" },
+        .{ "node:events", .@"node:events" },
+        .{ "node:fs", .@"node:fs" },
+        .{ "node:fs/promises", .@"node:fs/promises" },
+        .{ "node:http", .@"node:http" },
+        .{ "node:http2", .@"node:http2" },
+        .{ "node:https", .@"node:https" },
+        .{ "node:inspector", .@"node:inspector" },
+        .{ "node:module", .@"node:module" },
+        .{ "node:net", .@"node:net" },
+        .{ "node:readline", .@"node:readline" },
+        .{ "node:test", .@"node:test" },
+        .{ "node:os", .@"node:os" },
+        .{ "node:path", .@"node:path" },
+        .{ "node:path/posix", .@"node:path/posix" },
+        .{ "node:path/win32", .@"node:path/win32" },
+        .{ "node:perf_hooks", .@"node:perf_hooks" },
+        .{ "node:process", .@"node:process" },
+        .{ "node:punycode", .@"node:punycode" },
+        .{ "node:querystring", .@"node:querystring" },
+        .{ "node:readline", .@"node:readline" },
+        .{ "node:readline/promises", .@"node:readline/promises" },
+        .{ "node:repl", .@"node:repl" },
+        .{ "node:stream", .@"node:stream" },
+        .{ "node:stream/consumers", .@"node:stream/consumers" },
+        .{ "node:stream/promises", .@"node:stream/promises" },
+        .{ "node:stream/web", .@"node:stream/web" },
+        .{ "node:string_decoder", .@"node:string_decoder" },
+        .{ "node:timers", .@"node:timers" },
+        .{ "node:timers/promises", .@"node:timers/promises" },
+        .{ "node:tls", .@"node:tls" },
+        .{ "node:trace_events", .@"node:trace_events" },
+        .{ "node:tty", .@"node:tty" },
+        .{ "node:url", .@"node:url" },
+        .{ "node:util", .@"node:util" },
+        .{ "node:util/types", .@"node:util/types" },
+        .{ "node:v8", .@"node:v8" },
+        .{ "node:vm", .@"node:vm" },
+        .{ "node:wasi", .@"node:wasi" },
+        .{ "node:worker_threads", .@"node:worker_threads" },
+        .{ "node:zlib", .@"node:zlib" },
+        .{ "node:_stream_duplex", .@"node:_stream_duplex" },
+        .{ "node:_stream_passthrough", .@"node:_stream_passthrough" },
+        .{ "node:_stream_readable", .@"node:_stream_readable" },
+        .{ "node:_stream_transform", .@"node:_stream_transform" },
+        .{ "node:_stream_wrap", .@"node:_stream_wrap" },
+        .{ "node:_stream_writable", .@"node:_stream_writable" },
+        .{ "node:_tls_common", .@"node:_tls_common" },
 
-            .{ "node:test", HardcodedModule.@"node:test" },
+        .{ "node-fetch", HardcodedModule.@"node-fetch" },
+        .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
+        .{ "undici", HardcodedModule.undici },
+        .{ "ws", HardcodedModule.ws },
+        .{ "@vercel/fetch", HardcodedModule.vercel_fetch },
+        .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
+        .{ "abort-controller", HardcodedModule.@"abort-controller" },
+    });
 
-            .{ "assert", HardcodedModule.@"node:assert" },
-            .{ "assert/strict", HardcodedModule.@"node:assert/strict" },
-            .{ "async_hooks", HardcodedModule.@"node:async_hooks" },
-            .{ "buffer", HardcodedModule.@"node:buffer" },
-            .{ "child_process", HardcodedModule.@"node:child_process" },
-            .{ "cluster", HardcodedModule.@"node:cluster" },
-            .{ "console", HardcodedModule.@"node:console" },
-            .{ "constants", HardcodedModule.@"node:constants" },
-            .{ "crypto", HardcodedModule.@"node:crypto" },
-            .{ "dgram", HardcodedModule.@"node:dgram" },
-            .{ "diagnostics_channel", HardcodedModule.@"node:diagnostics_channel" },
-            .{ "dns", HardcodedModule.@"node:dns" },
-            .{ "dns/promises", HardcodedModule.@"node:dns/promises" },
-            .{ "domain", HardcodedModule.@"node:domain" },
-            .{ "events", HardcodedModule.@"node:events" },
-            .{ "fs", HardcodedModule.@"node:fs" },
-            .{ "fs/promises", HardcodedModule.@"node:fs/promises" },
-            .{ "http", HardcodedModule.@"node:http" },
-            .{ "http2", HardcodedModule.@"node:http2" },
-            .{ "https", HardcodedModule.@"node:https" },
-            .{ "inspector", HardcodedModule.@"node:inspector" },
-            .{ "module", HardcodedModule.@"node:module" },
-            .{ "net", HardcodedModule.@"node:net" },
-            .{ "os", HardcodedModule.@"node:os" },
-            .{ "path", HardcodedModule.@"node:path" },
-            .{ "path/posix", HardcodedModule.@"node:path/posix" },
-            .{ "path/win32", HardcodedModule.@"node:path/win32" },
-            .{ "punycode", HardcodedModule.@"node:punycode" },
-            .{ "perf_hooks", HardcodedModule.@"node:perf_hooks" },
-            .{ "process", HardcodedModule.@"node:process" },
-            .{ "querystring", HardcodedModule.@"node:querystring" },
-            .{ "node:readline", HardcodedModule.@"node:readline" },
-            .{ "readline", HardcodedModule.@"node:readline" },
-            .{ "readline/promises", HardcodedModule.@"node:readline/promises" },
-            .{ "repl", HardcodedModule.@"node:repl" },
-            .{ "stream", HardcodedModule.@"node:stream" },
-            .{ "stream/consumers", HardcodedModule.@"node:stream/consumers" },
-            .{ "stream/promises", HardcodedModule.@"node:stream/promises" },
-            .{ "stream/web", HardcodedModule.@"node:stream/web" },
-            .{ "string_decoder", HardcodedModule.@"node:string_decoder" },
-            .{ "timers", HardcodedModule.@"node:timers" },
-            .{ "timers/promises", HardcodedModule.@"node:timers/promises" },
-            .{ "tls", HardcodedModule.@"node:tls" },
-            .{ "trace_events", HardcodedModule.@"node:trace_events" },
-            .{ "tty", HardcodedModule.@"node:tty" },
-            .{ "url", HardcodedModule.@"node:url" },
-            .{ "util", HardcodedModule.@"node:util" },
-            .{ "util/types", HardcodedModule.@"node:util/types" },
-            .{ "v8", HardcodedModule.@"node:v8" },
-            .{ "vm", HardcodedModule.@"node:vm" },
-            .{ "wasi", HardcodedModule.@"node:wasi" },
-            .{ "worker_threads", HardcodedModule.@"node:worker_threads" },
-            .{ "zlib", HardcodedModule.@"node:zlib" },
-
-            .{ "_stream_duplex", .@"node:_stream_duplex" },
-            .{ "_stream_passthrough", .@"node:_stream_passthrough" },
-            .{ "_stream_readable", .@"node:_stream_readable" },
-            .{ "_stream_transform", .@"node:_stream_transform" },
-            .{ "_stream_wrap", .@"node:_stream_wrap" },
-            .{ "_stream_writable", .@"node:_stream_writable" },
-            .{ "_tls_common", .@"node:_tls_common" },
-
-            .{ "undici", HardcodedModule.undici },
-            .{ "ws", HardcodedModule.ws },
-            .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
-            .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
-            .{ "abort-controller", HardcodedModule.@"abort-controller" },
-        },
-    );
-
+    /// Contains the list of built-in modules from the perspective of the module
+    /// loader. This logic is duplicated for `isBuiltinModule` and the like.
     pub const Alias = struct {
         path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
-    };
+        node_builtin: bool = false,
+        node_only_prefix: bool = false,
 
-    pub const Aliases = struct {
-        // Used by both Bun and Node.
+        fn nodeEntry(path: [:0]const u8) struct { string, Alias } {
+            return .{
+                path,
+                .{
+                    .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
+                    .node_builtin = true,
+                },
+            };
+        }
+        fn nodeEntryOnlyPrefix(path: [:0]const u8) struct { string, Alias } {
+            return .{
+                path,
+                .{
+                    .path = if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path,
+                    .node_builtin = true,
+                    .node_only_prefix = true,
+                },
+            };
+        }
+        fn entry(path: [:0]const u8) struct { string, Alias } {
+            return .{ path, .{ .path = path } };
+        }
+
+        // Applied to both --target=bun and --target=node
         const common_alias_kvs = [_]struct { string, Alias }{
-            .{ "node:assert", .{ .path = "assert" } },
-            .{ "node:assert/strict", .{ .path = "assert/strict" } },
-            .{ "node:async_hooks", .{ .path = "async_hooks" } },
-            .{ "node:buffer", .{ .path = "buffer" } },
-            .{ "node:child_process", .{ .path = "child_process" } },
-            .{ "node:cluster", .{ .path = "cluster" } },
-            .{ "node:console", .{ .path = "console" } },
-            .{ "node:constants", .{ .path = "constants" } },
-            .{ "node:crypto", .{ .path = "crypto" } },
-            .{ "node:dgram", .{ .path = "dgram" } },
-            .{ "node:diagnostics_channel", .{ .path = "diagnostics_channel" } },
-            .{ "node:dns", .{ .path = "dns" } },
-            .{ "node:dns/promises", .{ .path = "dns/promises" } },
-            .{ "node:domain", .{ .path = "domain" } },
-            .{ "node:events", .{ .path = "events" } },
-            .{ "node:fs", .{ .path = "fs" } },
-            .{ "node:fs/promises", .{ .path = "fs/promises" } },
-            .{ "node:http", .{ .path = "http" } },
-            .{ "node:http2", .{ .path = "http2" } },
-            .{ "node:https", .{ .path = "https" } },
-            .{ "node:inspector", .{ .path = "inspector" } },
-            .{ "node:module", .{ .path = "module" } },
-            .{ "node:net", .{ .path = "net" } },
-            .{ "node:os", .{ .path = "os" } },
-            .{ "node:path", .{ .path = "path" } },
-            .{ "node:path/posix", .{ .path = "path/posix" } },
-            .{ "node:path/win32", .{ .path = "path/win32" } },
-            .{ "node:perf_hooks", .{ .path = "perf_hooks" } },
-            .{ "node:process", .{ .path = "process" } },
-            .{ "node:punycode", .{ .path = "punycode" } },
-            .{ "node:querystring", .{ .path = "querystring" } },
-            .{ "node:readline", .{ .path = "readline" } },
-            .{ "node:readline/promises", .{ .path = "readline/promises" } },
-            .{ "node:repl", .{ .path = "repl" } },
-            .{ "node:stream", .{ .path = "stream" } },
-            .{ "node:stream/consumers", .{ .path = "stream/consumers" } },
-            .{ "node:stream/promises", .{ .path = "stream/promises" } },
-            .{ "node:stream/web", .{ .path = "stream/web" } },
-            .{ "node:string_decoder", .{ .path = "string_decoder" } },
-            .{ "node:test", .{ .path = "node:test" } },
-            .{ "node:timers", .{ .path = "timers" } },
-            .{ "node:timers/promises", .{ .path = "timers/promises" } },
-            .{ "node:tls", .{ .path = "tls" } },
-            .{ "node:trace_events", .{ .path = "trace_events" } },
-            .{ "node:tty", .{ .path = "tty" } },
-            .{ "node:url", .{ .path = "url" } },
-            .{ "node:util", .{ .path = "util" } },
-            .{ "node:util/types", .{ .path = "util/types" } },
-            .{ "node:v8", .{ .path = "v8" } },
-            .{ "node:vm", .{ .path = "vm" } },
-            .{ "node:wasi", .{ .path = "wasi" } },
-            .{ "node:worker_threads", .{ .path = "worker_threads" } },
-            .{ "node:zlib", .{ .path = "zlib" } },
+            nodeEntry("node:assert"),
+            nodeEntry("node:assert/strict"),
+            nodeEntry("node:async_hooks"),
+            nodeEntry("node:buffer"),
+            nodeEntry("node:child_process"),
+            nodeEntry("node:cluster"),
+            nodeEntry("node:console"),
+            nodeEntry("node:constants"),
+            nodeEntry("node:crypto"),
+            nodeEntry("node:dgram"),
+            nodeEntry("node:diagnostics_channel"),
+            nodeEntry("node:dns"),
+            nodeEntry("node:dns/promises"),
+            nodeEntry("node:domain"),
+            nodeEntry("node:events"),
+            nodeEntry("node:fs"),
+            nodeEntry("node:fs/promises"),
+            nodeEntry("node:http"),
+            nodeEntry("node:http2"),
+            nodeEntry("node:https"),
+            nodeEntry("node:inspector"),
+            nodeEntry("node:module"),
+            nodeEntry("node:net"),
+            nodeEntry("node:os"),
+            nodeEntry("node:path"),
+            nodeEntry("node:path/posix"),
+            nodeEntry("node:path/win32"),
+            nodeEntry("node:perf_hooks"),
+            nodeEntry("node:process"),
+            nodeEntry("node:punycode"),
+            nodeEntry("node:querystring"),
+            nodeEntry("node:readline"),
+            nodeEntry("node:readline/promises"),
+            nodeEntry("node:repl"),
+            nodeEntry("node:stream"),
+            nodeEntry("node:stream/consumers"),
+            nodeEntry("node:stream/promises"),
+            nodeEntry("node:stream/web"),
+            nodeEntry("node:string_decoder"),
+            nodeEntry("node:timers"),
+            nodeEntry("node:timers/promises"),
+            nodeEntry("node:tls"),
+            nodeEntry("node:trace_events"),
+            nodeEntry("node:tty"),
+            nodeEntry("node:url"),
+            nodeEntry("node:util"),
+            nodeEntry("node:util/types"),
+            nodeEntry("node:v8"),
+            nodeEntry("node:vm"),
+            nodeEntry("node:wasi"),
+            nodeEntry("node:worker_threads"),
+            nodeEntry("node:zlib"),
+            // New Node.js builtins only resolve from the prefixed one.
+            nodeEntryOnlyPrefix("node:test"),
 
-            // These are returned in builtinModules, but probably not many packages use them so we will just alias them.
-            .{ "node:_http_agent", .{ .path = "http" } },
-            .{ "node:_http_client", .{ .path = "http" } },
-            .{ "node:_http_common", .{ .path = "http" } },
-            .{ "node:_http_incoming", .{ .path = "http" } },
-            .{ "node:_http_outgoing", .{ .path = "http" } },
-            .{ "node:_http_server", .{ .path = "http" } },
-            .{ "node:_stream_duplex", .{ .path = "_stream_duplex" } },
-            .{ "node:_stream_passthrough", .{ .path = "_stream_passthrough" } },
-            .{ "node:_stream_readable", .{ .path = "_stream_readable" } },
-            .{ "node:_stream_transform", .{ .path = "_stream_transform" } },
-            .{ "node:_stream_wrap", .{ .path = "_stream_wrap" } },
-            .{ "node:_stream_writable", .{ .path = "_stream_writable" } },
-            .{ "node:_tls_wrap", .{ .path = "tls" } },
-            .{ "node:_tls_common", .{ .path = "_tls_common" } },
+            nodeEntry("assert"),
+            nodeEntry("assert/strict"),
+            nodeEntry("async_hooks"),
+            nodeEntry("buffer"),
+            nodeEntry("child_process"),
+            nodeEntry("cluster"),
+            nodeEntry("console"),
+            nodeEntry("constants"),
+            nodeEntry("crypto"),
+            nodeEntry("dgram"),
+            nodeEntry("diagnostics_channel"),
+            nodeEntry("dns"),
+            nodeEntry("dns/promises"),
+            nodeEntry("domain"),
+            nodeEntry("events"),
+            nodeEntry("fs"),
+            nodeEntry("fs/promises"),
+            nodeEntry("http"),
+            nodeEntry("http2"),
+            nodeEntry("https"),
+            nodeEntry("inspector"),
+            nodeEntry("module"),
+            nodeEntry("net"),
+            nodeEntry("os"),
+            nodeEntry("path"),
+            nodeEntry("path/posix"),
+            nodeEntry("path/win32"),
+            nodeEntry("perf_hooks"),
+            nodeEntry("process"),
+            nodeEntry("punycode"),
+            nodeEntry("querystring"),
+            nodeEntry("readline"),
+            nodeEntry("readline/promises"),
+            nodeEntry("repl"),
+            nodeEntry("stream"),
+            nodeEntry("stream/consumers"),
+            nodeEntry("stream/promises"),
+            nodeEntry("stream/web"),
+            nodeEntry("string_decoder"),
+            nodeEntry("timers"),
+            nodeEntry("timers/promises"),
+            nodeEntry("tls"),
+            nodeEntry("trace_events"),
+            nodeEntry("tty"),
+            nodeEntry("url"),
+            nodeEntry("util"),
+            nodeEntry("util/types"),
+            nodeEntry("v8"),
+            nodeEntry("vm"),
+            nodeEntry("wasi"),
+            nodeEntry("worker_threads"),
+            nodeEntry("zlib"),
 
-            .{ "assert", .{ .path = "assert" } },
-            .{ "assert/strict", .{ .path = "assert/strict" } },
-            .{ "async_hooks", .{ .path = "async_hooks" } },
-            .{ "buffer", .{ .path = "buffer" } },
-            .{ "child_process", .{ .path = "child_process" } },
-            .{ "cluster", .{ .path = "cluster" } },
-            .{ "console", .{ .path = "console" } },
-            .{ "constants", .{ .path = "constants" } },
-            .{ "crypto", .{ .path = "crypto" } },
-            .{ "dgram", .{ .path = "dgram" } },
-            .{ "diagnostics_channel", .{ .path = "diagnostics_channel" } },
-            .{ "dns", .{ .path = "dns" } },
-            .{ "dns/promises", .{ .path = "dns/promises" } },
-            .{ "domain", .{ .path = "domain" } },
-            .{ "events", .{ .path = "events" } },
-            .{ "fs", .{ .path = "fs" } },
-            .{ "fs/promises", .{ .path = "fs/promises" } },
-            .{ "http", .{ .path = "http" } },
-            .{ "http2", .{ .path = "http2" } },
-            .{ "https", .{ .path = "https" } },
-            .{ "inspector", .{ .path = "inspector" } },
-            .{ "module", .{ .path = "module" } },
-            .{ "net", .{ .path = "net" } },
-            .{ "os", .{ .path = "os" } },
-            .{ "path", .{ .path = "path" } },
-            .{ "path/posix", .{ .path = "path/posix" } },
-            .{ "path/win32", .{ .path = "path/win32" } },
-            .{ "perf_hooks", .{ .path = "perf_hooks" } },
-            .{ "process", .{ .path = "process" } },
-            .{ "punycode", .{ .path = "punycode" } },
-            .{ "querystring", .{ .path = "querystring" } },
-            .{ "readline", .{ .path = "readline" } },
-            .{ "readline/promises", .{ .path = "readline/promises" } },
-            .{ "repl", .{ .path = "repl" } },
-            .{ "stream", .{ .path = "stream" } },
-            .{ "stream/consumers", .{ .path = "stream/consumers" } },
-            .{ "stream/promises", .{ .path = "stream/promises" } },
-            .{ "stream/web", .{ .path = "stream/web" } },
-            .{ "string_decoder", .{ .path = "string_decoder" } },
-            // .{ "test", .{ .path = "test" } },
-            .{ "timers", .{ .path = "timers" } },
-            .{ "timers/promises", .{ .path = "timers/promises" } },
-            .{ "tls", .{ .path = "tls" } },
-            .{ "trace_events", .{ .path = "trace_events" } },
-            .{ "tty", .{ .path = "tty" } },
-            .{ "url", .{ .path = "url" } },
-            .{ "util", .{ .path = "util" } },
-            .{ "util/types", .{ .path = "util/types" } },
-            .{ "v8", .{ .path = "v8" } },
-            .{ "vm", .{ .path = "vm" } },
-            .{ "wasi", .{ .path = "wasi" } },
-            .{ "worker_threads", .{ .path = "worker_threads" } },
-            .{ "zlib", .{ .path = "zlib" } },
+            // sys is a deprecated alias for util
+            .{ "sys", .{ .path = "node:util", .node_builtin = true } },
+            .{ "node:sys", .{ .path = "node:util", .node_builtin = true } },
 
-            // It implements the same interface
-            .{ "sys", .{ .path = "util" } },
-            .{ "node:sys", .{ .path = "util" } },
-
-            // These are returned in builtinModules, but probably not many packages use them
-            // so we will just alias them.
-            .{ "_http_agent", .{ .path = "http" } },
-            .{ "_http_client", .{ .path = "http" } },
-            .{ "_http_common", .{ .path = "http" } },
-            .{ "_http_incoming", .{ .path = "http" } },
-            .{ "_http_outgoing", .{ .path = "http" } },
-            .{ "_http_server", .{ .path = "http" } },
-            .{ "_stream_duplex", .{ .path = "_stream_duplex" } },
-            .{ "_stream_passthrough", .{ .path = "_stream_passthrough" } },
-            .{ "_stream_readable", .{ .path = "_stream_readable" } },
-            .{ "_stream_transform", .{ .path = "_stream_transform" } },
-            .{ "_stream_wrap", .{ .path = "_stream_wrap" } },
-            .{ "_stream_writable", .{ .path = "_stream_writable" } },
-            .{ "_tls_wrap", .{ .path = "tls" } },
-            .{ "_tls_common", .{ .path = "_tls_common" } },
-
-            .{ "next/dist/compiled/ws", .{ .path = "ws" } },
-            .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
-            .{ "next/dist/compiled/undici", .{ .path = "undici" } },
+            // These are returned in builtinModules, but probably not many
+            // packages use them so we will just alias them.
+            .{ "node:_http_agent", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_client", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_common", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_incoming", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_http_server", .{ .path = "node:http", .node_builtin = true } },
+            .{ "node:_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
+            .{ "node:_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
+            .{ "node:_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
+            .{ "node:_stream_transform", .{ .path = "node:_stream_transform", .node_builtin = true } },
+            .{ "node:_stream_wrap", .{ .path = "node:_stream_wrap", .node_builtin = true } },
+            .{ "node:_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
+            .{ "node:_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
+            .{ "node:_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
+            .{ "_http_agent", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_client", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_common", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_incoming", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_http_server", .{ .path = "node:http", .node_builtin = true } },
+            .{ "_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
+            .{ "_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
+            .{ "_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
+            .{ "_stream_transform", .{ .path = "node:_stream_transform", .node_builtin = true } },
+            .{ "_stream_wrap", .{ .path = "node:_stream_wrap", .node_builtin = true } },
+            .{ "_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
+            .{ "_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
+            .{ "_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
         };
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
@@ -2956,10 +3024,12 @@ pub const HardcodedModule = enum {
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
 
+            // inspector/promises is not implemented, it is an alias of inspector
+            .{ "node:inspector/promises", .{ .path = "node:inspector", .node_builtin = true } },
+            .{ "inspector/promises", .{ .path = "node:inspector", .node_builtin = true } },
+
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
-            .{ "detect-libc", .{ .path = "detect-libc" } },
-            .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
             .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
             .{ "node-fetch", .{ .path = "node-fetch" } },
             .{ "undici", .{ .path = "undici" } },
@@ -2967,45 +3037,33 @@ pub const HardcodedModule = enum {
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
 
-            .{ "inspector/promises", .{ .path = "inspector" } },
-            .{ "node:inspector/promises", .{ .path = "inspector" } },
-
             // Polyfills we force to native
             .{ "abort-controller", .{ .path = "abort-controller" } },
             .{ "abort-controller/polyfill", .{ .path = "abort-controller" } },
+
+            // To force Next.js to not use bundled dependencies.
+            .{ "next/dist/compiled/ws", .{ .path = "ws" } },
+            .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
+            .{ "next/dist/compiled/undici", .{ .path = "undici" } },
         };
 
-        const node_alias_kvs = [_]struct { string, Alias }{
-            .{ "inspector/promises", .{ .path = "inspector/promises" } },
-            .{ "node:inspector/promises", .{ .path = "inspector/promises" } },
+        const node_extra_alias_kvs = [_]struct { string, Alias }{
+            nodeEntry("node:inspector/promises"),
+            nodeEntry("inspector/promises"),
         };
 
-        const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_alias_kvs);
-        const BunAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
+        const node_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_extra_alias_kvs);
+        const bun_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
 
         pub fn has(name: []const u8, target: options.Target) bool {
-            if (target.isBun()) {
-                return BunAliases.has(name);
-            } else if (target.isNode()) {
-                return NodeAliases.has(name);
-            }
-            return false;
+            return get(name, target) != null;
         }
 
         pub fn get(name: []const u8, target: options.Target) ?Alias {
             if (target.isBun()) {
-                return BunAliases.get(name);
+                return bun_aliases.get(name);
             } else if (target.isNode()) {
-                return NodeAliases.get(name);
-            }
-            return null;
-        }
-
-        pub fn getWithEql(name: anytype, comptime eql: anytype, target: options.Target) ?Alias {
-            if (target.isBun()) {
-                return BunAliases.getWithEql(name, eql);
-            } else if (target.isNode()) {
-                return NodeAliases.getWithEql(name, eql);
+                return node_aliases.get(name);
             }
             return null;
         }
@@ -3025,5 +3083,5 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.Str
 
 export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     const str = data[0..len];
-    return HardcodedModule.Map.get(str) != null;
+    return HardcodedModule.Alias.bun_aliases.get(str) != null;
 }

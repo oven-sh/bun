@@ -137,7 +137,6 @@ private:
     Deque<RefPtr<Event>> m_pendingEvents;
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
-    bool m_didStartWorkerGlobalScope { false };
     // Tracks OnlineFlag and ClosingFlag
     std::atomic<uint8_t> m_onlineClosingFlags { 0 };
     // Tracks TerminateRequestedFlag and TerminatedFlag

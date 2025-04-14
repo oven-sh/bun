@@ -118,12 +118,14 @@ extern "C" void* WebWorker__create(
     uint32_t contextId,
     bool miniMode,
     bool unrefByDefault,
-    StringImpl* argvPtr,
-    uint32_t argvLen,
-    StringImpl* execArgvPtr,
-    uint32_t execArgvLen,
+    bool evalMode,
+    StringImpl** argvPtr,
+    size_t argvLen,
+    bool defaultExecArgv,
+    StringImpl** execArgvPtr,
+    size_t execArgvLen,
     BunString* preloadModulesPtr,
-    uint32_t preloadModulesLen);
+    size_t preloadModulesLen);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -161,26 +163,31 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     BunString errorMessage = BunStringEmpty;
     BunString nameStr = Bun::toString(worker->m_options.name);
 
-    bool miniMode = worker->m_options.bun.mini;
-    bool unrefByDefault = worker->m_options.bun.unref;
-
-    Vector<String>* argv = worker->m_options.bun.argv.get();
-    Vector<String>* execArgv = worker->m_options.bun.execArgv.get();
-    Vector<String>* preloadModuleStrings = &worker->m_options.bun.preloadModules;
+    auto& preloadModuleStrings = worker->m_options.preloadModules;
     Vector<BunString> preloadModules;
-    preloadModules.reserveInitialCapacity(preloadModuleStrings->size());
-    for (auto& str : *preloadModuleStrings) {
+    preloadModules.reserveInitialCapacity(preloadModuleStrings.size());
+    for (auto& str : preloadModuleStrings) {
         if (str.startsWith("file://"_s)) {
             WTF::URL urlObject = WTF::URL(str);
             if (!urlObject.isValid()) {
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
             }
+            // We need to replace the string inside preloadModuleStrings (this line replaces because
+            // we are iterating by-ref). Otherwise, the string returned by fileSystemPath() will be
+            // freed in this block, before it is used by Zig code.
             str = urlObject.fileSystemPath();
         }
 
         preloadModules.append(Bun::toString(str));
     }
 
+    // try to ensure the cast from String* to StringImpl** is sane
+    static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
+    std::span<WTF::StringImpl*> execArgv = worker->m_options.execArgv
+                                               .transform([](Vector<String>& vec) -> std::span<WTF::StringImpl*> {
+                                                   return { reinterpret_cast<WTF::StringImpl**>(vec.data()), vec.size() };
+                                               })
+                                               .value_or(std::span<WTF::StringImpl*> {});
     void* impl = WebWorker__create(
         worker.ptr(),
         jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(),
@@ -189,18 +196,20 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         &errorMessage,
         static_cast<uint32_t>(context.identifier()),
         static_cast<uint32_t>(worker->m_clientIdentifier),
-        miniMode,
-        unrefByDefault,
-        argv ? reinterpret_cast<StringImpl*>(argv->data()) : nullptr,
-        argv ? static_cast<uint32_t>(argv->size()) : 0,
-        execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
-        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0,
-        preloadModules.size() ? preloadModules.data() : nullptr,
-        static_cast<uint32_t>(preloadModules.size()));
+        worker->m_options.mini,
+        worker->m_options.unref,
+        worker->m_options.evalMode,
+        reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.data()),
+        worker->m_options.argv.size(),
+        !worker->m_options.execArgv.has_value(),
+        execArgv.data(),
+        execArgv.size(),
+        preloadModules.data(),
+        preloadModules.size());
     // now referenced by Zig
     worker->ref();
 
-    preloadModuleStrings->clear();
+    preloadModuleStrings.clear();
 
     if (!impl) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
@@ -479,7 +488,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
         return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
-    } else if (auto* broadcastChannel = jsDynamicCast<JSBroadcastChannel*>(port)) {
+    } else if (jsDynamicCast<JSBroadcastChannel*>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
     }
@@ -498,9 +507,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
-        if (worker && options.bun.data) {
-            auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.bun.dataMessagePorts));
-            RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
+        if (worker && options.data) {
+            auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
+            RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.data);
             JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
             RETURN_IF_EXCEPTION(scope, {});
             workerData = deserialized;

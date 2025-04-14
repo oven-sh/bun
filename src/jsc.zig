@@ -8,7 +8,6 @@ pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
-pub const Shimmer = @import("./bun.js/bindings/shimmer.zig").Shimmer;
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
@@ -55,6 +54,7 @@ pub const API = struct {
     pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
     pub const HTMLBundle = @import("./bun.js/api/server/HTMLBundle.zig");
+    pub const Valkey = @import("./valkey/js_valkey.zig").JSValkeyClient;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
@@ -87,6 +87,7 @@ pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub inline fn markMemberBinding(comptime class: anytype, src: std.builtin.SourceLocation) void {
+    if (!bun.Environment.enable_logs) return;
     const classname = switch (@typeInfo(@TypeOf(class))) {
         .pointer => class, // assumed to be a static string
         else => @typeName(class),

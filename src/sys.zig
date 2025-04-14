@@ -10,6 +10,7 @@ const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
 const mem = std.mem;
+const page_size_min = std.heap.page_size_min;
 const mode_t = posix.mode_t;
 const libc = std.posix.system;
 
@@ -1386,7 +1387,7 @@ pub fn openFileAtWindowsNtPath(
             0,
         );
 
-        if (comptime Environment.allow_assert) {
+        if (Environment.allow_assert and Environment.enable_logs) {
             if (rc == .INVALID_PARAMETER) {
                 // Double check what flags you are passing to this
                 //
@@ -1398,7 +1399,11 @@ pub fn openFileAtWindowsNtPath(
                 // See above comment. For absolute paths you must have \??\ at the start.
                 bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
-                log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                if (rc == .SUCCESS) {
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.toFD(result) });
+                } else {
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                }
             }
         }
 
@@ -1808,7 +1813,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: i32, per
 
 pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
-    return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
+    return openatA(bun.FD.cwd(), file_path, flags, perm);
 }
 
 pub fn open(file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -1834,11 +1839,11 @@ pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
         return null;
     }
 
-    return closeAllowingStdoutAndStderr(fd);
+    return closeAllowingStdinStdoutAndStderr(fd);
 }
 
-pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
-    return bun.FDImpl.decode(fd).closeAllowingStdoutAndStderr();
+pub fn closeAllowingStdinStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
+    return bun.FDImpl.decode(fd).closeAllowingStdinStdoutAndStderr();
 }
 
 pub const max_count = switch (builtin.os.tag) {
@@ -2198,6 +2203,22 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     };
 }
 
+pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    var rest = buf;
+    var total_read: usize = 0;
+    while (rest.len > 0) {
+        switch (read(fd, rest)) {
+            .result => |len| {
+                if (len == 0) break;
+                rest = rest[len..];
+                total_read += len;
+            },
+            .err => |err| return .{ .err = err },
+        }
+    }
+    return .{ .result = total_read };
+}
+
 const socket_flags_nonblock = bun.c.MSG_DONTWAIT | bun.c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
@@ -2315,11 +2336,20 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0
 
 pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
-            return Maybe(void).errnoSysFd(0, .ftruncate, fd) orelse Maybe(void).success;
-        }
+        var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+        var eof_info = std.os.windows.FILE_END_OF_FILE_INFORMATION{
+            .EndOfFile = @bitCast(size),
+        };
 
-        return Maybe(void).success;
+        const rc = windows.ntdll.NtSetInformationFile(
+            fd.cast(),
+            &io_status_block,
+            &eof_info,
+            @sizeOf(std.os.windows.FILE_END_OF_FILE_INFORMATION),
+            .FileEndOfFileInformation,
+        );
+
+        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
     }
 
     return while (true) {
@@ -2727,7 +2757,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     }
 }
 
-pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
+pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
     switch (comptime builtin.os.tag) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
@@ -2741,13 +2771,13 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
         .macos, .ios, .watchos, .tvos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
-            @memset(out_buffer[0..MAX_PATH_BYTES], 0);
+            @memset(out_buffer[0..out_buffer.*.len], 0);
             switch (fcntl(fd, posix.F.GETPATH, @intFromPtr(out_buffer))) {
                 .err => |err| return .{ .err = err },
                 .result => {},
             }
-            const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
-            return .{ .result = out_buffer[0..len] };
+
+            return .{ .result = bun.sliceTo(out_buffer, 0) };
         },
         .linux => {
             // TODO: alpine linux may not have /proc/self
@@ -2766,26 +2796,27 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
 /// * SIGSEGV - Attempted write into a region mapped as read-only.
 /// * SIGBUS - Attempted  access to a portion of the buffer that does not correspond to the file
 pub fn mmap(
-    ptr: ?[*]align(mem.page_size) u8,
+    ptr: ?[*]align(page_size_min) u8,
     length: usize,
     prot: u32,
     flags: std.posix.MAP,
     fd: bun.FileDescriptor,
     offset: u64,
-) Maybe([]align(mem.page_size) u8) {
+) Maybe([]align(page_size_min) u8) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     const rc = std.c.mmap(ptr, length, prot, flags, fd.cast(), ioffset);
     const fail = std.c.MAP_FAILED;
     if (rc == fail) {
-        return Maybe([]align(mem.page_size) u8){
-            .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))), .syscall = .mmap },
-        };
+        return .initErr(.{
+            .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))),
+            .syscall = .mmap,
+        });
     }
 
-    return Maybe([]align(mem.page_size) u8){ .result = @as([*]align(mem.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
+    return .initResult(@as([*]align(page_size_min) u8, @ptrCast(@alignCast(rc)))[0..length]);
 }
 
-pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
+pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(page_size_min) u8) {
     assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,
@@ -2945,7 +2976,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
     return Maybe([2]bun.FileDescriptor){ .result = .{ bun.toFD(fds_i[0]), bun.toFD(fds_i[1]) } };
 }
 
-pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
+pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(syscall.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
     } else return Maybe(void).success;
@@ -3346,7 +3377,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             // from libuv: directories cannot be read-only
             // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
             (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
+                basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
 
         const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
@@ -3859,6 +3890,10 @@ pub const File = struct {
         return This.read(self.handle, buf);
     }
 
+    pub fn readAll(self: File, buf: []u8) Maybe(usize) {
+        return This.readAll(self.handle, buf);
+    }
+
     pub fn writeAll(self: File, buf: []const u8) Maybe(void) {
         var remain = buf;
         while (remain.len > 0) {
@@ -4099,7 +4134,7 @@ pub const File = struct {
         };
     }
 
-    pub fn getPath(this: File, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
+    pub fn getPath(this: File, out_buffer: *bun.PathBuffer) Maybe([]u8) {
         return getFdPath(this.handle, out_buffer);
     }
 

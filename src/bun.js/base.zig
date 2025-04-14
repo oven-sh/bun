@@ -14,7 +14,7 @@ const Test = @import("./test/jest.zig");
 const Router = @import("./api/filesystem_router.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const uws = bun.uws;
-const TaggedPointerTypes = @import("../tagged_pointer.zig");
+const TaggedPointerTypes = @import("../ptr.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 const JSError = bun.JSError;
 
@@ -396,6 +396,7 @@ pub const ArrayBuffer = extern struct {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
+    // TODO: this can throw an error! should use JSError!JSValue
     pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSC.JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {
@@ -765,10 +766,6 @@ pub const RefString = struct {
         this.impl.deref();
     }
 
-    pub export fn RefString__free(this: *anyopaque, _: *anyopaque, _: u32) void {
-        bun.cast(*RefString, this).deinit();
-    }
-
     pub fn deinit(this: *RefString) void {
         if (this.onBeforeDeinit) |onBeforeDeinit| {
             onBeforeDeinit(this.ctx.?, this);
@@ -778,10 +775,6 @@ pub const RefString = struct {
         this.allocator.destroy(this);
     }
 };
-
-comptime {
-    std.testing.refAllDecls(RefString);
-}
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../allocators/mimalloc.zig");
@@ -978,8 +971,6 @@ pub fn DOMCall(
         pub const is_dom_call = true;
         const Slowpath = @field(Container, functionName);
         const SlowpathType = @TypeOf(@field(Container, functionName));
-        pub const shim = JSC.Shimmer(className, functionName, @This());
-        pub const name = class_name ++ "__" ++ functionName;
 
         // Zig doesn't support @frameAddress(1)
         // so we have to add a small wrapper fujnction
@@ -995,18 +986,18 @@ pub fn DOMCall(
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
+        const PutFnType = *const fn (globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.c) void;
+        const put_fn = @extern(PutFnType, .{ .name = className ++ "__" ++ functionName ++ "__put" });
 
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-            shim.cppFn("put", .{ globalObject, value });
+            put_fn(globalObject, value);
         }
 
         pub const effect = dom_effect;
 
-        pub const Extern = [_][]const u8{"put"};
-
         comptime {
-            @export(&slowpath, .{ .name = shim.symbolName("slowpath") });
-            @export(&fastpath, .{ .name = shim.symbolName("fastpath") });
+            @export(&slowpath, .{ .name = className ++ "__" ++ functionName ++ "__slowpath" });
+            @export(&fastpath, .{ .name = className ++ "__" ++ functionName ++ "__fastpath" });
         }
     };
 }
@@ -1064,7 +1055,7 @@ pub fn wrapInstanceMethod(
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                        args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
@@ -1072,7 +1063,7 @@ pub fn wrapInstanceMethod(
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                                args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                                     iter.deinit();
                                     return globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 };
@@ -1206,14 +1197,14 @@ pub fn wrapStaticMethod(
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                        args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("expected string or buffer", .{});
                         };
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
+                            args[i] = try JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
                                 if (arg == .undefined) {
                                     break :brk null;
                                 }
@@ -1227,7 +1218,7 @@ pub fn wrapStaticMethod(
                     },
                     JSC.Node.BlobOrStringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
+                            args[i] = try JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                                 iter.deinit();
                                 return globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                             };
@@ -1480,8 +1471,9 @@ pub const MemoryReportingAllocator = struct {
     memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     const log = Output.scoped(.MEM, false);
 
-    fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
-        const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+    fn alloc(context: *anyopaque, n: usize, alignment: std.mem.Alignment, return_address: usize) ?[*]u8 {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        const result = this.child_allocator.rawAlloc(n, alignment, return_address) orelse return null;
         _ = this.memory_cost.fetchAdd(n, .monotonic);
         if (comptime Environment.allow_assert)
             log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
@@ -1494,8 +1486,9 @@ pub const MemoryReportingAllocator = struct {
             log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
-    fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-        if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+    fn resize(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        if (this.child_allocator.rawResize(buf, alignment, new_len, ret_addr)) {
             _ = this.memory_cost.fetchAdd(new_len -| buf.len, .monotonic);
             if (comptime Environment.allow_assert)
                 log("resize() = {d}", .{this.memory_cost.raw});
@@ -1505,8 +1498,9 @@ pub const MemoryReportingAllocator = struct {
         }
     }
 
-    fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
-        this.child_allocator.rawFree(buf, buf_align, ret_addr);
+    fn free(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        this.child_allocator.rawFree(buf, alignment, ret_addr);
 
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
@@ -1554,9 +1548,10 @@ pub const MemoryReportingAllocator = struct {
     }
 
     pub const VTable = std.mem.Allocator.VTable{
-        .alloc = @ptrCast(&MemoryReportingAllocator.alloc),
-        .resize = @ptrCast(&MemoryReportingAllocator.resize),
-        .free = @ptrCast(&MemoryReportingAllocator.free),
+        .alloc = &MemoryReportingAllocator.alloc,
+        .resize = &MemoryReportingAllocator.resize,
+        .remap = &std.mem.Allocator.noRemap,
+        .free = &MemoryReportingAllocator.free,
     };
 };
 

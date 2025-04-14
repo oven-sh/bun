@@ -72,7 +72,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     while (ls) {
         struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
         us_listen_socket_close(ssl, ls);
-        
+
         ls = nextLS;
     }
 
@@ -310,7 +310,7 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
         }
     #endif
 
-    return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };    
+    return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
 }
 
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
@@ -337,7 +337,7 @@ void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
 }
 void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
     uint32_t ref_count = context->ref_count;
-    context->ref_count--;    
+    context->ref_count--;
     if (ref_count == 1) {
         us_internal_socket_context_free(ssl, context);
     }
@@ -369,9 +369,11 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     ls->s.context = context;
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
-    ls->s.low_prio_state = 0;
+    ls->s.flags.low_prio_state = 0;
+        ls->s.flags.is_paused = 0;
+
     ls->s.next = 0;
-    ls->s.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -401,10 +403,10 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     ls->s.context = context;
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
-    ls->s.low_prio_state = 0;
+    ls->s.flags.low_prio_state = 0;
+    ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    ls->s.flags.is_paused = 0;
     ls->s.next = 0;
-    ls->s.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -432,9 +434,11 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->context = context;
     socket->timeout = 255;
     socket->long_timeout = 255;
-    socket->low_prio_state = 0;
+    socket->flags.low_prio_state = 0;
+    socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    socket->flags.is_paused = 0;
     socket->connect_state = NULL;
-    socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    
 
     us_internal_socket_context_link_socket(context, socket);
 
@@ -520,7 +524,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     }
 
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
-    c->socket_ext_size = socket_ext_size;  
+    c->socket_ext_size = socket_ext_size;
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
@@ -556,8 +560,9 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->context = c->context;
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
-        s->low_prio_state = 0;
-        s->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+        s->flags.low_prio_state = 0;
+        s->flags.allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+        s->flags.is_paused = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(s->context, s);
 
@@ -641,9 +646,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
 
         /* Emit error, close without emitting on_close */
 
-        /* There are two possible states here: 
-            1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
-            2. It's a us_socket_t* 
+        /* There are two possible states here:
+            1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed.
+            2. It's a us_socket_t*
 
             We differentiate between these two cases by checking if the connect_state is null.
         */
@@ -731,9 +736,11 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->context = context;
     connect_socket->timeout = 255;
     connect_socket->long_timeout = 255;
-    connect_socket->low_prio_state = 0;
+    connect_socket->flags.low_prio_state = 0;
+    connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    connect_socket->flags.is_paused = 0;
     connect_socket->connect_state = NULL;
-    connect_socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(context, connect_socket);
 
     return connect_socket;
@@ -764,7 +771,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         return s;
     }
 
-    if (s->low_prio_state != 1) {
+    if (s->flags.low_prio_state != 1) {
          /* We need to be sure that we still holding a reference*/
         us_socket_context_ref(ssl, context);
         /* This properly updates the iterator if in on_timeout */
@@ -788,7 +795,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     new_s->timeout = 255;
     new_s->long_timeout = 255;
 
-    if (new_s->low_prio_state == 1) {
+    if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
         if (!new_s->prev) new_s->context->loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
@@ -887,7 +894,7 @@ void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *con
         return;
     }
 #endif
-    
+
     context->on_connect_error = on_connect_error;
 }
 
@@ -898,7 +905,7 @@ void us_socket_context_on_socket_connect_error(int ssl, struct us_socket_context
         return;
     }
 #endif
-    
+
     context->on_socket_connect_error = on_connect_error;
 }
 

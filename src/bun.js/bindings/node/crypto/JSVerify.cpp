@@ -14,7 +14,7 @@
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSBuffer.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunString.h"
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
@@ -241,7 +241,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
         }
 
-        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataString, encoding));
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
@@ -454,12 +456,25 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSC::JSGlobalObject * globalObject, J
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "Buffer, TypedArray, or DataView"_s, dataValue);
     }
 
-    // Get signature argument
+    // Get signature argument. Can only be a buffer type, not a string
     JSValue signatureValue = callFrame->argument(3);
-    JSC::JSArrayBufferView* signatureView = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!signatureView) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "signature"_s, "Buffer, TypedArray, or DataView"_s, signatureValue);
+    std::span<const uint8_t> signature;
+    if (JSArrayBufferView* view = jsDynamicCast<JSArrayBufferView*>(signatureValue)) {
+        if (UNLIKELY(view->isDetached())) {
+            throwVMTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+        signature = view->span();
+    } else if (JSArrayBuffer* buf = jsDynamicCast<JSArrayBuffer*>(signatureValue)) {
+        ArrayBuffer* bufImpl = buf->impl();
+        if (UNLIKELY(bufImpl->isDetached())) {
+            throwVMTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+
+        signature = bufImpl->span();
+    } else {
+        ERR::INVALID_ARG_INSTANCE(scope, globalObject, "signature"_s, "Buffer, TypedArray, or DataView"_s, signatureValue);
     }
 
     // Get key argument
@@ -504,8 +519,8 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSC::JSGlobalObject * globalObject, J
 
     // Create signature buffer
     ncrypto::Buffer<const uint8_t> sigBuf {
-        .data = static_cast<const uint8_t*>(signatureView->vector()),
-        .len = signatureView->byteLength()
+        .data = signature.data(),
+        .len = signature.size(),
     };
 
     // Create a new EVP_MD_CTX for verification

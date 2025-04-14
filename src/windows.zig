@@ -93,12 +93,6 @@ pub extern "kernel32" fn GetFileInformationByHandle(
     lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
 ) callconv(windows.WINAPI) BOOL;
 
-/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
-pub extern "kernel32" fn SetFileValidData(
-    hFile: win32.HANDLE,
-    validDataLength: c_longlong,
-) callconv(windows.WINAPI) win32.BOOL;
-
 pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
@@ -3070,14 +3064,14 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
-            bun.crash_handler.dumpCurrentStackTrace(null);
+            bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             break :brk .INVAL;
         } else .INVAL,
 
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
-                bun.crash_handler.dumpCurrentStackTrace(null);
+                bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             }
             return .UNKNOWN;
         },

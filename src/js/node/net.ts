@@ -1110,7 +1110,6 @@ Socket.prototype.destroySoon = function destroySoon() {
   else this.once("finish", this.destroy);
 };
 
-
 //TODO: migrate to native
 Socket.prototype._writev = function _writev(data, callback) {
   const allBuffers = data.allBuffers;
@@ -1311,25 +1310,10 @@ Server.prototype.address = function address() {
       return unix;
     }
 
-    //TODO: fix adress when host is passed
-    let address = server.hostname;
-    const type = isIP(address);
-    const port = server.port;
-    if (typeof port === "number") {
-      return {
-        port,
-        address,
-        family: type ? `IPv${type}` : undefined,
-      };
-    }
-    if (type) {
-      return {
-        address,
-        family: type ? `IPv${type}` : undefined,
-      };
-    }
-
-    return address;
+    const out = {};
+    const err = this._handle.getsockname(out);
+    if (err) throw new ErrnoException(err, "address");
+    return out;
   }
   return null;
 };
@@ -1723,4 +1707,4 @@ export default {
   SocketAddress,
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
-};
+} as any as typeof import("node:net");

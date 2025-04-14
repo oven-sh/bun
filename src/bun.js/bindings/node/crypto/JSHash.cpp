@@ -1,5 +1,5 @@
 #include "JSHash.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
@@ -171,7 +171,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
-        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputString, encoding));
+        WTF::StringView inputView = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);
@@ -258,15 +261,22 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     // Only compute the digest if it hasn't been cached yet
     if (!hash->m_digest && len > 0) {
-        // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
-        // We need to cache the result for future calls
-        auto data = hash->m_ctx.digestFinal(len);
+
+        const EVP_MD* md = hash->m_ctx.getDigest();
+        uint32_t bufLen = len;
+        if (md == EVP_sha512_224()) {
+            // SHA-512/224 expects buffer length of length % 8. can be truncated afterwards
+            bufLen = SHA512_224_DIGEST_BUFFER_LENGTH;
+        }
+
+        auto data = hash->m_ctx.digestFinal(bufLen);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return JSValue::encode({});
         }
 
-        // Store the digest in the hash object
+        // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
+        // We need to cache the result for future calls
         hash->m_digest = ByteSource::allocated(data.release());
     }
 

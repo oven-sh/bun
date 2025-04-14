@@ -124,7 +124,7 @@ pub const Async = struct {
 
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             var this: *AsyncMkdirp = @fieldParentPtr("task", task);
@@ -181,10 +181,8 @@ pub const Async = struct {
 
             pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "UvTask";
 
-            pub usingnamespace bun.New(@This());
-
             pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, task_args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
-                var task = Task.new(.{
+                var task = bun.new(Task, .{
                     .promise = JSC.JSPromise.Strong.init(globalObject),
                     .args = task_args,
                     .result = undefined,
@@ -372,7 +370,7 @@ pub const Async = struct {
                     this.args.deinit();
                 }
                 this.promise.deinit();
-                this.destroy();
+                bun.destroy(this);
             }
         };
     }
@@ -697,7 +695,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
         }
 
-        pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *void) void {
+        pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) void {
             this.runFromJSThread();
         }
 
@@ -1007,7 +1005,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pending_err: ?Syscall.Error = null,
     pending_err_mutex: bun.Mutex = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
@@ -1050,13 +1048,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         basename: bun.PathString = bun.PathString.empty,
         task: JSC.WorkPoolTask = .{ .callback = call },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn call(task: *JSC.WorkPoolTask) void {
             var this: *Subtask = @alignCast(@fieldParentPtr("task", task));
             defer {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
-                this.destroy();
+                bun.destroy(this);
             }
             var buf: bun.PathBuffer = undefined;
             this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
@@ -1308,7 +1306,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -1734,7 +1732,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -1777,7 +1775,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "throwIfNoEntry")) |throw_if_no_entry_val| {
@@ -1813,7 +1811,7 @@ pub const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        if (next_val.isCallable()) break :brk false;
                         arguments.eat();
 
                         if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
@@ -2485,7 +2483,7 @@ pub const Arguments = struct {
             };
 
             const buffer_value = arguments.next();
-            const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
+            const buffer = try StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
@@ -3724,7 +3722,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
@@ -3850,7 +3848,7 @@ pub const NodeFS = struct {
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
         return switch (Syscall.fstat(args.fd)) {
-            .result => |result| .{ .result = .init(result, args.big_int) },
+            .result => |*result| .{ .result = .init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
     }
@@ -3927,7 +3925,7 @@ pub const NodeFS = struct {
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
         return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
+            .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
@@ -4234,7 +4232,8 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.StatFS).initResult(Return.StatFS.init(req.ptrAs(*align(1) bun.StatFS).*, args.big_int));
+        const statfs_ = req.ptrAs(*align(1) bun.StatFS).*;
+        return Maybe(Return.StatFS).initResult(Return.StatFS.init(&statfs_, args.big_int));
     }
 
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, _: Flavor) Maybe(Return.OpenDir) {
@@ -5633,6 +5632,7 @@ pub const NodeFS = struct {
     }
 
     pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
+
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
             zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
@@ -5748,7 +5748,7 @@ pub const NodeFS = struct {
 
     pub fn statfs(this: *NodeFS, args: Arguments.StatFS, _: Flavor) Maybe(Return.StatFS) {
         return switch (Syscall.statfs(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
+            .result => |*result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
             .err => |err| Maybe(Return.StatFS){ .err = err },
         };
     }
@@ -5756,13 +5756,13 @@ pub const NodeFS = struct {
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
         if (bun.StandaloneModuleGraph.get()) |graph| {
-            if (graph.stat(path)) |result| {
+            if (graph.stat(path)) |*result| {
                 return .{ .result = .{ .stats = .init(result, args.big_int) } };
             }
         }
 
         return switch (Syscall.stat(path)) {
-            .result => |result| .{
+            .result => |*result| .{
                 .result = .{ .stats = .init(result, args.big_int) },
             },
             .err => |err| brk: {
@@ -6464,7 +6464,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -6751,10 +6751,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             continue :process_stack;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :process_stack,
-
-                            // Impossible because we do not pass any path separators.
-                            error.NotDir => unreachable,
-
+                            error.NotDir => if (Environment.isDebug) unreachable else return error.Unexpected,
                             error.IsDir => {
                                 treat_as_dir = true;
                                 continue :handle_entry;
@@ -6912,9 +6909,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             continue :dir_it;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :dir_it,
-
-                            // Impossible because we do not pass any path separators.
-                            error.NotDir => unreachable,
+                            error.NotDir => if (Environment.isDebug) unreachable else return error.Unexpected,
 
                             error.IsDir => {
                                 treat_as_dir = true;

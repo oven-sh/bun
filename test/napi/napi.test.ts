@@ -15,7 +15,8 @@ describe("napi", () => {
       stdin: "inherit",
     });
     if (!install.success) {
-      throw new Error("build failed");
+      console.error("build failed, bailing out!");
+      process.exit(1);
     }
   });
 
@@ -252,6 +253,22 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_async_work", () => {
+    it("null checks execute callbacks", () => {
+      const output = checkSameOutput("test_napi_async_work_execute_null_check", []);
+      expect(output).toContain("success!");
+      expect(output).not.toContain("failure!");
+    });
+    it("null checks complete callbacks after scheduling", () => {
+      checkSameOutput("test_napi_async_work_complete_null_check", []);
+    });
+    it("works with cancelation", () => {
+      const output = checkSameOutput("test_napi_async_work_cancel", [], { "UV_THREADPOOL_SIZE": "2" });
+      expect(output).toContain("success!");
+      expect(output).not.toContain("failure!");
+    });
+  });
+
   describe("napi_threadsafe_function", () => {
     it("keeps the event loop alive without async_work", () => {
       const result = checkSameOutput("test_promise_with_threadsafe_function", []);
@@ -454,19 +471,20 @@ describe("napi", () => {
   });
 });
 
-function checkSameOutput(test: string, args: any[] | string) {
-  const nodeResult = runOn("node", test, args).trim();
-  let bunResult = runOn(bunExe(), test, args);
+function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
+  const nodeResult = runOn("node", test, args, envArgs).trim();
+  let bunResult = runOn(bunExe(), test, args, envArgs);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
   expect(bunResult).toEqual(nodeResult);
   return nodeResult;
 }
 
-function runOn(executable: string, test: string, args: any[] | string) {
+function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
   // when the inspector runs (can be due to VSCode extension), there is
   // a bug that in debug modes the console logs extra stuff
   const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
+  const env = { ...rest, ...envArgs };
   const exec = spawnSync({
     cmd: [
       executable,
@@ -475,7 +493,7 @@ function runOn(executable: string, test: string, args: any[] | string) {
       test,
       typeof args == "string" ? args : JSON.stringify(args),
     ],
-    env: rest,
+    env,
   });
   const errs = exec.stderr.toString();
   if (errs !== "") {

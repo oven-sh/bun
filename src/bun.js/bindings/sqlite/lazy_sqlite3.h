@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "sqlite3.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -232,6 +233,8 @@ static int lazyLoadSQLite()
     if (!sqlite3_handle) {
         return -1;
     }
+    lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
+    if (!lazy_sqlite3_open_v2) return -1;
     lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
     lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");
     lazy_sqlite3_bind_int = (lazy_sqlite3_bind_int_type)dlsym(sqlite3_handle, "sqlite3_bind_int");
@@ -262,7 +265,6 @@ static int lazyLoadSQLite()
     lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
     lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");
     lazy_sqlite3_get_autocommit = (lazy_sqlite3_get_autocommit_type)dlsym(sqlite3_handle, "sqlite3_get_autocommit");
-    lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
     lazy_sqlite3_prepare_v3 = (lazy_sqlite3_prepare_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare_v3");
     lazy_sqlite3_prepare16_v3 = (lazy_sqlite3_prepare16_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare16_v3");
     lazy_sqlite3_reset = (lazy_sqlite3_reset_type)dlsym(sqlite3_handle, "sqlite3_reset");

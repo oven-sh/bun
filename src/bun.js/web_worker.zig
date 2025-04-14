@@ -27,7 +27,12 @@ pub const WebWorker = struct {
     arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
-    mini: bool = false,
+    mini: bool,
+    // Most of our code doesn't care whether `eval` was passed, because worker_threads.ts
+    // automatically passes a Blob URL instead of a file path if `eval` is true. But, if `eval` is
+    // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
+    // Blob URL.
+    eval_mode: bool,
 
     /// `user_keep_alive` is the state of the user's .ref()/.unref() calls
     /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
@@ -35,7 +40,8 @@ pub const WebWorker = struct {
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
 
-    argv: ?[]const WTFStringImpl,
+    // kept alive by C++ Worker object
+    argv: []const WTFStringImpl,
     execArgv: ?[]const WTFStringImpl,
 
     pub const Status = enum(u8) {
@@ -178,12 +184,14 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
+        eval_mode: bool,
         argv_ptr: ?[*]WTFStringImpl,
-        argv_len: u32,
+        argv_len: usize,
+        inherit_execArgv: bool,
         execArgv_ptr: ?[*]WTFStringImpl,
-        execArgv_len: u32,
+        execArgv_len: usize,
         preload_modules_ptr: ?[*]bun.String,
-        preload_modules_len: u32,
+        preload_modules_len: usize,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
@@ -195,10 +203,7 @@ pub const WebWorker = struct {
         defer parent.transpiler.setLog(prev_log);
         defer temp_log.deinit();
 
-        const preload_modules = if (preload_modules_ptr) |ptr|
-            ptr[0..preload_modules_len]
-        else
-            &.{};
+        const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
         const path = resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) orelse {
             return null;
@@ -228,6 +233,7 @@ pub const WebWorker = struct {
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
+            .eval_mode = eval_mode,
             .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .store_fd = parent.transpiler.resolver.store_fd,
             .name = brk: {
@@ -238,8 +244,8 @@ pub const WebWorker = struct {
             },
             .user_keep_alive = !default_unref,
             .worker_event_loop_running = true,
-            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
-            .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
+            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
+            .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
             .preloads = preloads.items,
         };
 
@@ -431,7 +437,7 @@ pub const WebWorker = struct {
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
+            _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
         }
 

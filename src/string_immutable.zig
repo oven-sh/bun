@@ -629,7 +629,7 @@ pub const StringOrTinyString = struct {
     const Buffer = [Max]u8;
 
     remainder_buf: Buffer = undefined,
-    meta: packed struct {
+    meta: packed struct(u8) {
         remainder_len: u7 = 0,
         is_tiny_string: u1 = 0,
     } = .{},
@@ -894,7 +894,9 @@ pub fn withoutTrailingSlashWindowsPath(input: string) []const u8 {
         path.len -= 1;
     }
 
-    bun.assert(!isWindowsAbsolutePathMissingDriveLetter(u8, path));
+    if (Environment.isDebug)
+        bun.debugAssert(!std.fs.path.isAbsolute(path) or
+            !isWindowsAbsolutePathMissingDriveLetter(u8, path));
 
     return path;
 }
@@ -1592,7 +1594,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             var out = try allocator.alloc(u16, out_length + if (sentinel) 1 else 0);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, if (comptime sentinel) out[0..out_length] else out);
             if (res.status == .success) {
                 if (comptime sentinel) {
                     out[out_length] = 0;
@@ -1671,7 +1673,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         }
 
         if (remaining.len > 0) {
-            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len);
+            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len + comptime if (sentinel) 1 else 0);
 
             output.items.len += remaining.len;
             strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
@@ -1692,7 +1694,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
 pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) [:0]u16 else []u16 {
     return (try toUTF16Alloc(allocator, bytes, fail_if_invalid, sentinel)) orelse {
         const output = try allocator.alloc(u16, bytes.len + if (sentinel) 1 else 0);
-        bun.strings.copyU8IntoU16(output, bytes);
+        bun.strings.copyU8IntoU16(if (sentinel) output[0..bytes.len] else output, bytes);
 
         if (comptime sentinel) {
             output[bytes.len] = 0;
@@ -2213,7 +2215,7 @@ pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: b
     return buf[0..len :0];
 }
 
-pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) OOM!std.ArrayList(u8) {
     var list = list_;
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
         utf16,
@@ -2285,7 +2287,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
     return list.items;
 }
 
-pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) OOM!std.ArrayList(u8) {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
@@ -2332,7 +2334,7 @@ pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std
     return list1;
 }
 
-pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type, comptime skip_trailing_replacement: bool) !(if (skip_trailing_replacement) ?u16 else std.ArrayList(u8)) {
+pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type, comptime skip_trailing_replacement: bool) OOM!(if (skip_trailing_replacement) ?u16 else std.ArrayList(u8)) {
     var utf16_remaining = utf16;
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
@@ -4343,15 +4345,15 @@ pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp: AsciiVectorU1 = if (comptime quote_char == '`') ( //
                 @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
+                    @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
+                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
+                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
             ) else ( //
                 @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
+                    @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
+                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
             );
 
             if (@reduce(.Max, cmp) > 0) {
@@ -4382,6 +4384,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
 
     if (remaining[0] >= 127 or
         remaining[0] < 0x20 or
+        remaining[0] == '%' or
         remaining[0] == '\\' or
         remaining[0] == '"' or
         remaining[0] == '#' or
@@ -4402,6 +4405,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
                 @as(AsciiVectorU1, @bitCast(vec > max_16_ascii)) |
                 @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('%')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('\\')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('"')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('#')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('?')))) |
@@ -4425,6 +4429,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
         const char = char_.*;
         if (char > 127 or char < 0x20 or
             char == '\\' or
+            char == '%' or
             char == '"' or
             char == '#' or
             char == '?' or
@@ -5215,7 +5220,7 @@ pub const PackedCodepointIterator = struct {
 
     pub const ZeroValue = zeroValue;
 
-    pub const Cursor = packed struct {
+    pub const Cursor = packed struct(u64) {
         i: u32 = 0,
         c: u29 = zeroValue,
         width: u3 = 0,
@@ -5594,7 +5599,7 @@ pub const unicode_replacement_str = brk: {
 
 pub fn isIPAddress(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
-    if (input.len > max_ip_address_buffer.len) return false;
+    if (input.len >= max_ip_address_buffer.len) return false;
 
     var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
@@ -5608,7 +5613,7 @@ pub fn isIPAddress(input: []const u8) bool {
 
 pub fn isIPV6Address(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
-    if (input.len > max_ip_address_buffer.len) return false;
+    if (input.len >= max_ip_address_buffer.len) return false;
 
     var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
@@ -5770,7 +5775,7 @@ pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
 ) []u16 {
-    // TODO(@paperdave): implement error handling here.
+    // TODO(@paperclover): implement error handling here.
     // for now this will cause invalid utf-8 to be ignored and become empty.
     // this is lame because of https://github.com/oven-sh/bun/issues/8197
     // it will cause process.env.whatever to be len=0 instead of the data
@@ -5806,7 +5811,7 @@ pub fn convertUTF16toUTF8InBuffer(
     const result = bun.simdutf.convert.utf16.to.utf8.le(input, buf);
     // switch (result.status) {
     //     .success => return buf[0..result.count],
-    //     // TODO(@paperdave): handle surrogate
+    //     // TODO(@paperclover): handle surrogate
     //     .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
     //     else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     // }

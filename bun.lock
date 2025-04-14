@@ -27,9 +27,10 @@
     },
     "packages/bun-types": {
       "name": "bun-types",
+      "version": "1.2.5",
       "dependencies": {
         "@types/node": "*",
-        "@types/ws": "~8.5.10",
+        "@types/ws": "*",
       },
       "devDependencies": {
         "@biomejs/biome": "^1.5.3",

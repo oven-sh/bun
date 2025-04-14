@@ -1,6 +1,6 @@
 {
   "name": "bun-plugin-svelte",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Official Svelte plugin for Bun",
   "repository": {
     "type": "git",
@@ -24,7 +24,8 @@
   },
   "devDependencies": {
     "bun-types": "canary",
-    "svelte": "^5.20.4"
+    "svelte": "^5.20.4",
+    "@threlte/core": "8.0.1"
   },
   "peerDependencies": {
     "svelte": "^5"

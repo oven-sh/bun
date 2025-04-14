@@ -2065,7 +2065,7 @@ describe("bundler", () => {
     run: true,
   });
 
-  // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
+  // TODO(@paperclover): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node
     ["require", "import.meta.require", "__require"],
@@ -2292,6 +2292,51 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     run: {
       stdout: "",
+    },
+  });
+  itBundled("edgecase/NodeBuiltinWithoutPrefix", {
+    files: {
+      "/entry.ts": `
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        import * as blah from "bun:jsc";
+        +[hello,world,etc,blah];
+      `,
+    },
+    target: 'bun',
+    onAfterBundle(api) {
+      api.expectFile('out.js').toMatchInlineSnapshot(`
+        "// @bun
+        // entry.ts
+        import * as hello from "node:test";
+        import * as world from "fs";
+        import * as etc from "console";
+        import * as blah from "bun:jsc";
+        +[hello, world, etc, blah];
+        "
+      `);
+    },
+  });
+  itBundled("edgecase/NodeBuiltinWithoutPrefix2", {
+    files: {
+      "/entry.ts": `
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        +[hello,world,etc];
+      `,
+    },
+    target: 'node',
+    onAfterBundle(api) {
+      api.expectFile('out.js').toMatchInlineSnapshot(`
+        "// entry.ts
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        +[hello, world, etc];
+        "
+      `);
     },
   });
 });

@@ -320,9 +320,7 @@ pub const PublishCommand = struct {
                     },
                 };
 
-                return switch (manager.options.log_level) {
-                    inline else => |log_level| Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true),
-                };
+                return Pack.pack(&pack_ctx, manager.original_package_json_path, true);
             }
         };
     }
@@ -963,7 +961,7 @@ pub const PublishCommand = struct {
             );
         }
 
-        const buffer_writer = try bun.js_printer.BufferWriter.init(allocator);
+        const buffer_writer = bun.js_printer.BufferWriter.init(allocator);
         var writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
         const written = bun.js_printer.printJSON(
@@ -1149,7 +1147,7 @@ pub const PublishCommand = struct {
 
                 try dirs.append(allocator, .{ bin_dir.asDir(), normalized_bin_dir, false });
 
-                while (dirs.popOrNull()) |dir_info| {
+                while (dirs.pop()) |dir_info| {
                     var dir, const dir_subpath, const close_dir = dir_info;
                     defer if (close_dir) dir.close();
 

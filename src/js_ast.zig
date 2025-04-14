@@ -969,7 +969,7 @@ pub const Symbol = struct {
     /// This is the name that came from the parser. Printed names may be renamed
     /// during minification or to avoid name collisions. Do not use the original
     /// name during printing.
-    original_name: string,
+    original_name: []const u8,
 
     /// This is used for symbols that represent items in the import clause of an
     /// ES6 import statement. These should always be referenced by EImportIdentifier
@@ -1103,15 +1103,13 @@ pub const Symbol = struct {
 
     remove_overwritten_function_declaration: bool = false,
 
-    /// In debug mode, sometimes its helpful to know what source file
-    /// A symbol came from. This is used for that.
-    ///
-    /// We don't want this in non-debug mode because it increases the size of
-    /// the symbol table.
-    debug_mode_source_index: if (Environment.allow_assert)
-        Index.Int
-    else
-        u0 = 0,
+    /// Used in HMR to decide when live binding code is needed.
+    has_been_assigned_to: bool = false,
+
+    comptime {
+        bun.assert_eql(@sizeOf(Symbol), 88);
+        bun.assert_eql(@alignOf(Symbol), @alignOf([]const u8));
+    }
 
     const invalid_chunk_index = std.math.maxInt(u32);
     pub const invalid_nested_scope_slot = std.math.maxInt(u32);
@@ -1412,7 +1410,7 @@ pub const Symbol = struct {
         }
 
         pub fn followAll(symbols: *Map) void {
-            const trace = bun.tracy.traceNamed(@src(), "Symbols.followAll");
+            const trace = bun.perf.trace("Symbols.followAll");
             defer trace.end();
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
@@ -2409,12 +2407,6 @@ pub const E = struct {
         }
 
         pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
-            if (Expr.Data.Store.memory_allocator) |mem| {
-                if (mem == GlobalStoreHandle.global_store_ast) {
-                    return str.string(allocator);
-                }
-            }
-
             if (str.isUTF8()) {
                 return allocator.dupe(u8, str.string(allocator) catch unreachable);
             }
@@ -7835,7 +7827,7 @@ pub const Scope = struct {
         if (Symbol.isKindHoistedOrFunction(new) and
             Symbol.isKindHoistedOrFunction(existing) and
             (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
-            (new == existing and Symbol.isKindHoisted(existing))))
+                (new == existing and Symbol.isKindHoisted(existing))))
         {
             return .replace_with_new;
         }
@@ -7977,7 +7969,7 @@ pub const Macro = struct {
             bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
-                if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
+                if (JSC.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
                     break :brk replacement.path;
                 }
 
@@ -8355,11 +8347,12 @@ pub const Macro = struct {
                             }
                             return _entry.value_ptr.*;
                         }
-
+                        // SAFETY: tag ensures `value` is an object.
+                        const obj = value.getObject() orelse unreachable;
                         var object_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, value);
+                        }).init(this.global, obj);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);
@@ -8556,7 +8549,7 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size));
+    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min));
 
     stack_allocator: SFA = undefined,
     bump_allocator: std.mem.Allocator = undefined,
@@ -8763,32 +8756,6 @@ pub const ServerComponentBoundary = struct {
             }
         };
     };
-};
-
-pub const GlobalStoreHandle = struct {
-    prev_memory_allocator: ?*ASTMemoryAllocator = null,
-
-    var global_store_ast: ?*ASTMemoryAllocator = null;
-    var global_store_threadsafe: std.heap.ThreadSafeAllocator = undefined;
-
-    pub fn get() ?*ASTMemoryAllocator {
-        if (global_store_ast == null) {
-            var global = bun.default_allocator.create(ASTMemoryAllocator) catch unreachable;
-            global.allocator = bun.default_allocator;
-            global.bump_allocator = bun.default_allocator;
-            global_store_ast = global;
-        }
-
-        const prev = Stmt.Data.Store.memory_allocator;
-        Stmt.Data.Store.memory_allocator = global_store_ast;
-        Expr.Data.Store.memory_allocator = global_store_ast;
-        return prev;
-    }
-
-    pub fn unget(handle: ?*ASTMemoryAllocator) void {
-        Stmt.Data.Store.memory_allocator = handle;
-        Expr.Data.Store.memory_allocator = handle;
-    }
 };
 
 extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;

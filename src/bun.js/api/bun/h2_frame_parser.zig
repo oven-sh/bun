@@ -550,7 +550,7 @@ const Handlers = struct {
     }
 
     pub fn callWriteCallback(this: *Handlers, callback: JSC.JSValue, data: []const JSValue) bool {
-        if (!callback.isCallable(this.globalObject.vm())) return false;
+        if (!callback.isCallable()) return false;
         this.vm.eventLoop().runCallback(callback, this.globalObject, .undefined, data);
         return true;
     }
@@ -595,7 +595,7 @@ const Handlers = struct {
 
         inline for (pairs) |pair| {
             if (try opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
-                if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
+                if (!callback_value.isCell() or !callback_value.isCallable()) {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
@@ -604,7 +604,7 @@ const Handlers = struct {
         }
 
         if (opts.fastGet(globalObject, .@"error")) |callback_value| {
-            if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
+            if (!callback_value.isCell() or !callback_value.isCallable()) {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
@@ -653,8 +653,11 @@ const Handlers = struct {
 
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
+    const Self = @This();
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, "H2");
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
     const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
@@ -708,7 +711,7 @@ pub const H2FrameParser = struct {
 
     autouncork_registered: bool = false,
     has_nonnative_backpressure: bool = false,
-    ref_count: u8 = 1,
+    ref_count: RefCount,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
@@ -771,7 +774,7 @@ pub const H2FrameParser = struct {
             parser: *H2FrameParser,
             stream_id: u32,
 
-            usingnamespace bun.New(SignalRef);
+            pub const new = bun.TrivialNew(SignalRef);
 
             pub fn isAborted(this: *SignalRef) bool {
                 return this.signal.aborted();
@@ -790,7 +793,7 @@ pub const H2FrameParser = struct {
             pub fn deinit(this: *SignalRef) void {
                 this.signal.detach(this);
                 this.parser.deref();
-                this.destroy();
+                bun.destroy(this);
             }
         };
         const PendingQueue = struct {
@@ -1020,7 +1023,7 @@ pub const H2FrameParser = struct {
                 .len = @intCast(bytes.len),
                 // we need to clone this data to send it later
                 .buffer = if (bytes.len == 0) "" else client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory(),
-                .callback = if (callback.isCallable(globalThis.vm())) JSC.Strong.create(callback, globalThis) else .empty,
+                .callback = if (callback.isCallable()) JSC.Strong.create(callback, globalThis) else .empty,
             };
             if (bytes.len > 0) {
                 @memcpy(frame.buffer[0..bytes.len], bytes);
@@ -3248,9 +3251,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         };
 
-        if (!headers_arg.isObject()) {
+        const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
-        }
+        };
 
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
@@ -3266,7 +3269,7 @@ pub const H2FrameParser = struct {
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_arg);
+        }).init(globalObject, headers_obj);
         defer iter.deinit();
 
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
@@ -3420,9 +3423,8 @@ pub const H2FrameParser = struct {
                 return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             }
 
-            break :brk JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
-                if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
-                return error.JSError;
+            break :brk try JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
+                return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             };
         };
 
@@ -3432,8 +3434,7 @@ pub const H2FrameParser = struct {
             data_arg,
             encoding,
         ) orelse {
-            if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
-            return error.JSError;
+            return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
         };
         defer buffer.deinit();
 
@@ -3597,9 +3598,9 @@ pub const H2FrameParser = struct {
         const headers_arg = args_list.ptr[2];
         const sensitive_arg = args_list.ptr[3];
 
-        if (!headers_arg.isObject()) {
+        const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
-        }
+        };
 
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
@@ -3619,7 +3620,7 @@ pub const H2FrameParser = struct {
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_arg);
+        }).init(globalObject, headers_obj);
         defer iter.deinit();
         var header_count: u32 = 0;
 
@@ -3855,7 +3856,7 @@ pub const H2FrameParser = struct {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
                     has_priority = true;
                     weight = weight_js.toInt32();
-                    if (weight < 1 or weight > 256) {
+                    if (weight < 1 or weight > std.math.maxInt(u8)) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
@@ -3864,7 +3865,7 @@ pub const H2FrameParser = struct {
                     stream.weight = @intCast(weight);
                 }
 
-                if (weight < 1 or weight > 256) {
+                if (weight < 1 or weight > std.math.maxInt(u8)) {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                     this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
@@ -4073,6 +4074,7 @@ pub const H2FrameParser = struct {
                 const self = H2FrameParser.pool.?.tryGet() catch bun.outOfMemory();
 
                 self.* = H2FrameParser{
+                    .ref_count = .init(),
                     .handlers = handlers,
                     .globalThis = globalObject,
                     .allocator = bun.default_allocator,
@@ -4087,7 +4089,8 @@ pub const H2FrameParser = struct {
                 };
                 break :brk self;
             } else {
-                break :brk H2FrameParser.new(.{
+                break :brk bun.new(H2FrameParser, .{
+                    .ref_count = .init(),
                     .handlers = handlers,
                     .globalThis = globalObject,
                     .allocator = bun.default_allocator,
@@ -4214,14 +4217,14 @@ pub const H2FrameParser = struct {
         this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
     }
 
-    pub fn deinit(this: *H2FrameParser) void {
+    fn deinit(this: *H2FrameParser) void {
         log("deinit", .{});
 
         defer {
             if (ENABLE_ALLOCATOR_POOL) {
                 H2FrameParser.pool.?.put(this);
             } else {
-                this.destroy();
+                bun.destroy(this);
             }
         }
         this.detach(true);

@@ -113,7 +113,7 @@ const LibInfo = struct {
 
         if (errno != 0) {
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.C.getErrno(errno))}));
-            if (request.cache.pending_cache) this.pending_host_cache_native.available.set(request.cache.pos_in_pending);
+            if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
             return promise_value;
@@ -979,7 +979,10 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         next: ?*@This() = null,
         name: []const u8,
 
-        pub usingnamespace bun.New(@This());
+        pub fn new(data: @This()) *@This() {
+            bun.assert(data.allocated); // deinit will not free this otherwise
+            return bun.new(@This(), data);
+        }
 
         pub fn init(resolver: ?*DNSResolver, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator, name: []const u8) !*@This() {
             if (resolver) |resolver_| {
@@ -1040,7 +1043,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             }
 
             if (this.allocated) {
-                this.destroy();
+                bun.destroy(this);
             }
         }
     };
@@ -1146,10 +1149,7 @@ pub const GlobalData = struct {
     pub fn init(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) *GlobalData {
         const global = allocator.create(GlobalData) catch bun.outOfMemory();
         global.* = .{
-            .resolver = .{
-                .vm = vm,
-                .polls = DNSResolver.PollsMap.init(allocator),
-            },
+            .resolver = DNSResolver.setup(allocator, vm),
         };
 
         return global;
@@ -1185,7 +1185,7 @@ pub const InternalDNS = struct {
     }
 
     pub const Request = struct {
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
         const Key = struct {
             host: ?[:0]const u8,
             hash: u64,
@@ -1274,7 +1274,7 @@ pub const InternalDNS = struct {
                 bun.default_allocator.free(host);
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -1768,38 +1768,41 @@ comptime {
 }
 
 pub const DNSResolver = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     const log = Output.scoped(.DNSResolver, false);
 
+    ref_count: RefCount,
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
     polls: PollsMap,
     options: c_ares.ChannelOptions = .{},
 
-    ref_count: u32 = 1,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .DNSResolver,
     },
 
-    pending_host_cache_cares: PendingCache = .empty,
-    pending_host_cache_native: PendingCache = .empty,
-    pending_srv_cache_cares: SrvPendingCache = .empty,
-    pending_soa_cache_cares: SoaPendingCache = .empty,
-    pending_txt_cache_cares: TxtPendingCache = .empty,
-    pending_naptr_cache_cares: NaptrPendingCache = .empty,
-    pending_mx_cache_cares: MxPendingCache = .empty,
-    pending_caa_cache_cares: CaaPendingCache = .empty,
-    pending_ns_cache_cares: NSPendingCache = .empty,
-    pending_ptr_cache_cares: PtrPendingCache = .empty,
-    pending_cname_cache_cares: CnamePendingCache = .empty,
-    pending_a_cache_cares: APendingCache = .empty,
-    pending_aaaa_cache_cares: AAAAPendingCache = .empty,
-    pending_any_cache_cares: AnyPendingCache = .empty,
-    pending_addr_cache_cares: AddrPendingCache = .empty,
-    pending_nameinfo_cache_cares: NameInfoPendingCache = .empty,
+    pending_host_cache_cares: PendingCache,
+    pending_host_cache_native: PendingCache,
+    pending_srv_cache_cares: SrvPendingCache,
+    pending_soa_cache_cares: SoaPendingCache,
+    pending_txt_cache_cares: TxtPendingCache,
+    pending_naptr_cache_cares: NaptrPendingCache,
+    pending_mx_cache_cares: MxPendingCache,
+    pending_caa_cache_cares: CaaPendingCache,
+    pending_ns_cache_cares: NSPendingCache,
+    pending_ptr_cache_cares: PtrPendingCache,
+    pending_cname_cache_cares: CnamePendingCache,
+    pending_a_cache_cares: APendingCache,
+    pending_aaaa_cache_cares: AAAAPendingCache,
+    pending_any_cache_cares: AnyPendingCache,
+    pending_addr_cache_cares: AddrPendingCache,
+    pending_nameinfo_cache_cares: NameInfoPendingCache,
 
     pub usingnamespace JSC.Codegen.JSDNSResolver;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 
@@ -1809,6 +1812,9 @@ pub const DNSResolver = struct {
         Async.FilePoll;
 
     const UvDnsPoll = struct {
+        pub const new = bun.TrivialNew(@This());
+        pub const destroy = bun.TrivialDeinit(@This());
+
         parent: *DNSResolver,
         socket: c_ares.ares_socket_t,
         poll: bun.windows.libuv.uv_poll_t,
@@ -1816,28 +1822,47 @@ pub const DNSResolver = struct {
         pub fn fromPoll(poll: *bun.windows.libuv.uv_poll_t) *UvDnsPoll {
             return @fieldParentPtr("poll", poll);
         }
-
-        pub usingnamespace bun.New(@This());
     };
+
+    pub fn setup(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) DNSResolver {
+        return .{
+            .ref_count = .init(),
+            .vm = vm,
+            .polls = DNSResolver.PollsMap.init(allocator),
+            .pending_host_cache_cares = PendingCache.empty,
+            .pending_host_cache_native = PendingCache.empty,
+            .pending_srv_cache_cares = SrvPendingCache.empty,
+            .pending_soa_cache_cares = SoaPendingCache.empty,
+            .pending_txt_cache_cares = TxtPendingCache.empty,
+            .pending_naptr_cache_cares = NaptrPendingCache.empty,
+            .pending_mx_cache_cares = MxPendingCache.empty,
+            .pending_caa_cache_cares = CaaPendingCache.empty,
+            .pending_ns_cache_cares = NSPendingCache.empty,
+            .pending_ptr_cache_cares = PtrPendingCache.empty,
+            .pending_cname_cache_cares = CnamePendingCache.empty,
+            .pending_a_cache_cares = APendingCache.empty,
+            .pending_aaaa_cache_cares = AAAAPendingCache.empty,
+            .pending_any_cache_cares = AnyPendingCache.empty,
+            .pending_addr_cache_cares = AddrPendingCache.empty,
+            .pending_nameinfo_cache_cares = NameInfoPendingCache.empty,
+        };
+    }
 
     pub fn init(allocator: std.mem.Allocator, vm: *JSC.VirtualMachine) *DNSResolver {
         log("init", .{});
-        return DNSResolver.new(.{
-            .vm = vm,
-            .polls = DNSResolver.PollsMap.init(allocator),
-        });
+        return bun.new(DNSResolver, .setup(allocator, vm));
     }
 
     pub fn finalize(this: *DNSResolver) void {
         this.deref();
     }
 
-    pub fn deinit(this: *DNSResolver) void {
+    fn deinit(this: *DNSResolver) void {
         if (this.channel) |channel| {
             channel.deinit();
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub const Order = enum(u8) {
@@ -1911,8 +1936,8 @@ pub const DNSResolver = struct {
     fn anyRequestsPending(this: *DNSResolver) bool {
         inline for (@typeInfo(DNSResolver).@"struct".fields) |field| {
             if (comptime std.mem.startsWith(u8, field.name, "pending_")) {
-                const set = &@field(this, field.name).available;
-                if (set.count() < set.capacity()) {
+                const set = &@field(this, field.name).used;
+                if (set.findFirstSet() != null) {
                     return true;
                 }
             }
@@ -1960,13 +1985,13 @@ pub const DNSResolver = struct {
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
         var cache = &@field(this, cache_name);
-        bun.assert(!cache.available.isSet(index));
+        bun.assert(cache.used.isSet(index));
         const entry = cache.buffer[index];
         cache.buffer[index] = undefined;
 
-        var available = cache.available;
-        available.set(index);
-        cache.available = available;
+        var used = cache.used;
+        used.unset(index);
+        cache.used = used;
 
         return entry;
     }
@@ -2221,9 +2246,9 @@ pub const DNSResolver = struct {
         comptime field: []const u8,
     ) LookupCacheHit(request_type) {
         var cache = &@field(this, field);
-        var inflight_iter = cache.available.iterator(
+        var inflight_iter = cache.used.iterator(
             .{
-                .kind = .unset,
+                .kind = .set,
             },
         );
 
@@ -2249,9 +2274,9 @@ pub const DNSResolver = struct {
         comptime field: std.meta.FieldEnum(DNSResolver),
     ) CacheHit {
         var cache: *PendingCache = &@field(this, @tagName(field));
-        var inflight_iter = cache.available.iterator(
+        var inflight_iter = cache.used.iterator(
             .{
-                .kind = .unset,
+                .kind = .set,
             },
         );
 
@@ -2484,7 +2509,7 @@ pub const DNSResolver = struct {
             return globalThis.throwNotEnoughArguments("resolve", 3, arguments.len);
         }
 
-        const record_type: RecordType = if (arguments.len == 1)
+        const record_type: RecordType = if (arguments.len <= 1)
             RecordType.default
         else brk: {
             const record_type_value = arguments.ptr[1];
@@ -2501,7 +2526,7 @@ pub const DNSResolver = struct {
             }
 
             break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), JSC.ZigString.eqlComptime) orelse {
-                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
+                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
             };
         };
 
@@ -2656,7 +2681,16 @@ pub const DNSResolver = struct {
             options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
-                    else => globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)}),
+                    error.JSError => |exception| exception,
+                    error.OutOfMemory => |oom| oom,
+
+                    // more information with these errors
+                    error.InvalidOptions,
+                    error.InvalidFamily,
+                    error.InvalidSocketType,
+                    error.InvalidProtocol,
+                    error.InvalidBackend,
+                    => globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)}),
                 };
             };
         }

@@ -45,7 +45,7 @@ pub const LifecycleScriptSubprocess = struct {
         return a.started_at < b.started_at;
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const min_milliseconds_to_log = 500;
 
@@ -460,7 +460,7 @@ pub const LifecycleScriptSubprocess = struct {
             this.stderr.deinit();
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {
@@ -485,8 +485,8 @@ pub const LifecycleScriptSubprocess = struct {
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]const u8,
         optional: bool,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime foreground: bool,
+        log_level: PackageManager.Options.LogLevel,
+        foreground: bool,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
@@ -497,7 +497,7 @@ pub const LifecycleScriptSubprocess = struct {
             .optional = optional,
         });
 
-        if (comptime log_level.isVerbose()) {
+        if (log_level.isVerbose()) {
             Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });

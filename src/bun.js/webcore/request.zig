@@ -57,14 +57,14 @@ pub const Request = struct {
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
-    weak_ptr_data: bun.WeakPtrData = .{},
+    weak_ptr_data: WeakRef.Data = .empty,
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
     internal_event_callback: InternalJSEventCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const getText = RequestMixin.getText;
     pub const getBytes = RequestMixin.getBytes;
@@ -75,10 +75,14 @@ pub const Request = struct {
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
-    pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
+    pub const WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data");
 
     pub fn memoryCost(this: *const Request) usize {
         return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
+    }
+
+    pub export fn Request__setCookiesOnRequestContext(this: *Request, cookieMap: ?*JSC.WebCore.CookieMap) void {
+        this.request_context.setCookies(cookieMap);
     }
 
     pub export fn Request__getUWSRequest(
@@ -348,7 +352,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return bun.String.static(@tagName(this.method)).toJS(globalThis);
+        return this.method.toJS(globalThis);
     }
 
     pub fn getMode(
@@ -378,7 +382,7 @@ pub const Request = struct {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
         if (this.weak_ptr_data.onFinalize()) {
-            this.destroy();
+            bun.destroy(this);
         }
     }
 
@@ -581,7 +585,7 @@ pub const Request = struct {
             url_or_object.as(JSC.DOMURL) != null;
 
         if (is_first_argument_a_url) {
-            const str = try bun.String.fromJS2(arguments[0], globalThis);
+            const str = try bun.String.fromJS(arguments[0], globalThis);
             req.url = str;
 
             if (!req.url.isEmpty())
@@ -683,7 +687,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis);
+                    req.url = try bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -691,7 +695,7 @@ pub const Request = struct {
                 } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const str = bun.String.tryFromJS(value, globalThis) orelse return error.JSError;
+                    const str = try bun.String.fromJS(value, globalThis);
                     req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);

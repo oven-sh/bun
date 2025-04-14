@@ -588,11 +588,11 @@ pub const RunCommand = struct {
                                 const is_probably_trying_to_run_a_pkg_script =
                                     original_script_for_bun_run != null and
                                     ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
-                                    (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
-                                    "install",
-                                    "kill",
-                                    "link",
-                                }) and ctx.positionals.len == 1));
+                                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                                            "install",
+                                            "kill",
+                                            "link",
+                                        }) and ctx.positionals.len == 1));
 
                                 if (is_probably_trying_to_run_a_pkg_script) {
                                     // if you run something like `bun run test`, you get a confusing message because
@@ -1527,9 +1527,26 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
-        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run) catch
-            this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved|
-        {
+        const resolution = brk: {
+            const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
+            defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
+            this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main or
+                if (bun.getenvZ("NODE_PRESERVE_SYMLINKS_MAIN")) |env|
+                    bun.strings.eqlComptime(env, "1")
+                else
+                    false;
+            break :brk this_transpiler.resolver.resolve(
+                this_transpiler.fs.top_level_dir,
+                target_name,
+                .entry_point_run,
+            ) catch
+                this_transpiler.resolver.resolve(
+                    this_transpiler.fs.top_level_dir,
+                    try std.mem.join(ctx.allocator, "", &.{ "./", target_name }),
+                    .entry_point_run,
+                );
+        };
+        if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
@@ -1644,13 +1661,13 @@ pub const RunCommand = struct {
             Global.exit(1);
         }
 
-        // TODO(@paperdave): merge windows branch
+        // TODO(@paperclover): merge windows branch
         // var win_resolver = resolve_path.PosixToWinNormalizer{};
 
         const filename = ctx.positionals[0];
 
         const normalized_filename = if (std.fs.path.isAbsolute(filename))
-            // TODO(@paperdave): merge windows branch
+            // TODO(@paperclover): merge windows branch
             // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
             filename
         else brk: {

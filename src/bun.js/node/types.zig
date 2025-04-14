@@ -1894,6 +1894,8 @@ pub const Process = struct {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
             vm.exit_handler.exit_code = code;
+            // TODO(@190n) we may need to use requestTerminate or throwTerminationException
+            // instead to terminate the worker sooner
             worker.notifyNeedTermination();
             return;
         }

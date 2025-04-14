@@ -25,10 +25,6 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").WritableStream<T>;
 
-    type LibEmptyOrNodeTransformStream<I, O> = LibDomIsLoaded extends true
-      ? {}
-      : import("node:stream/web").TransformStream<I, O>;
-
     type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort;
   }
 }

@@ -1354,7 +1354,7 @@ interface Blob {
   /**
    * Returns a readable stream of the blob's contents
    */
-  stream(): ReadableStream;
+  stream(): ReadableStream<Uint8Array>;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<

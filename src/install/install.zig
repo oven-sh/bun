@@ -1800,10 +1800,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             pub fn deinit(task: *@This()) void {
                 bun.default_allocator.free(task.bytes);
-                task.destroy();
+                bun.destroy(task);
             }
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn run(task: *@This()) ?anyerror {
                 const src = task.src;
@@ -2140,8 +2140,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     //
 
                     const UninstallTask = struct {
+                        pub const new = bun.TrivialNew(@This());
+
                         absolute_path: []const u8,
                         task: JSC.WorkPoolTask = .{ .callback = &run },
+
                         pub fn run(task: *JSC.WorkPoolTask) void {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
@@ -2179,10 +2182,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                         pub fn deinit(uninstall_task: *@This()) void {
                             bun.default_allocator.free(uninstall_task.absolute_path);
-                            uninstall_task.destroy();
+                            bun.destroy(uninstall_task);
                         }
-
-                        pub usingnamespace bun.New(@This());
                     };
                     var task = UninstallTask.new(.{
                         .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
@@ -7727,7 +7728,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub const Do = packed struct {
+        pub const Do = packed struct(u16) {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
@@ -7740,9 +7741,10 @@ pub const PackageManager = struct {
             trust_dependencies_from_args: bool = false,
             update_to_latest: bool = false,
             analyze: bool = false,
+            _: u4 = 0,
         };
 
-        pub const Enable = packed struct {
+        pub const Enable = packed struct(u16) {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
@@ -7757,6 +7759,7 @@ pub const PackageManager = struct {
 
             exact_versions: bool = false,
             only_missing: bool = false,
+            _: u7 = 0,
         };
     };
 
@@ -11009,7 +11012,7 @@ pub const PackageManager = struct {
             manager.update_requests = cloned;
         }
 
-        var buffer_writer = try JSPrinter.BufferWriter.init(manager.allocator);
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
@@ -11086,7 +11089,7 @@ pub const PackageManager = struct {
                     stuff.patch_key,
                     stuff.patchfile_path,
                 );
-                var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+                var buffer_writer2 = JSPrinter.BufferWriter.init(manager.allocator);
                 try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
                 buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
                 var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
@@ -11149,7 +11152,7 @@ pub const PackageManager = struct {
                     },
                 );
             }
-            var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
+            var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =
                 preserve_trailing_newline_at_eof_for_package_json;
@@ -13700,7 +13703,7 @@ pub const PackageManager = struct {
                             );
                             if (Environment.isDebug) {
                                 var t = cause.debug_trace;
-                                bun.crash_handler.dumpStackTrace(t.trace());
+                                bun.crash_handler.dumpStackTrace(t.trace(), .{});
                             }
                             this.summary.fail += 1;
                         }

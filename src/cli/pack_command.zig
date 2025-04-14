@@ -2135,7 +2135,7 @@ pub const PackCommand = struct {
         }
 
         const has_trailing_newline = json.source.contents.len > 0 and json.source.contents[json.source.contents.len - 1] == '\n';
-        var buffer_writer = try js_printer.BufferWriter.init(allocator);
+        var buffer_writer = js_printer.BufferWriter.init(allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(allocator, json.source.contents.len + 1);
         buffer_writer.append_newline = has_trailing_newline;
         var package_json_writer = js_printer.BufferPrinter.init(buffer_writer);
@@ -2171,7 +2171,7 @@ pub const PackCommand = struct {
         glob: CowString,
         flags: Flags,
 
-        const Flags = packed struct {
+        const Flags = packed struct(u8) {
             /// beginning or middle slash (leading slash was trimmed)
             rel_path: bool,
             // can only match directories (had an ending slash, also trimmed)
@@ -2180,6 +2180,8 @@ pub const PackCommand = struct {
             @"leading **/": bool,
             /// true if the pattern starts with `!`
             negated: bool,
+
+            _: u4 = 0,
         };
 
         pub fn fromUTF8(allocator: std.mem.Allocator, pattern: string) OOM!?Pattern {

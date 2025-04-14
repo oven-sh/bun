@@ -18,11 +18,13 @@ pub const JSValkeyClient = struct {
             .nsec = 0,
         },
     },
-
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     pub usingnamespace JSC.Codegen.JSRedisClient;
-    pub usingnamespace bun.NewRefCounted(JSValkeyClient, deinit, null);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+    pub const new = bun.TrivialNew(@This());
 
     // Factory function to create a new Valkey client from JS
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSValkeyClient {
@@ -102,7 +104,8 @@ pub const JSValkeyClient = struct {
         bun.analytics.Features.valkey += 1;
 
         return JSValkeyClient.new(.{
-            .client = valkey.ValkeyClient{
+            .ref_count = .init(),
+            .client = .{
                 .vm = vm,
                 .address = switch (uri) {
                     .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
@@ -138,7 +141,6 @@ pub const JSValkeyClient = struct {
                 .idle_timeout_interval_ms = options.idle_timeout_ms,
             },
             .globalObject = globalObject,
-            .ref_count = 1,
         });
     }
 
@@ -606,15 +608,15 @@ pub const JSValkeyClient = struct {
         return memory_cost;
     }
 
-    pub fn deinit(this: *JSValkeyClient) void {
+    fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
 
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
         this.this_value.deinit();
-        bun.debugAssert(this.ref_count == 0);
-        this.destroy();
+        this.ref_count.assertNoRefs();
+        bun.destroy(this);
     }
 
     /// Keep the event loop alive, or don't keep it alive
@@ -807,22 +809,20 @@ const Options = struct {
             .enable_auto_pipelining = !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING"),
         };
 
-        if (try options_obj.getIfPropertyExists(globalObject, "idleTimeout")) |idle_timeout| {
-            if (!idle_timeout.isEmptyOrUndefinedOrNull())
-                this.idle_timeout_ms = try globalObject.validateIntegerRange(idle_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
+        if (try options_obj.getOptionalInt(globalObject, "idleTimeout", u32)) |idle_timeout| {
+            this.idle_timeout_ms = idle_timeout;
         }
 
-        if (try options_obj.getIfPropertyExists(globalObject, "connectionTimeout")) |connection_timeout| {
-            if (!connection_timeout.isEmptyOrUndefinedOrNull())
-                this.connection_timeout_ms = try globalObject.validateIntegerRange(connection_timeout, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
+        if (try options_obj.getOptionalInt(globalObject, "connectionTimeout", u32)) |connection_timeout| {
+            this.connection_timeout_ms = connection_timeout;
         }
 
         if (try options_obj.getIfPropertyExists(globalObject, "autoReconnect")) |auto_reconnect| {
             this.enable_auto_reconnect = auto_reconnect.toBoolean();
         }
 
-        if (try options_obj.getIfPropertyExists(globalObject, "maxRetries")) |max_retries| {
-            this.max_retries = try globalObject.validateIntegerRange(max_retries, u32, 0, .{ .min = 0, .max = std.math.maxInt(u32) });
+        if (try options_obj.getOptionalInt(globalObject, "maxRetries", u32)) |max_retries| {
+            this.max_retries = max_retries;
         }
 
         if (try options_obj.getIfPropertyExists(globalObject, "enableOfflineQueue")) |enable_offline_queue| {

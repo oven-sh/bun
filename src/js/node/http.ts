@@ -2799,7 +2799,7 @@ function ClientRequest(input, options, cb) {
       }
 
       if (path.startsWith("http://") || path.startsWith("https://")) {
-        return [path`${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
+        return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
         const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;

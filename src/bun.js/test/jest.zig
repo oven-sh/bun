@@ -633,23 +633,22 @@ pub const TestScope = struct {
 
         if (JSC.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
-            const current_test = task.describe.tests.items[task.describe.current_test_id];
-            const is_failing = current_test.tag == .fail;
-            const test_succeeded = args.len == 0 or args.ptr[0].isEmptyOrUndefinedOrNull();
-            const expect_count = expect.active_test_expectation_counter.actual;
 
             JSC.setFunctionData(function, null);
-            if (bun.Environment.enable_logs) {
-                if (test_succeeded) debug("done()", .{}) else debug("done(err)", .{});
+            if (args.len > 0) {
+                const err = args.ptr[0];
+                if (err.isEmptyOrUndefinedOrNull()) {
+                    debug("done()", .{});
+                    task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
+                } else {
+                    debug("done(err)", .{});
+                    _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
+                    task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .callback);
+                }
+            } else {
+                debug("done()", .{});
+                task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
             }
-
-            const test_result: Result = if (is_failing) blk: {
-                break :blk if (test_succeeded) .{ .fail_because_failing_test_passed = expect_count } else .{ .pass = expect_count };
-            } else blk: {
-                break :blk if (test_succeeded) .{ .pass = expect_count } else .{ .fail = expect_count };
-            };
-
-            task.handleResult(test_result, .callback);
         }
 
         return JSValue.jsUndefined();
@@ -1421,7 +1420,7 @@ pub const TestRunnerTask = struct {
         if (comptime Environment.allow_assert) assert(!this.reported);
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
-        this.globalThis.throwTerminationException();
+        this.globalThis.requestTermination();
         this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = @intCast(@max(elapsed, 0)) });
     }
 

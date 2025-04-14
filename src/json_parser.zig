@@ -1036,7 +1036,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    const buffer_writer = js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
     const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{
         .mangled_props = null,

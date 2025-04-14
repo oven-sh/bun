@@ -128,11 +128,11 @@ import { expectType } from "./utilities";
     }
   };
 
-  ws.onerror = (event: Event) => {
+  ws.onerror = event => {
     expectType(event).is<Event>();
   };
 
-  ws.onclose = (event: CloseEvent) => {
+  ws.onclose = event => {
     expectType(event).is<CloseEvent>();
     expectType(event.code).is<number>();
     expectType(event.reason).is<string>();

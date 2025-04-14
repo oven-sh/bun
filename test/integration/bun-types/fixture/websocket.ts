@@ -78,23 +78,48 @@ import { expectType } from "./utilities";
 
   // Using event handler properties
   ws.onopen = (event: Event) => {
-    console.log("Connection opened");
+    expectType(event).is<Event>();
   };
 
-  ws.onmessage = (event: MessageEvent) => {
+  ws.onmessage = (event: MessageEvent<string>) => {
+    expectType(event.data).is<string>();
+  };
+
+  ws.onerror = (event: Event) => {
+    expectType(event).is<Event>();
+  };
+
+  ws.onclose = (event: CloseEvent) => {
+    expectType(event).is<CloseEvent>();
+    expectType(event.code).is<number>();
+    expectType(event.reason).is<string>();
+    expectType(event.wasClean).is<boolean>();
+  };
+
+  // Using event handler properties without typing the agument
+  ws.onopen = event => {
+    expectType(event).is<Event>();
+  };
+
+  ws.onmessage = event => {
+    expectType(event.data).is<any>();
+
     if (typeof event.data === "string") {
-      console.log("Received string:", event.data);
+      expectType(event.data).is<string>();
     } else if (event.data instanceof ArrayBuffer) {
-      console.log("Received ArrayBuffer");
+      expectType(event.data).is<ArrayBuffer>();
     }
   };
 
   ws.onerror = (event: Event) => {
-    console.log("Error occurred");
+    expectType(event).is<Event>();
   };
 
   ws.onclose = (event: CloseEvent) => {
-    console.log(`Connection closed: ${event.code} ${event.reason} ${event.wasClean}`);
+    expectType(event).is<CloseEvent>();
+    expectType(event.code).is<number>();
+    expectType(event.reason).is<string>();
+    expectType(event.wasClean).is<boolean>();
   };
 }
 

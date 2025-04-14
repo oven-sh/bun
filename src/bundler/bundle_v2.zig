@@ -1850,7 +1850,8 @@ pub const BundleV2 = struct {
         event_loop: *bun.JSC.EventLoop,
         _: std.mem.Allocator,
     ) OOM!*JSBundleCompletionTask {
-        const completion = JSBundleCompletionTask.new(.{
+        const completion = bun.new(JSBundleCompletionTask, .{
+            .ref_count = .init(),
             .config = config,
             .jsc_event_loop = event_loop,
             .globalThis = globalThis,
@@ -1917,6 +1918,11 @@ pub const BundleV2 = struct {
     };
 
     pub const JSBundleCompletionTask = struct {
+        pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit, .{});
+        // pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
         config: bun.JSC.API.JSBundler.Config,
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
@@ -1934,10 +1940,7 @@ pub const BundleV2 = struct {
         next: ?*JSBundleCompletionTask = null,
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
-
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -2018,7 +2021,7 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        fn _deinit(this: *JSBundleCompletionTask) void {
+        fn deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
             this.log.deinit();
             this.poll_ref.disable();
@@ -2027,7 +2030,7 @@ pub const BundleV2 = struct {
             }
             this.config.deinit(bun.default_allocator);
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -3250,7 +3253,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (path.loader(&this.transpiler.options.loaders) == .html) {
+                if (path.loader(&this.transpiler.options.loaders) == .html and (import_record.loader == null or import_record.loader.? == .html)) {
                     // This use case is currently not supported. This error
                     // blocks an assertion failure because the DevServer
                     // reserves the HTML file's spot in IncrementalGraph for the
@@ -5660,7 +5663,7 @@ pub const JSMeta = struct {
 
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         /// This is true if this file is affected by top-level await, either by having
         /// a top-level await inside this file or by having an import/export statement
         /// that transitively imports such a file. It is forbidden to call "require()"
@@ -10792,7 +10795,7 @@ pub const LinkerContext = struct {
         defer trace.end();
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator);
         defer _ = arena.reset(.retain_capacity);
 
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
@@ -10955,7 +10958,7 @@ pub const LinkerContext = struct {
             default_allocator;
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(allocator) catch bun.outOfMemory();
+        var buffer_writer = js_printer.BufferWriter.init(allocator);
         defer _ = arena.reset(.retain_capacity);
         worker.stmt_list.reset();
 
@@ -16805,7 +16808,7 @@ pub const PartRange = struct {
     part_index_end: u32 = 0,
 };
 
-const StableRef = packed struct {
+const StableRef = packed struct(u96) {
     stable_source_index: Index.Int,
     ref: Ref,
 

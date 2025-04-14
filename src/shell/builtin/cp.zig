@@ -615,7 +615,7 @@ pub const ShellCpTask = struct {
     }
 };
 
-const Opts = packed struct {
+const Opts = packed struct(u16) {
     /// -f
     ///
     /// If the destination file cannot be opened, remove it and create a
@@ -680,6 +680,8 @@ const Opts = packed struct {
     ///
     /// Do not overwrite an existing file.  (The -n option overrides any previous -f or -i options.)
     overwrite_existing_file: bool = true,
+
+    _padding: u7 = 0,
 
     const Parse = FlagParser(*@This());
 

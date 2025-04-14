@@ -1689,10 +1689,11 @@ fn NewPrinter(
                     .bun => {
                         if (record.kind == .dynamic) {
                             p.print("Promise.resolve(globalThis.Bun)");
-                        } else if (record.kind == .require) {
+                            return;
+                        } else if (record.kind == .require or record.kind == .stmt) {
                             p.print("globalThis.Bun");
+                            return;
                         }
-                        return;
                     },
                     .bun_test => {
                         if (record.kind == .dynamic) {
@@ -5559,12 +5560,9 @@ pub const BufferWriter = struct {
         return this.buffer.list.items;
     }
 
-    pub fn init(allocator: std.mem.Allocator) !BufferWriter {
+    pub fn init(allocator: std.mem.Allocator) BufferWriter {
         return BufferWriter{
-            .buffer = MutableString.init(
-                allocator,
-                0,
-            ) catch unreachable,
+            .buffer = MutableString.initEmpty(allocator),
         };
     }
 
@@ -5938,7 +5936,7 @@ pub fn print(
     const trace = bun.perf.trace("JSPrinter.print");
     defer trace.end();
 
-    const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    const buffer_writer = BufferWriter.init(allocator);
     var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(

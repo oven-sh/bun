@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 /// This is a string type that stores up to 15 bytes inline on the stack, and heap allocates if it is longer
-pub const SmolStr = packed struct {
+pub const SmolStr = packed struct(u128) {
     __len: u32,
     cap: u32,
     __ptr: [*]u8,
@@ -16,7 +16,7 @@ pub const SmolStr = packed struct {
         try writer.write(self.slice());
     }
 
-    pub const Inlined = packed struct {
+    pub const Inlined = packed struct(u128) {
         data: u120,
         __len: u7,
         _tag: u1,

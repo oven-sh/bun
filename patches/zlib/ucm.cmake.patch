@@ -1,0 +1,11 @@
+--- ucm.cmake
++++ ucm.cmake
+@@ -10,7 +10,7 @@
+ # The documentation can be found at the library's page:
+ # https://github.com/onqtam/ucm
+ 
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 2.8.12...3.5)
+ 
+ include(CMakeParseArguments)
+ 

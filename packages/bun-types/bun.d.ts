@@ -2034,22 +2034,6 @@ declare module "bun" {
      */
     maxAge?: number;
   }
-  interface CSRF {
-    /**
-     * Generate a CSRF token.
-     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
-     * @param options The options for the token.
-     * @returns The generated token.
-     */
-    generate(secret?: string, options?: CSRFGenerateOptions): string;
-    /**
-     * Verify a CSRF token.
-     * @param token The token to verify.
-     * @param options The options for the token.
-     * @returns True if the token is valid, false otherwise.
-     */
-    verify(token: string, options?: CSRFVerifyOptions): boolean;
-  }
 
   /**
    * SQL client
@@ -2077,7 +2061,23 @@ declare module "bun" {
    *
    * @category Security
    */
-  var CSRF: CSRF;
+  var CSRF: {
+    /**
+     * Generate a CSRF token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param options The options for the token.
+     * @returns The generated token.
+     */
+    generate(secret?: string, options?: CSRFGenerateOptions): string;
+
+    /**
+     * Verify a CSRF token.
+     * @param token The token to verify.
+     * @param options The options for the token.
+     * @returns True if the token is valid, false otherwise.
+     */
+    verify(token: string, options?: CSRFVerifyOptions): boolean;
+  };
 
   /**
    *   This lets you use macros as regular imports

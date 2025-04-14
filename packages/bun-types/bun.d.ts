@@ -4337,7 +4337,11 @@ declare module "bun" {
     /**
      * The current state of the connection
      */
-    readonly readyState: number;
+    readonly readyState:
+      | typeof WebSocket.CONNECTING
+      | typeof WebSocket.OPEN
+      | typeof WebSocket.CLOSING
+      | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network

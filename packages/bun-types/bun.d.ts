@@ -4252,15 +4252,206 @@ declare module "bun" {
     compact?: boolean;
   }
 
-  type WebSocketOptionsProtocolsOrProtocol = { protocols?: string | string[] } | { protocol?: string };
-  type WebSocketOptionsTLS = { tls?: { rejectUnauthorized?: boolean } };
-  type WebSocketOptionsHeaders = { headers?: import("node:http").OutgoingHttpHeaders };
+  type WebSocketOptionsProtocolsOrProtocol =
+    | {
+        /**
+         * Protocols to use for the WebSocket connection
+         */
+        protocols?: string | string[];
+      }
+    | {
+        /**
+         * Protocol to use for the WebSocket connection
+         */
+        protocol?: string;
+      };
 
+  type WebSocketOptionsTLS = {
+    /**
+     * Options for the TLS connection
+     */
+    tls?: {
+      /**
+       * Whether to reject the connection if the certificate is not valid
+       *
+       * @default true
+       */
+      rejectUnauthorized?: boolean;
+    };
+  };
+
+  type WebSocketOptionsHeaders = {
+    /**
+     * Headers to send to the server
+     */
+    headers?: import("node:http").OutgoingHttpHeaders;
+  };
+
+  /**
+   * Constructor options for the `Bun.WebSocket` client
+   */
   type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
 
-  class WebSocket extends EventTarget {
-    public constructor(url: string | URL, protocols?: string | string[]);
-    public constructor(url: string | URL, options?: WebSocketOptions);
+  interface WebSocketEventMap {
+    close: CloseEvent;
+    error: Event;
+    message: MessageEvent;
+    open: Event;
+  }
+
+  /**
+   * A WebSocket client implementation
+   *
+   * @example
+   * ```ts
+   * const ws = new WebSocket("ws://localhost:8080", {
+   *  headers: {
+   *    "x-custom-header": "hello",
+   *  },
+   * });
+   *
+   * ws.addEventListener("open", () => {
+   *   console.log("Connected to server");
+   * });
+   *
+   * ws.addEventListener("message", (event) => {
+   *   console.log("Received message:", event.data);
+   * });
+   *
+   * ws.send("Hello, server!");
+   * ws.terminate();
+   * ```
+   */
+  interface WebSocket extends EventTarget {
+    /**
+     * The URL of the WebSocket connection
+     */
+    readonly url: string;
+
+    /**
+     * Legacy URL property (same as url)
+     * @deprecated Use url instead
+     */
+    readonly URL: string;
+
+    /**
+     * The current state of the connection
+     */
+    readonly readyState: number;
+
+    /**
+     * The number of bytes of data that have been queued using send() but not yet transmitted to the network
+     */
+    readonly bufferedAmount: number;
+
+    /**
+     * The protocol selected by the server
+     */
+    readonly protocol: string | null;
+
+    /**
+     * The extensions selected by the server
+     */
+    readonly extensions: string | null;
+
+    /**
+     * The type of binary data being received.
+     * Valid values are "blob" or "arraybuffer"
+     */
+    binaryType: "blob" | "arraybuffer";
+
+    /**
+     * Event handler for open event
+     */
+    onopen: ((this: WebSocket, ev: Event) => any) | null;
+
+    /**
+     * Event handler for message event
+     */
+    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+
+    /**
+     * Event handler for error event
+     */
+    onerror: ((this: WebSocket, ev: Event) => any) | null;
+
+    /**
+     * Event handler for close event
+     */
+    onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
+
+    /**
+     * Transmits data to the server
+     * @param data The data to send to the server
+     */
+    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Closes the WebSocket connection
+     * @param code A numeric value indicating the status code
+     * @param reason A human-readable string explaining why the connection is closing
+     */
+    close(code?: number, reason?: string): void;
+
+    /**
+     * Sends a ping frame to the server
+     * @param data Optional data to include in the ping frame
+     */
+    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Sends a pong frame to the server
+     * @param data Optional data to include in the pong frame
+     */
+    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Immediately terminates the connection
+     */
+    terminate(): void;
+
+    /**
+     * Registers an event handler of a specific event type on the WebSocket.
+     * @param type A case-sensitive string representing the event type to listen for
+     * @param listener The function to be called when the event occurs
+     * @param options An options object that specifies characteristics about the event listener
+     */
+    addEventListener<K extends keyof WebSocketEventMap>(
+      type: K,
+      listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+
+    /**
+     * Removes an event listener previously registered with addEventListener()
+     * @param type A case-sensitive string representing the event type to remove
+     * @param listener The function to remove from the event target
+     * @param options An options object that specifies characteristics about the event listener
+     */
+    removeEventListener<K extends keyof WebSocketEventMap>(
+      type: K,
+      listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void;
+
+    /** @deprecated Use instance property instead */
+    readonly CONNECTING: 0;
+    /** @deprecated Use instance property instead */
+    readonly OPEN: 1;
+    /** @deprecated Use instance property instead */
+    readonly CLOSING: 2;
+    /** @deprecated Use instance property instead */
+    readonly CLOSED: 3;
   }
 
   /**

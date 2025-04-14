@@ -76,7 +76,35 @@ interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
  * Otherwise (when outside of a browser environment), this will be the `WebSocket`
  * implementation from the `ws` package, which Bun implements.
  */
-declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
+declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
+  "WebSocket",
+  {
+    prototype: WebSocket;
+
+    new (url: string | URL, protocols?: string | string[]): WebSocket;
+    new (url: string | URL, options?: Bun.WebSocketOptions): WebSocket;
+
+    /**
+     * The connection is not yet open
+     */
+    readonly CONNECTING: 0;
+
+    /**
+     * The connection is open and ready to communicate
+     */
+    readonly OPEN: 1;
+
+    /**
+     * The connection is in the process of closing
+     */
+    readonly CLOSING: 2;
+
+    /**
+     * The connection is closed or couldn't be opened
+     */
+    readonly CLOSED: 3;
+  }
+>;
 
 interface Crypto {
   readonly subtle: SubtleCrypto;

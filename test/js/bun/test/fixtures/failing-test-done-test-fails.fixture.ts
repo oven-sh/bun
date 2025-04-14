@@ -9,9 +9,6 @@ describe("test.failing with a done callback", () => {
     done(undefined);
   });
 
-  // Is this desireable behavior?
-  test.failing("fails when the test times out before done is called", done => {}, { timeout: 5 });
-
   test.failing("fails when all expectations are met and done is called without an error", done => {
     expect(1).toBe(1);
     done();

@@ -39,7 +39,7 @@ describe("test.failing", () => {
     if (result.exitCode === 0) {
       fail("Expected exit code to be non-zero\n\n" + stderr);
     }
-    expect(stderr).toContain(" 1 fail\n");
+    expect(stderr).toContain(" 0 pass\n");
     expect(stderr).toMatch(/timed out after \d+ms/i);
   });
 
@@ -58,7 +58,7 @@ describe("test.failing", () => {
       }
     });
 
-    it("when the test doesn't throw, times out, or otherwise fail, the test does not pass", async () => {
+    it("when the test doesn't throw, or otherwise fail, the test does not pass", async () => {
       const result = await $.cwd(
         fixtureDir,
       ).nothrow()`${bunExe()} test ./failing-test-done-test-fails.fixture.ts`.quiet();

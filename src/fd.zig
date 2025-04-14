@@ -242,7 +242,7 @@ pub const FD = packed struct(backing_int) {
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
         var buf: if (Environment.isDebug) [1050]u8 else void = undefined;
-        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{fd}) catch unreachable;
+        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{fd}) catch buf[0..];
 
         const result: ?bun.sys.Error = switch (os) {
             .linux => result: {
@@ -509,7 +509,7 @@ pub const FD = packed struct(backing_int) {
     /// Note that currently FD can encode the invalid file descriptor value.
     /// Obviously, prefer fd instead of that.
     pub const Optional = enum(backing_int) {
-        none = @as(backing_int, @bitCast(invalid)),
+        none = @bitCast(invalid),
         _,
         pub fn init(maybe: ?FD) Optional {
             return if (maybe) |fd| fd.toOptional() else .none;

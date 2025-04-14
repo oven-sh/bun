@@ -217,24 +217,24 @@ pub const FD = packed struct(backing_int) {
     /// In debug, fd assertion failure can print where the FD was actually
     /// closed.
     pub fn close(fd: FD) void {
-        bun.debugAssert(fd.closeAllowingBadFileDescriptor() == null); // use after close!
+        bun.debugAssert(fd.closeAllowingBadFileDescriptor(@returnAddress()) == null); // use after close!
     }
 
     /// fd function will NOT CLOSE stdin/stdout/stderr.
     ///
     /// Use fd API to implement `node:fs` close.
     /// Prefer asserting that EBADF does not happen with `.close()`
-    pub fn closeAllowingBadFileDescriptor(fd: FD) ?bun.sys.Error {
+    pub fn closeAllowingBadFileDescriptor(fd: FD, return_address: ?usize) ?bun.sys.Error {
         if (fd.stdioTag() != null) {
             log("close({}) SKIPPED", .{fd});
             return null;
         }
-        return fd.closeAllowingStandardIo();
+        return fd.closeAllowingStandardIo(return_address orelse @returnAddress());
     }
 
     /// fd allows you to close standard io. It also returns the error.
     /// Consider fd the raw close method.
-    pub fn closeAllowingStandardIo(fd: FD) ?bun.sys.Error {
+    pub fn closeAllowingStandardIo(fd: FD, return_address: ?usize) ?bun.sys.Error {
         if (allow_assert) {
             fd.assertValid(); // probably a UAF
         }
@@ -286,6 +286,7 @@ pub const FD = packed struct(backing_int) {
             if (result) |err| {
                 if (err.errno == @intFromEnum(E.BADF)) {
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{fd_fmt});
+                    bun.crash_handler.dumpCurrentStackTrace(return_address orelse @returnAddress(), .{ .frame_count = 4, .stop_at_jsc_llint = true });
                 } else {
                     log("close({s}) = {}", .{ fd_fmt, err });
                 }
@@ -594,35 +595,6 @@ pub const FD = packed struct(backing_int) {
             bun.assert(@as(FD, @bitCast(@as(u64, 512))).value.as_system == 512);
         }
     }
-};
-
-const Debug = struct {
-    next_file_id: i32 = 0,
-    var singleton: Debug = null;
-
-    pub const max_free_tracking = 2048 - 1;
-
-    fn nextId() i32 {
-        const id = singleton.next_file_id;
-        if (id == std.math.maxInt(i32)) {
-            @panic("File Descriptor tracking does not support more than 2,147,483,647 total file opens.");
-        }
-        singleton.next_file_id += 1;
-        return id;
-    }
-
-    pub const Open = struct {
-        id: i32,
-        allocated_at: StoredTrace,
-        len: usize,
-    };
-
-    pub const Close = struct {
-        allocated_at: StoredTrace,
-        freed_at: StoredTrace,
-    };
-
-    const StoredTrace = bun.crash_handler.StoredTrace;
 };
 
 fn isStdioHandle(id: std.os.windows.DWORD, handle: HANDLE) bool {

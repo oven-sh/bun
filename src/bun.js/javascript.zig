@@ -4082,12 +4082,15 @@ pub const VirtualMachine = struct {
                     const prev_disable_inspect_custom = formatter.disable_inspect_custom;
                     const prev_quote_strings = formatter.quote_strings;
                     const prev_max_depth = formatter.max_depth;
+                    const prev_format_buffer_as_text = formatter.format_buffer_as_text;
                     formatter.depth += 1;
+                    formatter.format_buffer_as_text = true;
                     defer {
                         formatter.depth -= 1;
                         formatter.max_depth = prev_max_depth;
                         formatter.quote_strings = prev_quote_strings;
                         formatter.disable_inspect_custom = prev_disable_inspect_custom;
+                        formatter.format_buffer_as_text = prev_format_buffer_as_text;
                     }
                     formatter.max_depth = 1;
                     formatter.quote_strings = true;

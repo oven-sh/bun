@@ -75,7 +75,7 @@ pub const Fs = struct {
         pub fn closeFD(entry: *Entry) ?bun.sys.Error {
             if (entry.fd.isValid()) {
                 defer entry.fd = .invalid;
-                return entry.fd.closeAllowingBadFileDescriptor();
+                return entry.fd.closeAllowingBadFileDescriptor(@returnAddress());
             }
             return null;
         }

@@ -2420,7 +2420,7 @@ pub const Blob = struct {
                         if (comptime Environment.isWindows) {
                             bun.Async.Closer.close(this.opened_fd, this.loop);
                         } else {
-                            _ = this.opened_fd.closeAllowingBadFileDescriptor();
+                            _ = this.opened_fd.closeAllowingBadFileDescriptor(null);
                         }
                         this.opened_fd = invalid_fd;
                     }

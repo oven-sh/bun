@@ -3439,7 +3439,7 @@ pub const NodeFS = struct {
     }
 
     pub fn close(_: *NodeFS, args: Arguments.Close, _: Flavor) Maybe(Return.Close) {
-        return if (args.fd.closeAllowingBadFileDescriptor()) |err|
+        return if (args.fd.closeAllowingBadFileDescriptor(null)) |err|
             .{ .err = err }
         else
             .success;

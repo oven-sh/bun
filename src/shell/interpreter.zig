@@ -611,7 +611,7 @@ pub const Interpreter = struct {
                     return Maybe(void).initErr(err);
                 },
             };
-            defer this.cwd_fd.close();
+            _ = this.cwd_fd.closeAllowingBadFileDescriptor(null);
 
             this.__prev_cwd.clearRetainingCapacity();
             this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
@@ -5052,7 +5052,7 @@ pub fn MaybeChild(comptime T: type) type {
 }
 
 fn closefd(fd: bun.FileDescriptor) void {
-    if (fd.closeAllowingBadFileDescriptor()) |err| {
+    if (fd.closeAllowingBadFileDescriptor(null)) |err| {
         log("ERR closefd: {}\n", .{err});
     }
 }

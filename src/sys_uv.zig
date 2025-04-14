@@ -312,11 +312,11 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn close(fd: FileDescriptor) ?bun.sys.Error {
-    return fd.closeAllowingBadFileDescriptor();
+    return fd.closeAllowingBadFileDescriptor(@returnAddress());
 }
 
 pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?bun.sys.Error {
-    return fd.closeAllowingStandardIo();
+    return fd.closeAllowingStandardIo(@returnAddress());
 }
 
 pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {

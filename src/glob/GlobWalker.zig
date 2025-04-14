@@ -190,7 +190,7 @@ pub const SyscallAccessor = struct {
     }
 
     pub fn close(handle: Handle) ?Syscall.Error {
-        return handle.value.closeAllowingBadFileDescriptor();
+        return handle.value.closeAllowingBadFileDescriptor(@returnAddress());
     }
 
     pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {

@@ -58,6 +58,23 @@ import { expectType } from "./utilities";
   });
 }
 
+// Assignability test
+{
+  function toAny<T>(value: T): any {
+    return value;
+  }
+
+  const AnySocket = toAny(WebSocket);
+
+  const ws: WebSocket = new AnySocket("wss://dev.local");
+
+  ws.close();
+  ws.addEventListener("open", e => expectType(e).is<Event>());
+  ws.addEventListener("message", e => expectType(e).is<MessageEvent>());
+  ws.addEventListener("message", (e: MessageEvent<string>) => expectType(e).is<MessageEvent<string>>());
+  ws.addEventListener("message", (e: MessageEvent<string>) => expectType(e.data).is<string>());
+}
+
 // WebSocket static properties test
 {
   expectType(WebSocket.CONNECTING).is<0>();

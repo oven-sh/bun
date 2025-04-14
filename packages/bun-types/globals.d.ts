@@ -68,21 +68,49 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * A WebSocket client implementation.
+ */
 interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
 /**
  * A WebSocket client implementation
- *
- * If `DOM` is included in tsconfig `lib`, this falls back to the default DOM global `WebSocket`.
- * Otherwise (when outside of a browser environment), this will be the `WebSocket`
- * implementation from the `ws` package, which Bun implements.
  */
 declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
   "WebSocket",
   {
     prototype: WebSocket;
 
-    new (url: string | URL, protocols?: string | string[]): WebSocket;
+    /**
+     * Creates a new WebSocket instance with the given URL and options.
+     *
+     * @param url The URL to connect to.
+     * @param options The options to use for the connection.
+     *
+     * @example
+     * ```ts
+     * const ws = new WebSocket("wss://dev.local", {
+     *  protocols: ["proto1", "proto2"],
+     *  headers: {
+     *    "Cookie": "session=123456",
+     *  },
+     * });
+     * ```
+     */
     new (url: string | URL, options?: Bun.WebSocketOptions): WebSocket;
+
+    /**
+     * Creates a new WebSocket instance with the given URL and protocols.
+     *
+     * @param url The URL to connect to.
+     * @param protocols The protocols to use for the connection.
+     *
+     * @example
+     * ```ts
+     * const ws = new WebSocket("wss://dev.local");
+     * const ws = new WebSocket("wss://dev.local", ["proto1", "proto2"]);
+     * ```
+     */
+    new (url: string | URL, protocols?: string | string[]): WebSocket;
 
     /**
      * The connection is not yet open

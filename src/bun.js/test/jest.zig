@@ -259,6 +259,7 @@ pub const TestRunner = struct {
         status: Status = Status.pending,
 
         pub const ID = u32;
+        pub const null_id: ID = std.math.maxInt(Test.ID);
         pub const List = std.MultiArrayList(Test);
 
         pub const Status = enum(u4) {
@@ -633,21 +634,35 @@ pub const TestScope = struct {
 
         if (JSC.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
+            const expect_count = expect.active_test_expectation_counter.actual;
+            const current_test = task.testScope();
+            const no_err_result: Result = if (current_test.tag == .fail)
+                .{ .fail_because_failing_test_passed = expect_count }
+            else
+                .{ .pass = expect_count };
 
             JSC.setFunctionData(function, null);
             if (args.len > 0) {
                 const err = args.ptr[0];
                 if (err.isEmptyOrUndefinedOrNull()) {
                     debug("done()", .{});
-                    task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
+                    task.handleResult(no_err_result, .callback);
                 } else {
                     debug("done(err)", .{});
-                    _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-                    task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .callback);
+                    const result: Result = if (current_test.tag == .fail) failing_passed: {
+                        break :failing_passed if (globalThis.clearExceptionExceptTermination())
+                            Result{ .pass = expect_count }
+                        else
+                            Result{ .fail = expect_count }; // what is the correct thing to do when terminating?
+                    } else passing_failed: {
+                        _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
+                        break :passing_failed Result{ .fail = expect_count };
+                    };
+                    task.handleResult(result, .callback);
                 }
             } else {
                 debug("done()", .{});
-                task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
+                task.handleResult(no_err_result, .callback);
             }
         }
 
@@ -1142,7 +1157,7 @@ pub const DescribeScope = struct {
             if (end == 0) {
                 var runner = allocator.create(TestRunnerTask) catch unreachable;
                 runner.* = .{
-                    .test_id = std.math.maxInt(TestRunner.Test.ID),
+                    .test_id = TestRunner.Test.null_id,
                     .describe = this,
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
@@ -1174,8 +1189,8 @@ pub const DescribeScope = struct {
 
     pub fn onTestComplete(this: *DescribeScope, globalThis: *JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) void {
         // invalidate it
-        this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
-        if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
+        this.current_test_id = TestRunner.Test.null_id;
+        if (test_id != TestRunner.Test.null_id) this.pending_tests.unset(test_id);
         globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
@@ -1277,6 +1292,10 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
+    pub inline fn testScope(this: *TestRunnerTask) *TestScope {
+        return &this.describe.tests.items[this.test_id];
+    }
+
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
         var deduped = false;
         const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
@@ -1309,7 +1328,11 @@ pub const TestRunnerTask = struct {
         if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
-            this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .unhandledRejection);
+            const result: Result = if (this.testScope().tag == .fail)
+                .{ .pass = expect.active_test_expectation_counter.actual }
+            else
+                .{ .fail = expect.active_test_expectation_counter.actual };
+            this.handleResult(result, .unhandledRejection);
         } else if (Jest.runner) |runner| {
             if (!deduped)
                 runner.unhandled_errors_between_tests += 1;
@@ -1343,7 +1366,7 @@ pub const TestRunnerTask = struct {
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
-        if (test_id == std.math.maxInt(TestRunner.Test.ID)) {
+        if (test_id == TestRunner.Test.null_id) {
             describe.onTestComplete(globalThis, test_id, true);
             Jest.runner.?.runNextTest();
             this.deinit();

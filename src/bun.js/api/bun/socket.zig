@@ -524,7 +524,10 @@ pub const Listener = struct {
     strong_data: JSC.Strong = .empty,
     strong_self: JSC.Strong = .empty,
 
-    pub usingnamespace JSC.Codegen.JSListener;
+    pub const js = JSC.Codegen.JSListener;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub const ListenerType = union(enum) {
         uws: *uws.ListenSocket,

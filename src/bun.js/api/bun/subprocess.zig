@@ -1,7 +1,11 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
-pub usingnamespace JSC.Codegen.JSSubprocess;
+pub const js = JSC.Codegen.JSSubprocess;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -78,7 +82,11 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 }
 
 pub const ResourceUsage = struct {
-    pub usingnamespace JSC.Codegen.JSResourceUsage;
+    pub const js = JSC.Codegen.JSResourceUsage;
+    pub const toJS = ResourceUsage.js.toJS;
+    pub const fromJS = ResourceUsage.js.fromJS;
+    pub const fromJSDirect = ResourceUsage.js.fromJSDirect;
+
     rusage: Rusage,
 
     pub fn getCPUTime(
@@ -1290,7 +1298,7 @@ const Writable = union(enum) {
         const process: *Subprocess = @fieldParentPtr("stdin", this);
 
         if (process.this_jsvalue != .zero) {
-            if (Subprocess.stdinGetCached(process.this_jsvalue)) |existing_value| {
+            if (js.stdinGetCached(process.this_jsvalue)) |existing_value| {
                 JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
             }
         }

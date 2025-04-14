@@ -426,8 +426,9 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
-    pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
-        return @as(C_API.JSContextRef, @ptrCast(this));
+    // TODO: delete these two fns
+    pub fn ref(this: *JSGlobalObject) *JSGlobalObject {
+        return this;
     }
     pub const ctx = ref;
 

@@ -5,7 +5,6 @@ const MimeType = http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const http = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 const io = bun.io;
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -58,7 +57,10 @@ pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
     pub const new = bun.TrivialNew(@This());
-    pub usingnamespace JSC.Codegen.JSBlob;
+    pub const js = JSC.Codegen.JSBlob;
+    // NOTE: toJS is overridden
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     const rf = @import("blob/ReadFile.zig");
     pub const ReadFile = rf.ReadFile;
@@ -867,7 +869,7 @@ pub const Blob = struct {
     /// - doesn't exist and is created
     /// - exists and is truncated
     fn writeFileWithEmptySourceToDestination(
-        ctx: JSC.C.JSContextRef,
+        ctx: *JSC.JSGlobalObject,
         destination_blob: *Blob,
         options: WriteFileOptions,
     ) JSC.JSValue {
@@ -1012,7 +1014,7 @@ pub const Blob = struct {
     }
 
     pub fn writeFileWithSourceDestination(
-        ctx: JSC.C.JSContextRef,
+        ctx: *JSC.JSGlobalObject,
         source_blob: *Blob,
         destination_blob: *Blob,
         options: WriteFileOptions,
@@ -3902,7 +3904,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const thisValue = callframe.this();
-        if (Blob.streamGetCached(thisValue)) |cached| {
+        if (js.streamGetCached(thisValue)) |cached| {
             return cached;
         }
         var recommended_chunk_size: SizeType = 0;
@@ -3928,7 +3930,7 @@ pub const Blob = struct {
                         // in the case we have a file descriptor store, we want to de-duplicate
                         // readable streams. in every other case we want `.stream()` to be it's
                         // own stream.
-                        Blob.streamSetCached(thisValue, globalThis, stream);
+                        js.streamSetCached(thisValue, globalThis, stream);
                     },
                     else => {},
                 },
@@ -4869,7 +4871,7 @@ pub const Blob = struct {
         if (value.isEmptyOrUndefinedOrNull()) {
             this.name.deref();
             this.name = bun.String.dead;
-            Blob.nameSetCached(jsThis, globalThis, value);
+            js.nameSetCached(jsThis, globalThis, value);
             return true;
         }
         if (value.isString()) {
@@ -4886,7 +4888,7 @@ pub const Blob = struct {
                 return false;
             };
             // We don't need to increment the reference count since tryFromJS already did it.
-            Blob.nameSetCached(jsThis, globalThis, value);
+            js.nameSetCached(jsThis, globalThis, value);
             old_name.deref();
             return true;
         }
@@ -5323,7 +5325,7 @@ pub const Blob = struct {
             return S3File.toJSUnchecked(globalObject, this);
         }
 
-        return Blob.toJSUnchecked(globalObject, this);
+        return js.toJSUnchecked(globalObject, this);
     }
 
     pub fn deinit(this: *Blob) void {

@@ -565,7 +565,10 @@ pub const TimeoutObject = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    pub usingnamespace JSC.Codegen.JSTimeout;
+    pub const js = JSC.Codegen.JSTimeout;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{
@@ -584,10 +587,10 @@ pub const TimeoutObject = struct {
     ) JSValue {
         // internals are initialized by init()
         const timeout = bun.new(TimeoutObject, .{ .ref_count = .init(), .internals = undefined });
-        const js = timeout.toJS(globalThis);
-        defer js.ensureStillAlive();
+        const js_value = timeout.toJS(globalThis);
+        defer js_value.ensureStillAlive();
         timeout.internals.init(
-            js,
+            js_value,
             globalThis,
             id,
             kind,
@@ -595,7 +598,7 @@ pub const TimeoutObject = struct {
             callback,
             arguments_array_or_zero,
         );
-        return js;
+        return js_value;
     }
 
     fn deinit(this: *TimeoutObject) void {
@@ -654,7 +657,10 @@ pub const ImmediateObject = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    pub usingnamespace JSC.Codegen.JSImmediate;
+    pub const js = JSC.Codegen.JSImmediate;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{
@@ -671,10 +677,10 @@ pub const ImmediateObject = struct {
     ) JSValue {
         // internals are initialized by init()
         const immediate = bun.new(ImmediateObject, .{ .ref_count = .init(), .internals = undefined });
-        const js = immediate.toJS(globalThis);
-        defer js.ensureStillAlive();
+        const js_value = immediate.toJS(globalThis);
+        defer js_value.ensureStillAlive();
         immediate.internals.init(
-            js,
+            js_value,
             globalThis,
             id,
             .setImmediate,
@@ -682,7 +688,7 @@ pub const ImmediateObject = struct {
             callback,
             arguments_array_or_zero,
         );
-        return js;
+        return js_value;
     }
 
     fn deinit(this: *ImmediateObject) void {
@@ -951,8 +957,8 @@ const TimerObjectInternals = struct {
 
         if (kind == .setImmediate) {
             if (arguments != .zero)
-                ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
-            ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
+                ImmediateObject.js.argumentsSetCached(timer_js, globalThis, arguments);
+            ImmediateObject.js.callbackSetCached(timer_js, globalThis, callback);
             const parent: *ImmediateObject = @fieldParentPtr("internals", this);
             vm.enqueueImmediateTask(parent);
             this.setEnableKeepingEventLoopAlive(vm, true);
@@ -960,8 +966,8 @@ const TimerObjectInternals = struct {
             parent.ref();
         } else {
             if (arguments != .zero)
-                TimeoutObject.argumentsSetCached(timer_js, globalThis, arguments);
-            TimeoutObject.callbackSetCached(timer_js, globalThis, callback);
+                TimeoutObject.js.argumentsSetCached(timer_js, globalThis, arguments);
+            TimeoutObject.js.callbackSetCached(timer_js, globalThis, callback);
             // this increments the refcount
             this.reschedule(vm);
         }

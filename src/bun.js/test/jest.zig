@@ -16,7 +16,6 @@ const Expect = expect.Expect;
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const logger = bun.logger;
 const Method = @import("../../http/method.zig").Method;
@@ -402,7 +401,7 @@ pub const Jest = struct {
         module.put(
             globalObject,
             ZigString.static("expect"),
-            Expect.getConstructor(globalObject),
+            Expect.js.getConstructor(globalObject),
         );
 
         createMockObjects(globalObject, module);
@@ -457,7 +456,7 @@ pub const Jest = struct {
         module.put(
             globalObject,
             ZigString.static("expect"),
-            Expect.getConstructor(globalObject),
+            Expect.js.getConstructor(globalObject),
         );
 
         const vi = JSValue.createEmptyObject(globalObject, 3);
@@ -889,7 +888,7 @@ pub const DescribeScope = struct {
     }
 
     pub fn onDone(
-        ctx: js.JSContextRef,
+        ctx: *JSC.JSGlobalObject,
         callframe: *CallFrame,
     ) bun.JSError!JSValue {
         const function = callframe.callee();

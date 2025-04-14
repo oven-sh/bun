@@ -2329,7 +2329,11 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
 ///  4. For the Zig code to successfully compile:
 ///        - Add it to generated_classes_list.zig
-///        - pub usingnamespace JSC.Codegen.JSMyClassName;
+///        - pub const js = JSC.Codegen.JSMyClassName;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 ///  5. bun run build
 ///
 const bun = @import("root").bun;

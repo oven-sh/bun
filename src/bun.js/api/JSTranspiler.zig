@@ -5,7 +5,6 @@ const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
@@ -40,7 +39,10 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 
 const JSTranspiler = @This();
-pub usingnamespace JSC.Codegen.JSTranspiler;
+pub const js = JSC.Codegen.JSTranspiler;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 transpiler: bun.transpiler.Transpiler,
 arena: bun.ArenaAllocator,
@@ -304,7 +306,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) bun.JSErr
     return null;
 }
 
-fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
+fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
     const globalThis = globalObject;
     const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
     if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };

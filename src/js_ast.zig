@@ -1566,7 +1566,7 @@ pub const E = struct {
 
     pub const Boolean = struct {
         value: bool,
-        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef) JSC.C.JSValueRef {
+        pub fn toJS(this: @This(), ctx: *JSC.JSGlobalObject) JSC.C.JSValueRef {
             return JSC.C.JSValueMakeBoolean(ctx, this.value);
         }
     };

@@ -14,7 +14,6 @@ const Fs = @import("../../fs.zig");
 
 const options = @import("../../options.zig");
 const ZigString = bun.JSC.ZigString;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
 const JSError = @import("../base.zig").JSError;
 
@@ -60,13 +59,16 @@ const Offsets = extern struct {
 };
 
 pub const FFI = struct {
+    pub const js = JSC.Codegen.JSFFI;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     dylib: ?std.DynLib = null,
     relocated_bytes_to_free: ?[]u8 = null,
     functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
     shared_state: ?*TCC.State = null,
-
-    pub usingnamespace JSC.Codegen.JSFFI;
 
     pub fn finalize(_: *FFI) callconv(.C) void {}
 

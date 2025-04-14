@@ -596,7 +596,7 @@ pub const Error = struct {
         return Error{ .errno = todo_errno, .syscall = .TODO };
     }
 
-    pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
+    pub fn toJS(this: Error, ctx: *JSC.JSGlobalObject) JSC.C.JSObjectRef {
         return this.toSystemError().toErrorInstance(ctx).asObjectRef();
     }
 

@@ -6404,7 +6404,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var stack_fallback = std.heap.stackFallback(8192, this.allocator);
             const allocator = stack_fallback.get();
 
-            const buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
+            const buffer_writer = js_printer.BufferWriter.init(allocator);
             var writer = js_printer.BufferPrinter.init(buffer_writer);
             defer writer.ctx.buffer.deinit();
             var source = logger.Source.initEmptyFile("info.json");
@@ -6460,6 +6460,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 globalThis,
                 thisObject,
                 this.config.onNodeHTTPRequest,
+                if (bun.http.Method.find(req.method())) |method|
+                    method.toJS(globalThis)
+                else
+                    .undefined,
                 req,
                 resp,
                 upgrade_ctx,
@@ -7626,6 +7630,7 @@ extern fn NodeHTTPServer__onRequest_http(
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
+    methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
@@ -7637,6 +7642,7 @@ extern fn NodeHTTPServer__onRequest_https(
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
+    methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,

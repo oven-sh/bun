@@ -92,6 +92,7 @@ const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
 const { format } = require("internal/util/inspect");
+const { Agent, globalAgent, NODE_HTTP_WARNING } = require("node:_http_agent");
 
 const {
   getHeader,
@@ -183,8 +184,6 @@ const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
-const NODE_HTTP_WARNING =
-  "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
 const kEmptyBuffer = Buffer.alloc(0);
 
@@ -541,91 +540,8 @@ function createServer(options, callback) {
   return new Server(options, callback);
 }
 
-function Agent(options = kEmptyObject) {
-  if (!(this instanceof Agent)) return new Agent(options);
-
-  EventEmitter.$apply(this, []);
-
-  this.defaultPort = 80;
-  this.protocol = "http:";
-
-  this.options = options = { ...options, path: null };
-  if (options.noDelay === undefined) options.noDelay = true;
-
-  // Don't confuse net and make it think that we're connecting to a pipe
-  this.requests = Object.create(null);
-  this.sockets = Object.create(null);
-  this.freeSockets = Object.create(null);
-
-  this.keepAliveMsecs = options.keepAliveMsecs || 1000;
-  this.keepAlive = options.keepAlive || false;
-  this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
-  this.maxFreeSockets = options.maxFreeSockets || 256;
-  this.scheduling = options.scheduling || "lifo";
-  this.maxTotalSockets = options.maxTotalSockets;
-  this.totalSocketCount = 0;
-  this.defaultPort = options.defaultPort || 80;
-  this.protocol = options.protocol || "http:";
-}
-$toClass(Agent, "Agent", EventEmitter);
-
 Object.defineProperty(FakeSocket, "name", { value: "Socket" });
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
-
-ObjectDefineProperty(Agent, "globalAgent", {
-  get: function () {
-    return globalAgent;
-  },
-});
-
-ObjectDefineProperty(Agent, "defaultMaxSockets", {
-  get: function () {
-    return Infinity;
-  },
-});
-
-Agent.prototype.createConnection = function () {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
-  return (this[kfakeSocket] ??= new FakeSocket());
-};
-
-Agent.prototype.getName = function (options = kEmptyObject) {
-  let name = `http:${options.host || "localhost"}:`;
-  if (options.port) name += options.port;
-  name += ":";
-  if (options.localAddress) name += options.localAddress;
-  // Pacify parallel/test-http-agent-getname by only appending
-  // the ':' when options.family is set.
-  if (options.family === 4 || options.family === 6) name += `:${options.family}`;
-  if (options.socketPath) name += `:${options.socketPath}`;
-  return name;
-};
-
-Agent.prototype.addRequest = function () {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
-};
-
-Agent.prototype.createSocket = function (req, options, cb) {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
-  cb(null, (this[kfakeSocket] ??= new FakeSocket()));
-};
-
-Agent.prototype.removeSocket = function () {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
-};
-
-Agent.prototype.keepSocketAlive = function () {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
-  return true;
-};
-
-Agent.prototype.reuseSocket = function () {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
-};
-
-Agent.prototype.destroy = function () {
-  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
-};
 
 function emitListeningNextTick(self, hostname, port) {
   if ((self.listening = !!self[serverSymbol])) {
@@ -3818,7 +3734,6 @@ function assignSocketInternal(self, socket) {
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 
-var globalAgent = new Agent();
 const http_exports = {
   Agent,
   Server,

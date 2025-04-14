@@ -6243,11 +6243,34 @@ declare module "bun" {
      */
     tls?: TLSOptions;
     /**
-     * Whether to use exclusive mode
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
      */
     exclusive?: boolean;
     /**
-     * Whether to allow half-open connections
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
      */
     allowHalfOpen?: boolean;
   }
@@ -6266,11 +6289,34 @@ declare module "bun" {
      */
     tls?: boolean;
     /**
-     * Whether to use exclusive mode
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
      */
     exclusive?: boolean;
     /**
-     * Whether to allow half-open connections
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
      */
     allowHalfOpen?: boolean;
   }

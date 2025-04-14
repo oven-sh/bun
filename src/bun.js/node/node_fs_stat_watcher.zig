@@ -334,18 +334,14 @@ pub const StatWatcher = struct {
         watcher: *StatWatcher,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
-        pub usingnamespace bun.New(@This());
-
-        pub fn createAndSchedule(
-            watcher: *StatWatcher,
-        ) void {
-            const task = InitialStatTask.new(.{ .watcher = watcher });
+        pub fn createAndSchedule(watcher: *StatWatcher) void {
+            const task = bun.new(InitialStatTask, .{ .watcher = watcher });
             JSC.WorkPool.schedule(&task.task);
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
-            defer initial_stat_task.destroy();
+            defer bun.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
             if (this.closed) {

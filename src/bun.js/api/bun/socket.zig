@@ -131,7 +131,7 @@ const Handlers = struct {
     is_server: bool = false,
     promise: JSC.Strong = .empty,
 
-    protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
+    protection_count: bun.DebugOnly(u32) = if (Environment.isDebug) 0,
 
     pub fn markActive(this: *Handlers) void {
         Listener.log("markActive", .{});
@@ -275,7 +275,7 @@ const Handlers = struct {
             return;
         }
 
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
         }
@@ -291,7 +291,7 @@ const Handlers = struct {
     }
 
     pub fn protect(this: *Handlers) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             this.protection_count += 1;
         }
         this.onOpen.protect();
@@ -860,6 +860,7 @@ pub const Listener = struct {
         bun.assert(ssl == listener.ssl);
 
         var this_socket = Socket.new(.{
+            .ref_count = .init(),
             .handlers = &listener.handlers,
             .this_value = .zero,
             // here we start with a detached socket and attach it later after accept
@@ -885,7 +886,8 @@ pub const Listener = struct {
         const Socket = NewSocket(ssl);
         bun.assert(ssl == listener.ssl);
 
-        var this_socket = Socket.new(.{
+        const this_socket = bun.new(Socket, .{
+            .ref_count = .init(),
             .handlers = &listener.handlers,
             .this_value = .zero,
             .socket = socket,
@@ -1136,6 +1138,7 @@ pub const Listener = struct {
 
                 if (ssl_enabled) {
                     var tls = TLSSocket.new(.{
+                        .ref_count = .init(),
                         .handlers = handlers_ptr,
                         .this_value = .zero,
                         .socket = TLSSocket.Socket.detached,
@@ -1161,6 +1164,7 @@ pub const Listener = struct {
                     }
                 } else {
                     var tcp = TCPSocket.new(.{
+                        .ref_count = .init(),
                         .handlers = handlers_ptr,
                         .this_value = .zero,
                         .socket = TCPSocket.Socket.detached,
@@ -1232,7 +1236,8 @@ pub const Listener = struct {
         switch (ssl_enabled) {
             inline else => |is_ssl_enabled| {
                 const SocketType = NewSocket(is_ssl_enabled);
-                var socket = SocketType.new(.{
+                const socket = bun.new(SocketType, .{
+                    .ref_count = .init(),
                     .handlers = handlers_ptr,
                     .this_value = .zero,
                     .socket = SocketType.Socket.detached,
@@ -1322,13 +1327,19 @@ fn selectALPNCallback(
 
 fn NewSocket(comptime ssl: bool) type {
     return struct {
+        const This = @This();
+        pub const new = bun.TrivialNew(@This());
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
         // if the socket owns a context it will be here
         socket_context: ?*uws.SocketContext,
 
         flags: Flags = .{},
-        ref_count: u32 = 1,
+        ref_count: RefCount,
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
@@ -1344,7 +1355,6 @@ fn NewSocket(comptime ssl: bool) type {
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         native_callback: NativeCallbacks = .none,
-        pub usingnamespace bun.NewRefCounted(@This(), deinit, "Socket");
 
         // We use this direct callbacks on HTTP2 when available
         pub const NativeCallbacks = union(enum) {
@@ -1371,7 +1381,6 @@ fn NewSocket(comptime ssl: bool) type {
             }
         };
 
-        const This = @This();
         const log = Output.scoped(.Socket, false);
         const WriteResult = union(enum) {
             fail: void,
@@ -1380,7 +1389,7 @@ fn NewSocket(comptime ssl: bool) type {
                 total: usize = 0,
             },
         };
-        const Flags = packed struct {
+        const Flags = packed struct(u16) {
             is_active: bool = false,
             /// Prevent onClose from calling into JavaScript while we are finalizing
             finalizing: bool = false,
@@ -1391,6 +1400,7 @@ fn NewSocket(comptime ssl: bool) type {
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,
+            _: u7 = 0,
         };
 
         pub usingnamespace if (!ssl)
@@ -2657,7 +2667,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.socket_context = null;
                 socket_context.deinit(ssl);
             }
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn finalize(this: *This) void {
@@ -3524,7 +3534,8 @@ fn NewSocket(comptime ssl: bool) type {
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
-            var tls = TLSSocket.new(.{
+            var tls = bun.new(TLSSocket, .{
+                .ref_count = .init(),
                 .handlers = handlers_ptr,
                 .this_value = .zero,
                 .socket = TLSSocket.Socket.detached,
@@ -3623,7 +3634,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             raw_handlers_ptr.protect();
 
-            var raw = TLSSocket.new(.{
+            const raw = bun.new(TLSSocket, .{
+                .ref_count = .init(),
                 .handlers = raw_handlers_ptr,
                 .this_value = .zero,
                 .socket = new_socket,
@@ -3658,7 +3670,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.poll_ref.disable();
                 this.flags.is_active = false;
                 // will free handlers when hits 0 active connections
-                // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
+                // the connection can be upgraded inside a handler call so we need to guarantee that it will be still alive
                 this.handlers.markInactive();
 
                 this.has_pending_activity.store(false, .release);
@@ -3815,7 +3827,7 @@ pub const DuplexUpgradeContext = struct {
         Close,
     };
 
-    usingnamespace bun.New(DuplexUpgradeContext);
+    pub const new = bun.TrivialNew(DuplexUpgradeContext);
 
     fn onOpen(this: *DuplexUpgradeContext) void {
         this.is_open = true;
@@ -3943,7 +3955,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     globalThis: *JSC.JSGlobalObject,
     vm: *JSC.VirtualMachine,
     ctx: ?*BoringSSL.SSL_CTX = null, // server reuses the same ctx
-    usingnamespace bun.New(WindowsNamedPipeListeningContext);
+    pub const new = bun.TrivialNew(WindowsNamedPipeListeningContext);
 
     fn onClientConnect(this: *WindowsNamedPipeListeningContext, status: uv.ReturnCode) void {
         if (status != uv.ReturnCode.zero or this.vm.isShuttingDown() or this.listener == null) {
@@ -4043,7 +4055,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             this.ctx = null;
             BoringSSL.SSL_CTX_free(ctx);
         }
-        this.destroy();
+        bun.destroy(this);
     }
 } else void;
 pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
@@ -4067,7 +4079,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         none: void,
     };
 
-    usingnamespace bun.New(WindowsNamedPipeContext);
+    pub const new = bun.TrivialNew(WindowsNamedPipeContext);
     const log = Output.scoped(.WindowsNamedPipeContext, false);
 
     fn onOpen(this: *WindowsNamedPipeContext) void {
@@ -4323,7 +4335,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         }
 
         this.named_pipe.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 } else void;
 
@@ -4398,7 +4410,8 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
     handlers_ptr.protect();
-    var tls = TLSSocket.new(.{
+    var tls = bun.new(TLSSocket, .{
+        .ref_count = .init(),
         .handlers = handlers_ptr,
         .this_value = .zero,
         .socket = TLSSocket.Socket.detached,

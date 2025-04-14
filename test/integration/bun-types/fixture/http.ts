@@ -39,3 +39,19 @@ fetch("https://example.com", {
   },
   proxy: "cool",
 });
+
+const a = new Response(async function* () {
+  yield new Uint8Array([50, 60, 70]);
+  yield "hey";
+  await Bun.sleep(500);
+});
+
+const b_generator = async function* () {
+  await Bun.sleep(500);
+  yield new Uint8Array([1, 2, 3]);
+  yield "it works!";
+};
+
+const b = new Response(b_generator());
+
+for (const r of await Promise.all([a.text(), b.text()])) console.log(r);

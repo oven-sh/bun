@@ -299,6 +299,24 @@ devTest("importing html file", {
     });
   },
 });
+devTest("importing html file with text loader (#18154)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>hello world</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("<div>hello world</div>");
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({

@@ -1795,9 +1795,16 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
         msg: []const u8 = "",
 
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-            try writer.writeAll("The value of \"");
-            try writer.writeAll(self.field_name);
-            try writer.writeAll("\" is out of range. It must be ");
+            if (self.field_name.len > 0) {
+                try writer.writeAll("The value of \"");
+                try writer.writeAll(self.field_name);
+                try writer.writeAll("\" is out of range. It must be ");
+            } else {
+                if (comptime Environment.isDebug) {
+                    @panic("Set field_name plz");
+                }
+                try writer.writeAll("The value is out of range. It must be ");
+            }
 
             const min = self.min;
             const max = self.max;

@@ -16,7 +16,9 @@
 declare module "bun" {
   type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
-  type ArrayBufferView = NodeJS.TypedArray | DataView;
+  type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
+    | NodeJS.TypedArray<TArrayBuffer>
+    | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;

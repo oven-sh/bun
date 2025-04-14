@@ -277,7 +277,7 @@ pub const BunxCommand = struct {
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
     fn getBinName(transpiler: *bun.Transpiler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
-        toplevel_fd.assertValid();
+        bun.assert(toplevel_fd.isValid());
         return getBinNameFromProjectDirectory(transpiler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;

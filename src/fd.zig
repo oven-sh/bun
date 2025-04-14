@@ -119,14 +119,11 @@ pub const FD = packed struct(backing_int) {
     pub fn unwrapValid(fd: FD) ?FD {
         return if (fd.isValid()) fd else null;
     }
-    pub fn assertValid(fd: FD) void {
-        assert(fd.isValid());
-    }
 
     /// When calling fd function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the `bun.FD`.
     pub fn native(fd: FD) fd_t {
-        if (Environment.isDebug and !@inComptime()) fd.assertValid();
+        if (Environment.isDebug and !@inComptime()) bun.assert(fd.isValid());
         return switch (os) {
             else => fd.value.as_system,
             .windows => switch (fd.decodeWindows()) {
@@ -135,7 +132,8 @@ pub const FD = packed struct(backing_int) {
             },
         };
     }
-    pub const cast = native; // cast is a legacy name. renamed because it is unclear what it casts to.
+    /// Deprecated: renamed to `native` because it is unclear what `cast` would cast to.
+    pub const cast = native;
 
     /// When calling fd function, you should consider the FD struct to now be
     /// invalid. Calling `.close()` on the FD at that point may not work.
@@ -171,7 +169,7 @@ pub const FD = packed struct(backing_int) {
     /// Assumes given a valid file descriptor
     /// If error, the handle has not been closed
     pub fn makeLibUVOwned(fd: FD) !FD {
-        fd.assertValid();
+        if (allow_assert) bun.assert(fd.isValid());
         return switch (os) {
             else => fd,
             .windows => switch (fd.kind) {
@@ -235,9 +233,7 @@ pub const FD = packed struct(backing_int) {
     /// fd allows you to close standard io. It also returns the error.
     /// Consider fd the raw close method.
     pub fn closeAllowingStandardIo(fd: FD, return_address: ?usize) ?bun.sys.Error {
-        if (allow_assert) {
-            fd.assertValid(); // probably a UAF
-        }
+        if (allow_assert) bun.assert(fd.isValid()); // probably a UAF
 
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.

@@ -1212,7 +1212,7 @@ pub const Closer = struct {
         /// for compatibility with windows version
         _: void,
     ) void {
-        fd.assertValid();
+        bun.assert(fd.isValid());
         JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
     }
 

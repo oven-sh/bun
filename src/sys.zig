@@ -521,7 +521,10 @@ pub const Error = struct {
         }
 
         if (this.fd.unwrapValid()) |valid| {
-            err.fd = valid.native();
+            // When the FD is a windows handle, there is no sane way to report this.
+            if (!Environment.isWindows or valid.kind == .uv) {
+                err.fd = valid.uv();
+            }
         }
 
         return err;
@@ -583,7 +586,10 @@ pub const Error = struct {
         }
 
         if (this.fd.unwrapValid()) |valid| {
-            err.fd = valid.native();
+            // When the FD is a windows handle, there is no sane way to report this.
+            if (!Environment.isWindows or valid.kind == .uv) {
+                err.fd = valid.uv();
+            }
         }
 
         return err;

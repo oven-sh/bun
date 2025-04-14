@@ -3318,7 +3318,7 @@ const SrcAscii = struct {
     bytes: []const u8,
     i: usize,
 
-    const IndexValue = packed struct {
+    const IndexValue = packed struct(u8) {
         char: u7,
         escaped: bool = false,
     };
@@ -3350,7 +3350,7 @@ const SrcUnicode = struct {
     cursor: CodepointIterator.Cursor,
     next_cursor: CodepointIterator.Cursor,
 
-    const IndexValue = packed struct {
+    const IndexValue = packed struct(u32) {
         char: u29,
         width: u3 = 0,
     };

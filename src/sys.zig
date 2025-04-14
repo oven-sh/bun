@@ -2729,7 +2729,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     }
 }
 
-pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
+pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
     switch (comptime builtin.os.tag) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
@@ -2743,13 +2743,13 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
         .macos, .ios, .watchos, .tvos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
-            @memset(out_buffer[0..MAX_PATH_BYTES], 0);
+            @memset(out_buffer[0..out_buffer.*.len], 0);
             switch (fcntl(fd, posix.F.GETPATH, @intFromPtr(out_buffer))) {
                 .err => |err| return .{ .err = err },
                 .result => {},
             }
-            const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
-            return .{ .result = out_buffer[0..len] };
+
+            return .{ .result = bun.sliceTo(out_buffer, 0) };
         },
         .linux => {
             // TODO: alpine linux may not have /proc/self
@@ -4092,7 +4092,7 @@ pub const File = struct {
         };
     }
 
-    pub fn getPath(this: File, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
+    pub fn getPath(this: File, out_buffer: *bun.PathBuffer) Maybe([]u8) {
         return getFdPath(this.handle, out_buffer);
     }
 

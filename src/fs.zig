@@ -1058,6 +1058,8 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
+        /// Caller borrows the returned EntriesOption. When `FeatureFlags.enable_entry_cache` is `false`,
+        /// it is not safe to store this pointer past the current function call.
         pub fn readDirectoryWithIterator(
             fs: *RealFS,
             dir_maybe_trail_slash: string,

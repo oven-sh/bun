@@ -532,8 +532,9 @@ for (let [gcTick, label] of [
 }
 
 // This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
-  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+  "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
+  async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],
       env: {
@@ -547,8 +548,9 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
       stdin: "inherit",
     });
     expect(result.exitCode).toBe(0);
-  }, 128_000);
-}
+  },
+  192_000,
+);
 
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];

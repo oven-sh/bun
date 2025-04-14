@@ -326,7 +326,7 @@ pub const ShellArgs = struct {
     /// Root ast node
     script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn arena_allocator(this: *ShellArgs) std.mem.Allocator {
         return this.__arena.allocator();
@@ -335,7 +335,7 @@ pub const ShellArgs = struct {
     pub fn deinit(this: *ShellArgs) void {
         this.__arena.deinit();
         bun.destroy(this.__arena);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn init() *ShellArgs {
@@ -4686,12 +4686,16 @@ pub const Interpreter = struct {
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
     pub const IOReader = struct {
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
         fd: bun.FileDescriptor,
         reader: ReaderImpl,
         buf: std.ArrayListUnmanaged(u8) = .{},
         readers: Readers = .{ .inlined = .{} },
         read: usize = 0,
-        ref_count: u32 = 1,
+        ref_count: RefCount,
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
         concurrent_task: JSC.EventLoopTask,
@@ -4700,8 +4704,6 @@ pub const Interpreter = struct {
 
         pub const ChildPtr = IOReaderChildPtr;
         pub const ReaderImpl = bun.io.BufferedReader;
-
-        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOReaderRefCount");
 
         const InitFlags = packed struct(u8) {
             pollable: bool = false,
@@ -4724,7 +4726,8 @@ pub const Interpreter = struct {
         }
 
         pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *IOReader {
-            const this = IOReader.new(.{
+            const this = bun.new(IOReader, .{
+                .ref_count = .init(),
                 .fd = fd,
                 .reader = ReaderImpl.init(@This()),
                 .evtloop = evtloop,
@@ -4858,12 +4861,12 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn asyncDeinit(this: *@This()) void {
+        fn asyncDeinit(this: *@This()) void {
             log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
-            this.async_deinit.enqueue();
+            this.async_deinit.enqueue(); // calls `asyncDeinitCallback`
         }
 
-        pub fn __deinit(this: *@This()) void {
+        fn asyncDeinitCallback(this: *@This()) void {
             if (this.fd != bun.invalid_fd) {
                 // windows reader closes the file descriptor
                 if (bun.Environment.isWindows) {
@@ -4909,7 +4912,7 @@ pub const Interpreter = struct {
 
         pub fn runFromMainThread(this: *AsyncDeinitReader) void {
             const ioreader: *IOReader = @alignCast(@fieldParentPtr("async_deinit", this));
-            ioreader.__deinit();
+            ioreader.asyncDeinitCallback();
         }
 
         pub fn runFromMainThreadMini(this: *AsyncDeinitReader, _: *void) void {
@@ -4940,7 +4943,7 @@ pub const Interpreter = struct {
         }
 
         pub fn runFromMainThread(this: *@This()) void {
-            this.writer().__deinit();
+            this.writer().deinitOnMainThread();
         }
 
         pub fn runFromMainThreadMini(this: *@This(), _: *void) void {

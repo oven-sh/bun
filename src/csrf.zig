@@ -248,8 +248,8 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
         const options_value = args[1];
 
         // Extract expiresIn (optional)
-        if (try options_value.get(globalObject, "expiresIn")) |expires_in_js| {
-            expires_in = @intCast(try globalObject.validateIntegerRange(expires_in_js, i64, 0, .{ .min = 0, .max = JSC.MAX_SAFE_INTEGER }));
+        if (try options_value.getOptionalInt(globalObject, "expiresIn", u64)) |expires_in_js| {
+            expires_in = expires_in_js;
         }
 
         // Extract encoding (optional)
@@ -344,8 +344,8 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
         }
 
         // Extract maxAge (optional)
-        if (try options_value.get(globalObject, "maxAge")) |max_age_js| {
-            max_age = @intCast(try globalObject.validateIntegerRange(max_age_js, i64, 0, .{ .min = 0, .max = JSC.MAX_SAFE_INTEGER }));
+        if (try options_value.getOptionalInt(globalObject, "maxAge", u64)) |max_age_js| {
+            max_age = max_age_js;
         }
 
         // Extract encoding (optional)

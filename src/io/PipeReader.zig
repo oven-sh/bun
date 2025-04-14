@@ -83,7 +83,7 @@ const PosixBufferedReader = struct {
     count: usize = 0,
     maxbuf: ?*MaxBuf = null,
 
-    const Flags = packed struct {
+    const Flags = packed struct(u16) {
         is_done: bool = false,
         pollable: bool = false,
         nonblocking: bool = false,
@@ -93,6 +93,7 @@ const PosixBufferedReader = struct {
         close_handle: bool = true,
         memfd: bool = false,
         use_pread: bool = false,
+        _: u7 = 0,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -305,7 +306,7 @@ const PosixBufferedReader = struct {
         return this.start(fd, poll);
     }
 
-    // Exists for consistentcy with Windows.
+    // Exists for consistently with Windows.
     pub fn hasPendingRead(this: *const PosixBufferedReader) bool {
         return this.handle == .poll and this.handle.poll.isRegistered();
     }
@@ -646,7 +647,7 @@ const PosixBufferedReader = struct {
 
 const JSC = bun.JSC;
 
-const WindowsOutputReaderVTable = struct {
+const WindowsBufferedReaderVTable = struct {
     onReaderDone: *const fn (*anyopaque) void,
     onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
     onReadChunk: ?*const fn (
@@ -667,17 +668,13 @@ pub const WindowsBufferedReader = struct {
     maxbuf: ?*MaxBuf = null,
 
     parent: *anyopaque = undefined,
-    vtable: WindowsOutputReaderVTable = undefined,
-    ref_count: u32 = 1,
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
+    vtable: WindowsBufferedReaderVTable = undefined,
 
-    const WindowsOutputReader = @This();
-
-    pub fn memoryCost(this: *const WindowsOutputReader) usize {
+    pub fn memoryCost(this: *const WindowsBufferedReader) usize {
         return @sizeOf(@This()) + this._buffer.capacity;
     }
 
-    const Flags = packed struct {
+    const Flags = packed struct(u16) {
         is_done: bool = false,
         pollable: bool = false,
         nonblocking: bool = false,
@@ -688,9 +685,10 @@ pub const WindowsBufferedReader = struct {
         is_paused: bool = true,
         has_inflight_read: bool = false,
         use_pread: bool = false,
+        _: u7 = 0,
     };
 
-    pub fn init(comptime Type: type) WindowsOutputReader {
+    pub fn init(comptime Type: type) WindowsBufferedReader {
         const fns = struct {
             fn onReadChunk(this: *anyopaque, chunk: []const u8, hasMore: ReadState) bool {
                 return Type.onReadChunk(@as(*Type, @alignCast(@ptrCast(this))), chunk, hasMore);
@@ -711,11 +709,11 @@ pub const WindowsBufferedReader = struct {
         };
     }
 
-    pub inline fn isDone(this: *WindowsOutputReader) bool {
+    pub inline fn isDone(this: *WindowsBufferedReader) bool {
         return this.flags.is_done or this.flags.received_eof or this.flags.closed_without_reporting;
     }
 
-    pub fn from(to: *WindowsOutputReader, other: anytype, parent: anytype) void {
+    pub fn from(to: *WindowsBufferedReader, other: anytype, parent: anytype) void {
         bun.assert(other.source != null and to.source == null);
         to.* = .{
             .vtable = to.vtable,
@@ -732,16 +730,16 @@ pub const WindowsBufferedReader = struct {
         to.setParent(parent);
     }
 
-    pub fn getFd(this: *const WindowsOutputReader) bun.FileDescriptor {
+    pub fn getFd(this: *const WindowsBufferedReader) bun.FileDescriptor {
         const source = this.source orelse return bun.invalid_fd;
         return source.getFd();
     }
 
-    pub fn watch(_: *WindowsOutputReader) void {
+    pub fn watch(_: *WindowsBufferedReader) void {
         // No-op on windows.
     }
 
-    pub fn setParent(this: *WindowsOutputReader, parent: anytype) void {
+    pub fn setParent(this: *WindowsBufferedReader, parent: anytype) void {
         this.parent = parent;
         if (!this.flags.is_done) {
             if (this.source) |source| {
@@ -750,7 +748,7 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn updateRef(this: *WindowsOutputReader, value: bool) void {
+    pub fn updateRef(this: *WindowsBufferedReader, value: bool) void {
         if (this.source) |source| {
             if (value) {
                 source.ref();
@@ -760,36 +758,36 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn enableKeepingProcessAlive(this: *WindowsOutputReader, _: anytype) void {
+    pub fn enableKeepingProcessAlive(this: *WindowsBufferedReader, _: anytype) void {
         this.updateRef(true);
     }
 
-    pub fn disableKeepingProcessAlive(this: *WindowsOutputReader, _: anytype) void {
+    pub fn disableKeepingProcessAlive(this: *WindowsBufferedReader, _: anytype) void {
         this.updateRef(false);
     }
 
-    pub fn takeBuffer(this: *WindowsOutputReader) std.ArrayList(u8) {
+    pub fn takeBuffer(this: *WindowsBufferedReader) std.ArrayList(u8) {
         const out = this._buffer;
         this._buffer = std.ArrayList(u8).init(out.allocator);
         return out;
     }
 
-    pub fn buffer(this: *WindowsOutputReader) *std.ArrayList(u8) {
+    pub fn buffer(this: *WindowsBufferedReader) *std.ArrayList(u8) {
         return &this._buffer;
     }
 
     pub const finalBuffer = buffer;
 
-    pub fn hasPendingActivity(this: *const WindowsOutputReader) bool {
+    pub fn hasPendingActivity(this: *const WindowsBufferedReader) bool {
         const source = this.source orelse return false;
         return source.isActive();
     }
 
-    pub fn hasPendingRead(this: *const WindowsOutputReader) bool {
+    pub fn hasPendingRead(this: *const WindowsBufferedReader) bool {
         return this.flags.has_inflight_read;
     }
 
-    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) bool {
+    fn _onReadChunk(this: *WindowsBufferedReader, buf: []u8, hasMore: ReadState) bool {
         if (this.maxbuf) |m| m.onReadBytes(buf.len);
         this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
@@ -800,12 +798,12 @@ pub const WindowsBufferedReader = struct {
         return onReadChunkFn(this.parent, buf, hasMore);
     }
 
-    fn finish(this: *WindowsOutputReader) void {
+    fn finish(this: *WindowsBufferedReader) void {
         this.flags.has_inflight_read = false;
         this.flags.is_done = true;
     }
 
-    pub fn done(this: *WindowsOutputReader) void {
+    pub fn done(this: *WindowsBufferedReader) void {
         if (this.source) |source| bun.assert(source.isClosed());
 
         this.finish();
@@ -813,19 +811,19 @@ pub const WindowsBufferedReader = struct {
         this.vtable.onReaderDone(this.parent);
     }
 
-    pub fn onError(this: *WindowsOutputReader, err: bun.sys.Error) void {
+    pub fn onError(this: *WindowsBufferedReader, err: bun.sys.Error) void {
         this.finish();
         this.vtable.onReaderError(this.parent, err);
     }
 
-    pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
+    pub fn getReadBufferWithStableMemoryAddress(this: *WindowsBufferedReader, suggested_size: usize) []u8 {
         this.flags.has_inflight_read = true;
         this._buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
         const res = this._buffer.allocatedSlice()[this._buffer.items.len..];
         return res;
     }
 
-    pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
+    pub fn startWithCurrentPipe(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
         bun.assert(!this.source.?.isClosed());
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
@@ -833,12 +831,12 @@ pub const WindowsBufferedReader = struct {
         return this.startReading();
     }
 
-    pub fn startWithPipe(this: *WindowsOutputReader, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
+    pub fn startWithPipe(this: *WindowsBufferedReader, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
         this.source = .{ .pipe = pipe };
         return this.startWithCurrentPipe();
     }
 
-    pub fn start(this: *WindowsOutputReader, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+    pub fn start(this: *WindowsBufferedReader, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
         bun.assert(this.source == null);
         const source = switch (Source.open(uv.Loop.get(), fd)) {
             .err => |err| return .{ .err = err },
@@ -849,13 +847,13 @@ pub const WindowsBufferedReader = struct {
         return this.startWithCurrentPipe();
     }
 
-    pub fn startFileOffset(this: *WindowsOutputReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.JSC.Maybe(void) {
+    pub fn startFileOffset(this: *WindowsBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.JSC.Maybe(void) {
         this._offset = offset;
         this.flags.use_pread = true;
         return this.start(fd, poll);
     }
 
-    pub fn deinit(this: *WindowsOutputReader) void {
+    pub fn deinit(this: *WindowsBufferedReader) void {
         MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
@@ -1116,7 +1114,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     comptime {
-        bun.meta.banFieldType(WindowsOutputReader, bool); // Don't increase the size of the struct. Put them in flags instead.
+        bun.meta.banFieldType(WindowsBufferedReader, bool); // Don't increase the size of the struct. Put them in flags instead.
     }
 };
 

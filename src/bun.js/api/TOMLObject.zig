@@ -35,9 +35,7 @@ pub fn parse(
     };
 
     // for now...
-    const buffer_writer = js_printer.BufferWriter.init(allocator) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
-    };
+    const buffer_writer = js_printer.BufferWriter.init(allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
     _ = js_printer.printJSON(
         *js_printer.BufferPrinter,

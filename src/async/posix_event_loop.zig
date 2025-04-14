@@ -1205,7 +1205,7 @@ pub const Closer = struct {
     fd: bun.FileDescriptor,
     task: JSC.WorkPoolTask = .{ .callback = &onClose },
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn close(
         fd: bun.FileDescriptor,
@@ -1218,7 +1218,7 @@ pub const Closer = struct {
 
     fn onClose(task: *JSC.WorkPoolTask) void {
         const closer: *Closer = @fieldParentPtr("task", task);
-        defer closer.destroy();
+        defer bun.destroy(closer);
         closer.fd.close();
     }
 };

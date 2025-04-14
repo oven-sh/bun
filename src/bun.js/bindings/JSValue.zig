@@ -2155,6 +2155,19 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
+    pub fn getOptionalInt(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Type: type) JSError!?Type {
+        const value = try this.get(globalThis, property_name) orelse return null;
+        const info = @typeInfo(Type);
+        if (comptime info != .int) {
+            @compileError("getOptionalInt only works with integer types");
+        }
+        const is_unsigned = info.int.signedness == .unsigned;
+        const min: i64 = if (is_unsigned) 0 else @max(std.math.minInt(Type), -JSC.MAX_SAFE_INTEGER);
+        const max: i64 = @min(std.math.maxInt(Type), JSC.MAX_SAFE_INTEGER);
+
+        return try globalThis.validateIntegerRange(value, Type, 0, .{ .min = min, .max = max, .field_name = property_name });
+    }
+
     pub fn getOwnOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
         const prop = (if (comptime BuiltinName.has(property_name))
             fastGetOwn(this, globalThis, @field(BuiltinName, property_name))

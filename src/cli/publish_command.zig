@@ -961,7 +961,7 @@ pub const PublishCommand = struct {
             );
         }
 
-        const buffer_writer = try bun.js_printer.BufferWriter.init(allocator);
+        const buffer_writer = bun.js_printer.BufferWriter.init(allocator);
         var writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
         const written = bun.js_printer.printJSON(

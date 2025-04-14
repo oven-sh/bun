@@ -620,7 +620,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         true => spawn_command_line: {
             // When the shebang flag is set, we expect two u32s containing byte lengths of the bin and arg components
             // This is not needed for the other case because the other case does not have an args component.
-            const ShebangMetadataPacked = packed struct {
+            const ShebangMetadataPacked = packed struct(u64) {
                 bin_path_len_bytes: u32,
                 args_len_bytes: u32,
             };

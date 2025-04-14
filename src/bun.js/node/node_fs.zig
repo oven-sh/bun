@@ -125,7 +125,7 @@ pub const Async = struct {
 
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             var this: *AsyncMkdirp = @fieldParentPtr("task", task);
@@ -182,10 +182,8 @@ pub const Async = struct {
 
             pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "UvTask";
 
-            pub usingnamespace bun.New(@This());
-
             pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, task_args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
-                var task = Task.new(.{
+                var task = bun.new(Task, .{
                     .promise = JSC.JSPromise.Strong.init(globalObject),
                     .args = task_args,
                     .result = undefined,
@@ -373,7 +371,7 @@ pub const Async = struct {
                     this.args.deinit();
                 }
                 this.promise.deinit();
-                this.destroy();
+                bun.destroy(this);
             }
         };
     }
@@ -1008,7 +1006,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pending_err: ?Syscall.Error = null,
     pending_err_mutex: bun.Mutex = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
@@ -1051,13 +1049,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         basename: bun.PathString = bun.PathString.empty,
         task: JSC.WorkPoolTask = .{ .callback = call },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn call(task: *JSC.WorkPoolTask) void {
             var this: *Subtask = @alignCast(@fieldParentPtr("task", task));
             defer {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
-                this.destroy();
+                bun.destroy(this);
             }
             var buf: bun.PathBuffer = undefined;
             this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
@@ -1309,7 +1307,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -5634,6 +5632,7 @@ pub const NodeFS = struct {
     }
 
     pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
+
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
             zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
@@ -6752,10 +6751,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             continue :process_stack;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :process_stack,
-
-                            // Impossible because we do not pass any path separators.
-                            error.NotDir => unreachable,
-
+                            error.NotDir => if (Environment.isDebug) unreachable else return error.Unexpected,
                             error.IsDir => {
                                 treat_as_dir = true;
                                 continue :handle_entry;
@@ -6913,9 +6909,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             continue :dir_it;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :dir_it,
-
-                            // Impossible because we do not pass any path separators.
-                            error.NotDir => unreachable,
+                            error.NotDir => if (Environment.isDebug) unreachable else return error.Unexpected,
 
                             error.IsDir => {
                                 treat_as_dir = true;

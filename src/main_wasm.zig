@@ -195,7 +195,7 @@ export fn init(heapsize: u32) void {
 
         JSAst.Stmt.Data.Store.create(default_allocator);
         JSAst.Expr.Data.Store.create(default_allocator);
-        buffer_writer = JSPrinter.BufferWriter.init(default_allocator) catch unreachable;
+        buffer_writer = JSPrinter.BufferWriter.init(default_allocator);
         buffer_writer.buffer.growBy(1024) catch unreachable;
         writer = JSPrinter.BufferPrinter.init(buffer_writer);
         define = Define.Define.init(default_allocator, null, null) catch unreachable;

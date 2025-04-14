@@ -1,137 +1,233 @@
-export class TestWebSocketClient {
-  #ws: WebSocket;
-  #dataWs: WebSocket;
+import { expectType } from "./utilities";
 
-  constructor() {
-    // Test constructor with string URL and protocol string array
-    this.#ws = new WebSocket("wss://dev.local", ["proto1", "proto2"]);
+// WebSocket constructor tests
+{
+  // Constructor with string URL only
+  new WebSocket("wss://dev.local");
 
-    // Test constructor with URL object and protocols
-    this.#dataWs = new WebSocket(new URL("wss://dev.local"), {
-      protocols: ["proto1", "proto2"],
-    });
+  // Constructor with string URL and protocols array
+  new WebSocket("wss://dev.local", ["proto1", "proto2"]);
 
-    // Access static properties
-    const states = {
-      CONNECTING: WebSocket.CONNECTING, // 0
-      OPEN: WebSocket.OPEN, // 1
-      CLOSING: WebSocket.CLOSING, // 2
-      CLOSED: WebSocket.CLOSED, // 3
-    };
+  // Constructor with string URL and single protocol string
+  new WebSocket("wss://dev.local", "proto1");
 
-    // Test event handlers
-    this.#ws.onopen = (event: Event) => {
-      console.log("Connection opened");
-    };
+  // Constructor with URL object only
+  new WebSocket(new URL("wss://dev.local"));
 
-    this.#ws.onmessage = (event: MessageEvent) => {
-      // Test data types when receiving messages
-      if (typeof event.data === "string") {
-        console.log("Received string:", event.data);
-      } else if (event.data instanceof ArrayBuffer) {
-        console.log("Received ArrayBuffer");
-      }
-    };
+  // Constructor with URL object and protocols array
+  new WebSocket(new URL("wss://dev.local"), ["proto1", "proto2"]);
 
-    this.#ws.onerror = (event: Event) => {
-      console.log("Error occurred");
-    };
+  // Constructor with URL object and single protocol string
+  new WebSocket(new URL("wss://dev.local"), "proto1");
 
-    this.#ws.onclose = (event: CloseEvent) => {
-      console.log(`Connection closed: ${event.code} ${event.reason} ${event.wasClean}`);
-    };
+  // Constructor with string URL and options object with protocols
+  new WebSocket("wss://dev.local", {
+    protocols: ["proto1", "proto2"],
+  });
 
-    // Test property access
-    const readyState = this.#ws.readyState;
-    const bufferedAmount = this.#ws.bufferedAmount;
-    const url = this.#ws.url;
-    const protocol = this.#ws.protocol;
-    const extensions = this.#ws.extensions;
+  // Constructor with string URL and options object with protocol
+  new WebSocket("wss://dev.local", {
+    protocol: "proto1",
+  });
 
-    // Test binary type setting
-    this.#ws.binaryType = "arraybuffer";
-    this.#ws.binaryType = "blob";
+  // Constructor with URL object and options with TLS settings
+  new WebSocket(new URL("wss://dev.local"), {
+    protocol: "proto1",
+    tls: {
+      rejectUnauthorized: false,
+    },
+  });
 
-    // The URL property is deprecated but exists in the type definitions
-    const deprecatedUrl = this.#ws.url; // Using url instead of URL to avoid linter error
+  // Constructor with headers
+  new WebSocket("wss://dev.local", {
+    headers: {
+      "Cookie": "session=123456",
+      "User-Agent": "BunWebSocketTest",
+    },
+  });
 
-    // Test addEventListener methods
-    this.#ws.addEventListener("open", this.handleOpen);
-    this.#ws.addEventListener("message", this.handleMessage);
-    this.#ws.addEventListener("error", this.handleError);
-    this.#ws.addEventListener("close", this.handleClose);
-  }
+  // Constructor with full options object
+  new WebSocket("wss://dev.local", {
+    protocols: ["proto1", "proto2"],
+    headers: {
+      "Cookie": "session=123456",
+    },
+    tls: {
+      rejectUnauthorized: true,
+    },
+  });
+}
 
-  handleOpen(event: Event): void {
-    console.log("Connection opened via event listener");
-  }
+// WebSocket static properties test
+{
+  expectType(WebSocket.CONNECTING).is<0>();
+  expectType(WebSocket.OPEN).is<1>();
+  expectType(WebSocket.CLOSING).is<2>();
+  expectType(WebSocket.CLOSED).is<3>();
 
-  handleMessage(event: MessageEvent): void {
-    console.log("Message received via event listener");
-  }
+  const instance: WebSocket = null as never;
+  expectType(instance.CONNECTING).is<0>();
+  expectType(instance.OPEN).is<1>();
+  expectType(instance.CLOSING).is<2>();
+  expectType(instance.CLOSED).is<3>();
+}
 
-  handleError(event: Event): void {
-    console.log("Error occurred via event listener");
-  }
+// WebSocket event handlers test
+{
+  const ws = new WebSocket("wss://dev.local");
 
-  handleClose(event: CloseEvent): void {
-    console.log("Connection closed via event listener");
-  }
+  // Using event handler properties
+  ws.onopen = (event: Event) => {
+    console.log("Connection opened");
+  };
 
-  sendData(): void {
-    // Test sending different data types
-    this.#ws.send("Hello, server!");
-
-    // Send ArrayBuffer
-    const buffer = new ArrayBuffer(10);
-    this.#ws.send(buffer);
-
-    // Send ArrayBufferView (Uint8Array)
-    const uint8Array = new Uint8Array(buffer);
-    this.#ws.send(uint8Array);
-  }
-
-  testRemoveEventListeners(): void {
-    // Test removeEventListener methods
-    this.#ws.removeEventListener("open", this.handleOpen);
-    this.#ws.removeEventListener("message", this.handleMessage);
-    this.#ws.removeEventListener("error", this.handleError);
-    this.#ws.removeEventListener("close", this.handleClose);
-  }
-
-  close(): void {
-    // Test close method with different parameters
-    if (this.#ws.readyState === WebSocket.OPEN) {
-      this.#ws.close();
+  ws.onmessage = (event: MessageEvent) => {
+    if (typeof event.data === "string") {
+      console.log("Received string:", event.data);
+    } else if (event.data instanceof ArrayBuffer) {
+      console.log("Received ArrayBuffer");
     }
+  };
 
-    this.#dataWs.close(1000);
-    this.#dataWs.close(1001, "Going away");
-  }
+  ws.onerror = (event: Event) => {
+    console.log("Error occurred");
+  };
 
-  testPingPong(): void {
-    // Test ping and pong methods
-    this.#ws.ping();
-    this.#ws.ping("ping data");
+  ws.onclose = (event: CloseEvent) => {
+    console.log(`Connection closed: ${event.code} ${event.reason} ${event.wasClean}`);
+  };
+}
 
-    const pingBuffer = new ArrayBuffer(4);
-    this.#ws.ping(pingBuffer);
+// WebSocket addEventListener test
+{
+  const ws = new WebSocket("wss://dev.local");
 
-    const pingView = new Uint8Array(pingBuffer);
-    this.#ws.ping(pingView);
+  // Event handler functions
+  const handleOpen = (event: Event) => {
+    expectType(event).is<Event>();
+  };
 
-    this.#ws.pong();
-    this.#ws.pong("pong data");
+  const handleMessage = (event: MessageEvent<string>) => {
+    expectType(event.data).is<string>();
+  };
 
-    const pongBuffer = new ArrayBuffer(4);
-    this.#ws.pong(pongBuffer);
+  const handleError = (event: Event) => {
+    expectType(event).is<Event>();
+  };
 
-    const pongView = new Uint8Array(pongBuffer);
-    this.#ws.pong(pongView);
-  }
+  const handleClose = (event: CloseEvent) => {
+    expectType(event).is<CloseEvent>();
+    expectType(event.code).is<number>();
+    expectType(event.reason).is<string>();
+    expectType(event.wasClean).is<boolean>();
+  };
 
-  terminate(): void {
-    // Test terminate method
-    this.#ws.terminate();
-  }
+  // Add event listeners
+  ws.addEventListener("open", handleOpen);
+  ws.addEventListener("message", handleMessage);
+  ws.addEventListener("error", handleError);
+  ws.addEventListener("close", handleClose);
+
+  // Remove event listeners
+  ws.removeEventListener("open", handleOpen);
+  ws.removeEventListener("message", handleMessage);
+  ws.removeEventListener("error", handleError);
+  ws.removeEventListener("close", handleClose);
+}
+
+// WebSocket property access test
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  // Read various properties
+  expectType(ws.readyState).is<0 | 2 | 1 | 3>();
+  expectType(ws.bufferedAmount).is<number>();
+  expectType(ws.url).is<string>();
+  expectType(ws.protocol).is<string>();
+  expectType(ws.extensions).is<string>();
+
+  // Legacy URL property (deprecated but exists)
+  expectType(ws.URL).is<string>();
+
+  // Set binary type
+  ws.binaryType = "arraybuffer";
+  ws.binaryType = "blob";
+}
+
+// WebSocket send method test
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  // Send string data
+  ws.send("Hello, server!");
+
+  // Send ArrayBuffer
+  const buffer = new ArrayBuffer(10);
+  ws.send(buffer);
+
+  // Send ArrayBufferView (Uint8Array)
+  const uint8Array = new Uint8Array(buffer);
+  ws.send(uint8Array);
+
+  // --------------------------------------- //
+  // `.send(blob)` is not supported yet
+  // --------------------------------------- //
+  // // Send Blob
+  // const blob = new Blob(["Hello, server!"]);
+  // ws.send(blob);
+  // --------------------------------------- //
+
+  // Send FormData
+  const formData = new FormData();
+  formData.append("message", "Hello, server!");
+}
+
+// WebSocket close method test
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  // Close without parameters
+  ws.close();
+
+  // Close with code
+  ws.close(1000);
+
+  // Close with code and reason
+  ws.close(1001, "Going away");
+}
+
+// Bun-specific WebSocket extensions test
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  // Send ping frame with no data
+  ws.ping();
+
+  // Send ping frame with string data
+  ws.ping("ping data");
+
+  // Send ping frame with ArrayBuffer
+  const pingBuffer = new ArrayBuffer(4);
+  ws.ping(pingBuffer);
+
+  // Send ping frame with ArrayBufferView
+  const pingView = new Uint8Array(pingBuffer);
+  ws.ping(pingView);
+
+  // Send pong frame with no data
+  ws.pong();
+
+  // Send pong frame with string data
+  ws.pong("pong data");
+
+  // Send pong frame with ArrayBuffer
+  const pongBuffer = new ArrayBuffer(4);
+  ws.pong(pongBuffer);
+
+  // Send pong frame with ArrayBufferView
+  const pongView = new Uint8Array(pongBuffer);
+  ws.pong(pongView);
+
+  // Terminate the connection immediately
+  ws.terminate();
 }

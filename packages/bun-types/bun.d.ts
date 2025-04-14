@@ -4351,12 +4351,12 @@ declare module "bun" {
     /**
      * The protocol selected by the server
      */
-    readonly protocol: string | null;
+    readonly protocol: string;
 
     /**
      * The extensions selected by the server
      */
-    readonly extensions: string | null;
+    readonly extensions: string;
 
     /**
      * The type of binary data being received.

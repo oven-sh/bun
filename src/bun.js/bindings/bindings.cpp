@@ -2077,7 +2077,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
         result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    if (err.fd != -1) {
+    if (err.fd >= 0) {
         JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
         result->putDirect(vm, names.fdPublicName(), fd,
             JSC::PropertyAttribute::DontDelete | 0);

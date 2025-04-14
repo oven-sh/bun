@@ -14,7 +14,8 @@ pub const SystemError = extern struct {
     path: String = .empty,
     syscall: String = .empty,
     hostname: String = .empty,
-    fd: bun.FileDescriptor.Optional = .none,
+    /// MinInt = no file descriptor
+    fd: c_int = std.math.minInt(c_int),
     dest: String = .empty,
 
     pub fn Maybe(comptime Result: type) type {

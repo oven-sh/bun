@@ -520,7 +520,9 @@ pub const Error = struct {
             err.dest = bun.String.createUTF8(this.dest);
         }
 
-        err.fd = this.fd.toOptional();
+        if (this.fd.unwrapValid()) |valid| {
+            err.fd = valid.native();
+        }
 
         return err;
     }
@@ -580,7 +582,9 @@ pub const Error = struct {
             err.dest = bun.String.createUTF8(this.dest);
         }
 
-        err.fd = this.fd.toOptional();
+        if (this.fd.unwrapValid()) |valid| {
+            err.fd = valid.native();
+        }
 
         return err;
     }

@@ -756,8 +756,8 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (!entry.cache.fd.isValid()) {
-                file = entry.cache.fd.stdFile();
+            if (entry.cache.fd.unwrapValid()) |valid| {
+                file = valid.stdFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);

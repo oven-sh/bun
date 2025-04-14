@@ -201,10 +201,6 @@ import { expectType } from "./utilities";
   // const blob = new Blob(["Hello, server!"]);
   // ws.send(blob);
   // --------------------------------------- //
-
-  // Send FormData
-  const formData = new FormData();
-  formData.append("message", "Hello, server!");
 }
 
 // WebSocket close method test

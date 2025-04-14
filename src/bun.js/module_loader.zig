@@ -628,7 +628,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (source_code_printer == null) {
-                const writer = try js_printer.BufferWriter.init(bun.default_allocator);
+                const writer = js_printer.BufferWriter.init(bun.default_allocator);
                 source_code_printer = bun.default_allocator.create(js_printer.BufferPrinter) catch unreachable;
                 source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
                 source_code_printer.?.ctx.append_null_byte = false;

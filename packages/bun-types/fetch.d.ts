@@ -10,7 +10,12 @@
 
 declare module "bun" {
   type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
-  type BodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams | AsyncGenerator<Uint8Array>;
+  type BodyInit =
+    | ReadableStream
+    | Bun.XMLHttpRequestBodyInit
+    | URLSearchParams
+    | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+    | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);
 
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;

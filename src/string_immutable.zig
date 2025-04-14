@@ -629,7 +629,7 @@ pub const StringOrTinyString = struct {
     const Buffer = [Max]u8;
 
     remainder_buf: Buffer = undefined,
-    meta: packed struct {
+    meta: packed struct(u8) {
         remainder_len: u7 = 0,
         is_tiny_string: u1 = 0,
     } = .{},
@@ -1594,7 +1594,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             var out = try allocator.alloc(u16, out_length + if (sentinel) 1 else 0);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, if (comptime sentinel) out[0..out_length] else out);
             if (res.status == .success) {
                 if (comptime sentinel) {
                     out[out_length] = 0;
@@ -1673,7 +1673,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         }
 
         if (remaining.len > 0) {
-            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len);
+            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len + comptime if (sentinel) 1 else 0);
 
             output.items.len += remaining.len;
             strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
@@ -1694,7 +1694,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
 pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) [:0]u16 else []u16 {
     return (try toUTF16Alloc(allocator, bytes, fail_if_invalid, sentinel)) orelse {
         const output = try allocator.alloc(u16, bytes.len + if (sentinel) 1 else 0);
-        bun.strings.copyU8IntoU16(output, bytes);
+        bun.strings.copyU8IntoU16(if (sentinel) output[0..bytes.len] else output, bytes);
 
         if (comptime sentinel) {
             output[bytes.len] = 0;
@@ -5220,7 +5220,7 @@ pub const PackedCodepointIterator = struct {
 
     pub const ZeroValue = zeroValue;
 
-    pub const Cursor = packed struct {
+    pub const Cursor = packed struct(u64) {
         i: u32 = 0,
         c: u29 = zeroValue,
         width: u3 = 0,
@@ -5599,7 +5599,7 @@ pub const unicode_replacement_str = brk: {
 
 pub fn isIPAddress(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
-    if (input.len > max_ip_address_buffer.len) return false;
+    if (input.len >= max_ip_address_buffer.len) return false;
 
     var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
@@ -5613,7 +5613,7 @@ pub fn isIPAddress(input: []const u8) bool {
 
 pub fn isIPV6Address(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
-    if (input.len > max_ip_address_buffer.len) return false;
+    if (input.len >= max_ip_address_buffer.len) return false;
 
     var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);

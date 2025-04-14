@@ -83,7 +83,7 @@ const PosixBufferedReader = struct {
     count: usize = 0,
     maxbuf: ?*MaxBuf = null,
 
-    const Flags = packed struct {
+    const Flags = packed struct(u16) {
         is_done: bool = false,
         pollable: bool = false,
         nonblocking: bool = false,
@@ -93,6 +93,7 @@ const PosixBufferedReader = struct {
         close_handle: bool = true,
         memfd: bool = false,
         use_pread: bool = false,
+        _: u7 = 0,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -673,7 +674,7 @@ pub const WindowsBufferedReader = struct {
         return @sizeOf(@This()) + this._buffer.capacity;
     }
 
-    const Flags = packed struct {
+    const Flags = packed struct(u16) {
         is_done: bool = false,
         pollable: bool = false,
         nonblocking: bool = false,
@@ -684,6 +685,7 @@ pub const WindowsBufferedReader = struct {
         is_paused: bool = true,
         has_inflight_read: bool = false,
         use_pread: bool = false,
+        _: u7 = 0,
     };
 
     pub fn init(comptime Type: type) WindowsBufferedReader {

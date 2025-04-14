@@ -68,8 +68,6 @@
     macro(rsaPss, "rsa-pss") \
     macro(s3Error, "S3Error") \
     macro(strict, "strict") \
-    macro(lax, "lax") \
-    macro(none, "none") \
     macro(jwkCrv, "crv") \
     macro(jwkD, "d") \
     macro(jwkDp, "dp") \
@@ -89,8 +87,6 @@
     macro(jwkRsa, "RSA") \
     macro(jwkX, "x") \
     macro(jwkY, "y") \
-    macro(lax, "lax") \
-    macro(none, "none") \
     macro(systemError, "SystemError") \
     macro(ucs2, "ucs2") \
     macro(utf16le, "utf16le") \

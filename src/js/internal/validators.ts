@@ -69,7 +69,6 @@ function validateLinkHeaderValue(hints) {
 hideFromStack(validateLinkHeaderValue);
 
 // We want to let the JIT remove the most trivial checks.
-const validateObjectInternal = $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2);
 const validateNumberInternal = $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0);
 const validateStringInternal = $newCppFunction("NodeValidator.cpp", "jsFunction_validateString", 0);
 const validateFunctionInternal = $newCppFunction("NodeValidator.cpp", "jsFunction_validateFunction", 0);
@@ -78,11 +77,7 @@ const validateArrayInternal = $newCppFunction("NodeValidator.cpp", "jsFunction_v
 
 export default {
   /** (value, name) */
-  validateObject: function validateObject(value, name) {
-    if (typeof value !== "undefined") {
-      return validateObjectInternal.$apply(this, arguments);
-    }
-  },
+  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
 
   /** `(value, name, min, max)` */
   validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),

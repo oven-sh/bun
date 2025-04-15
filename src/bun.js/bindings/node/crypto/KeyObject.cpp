@@ -47,7 +47,7 @@ void setEncodedValue(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* 
     obj->putDirect(vm, Identifier::fromString(vm, name->value(globalObject)), encodedBn);
 }
 
-JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, KeyObjectType exportType)
+JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -77,7 +77,7 @@ JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject,
         Identifier::fromString(vm, commonStrings.jwkCrvString(lexicalGlobalObject)->value(lexicalGlobalObject)),
         jsString(vm, makeString(curve)));
 
-    if (exportType == KeyObjectType::Private) {
+    if (exportType == CryptoKeyType::Private) {
         ncrypto::DataPointer privateData = pkey.rawPrivateKey();
 
         JSValue encoded = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, privateData.span(), BufferEncodingType::base64url));
@@ -104,7 +104,7 @@ JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject,
     return jwk;
 }
 
-JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, KeyObjectType exportType)
+JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -169,7 +169,7 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
         Identifier::fromString(vm, commonStrings.jwkCrvString(lexicalGlobalObject)->value(lexicalGlobalObject)),
         jsString(vm, makeString(crvName)));
 
-    if (exportType == KeyObjectType::Private) {
+    if (exportType == CryptoKeyType::Private) {
         auto pvt = ncrypto::ECKeyPointer::GetPrivateKey(ec);
         setEncodedValue(lexicalGlobalObject, scope, jwk, commonStrings.jwkDString(lexicalGlobalObject), pvt, degree_bytes);
         RETURN_IF_EXCEPTION(scope, {});
@@ -178,7 +178,7 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
     return jwk;
 }
 
-JSC::JSValue KeyObject::exportJwkRsaKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, KeyObjectType exportType)
+JSC::JSValue KeyObject::exportJwkRsaKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -200,7 +200,7 @@ JSC::JSValue KeyObject::exportJwkRsaKey(JSC::JSGlobalObject* lexicalGlobalObject
     setEncodedValue(lexicalGlobalObject, scope, jwk, commonStrings.jwkEString(lexicalGlobalObject), publicKey.e);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (exportType == KeyObjectType::Private) {
+    if (exportType == CryptoKeyType::Private) {
         auto privateKey = rsa.getPrivateKey();
         setEncodedValue(lexicalGlobalObject, scope, jwk, commonStrings.jwkDString(lexicalGlobalObject), publicKey.d);
         RETURN_IF_EXCEPTION(scope, {});
@@ -241,7 +241,7 @@ JSC::JSValue KeyObject::exportJwkSecretKey(JSC::JSGlobalObject* lexicalGlobalObj
     return jwk;
 }
 
-JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, KeyObjectType exportType, bool handleRsaPss)
+JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, CryptoKeyType exportType, bool handleRsaPss)
 {
     switch (m_data->asymmetricKey.id()) {
     case EVP_PKEY_RSA_PSS: {
@@ -268,9 +268,9 @@ JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject
     return {};
 }
 
-JSC::JSValue KeyObject::exportJwk(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, KeyObjectType type, bool handleRsaPss)
+JSC::JSValue KeyObject::exportJwk(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, CryptoKeyType type, bool handleRsaPss)
 {
-    if (type == KeyObjectType::Secret) {
+    if (type == CryptoKeyType::Secret) {
         return exportJwkSecretKey(globalObject, scope);
     }
 
@@ -306,7 +306,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    ASSERT(m_type != KeyObjectType::Secret);
+    ASSERT(m_type != CryptoKeyType::Secret);
 
     if (config.output_key_object) {
         KeyObject keyObject = *this;
@@ -316,7 +316,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
-        return exportJwk(lexicalGlobalObject, scope, KeyObjectType::Public, false);
+        return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Public, false);
     }
 
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
@@ -334,7 +334,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    ASSERT(m_type != KeyObjectType::Secret);
+    ASSERT(m_type != CryptoKeyType::Secret);
 
     if (config.output_key_object) {
         KeyObject keyObject = *this;
@@ -344,7 +344,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
-        return exportJwk(lexicalGlobalObject, scope, KeyObjectType::Private, false);
+        return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Private, false);
     }
 
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
@@ -357,11 +357,11 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     return toJS(lexicalGlobalObject, scope, res.value, config);
 }
 
-JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& scope, JSValue optionsValue, KeyObjectType exportType)
+JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& scope, JSValue optionsValue, CryptoKeyType exportType)
 {
     VM& vm = globalObject->vm();
 
-    ASSERT(m_type != KeyObjectType::Secret);
+    ASSERT(m_type != CryptoKeyType::Secret);
 
     if (JSObject* options = jsDynamicCast<JSObject*>(optionsValue)) {
         JSValue formatValue = options->get(globalObject, Identifier::fromString(vm, "format"_s));
@@ -373,7 +373,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
             auto formatView = formatString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (exportType == KeyObjectType::Private) {
+            if (exportType == CryptoKeyType::Private) {
                 JSValue passphraseValue = options->get(globalObject, Identifier::fromString(vm, "passphrase"_s));
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!passphraseValue.isUndefined()) {
@@ -386,7 +386,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
         }
 
         JSValue keyType = asymmetricKeyType(globalObject);
-        if (exportType == KeyObjectType::Public) {
+        if (exportType == CryptoKeyType::Public) {
             ncrypto::EVPKeyPointer::PublicKeyEncodingConfig config;
             parsePublicKeyEncoding(globalObject, scope, options, keyType, WTF::nullStringView(), config);
             RETURN_IF_EXCEPTION(scope, {});
@@ -435,7 +435,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
         }
 
         if (jwk) {
-            return exportJwk(lexicalGlobalObject, scope, KeyObjectType::Secret, false);
+            return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Secret, false);
         }
     }
 
@@ -455,7 +455,7 @@ JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
-    if (m_type == KeyObjectType::Secret) {
+    if (m_type == CryptoKeyType::Secret) {
         return jsUndefined();
     }
 
@@ -566,7 +566,7 @@ JSObject* KeyObject::asymmetricKeyDetails(JSGlobalObject* globalObject, ThrowSco
 {
     JSObject* result = JSC::constructEmptyObject(globalObject);
 
-    if (m_type == KeyObjectType::Secret) {
+    if (m_type == CryptoKeyType::Secret) {
         return result;
     }
 
@@ -599,7 +599,7 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 
     switch (m_type) {
-    case KeyObjectType::Secret: {
+    case CryptoKeyType::Secret: {
         auto thisKey = symmetricKey().span();
         auto otherKey = other.symmetricKey().span();
 
@@ -609,8 +609,8 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
 
         return CRYPTO_memcmp(thisKey.data(), otherKey.data(), thisKey.size()) == 0;
     }
-    case KeyObjectType::Public:
-    case KeyObjectType::Private: {
+    case CryptoKeyType::Public:
+    case CryptoKeyType::Private: {
         EVP_PKEY* thisKey = m_data->asymmetricKey.get();
         EVP_PKEY* otherKey = other.m_data->asymmetricKey.get();
 
@@ -641,7 +641,7 @@ static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::Cryp
 
 WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
 {
-    // Determine KeyKeyObjectType and Extract Material
+    // Determine KeyCryptoKeyType and Extract Material
     switch (key.type()) {
     case WebCore::CryptoKeyType::Secret: {
         // Extract symmetric key data
@@ -666,7 +666,7 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
         EVP_PKEY_up_ref(keyValue.key);
         ncrypto::EVPKeyPointer keyPtr(keyValue.key);
 
-        return create(KeyObjectType::Public, WTFMove(keyPtr));
+        return create(CryptoKeyType::Public, WTFMove(keyPtr));
     }
 
     case WebCore::CryptoKeyType::Private: {
@@ -680,7 +680,7 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
         EVP_PKEY_up_ref(keyValue.key);
         ncrypto::EVPKeyPointer keyPtr(keyValue.key);
 
-        return create(KeyObjectType::Private, WTFMove(keyPtr));
+        return create(CryptoKeyType::Private, WTFMove(keyPtr));
     }
     }
 
@@ -690,10 +690,10 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
 KeyObject KeyObject::create(WTF::Vector<uint8_t>&& symmetricKey)
 {
     RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
-    return KeyObject(KeyObjectType::Secret, WTFMove(data));
+    return KeyObject(CryptoKeyType::Secret, WTFMove(data));
 }
 
-KeyObject KeyObject::create(KeyObjectType type, ncrypto::EVPKeyPointer&& asymmetricKey)
+KeyObject KeyObject::create(CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey)
 {
     RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(asymmetricKey));
     return KeyObject(type, WTFMove(data));
@@ -706,12 +706,12 @@ void KeyObject::getKeyObjectFromHandle(JSGlobalObject* globalObject, ThrowScope&
         return;
     }
 
-    if (handle.type() != KeyObjectType::Private) {
+    if (handle.type() != CryptoKeyType::Private) {
         if (mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePublic) {
             ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "private"_s);
             return;
         }
-        if (handle.type() != KeyObjectType::Public) {
+        if (handle.type() != CryptoKeyType::Public) {
             ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "private or public"_s);
             return;
         }
@@ -766,10 +766,8 @@ inline BignumPointer jwkBufToBn(JSArrayBufferView* buf)
     return BignumPointer(reinterpret_cast<uint8_t*>(buf->vector()), buf->byteLength());
 }
 
-KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, KeyObjectType, PrepareAsymmetricKeyMode mode)
+KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, CryptoKeyType, PrepareAsymmetricKeyMode mode)
 {
-    VM& vm = globalObject->vm();
-
     auto ktyView = getJwkStringView(globalObject, scope, jwk, "kty"_s, "key.kty"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -792,9 +790,9 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
         return {};
     }
 
-    KeyObjectType keyType = mode == PrepareAsymmetricKeyMode::ConsumePublic || mode == PrepareAsymmetricKeyMode::CreatePublic
-        ? KeyObjectType::Public
-        : KeyObjectType::Private;
+    CryptoKeyType keyType = mode == PrepareAsymmetricKeyMode::ConsumePublic || mode == PrepareAsymmetricKeyMode::CreatePublic
+        ? CryptoKeyType::Public
+        : CryptoKeyType::Private;
 
     switch (kty) {
     case Kty::Okp: {
@@ -821,12 +819,12 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
 
         GCOwnedDataScope<WTF::StringView> dView = GCOwnedDataScope<WTF::StringView>(nullptr, WTF::nullStringView());
 
-        if (keyType != KeyObjectType::Public) {
+        if (keyType != CryptoKeyType::Public) {
             dView = getJwkStringView(globalObject, scope, jwk, "d"_s, "key.d"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        auto dataView = keyType == KeyObjectType::Public ? xView : dView;
+        auto dataView = keyType == CryptoKeyType::Public ? xView : dView;
 
         auto* dataBuf = decodeJwkString(globalObject, scope, dataView, "key.x"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -861,7 +859,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             .len = bufSpan.size(),
         };
 
-        auto key = keyType == KeyObjectType::Public
+        auto key = keyType == CryptoKeyType::Public
             ? EVPKeyPointer::NewRawPublic(nid, buf)
             : EVPKeyPointer::NewRawPrivate(nid, buf);
 
@@ -889,7 +887,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
 
         GCOwnedDataScope<WTF::StringView> dView = GCOwnedDataScope<WTF::StringView>(nullptr, WTF::nullStringView());
 
-        if (keyType != KeyObjectType::Public) {
+        if (keyType != CryptoKeyType::Public) {
             dView = getJwkStringView(globalObject, scope, jwk, "d"_s, "key.d"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -919,7 +917,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             return {};
         }
 
-        if (keyType != KeyObjectType::Public) {
+        if (keyType != CryptoKeyType::Public) {
             auto* dBuf = decodeJwkString(globalObject, scope, dView, "key.d"_s);
             auto dBufSpan = dBuf->span();
             BignumPointer dBn = BignumPointer(dBufSpan.data(), dBufSpan.size());
@@ -953,7 +951,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             return {};
         }
 
-        if (keyType == KeyObjectType::Private) {
+        if (keyType == CryptoKeyType::Private) {
             auto* dBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "d"_s, "key.d"_s);
             RETURN_IF_EXCEPTION(scope, {});
             auto* pBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "p"_s, "key.p"_s);
@@ -1020,8 +1018,6 @@ EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
     std::optional<std::span<const uint8_t>> passphrase,
     KeyEncodingContext ctx)
 {
-    VM& vm = globalObject->vm();
-
     EVPKeyPointer::PrivateKeyEncodingConfig config;
     getKeyFormatAndType(formatType, encodingType, ctx, config);
 
@@ -1045,7 +1041,7 @@ EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
         }
     }
 
-    return WTFMove(config);
+    return config;
 }
 
 // KeyObjectHandle::init for public and private keys
@@ -1053,7 +1049,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     JSGlobalObject* globalObject,
     ThrowScope& scope,
     std::span<const uint8_t> keyData,
-    KeyObjectType keyType,
+    CryptoKeyType keyType,
     EVPKeyPointer::PKFormatType formatType,
     std::optional<EVPKeyPointer::PKEncodingType> encodingType,
     GCOwnedDataScope<WTF::StringView> cipherView,
@@ -1064,7 +1060,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
         .len = keyData.size(),
     };
 
-    if (keyType == KeyObjectType::Private) {
+    if (keyType == CryptoKeyType::Private) {
         auto config = getPrivateKeyEncoding(
             globalObject,
             scope,
@@ -1077,7 +1073,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
 
         auto res = EVPKeyPointer::TryParsePrivateKey(config, buf);
         if (res) {
-            return create(KeyObjectType::Private, WTFMove(res.value));
+            return create(CryptoKeyType::Private, WTFMove(res.value));
         }
 
         if (res.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
@@ -1106,13 +1102,13 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     if (config.format == EVPKeyPointer::PKFormatType::PEM) {
         auto publicRes = EVPKeyPointer::TryParsePublicKeyPEM(buf);
         if (publicRes) {
-            return create(KeyObjectType::Public, WTFMove(publicRes.value));
+            return create(CryptoKeyType::Public, WTFMove(publicRes.value));
         }
 
         if (publicRes.error.value() == EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
             auto privateRes = EVPKeyPointer::TryParsePrivateKey(config, buf);
             if (privateRes) {
-                return create(KeyObjectType::Private, WTFMove(privateRes.value));
+                return create(CryptoKeyType::Private, WTFMove(privateRes.value));
             }
 
             if (privateRes.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
@@ -1145,7 +1141,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     if (isPublic(config, buf)) {
         auto res = EVPKeyPointer::TryParsePublicKey(config, buf);
         if (res) {
-            return create(KeyObjectType::Public, WTFMove(res.value));
+            return create(CryptoKeyType::Public, WTFMove(res.value));
         }
 
         throwCryptoError(globalObject, scope, res.openssl_error.value_or(0), "Failed to read asymmetric key"_s);
@@ -1154,7 +1150,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
 
     auto res = EVPKeyPointer::TryParsePrivateKey(config, buf);
     if (res) {
-        return create(KeyObjectType::Private, WTFMove(res.value));
+        return create(CryptoKeyType::Private, WTFMove(res.value));
     }
 
     if (res.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
@@ -1165,7 +1161,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     return {};
 }
 
-KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, KeyObjectType type, PrepareAsymmetricKeyMode mode)
+KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, CryptoKeyType type, PrepareAsymmetricKeyMode mode)
 {
     VM& vm = globalObject->vm();
 
@@ -1175,12 +1171,12 @@ KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC
             return;
         }
 
-        if (keyObject.type() != KeyObjectType::Private) {
+        if (keyObject.type() != CryptoKeyType::Private) {
             if (mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePublic) {
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, keyObject.type(), "private"_s);
                 return;
             }
-            if (keyObject.type() != KeyObjectType::Public) {
+            if (keyObject.type() != CryptoKeyType::Public) {
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, keyObject.type(), "private or public"_s);
                 return;
             }
@@ -1248,8 +1244,8 @@ KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC
                 scope,
                 decodedBuf->span(),
                 mode == PrepareAsymmetricKeyMode::CreatePublic || mode == PrepareAsymmetricKeyMode::ConsumePublic
-                    ? KeyObjectType::Public
-                    : KeyObjectType::Private,
+                    ? CryptoKeyType::Public
+                    : CryptoKeyType::Private,
                 EVPKeyPointer::PKFormatType::PEM,
                 std::nullopt,
                 { nullptr, WTF::nullStringView() },
@@ -1262,8 +1258,8 @@ KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC
                 scope,
                 view->span(),
                 mode == PrepareAsymmetricKeyMode::CreatePublic || mode == PrepareAsymmetricKeyMode::ConsumePublic
-                    ? KeyObjectType::Public
-                    : KeyObjectType::Private,
+                    ? CryptoKeyType::Public
+                    : CryptoKeyType::Private,
                 EVPKeyPointer::PKFormatType::PEM,
                 std::nullopt,
                 { nullptr, WTF::nullStringView() },
@@ -1277,8 +1273,8 @@ KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC
                 scope,
                 buffer->span(),
                 mode == PrepareAsymmetricKeyMode::CreatePublic || mode == PrepareAsymmetricKeyMode::ConsumePublic
-                    ? KeyObjectType::Public
-                    : KeyObjectType::Private,
+                    ? CryptoKeyType::Public
+                    : CryptoKeyType::Private,
                 EVPKeyPointer::PKFormatType::PEM,
                 std::nullopt,
                 { nullptr, WTF::nullStringView() },
@@ -1370,12 +1366,12 @@ KeyObject KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC
     return {};
 }
 
-KeyObject KeyObject::preparePrivateKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, KeyObjectType type)
+KeyObject KeyObject::preparePrivateKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, CryptoKeyType type)
 {
     return prepareAsymmetricKey(globalObject, scope, keyValue, type, PrepareAsymmetricKeyMode::ConsumePrivate);
 }
 
-KeyObject KeyObject::preparePublicOrPrivateKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, KeyObjectType type)
+KeyObject KeyObject::preparePublicOrPrivateKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, CryptoKeyType type)
 {
     return prepareAsymmetricKey(globalObject, scope, keyValue, type, PrepareAsymmetricKeyMode::ConsumePublic);
 }
@@ -1385,7 +1381,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
     if (!bufferOnly) {
         if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(keyValue)) {
             auto& handle = keyObject->handle();
-            if (handle.type() != KeyObjectType::Secret) {
+            if (handle.type() != CryptoKeyType::Secret) {
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "secret"_s);
                 return {};
             }

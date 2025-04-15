@@ -135,7 +135,7 @@ void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, 
 KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)
 {
     if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
-        // Node doesn't check for KeyObjectType::Secret, so we don't either
+        // Node doesn't check for CryptoKeyType::Secret, so we don't either
         return keyObject->handle();
     }
 

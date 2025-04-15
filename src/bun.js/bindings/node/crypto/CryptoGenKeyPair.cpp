@@ -29,7 +29,7 @@ void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPoin
     }
 
     ncrypto::EVPKeyPointer key = ncrypto::EVPKeyPointer(pkey);
-    m_keyObj = KeyObject::create(KeyObjectType::Private, WTFMove(key));
+    m_keyObj = KeyObject::create(CryptoKeyType::Private, WTFMove(key));
 }
 
 void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)

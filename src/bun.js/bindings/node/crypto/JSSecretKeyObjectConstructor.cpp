@@ -32,22 +32,9 @@ JSC_DEFINE_HOST_FUNCTION(constructSecretKeyObject, (JSC::JSGlobalObject * lexica
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    // auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     JSValue handleValue = callFrame->argument(0);
-    // constructing a SecretKeyObject is impossible
     return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
-
-    // JSKeyObjectHandle* handle = jsDynamicCast<JSKeyObjectHandle*>(handleValue);
-
-    // if (!handle) {
-    //     return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "handle"_s, "object"_s, handleValue);
-    // }
-
-    // Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    // JSSecretKeyObject* instance = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, KeyObjectType::Secret, handle);
-
-    // return JSValue::encode(instance);
 }
 
 } // namespace Bun

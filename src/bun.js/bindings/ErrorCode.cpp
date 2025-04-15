@@ -1233,6 +1233,12 @@ JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGloba
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_JWK, message));
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
     auto message = "No key provided to sign"_s;
@@ -1253,18 +1259,18 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, 
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, KeyObjectType receivedType, ASCIILiteral expected)
+JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, CryptoKeyType receivedType, ASCIILiteral expected)
 {
     WTF::StringBuilder builder;
     builder.append("Invalid key object type "_s);
     switch (receivedType) {
-    case KeyObjectType::Private:
+    case CryptoKeyType::Private:
         builder.append("private"_s);
         break;
-    case KeyObjectType::Public:
+    case CryptoKeyType::Public:
         builder.append("public"_s);
         break;
-    case KeyObjectType::Secret:
+    case CryptoKeyType::Secret:
         builder.append("secret"_s);
         break;
     }

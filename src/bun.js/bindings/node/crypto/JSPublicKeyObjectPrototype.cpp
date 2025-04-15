@@ -47,7 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_export, (JSGlobalObject * gl
 
     KeyObject& handle = publicKeyObject->handle();
     JSValue optionsValue = callFrame->argument(0);
-    return JSValue::encode(handle.exportAsymmetric(globalObject, scope, optionsValue, KeyObjectType::Public));
+    return JSValue::encode(handle.exportAsymmetric(globalObject, scope, optionsValue, CryptoKeyType::Public));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyType, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))

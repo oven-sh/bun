@@ -11,6 +11,7 @@
 #include "openssl/err.h"
 #include "ncrypto.h"
 #include "KeyObject.h"
+#include "CryptoKeyType.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -43,13 +44,13 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObjectHandle, (JSC::JSGlobalObject * lexica
 
     auto typeNumber = typeValue.asNumber();
 
-    KeyObjectType type;
+    CryptoKeyType type;
     if (typeNumber == 0) {
-        type = KeyObjectType::Secret;
+        type = CryptoKeyType::Secret;
     } else if (typeNumber == 1) {
-        type = KeyObjectType::Public;
+        type = CryptoKeyType::Public;
     } else if (typeNumber == 2) {
-        type = KeyObjectType::Private;
+        type = CryptoKeyType::Private;
     } else {
         return ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "type"_s, typeValue, "0, 1, or 2"_s);
     }
@@ -57,7 +58,7 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObjectHandle, (JSC::JSGlobalObject * lexica
     JSValue dataValue = callFrame->argument(1);
 
     switch (type) {
-    case KeyObjectType::Secret: {
+    case CryptoKeyType::Secret: {
         WTF::Vector<uint8_t> symmetricKey;
 
         // should already be a validated buffer
@@ -73,8 +74,8 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObjectHandle, (JSC::JSGlobalObject * lexica
 
         break;
     }
-    case KeyObjectType::Public:
-    case KeyObjectType::Private: {
+    case CryptoKeyType::Public:
+    case CryptoKeyType::Private: {
         break;
     }
     }

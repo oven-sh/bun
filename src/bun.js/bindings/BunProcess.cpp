@@ -2,6 +2,7 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "headers-handwritten.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -116,8 +117,6 @@ namespace Bun {
 using namespace JSC;
 
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
-#define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
-#define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
 
 #if !defined(BUN_WEBKIT_VERSION)
 #define BUN_WEBKIT_VERSION "unknown"
@@ -3508,6 +3507,58 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
     }
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Expected 'this' to be a Process object"_s);
+        return {};
+    }
+    JSVMClientData* clientData = WebCore::clientData(vm);
+    ASSERT(clientData);
+
+    // check if we've cached it already
+    JSC::Identifier mainIdent = clientData->builtinNames().mainPrivateName();
+    if (JSValue mainValue = thisObject->getDirect(vm, mainIdent)) {
+        return JSValue::encode(mainValue);
+    }
+
+    auto* global = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    auto* requireCache = global->lazyRequireCacheObject();
+    auto* mm = global->mainModule();
+    if (UNLIKELY(mm->length() == 0)) {
+        thisObject->putDirect(vm, mainIdent, jsUndefined(), 0);
+        return JSValue::encode(jsUndefined());
+    }
+    auto prop = PropertyName(JSC::Identifier::fromString(vm, WTFMove(mm->getString(global))));
+    auto mainModule = requireCache->getIfPropertyExists(global, prop);
+    thisObject->putDirect(vm, mainIdent, mainModule, 0);
+    return JSValue::encode(mainModule);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessMainModule, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSVMClientData* clientData = WebCore::clientData(vm);
+    ASSERT(clientData);
+
+    auto* thisObject = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        throwVMTypeError(globalObject, scope, "Expected 'this' to be a Process object"_s);
+        return false;
+    }
+
+    JSC::Identifier mainIdent = clientData->builtinNames().mainPrivateName();
+    thisObject->putDirect(vm, mainIdent, JSValue::decode(encodedValue), 0);
+    return true;
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                               Function 1
@@ -3541,7 +3592,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  mainModule                       processMainModule                                   CustomAccessor
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

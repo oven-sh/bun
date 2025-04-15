@@ -1,8 +1,8 @@
 import { spawnSync, which } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, it, expect } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import path, { basename, join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { familySync } from "detect-libc";
 
 expect.extend({
@@ -1098,4 +1098,41 @@ it("process.memoryUsage.arrayBuffers", () => {
   const array = new ArrayBuffer(1024 * 1024 * 16);
   array.buffer;
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
+});
+
+describe("process.mainModule", () => {
+  it("is undefined when run via REPL", async () => {
+    await Bun.$`${bunExe()} -e 'assert(process.mainModule === undefined)'`.nothrow();
+  });
+
+  it("can be written to", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "mainModule");
+    expect(descriptor.configurable).toBe(true);
+
+    const prev = process.mainModule;
+    expect(() => {
+      // @ts-expect-error
+      process.mainModule = "foo";
+    }).not.toThrow();
+    // @ts-expect-error
+    expect(process.mainModule).toBe("foo");
+    process.mainModule = prev;
+  });
+
+  describe("When accessed from a file", () => {
+    it.failing("is a NodeJS.Module object", () => {
+      expect(process.mainModule).toBeObject();
+      expect(process.mainModule).toMatchObject({
+        children: expect.arrayContaining([expect.any(Object)]),
+        exports: { foo: "bar" },
+        filename: __filename,
+        id: expect.any(String),
+        isPreloading: expect.any(Boolean),
+        loaded: true,
+        path: __dirname,
+        paths: expect.arrayContaining([expect.any(String)]),
+        require: expect.any(Function),
+      });
+    });
+  }); // when accessed from a file
 });

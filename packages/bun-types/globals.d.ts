@@ -1776,14 +1776,40 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * Override http_proxy or HTTPS_PROXY
    * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @example
+   * ```js
+   * const response = await fetch("http://example.com", {
+   *  proxy: "https://username:password@127.0.0.1:8080"
+   * });
+   * ```
    */
   proxy?: string;
 
   /**
    * Override the default S3 options
+   *
+   * @example
+   * ```js
+   * const response = await fetch("s3://bucket/key", {
+   *   s3: {
+   *     accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+   *     secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+   *     region: "us-east-1",
+   *   }
+   * });
+   * ```
    */
   s3?: Bun.S3Options;
 
+  /**
+   * Make the request over a Unix socket
+   *
+   * @example
+   * ```js
+   * const response = await fetch("http://example.com", { unix: "/path/to/socket" });
+   * ```
+   */
   unix?: string;
 }
 

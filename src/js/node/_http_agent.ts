@@ -1,12 +1,51 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 
+const { kEmptyObject } = require("internal/http");
+
+const { FakeSocket } = require("node:_http_outgoing");
+
 const ObjectDefineProperty = Object.defineProperty;
-const kEmptyObject = Object.freeze(Object.create(null));
 
 const kfakeSocket = Symbol("kfakeSocket");
 
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
+
+// Define Agent interface
+interface Agent extends InstanceType<typeof EventEmitter> {
+  defaultPort: number;
+  protocol: string;
+  options: any;
+  requests: Record<string, any>;
+  sockets: Record<string, any>;
+  freeSockets: Record<string, any>;
+  keepAliveMsecs: number;
+  keepAlive: boolean;
+  maxSockets: number;
+  maxFreeSockets: number;
+  scheduling: string;
+  maxTotalSockets: any;
+  totalSocketCount: number;
+  [kfakeSocket]?: any;
+
+  createConnection(): any;
+  getName(options?: any): string;
+  addRequest(): void;
+  createSocket(req: any, options: any, cb: (err: any, socket: any) => void): void;
+  removeSocket(): void;
+  keepSocketAlive(): boolean;
+  reuseSocket(): void;
+  destroy(): void;
+}
+
+// Define the constructor interface
+interface AgentConstructor {
+  new (options?: any): Agent;
+  (options?: any): Agent;
+  defaultMaxSockets: number;
+  globalAgent: Agent;
+  prototype: Agent;
+}
 
 function Agent(options = kEmptyObject) {
   if (!(this instanceof Agent)) return new Agent(options);
@@ -36,13 +75,16 @@ function Agent(options = kEmptyObject) {
 }
 $toClass(Agent, "Agent", EventEmitter);
 
-ObjectDefineProperty(Agent, "globalAgent", {
+// Type assertion to help TypeScript understand Agent has static properties
+const AgentClass = Agent as unknown as AgentConstructor;
+
+ObjectDefineProperty(AgentClass, "globalAgent", {
   get: function () {
     return globalAgent;
   },
 });
 
-ObjectDefineProperty(Agent, "defaultMaxSockets", {
+ObjectDefineProperty(AgentClass, "defaultMaxSockets", {
   get: function () {
     return Infinity;
   },
@@ -94,7 +136,7 @@ Agent.prototype.destroy = function () {
 var globalAgent = new Agent();
 
 const http_agent_exports = {
-  Agent,
+  Agent: AgentClass,
   globalAgent,
   NODE_HTTP_WARNING,
 };

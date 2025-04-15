@@ -1313,6 +1313,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
         if (res.success)
             return JSC::JSValue::encode(result);
     }
+    RETURN_IF_EXCEPTION(throwScope, {});
     ASSERT_WITH_MESSAGE(false, "Failed to fetch builtin module %s", specifier.utf8().data());
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
 }

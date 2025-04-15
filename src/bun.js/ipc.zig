@@ -323,21 +323,29 @@ pub const SendHandle = struct {
     // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
     // we only retry sending the message with the handle, not the original message.
     data: bun.io.StreamBuffer = .{},
+    /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
     handle: ?Handle,
-    is_ack_nack: bool = false,
-    // keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
+    /// if zero, this indicates that the message is an ack/nack. these can send even if there is a handle waiting_for_ack.
+    /// if undefined or null, this indicates that the message does not have a callback.
+    callback: JSC.JSValue,
 
+    pub fn isAckNack(self: *SendHandle) bool {
+        return self.callback == .zero;
+    }
+
+    /// Call the callback and deinit
+    pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
+        if (self.callback.isEmptyOrUndefinedOrNull()) return;
+        if (self.callback.isFunction()) {
+            JSC.Bun__Process__queueNextTick1(global, self.callback, .null);
+        }
+        self.deinit();
+    }
     pub fn deinit(self: *SendHandle) void {
         self.data.deinit();
+        self.callback.unprotect();
         if (self.handle) |*handle| {
             handle.deinit();
-        }
-    }
-    pub fn reset(self: *SendHandle) void {
-        self.data.reset();
-        if (self.handle) |*handle| {
-            handle.deinit();
-            self.handle = null;
         }
     }
 };
@@ -359,22 +367,9 @@ pub const SendQueue = struct {
     }
 
     /// returned pointer is invalidated if the queue is modified
-    pub fn startMessage(self: *SendQueue, handle: ?Handle) *SendHandle {
-        if (self.queue.items.len == 0) {
-            // queue is empty; add an item
-            self.queue.append(.{ .handle = handle }) catch bun.outOfMemory();
-            return &self.queue.items[0];
-        }
-        const last = &self.queue.items[self.queue.items.len - 1];
-        // if there is a handle, always add a new item even if the previous item doesn't have a handle
-        //   this is so that in the case of a NACK, we can retry sending the whole message that has the handle
-        // if the last item has a handle, always add a new item
-        if (last.handle != null or handle != null) {
-            self.queue.append(.{ .handle = handle }) catch bun.outOfMemory();
-            return &self.queue.items[0];
-        }
-        bun.assert(handle == null);
-        return last;
+    pub fn startMessage(self: *SendQueue, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+        self.queue.append(.{ .handle = handle, .callback = callback }) catch bun.outOfMemory();
+        return &self.queue.items[0];
     }
 
     pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, socket: anytype, ack_nack: enum { ack, nack }) void {
@@ -399,7 +394,7 @@ pub const SendQueue = struct {
                     this.waiting_for_ack = null;
                 } else {
                     // insert at index 1 (we are in the middle of sending an ack/nack to the other process)
-                    bun.debugAssert(this.queue.items[0].is_ack_nack);
+                    bun.debugAssert(this.queue.items[0].isAckNack());
                     this.queue.insert(1, item.*) catch bun.outOfMemory();
                     this.waiting_for_ack = null;
                 }
@@ -419,7 +414,7 @@ pub const SendQueue = struct {
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending
-        item.deinit();
+        item.complete(global);
         this.waiting_for_ack = null;
         this.continueSend(global, socket, .new_message_appended);
     }
@@ -440,13 +435,13 @@ pub const SendQueue = struct {
         new_message_appended,
         on_writable,
     };
-    fn _continueSend(this: *SendQueue, socket: anytype, reason: ContinueSendReason) void {
+    fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, socket: anytype, reason: ContinueSendReason) void {
         if (this.queue.items.len == 0) {
             return; // nothing to send
         }
 
         const first = &this.queue.items[0];
-        if (this.waiting_for_ack != null and !first.is_ack_nack) {
+        if (this.waiting_for_ack != null and !first.isAckNack()) {
             // waiting for ack/nack. may not send any items until it is received.
             // only allowed to send the message if it is an ack/nack itself.
             return;
@@ -457,12 +452,10 @@ pub const SendQueue = struct {
         }
         const to_send = first.data.list.items[first.data.cursor..];
         if (to_send.len == 0) {
-            if (this.queue.items.len > 1) {
-                const item = this.queue.orderedRemove(0);
-                item.deinit();
-                return _continueSend(this, socket, reason);
-            }
-            return; // nothing to send
+            // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
+            var itm = this.queue.orderedRemove(0);
+            itm.complete(global);
+            return _continueSend(this, global, socket, reason);
         }
         const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send, false);
         if (n == to_send.len) {
@@ -475,18 +468,13 @@ pub const SendQueue = struct {
                 // shift the item off the queue and move it to waiting_for_ack
                 const item = this.queue.orderedRemove(0);
                 this.waiting_for_ack = item;
-                return _continueSend(this, socket, reason); // in case the next item is an ack/nack waiting to be sent
-            } else if (this.queue.items.len == 1) {
-                // the message was fully sent and this is the last item; reuse the StreamBuffer for the next message
-                first.reset();
-                // the last item was fully sent; wait for the next .send() call from js
-                return;
+                return _continueSend(this, global, socket, reason); // in case the next item is an ack/nack waiting to be sent
             } else {
-                // the message was fully sent, but there are more items in the queue.
+                // the message was fully sent, but there may be more items in the queue.
                 // shift the queue and try to send the next item immediately.
                 var item = this.queue.orderedRemove(0);
-                item.deinit(); // free the StreamBuffer.
-                return _continueSend(this, socket, reason);
+                item.complete(global); // free the StreamBuffer.
+                return _continueSend(this, global, socket, reason);
             }
         } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
             // the item was partially sent; update the cursor and wait for writable to send the rest
@@ -499,7 +487,7 @@ pub const SendQueue = struct {
         }
     }
     fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: anytype, reason: ContinueSendReason) void {
-        this._continueSend(socket, reason);
+        this._continueSend(global, socket, reason);
         this.updateRef(global);
     }
 };
@@ -538,7 +526,7 @@ const SocketIPCData = struct {
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
-            const msg = this.send_queue.startMessage(null);
+            const msg = this.send_queue.startMessage(.null, null);
             msg.data.write(bytes) catch bun.outOfMemory();
             this.send_queue.continueSend(global, this.socket, .new_message_appended);
         }
@@ -547,13 +535,13 @@ const SocketIPCData = struct {
         }
     }
 
-    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, handle: ?Handle) SerializeAndSendResult {
+    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
         if (Environment.allow_assert) {
             bun.assert(ipc_data.has_written_version == 1);
         }
 
         const indicate_backoff = ipc_data.send_queue.waiting_for_ack != null and ipc_data.send_queue.queue.items.len > 0;
-        const msg = ipc_data.send_queue.startMessage(handle);
+        const msg = ipc_data.send_queue.startMessage(callback, handle);
         const start_offset = msg.data.list.items.len;
 
         const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return .failure;
@@ -881,18 +869,15 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         log("sending ipc message with fd: {d}", .{@intFromEnum(zig_handle_resolved.fd)});
     }
 
-    const status = ipc_data.serializeAndSend(globalObject, message, .external, zig_handle);
+    const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
 
-    if (status != .failure) {
-        if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(globalObject, callback, .null);
-        }
-    } else {
+    if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
         ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         return doSendErr(globalObject, callback, ex, from);
     }
 
+    // in the success or backoff case, serializeAndSend will handle calling the callback
     return if (status == .success) .true else .false;
 }
 
@@ -976,7 +961,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             const ack = ipc.incoming_fd != null;
 
                             const packet = if (ack) getAckPacket(ipc) else getNackPacket(ipc);
-                            var handle = SendHandle{ .data = .{}, .handle = null, .is_ack_nack = true };
+                            var handle = SendHandle{ .data = .{}, .handle = null, .callback = .zero };
                             handle.data.write(packet) catch bun.outOfMemory();
 
                             // Insert at appropriate position in send queue

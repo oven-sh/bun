@@ -65,7 +65,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         }
     };
 
-    const good = ipc_instance.data.serializeAndSend(globalThis, message, .internal, null);
+    const good = ipc_instance.data.serializeAndSend(globalThis, message, .internal, .null, null);
 
     if (good == .failure) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
@@ -210,7 +210,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
-    const success = ipc_data.serializeAndSend(globalThis, message, .internal, null);
+    const success = ipc_data.serializeAndSend(globalThis, message, .internal, .null, null);
     return if (success == .success) .true else .false;
 }
 

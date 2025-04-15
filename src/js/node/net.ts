@@ -696,7 +696,7 @@ class SocketHandle {
   close(cb) {
     $debug("SocketHandle.close");
     this.#socket?.close();
-    if (typeof cb === "function") process.nextTick(cb);
+    if (typeof cb === "function") setImmediate(cb);
   }
   reset(cb) {
     $debug("SocketHandle.reset");
@@ -704,7 +704,7 @@ class SocketHandle {
       return;
     }
     this.#socket.close();
-    process.nextTick(cb);
+    if (typeof cb === "function") setImmediate(cb);
   }
   ref() {
     $debug("SocketHandle.ref");

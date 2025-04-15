@@ -1,18 +1,101 @@
-import { test, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import path from "path";
+import { join } from "path";
 
-test("verify we print error messages passed to done callbacks", () => {
-  const { stdout, stderr } = Bun.spawnSync({
-    cmd: [bunExe(), "test", path.resolve(import.meta.dir, "test-error-done-callback-fixture.ts")],
-    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
-    stdout: "pipe",
-    stderr: "pipe",
+const fixtureDir = join(import.meta.dir, "fixtures", "done-cb");
+var $$: typeof Bun.$;
+const bunTest = (file: string) => $$`${bunExe()} test ${file}`.quiet();
+
+beforeAll(() => {
+  $$ = new Bun.$.Shell();
+  $$.cwd(fixtureDir);
+  $$.nothrow();
+  $$.env({
+    ...bunEnv,
+    BUN_JSC_showPrivateScriptsInStackTraces: "0",
+  } as unknown as Record<string, string | undefined>);
+});
+
+describe("basic done() usage", () => {
+  it("test passes when done() is called with no args", done => {
+    done();
   });
+
+  for (const arg of [null, undefined]) {
+    it(`test passes when done() is called with ${arg}`, done => {
+      done(arg);
+    });
+  }
+  it("done(err) fails the test", async () => {
+    const result = await bunTest(`./done-should-fail.fixture.ts`);
+    const stderr = result.stderr.toString();
+    const stdout = result.stdout.toString();
+    try {
+      expect(stderr).toMatch(/ \d fail\n/);
+      expect(stderr).toContain(" 0 pass\n");
+      for (let i = 0; i < 4; i++) {
+        expect(stderr).toContain(`error message ${i + 1}`);
+      }
+      expect(result.exitCode).toBe(1);
+    } catch (e) {
+      console.log(stdout);
+      console.log(stderr);
+      throw e;
+    }
+  });
+}); // </ basic done() usage>
+
+describe("done callbacks in sync tests", () => {
+  it("test will not hang when done() is never called or called after timeout", async () => {
+    const result = await bunTest("./done-timeout-sync.fixture.ts");
+    const stderr = result.stderr.toString();
+    const stdout = result.stdout.toString();
+
+    try {
+      expect(result.exitCode).toBe(1);
+      expect(stderr).toContain(" 0 pass\n");
+      expect(stderr).toContain("timed out after");
+    } catch (e) {
+      console.log(stdout);
+      console.log(stderr);
+      throw e;
+    }
+  });
+}); // </ done callbacks in sync tests>
+
+describe("done callbacks in async tests", () => {
+  it("done() causes the test to fail when it should", async () => {
+    const result = await bunTest("./done-infinity.fixture.ts");
+    const stderr = result.stderr.toString();
+    const stdout = result.stdout.toString();
+
+    try {
+      expect(stderr).toContain(" 7 fail\n");
+      expect(stderr).toContain(" 0 pass\n");
+    } catch (e) {
+      console.log(stdout);
+      console.log(stderr);
+      throw e;
+    }
+  });
+
+  it("calling done() then rejecting makes the test pass but makes `bun test` exit with 1", async () => {
+    const result = await bunTest("./done-then-reject.fixture.ts");
+    const stderr = result.stderr.toString();
+    expect(result.exitCode).toBe(1);
+    expect(stderr).toContain(" 1 pass\n");
+    expect(stderr).toContain(" 0 fail\n");
+    expect(stderr).toContain("error message from test");
+    expect(stderr).toContain("Unhandled error between tests");
+  });
+}); // </ done callbacks in async tests>
+
+test("verify we print error messages passed to done callbacks", async () => {
+  const fixtureName = "test-error-done-callback-fixture.ts";
+  const { stdout, stderr } = await bunTest(`./${fixtureName}`);
   let stdoutStr = stdout
     .toString()
     .replaceAll("\\", "/")
-    .replaceAll(import.meta.dir.replaceAll("\\", "/"), "<dir>")
+    .replaceAll(fixtureDir.replaceAll("\\", "/"), "<dir>")
     .replace(/\d+(\.\d+)?ms/g, "<time>ms")
     .replace(/\d+(\.\d+)?s/g, "<time>s")
     .replaceAll(Bun.version_with_sha, "<version>")
@@ -24,7 +107,7 @@ test("verify we print error messages passed to done callbacks", () => {
   let stderrStr = stderr
     .toString()
     .replaceAll("\\", "/")
-    .replaceAll(import.meta.dir.replaceAll("\\", "/"), "<dir>")
+    .replaceAll(fixtureDir.replaceAll("\\", "/"), "<dir>")
     .replace(/\d+(\.\d+)?ms/g, "<time>ms")
     .replace(/\d+(\.\d+)?s/g, "<time>s")
     .replaceAll(Bun.version_with_sha, "<version>")
@@ -40,7 +123,7 @@ test("verify we print error messages passed to done callbacks", () => {
   `);
   expect(stderrStr).toMatchInlineSnapshot(`
     "
-    test/js/bun/test/test-error-done-callback-fixture.ts:
+    ${fixtureName}:
     22 |   105,
     23 |   115,
     24 | );
@@ -49,7 +132,7 @@ test("verify we print error messages passed to done callbacks", () => {
     27 |   done(new Error(msg + "(sync)"));
     ^
     error: you should see this(sync)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:27:8)
+    at <anonymous> (<dir>/${fixtureName}:27:8)
     (fail) error done callback (sync)
     27 |   done(new Error(msg + "(sync)"));
     28 | });
@@ -59,7 +142,7 @@ test("verify we print error messages passed to done callbacks", () => {
     32 |   done(new Error(msg + "(async with await)"));
     ^
     error: you should see this(async with await)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:32:8)
+    at <anonymous> (<dir>/${fixtureName}:32:8)
     (fail) error done callback (async with await)
     32 |   done(new Error(msg + "(async with await)"));
     33 | });

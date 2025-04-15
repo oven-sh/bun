@@ -7,15 +7,13 @@ const JSValue = JSC.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
-const Bool = std.atomic.Value(bool);
-
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
     /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
-    status: std.atomic.Value(Status) = std.atomic.Value(Status).init(.start),
+    status: std.atomic.Value(Status) = .init(.start),
     /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
-    requested_terminate: Bool = Bool.init(false),
+    requested_terminate: std.atomic.Value(bool) = .init(false),
     execution_context_id: u32 = 0,
     parent_context_id: u32 = 0,
     parent: *JSC.VirtualMachine,
@@ -43,6 +41,9 @@ pub const WebWorker = struct {
     // kept alive by C++ Worker object
     argv: []const WTFStringImpl,
     execArgv: ?[]const WTFStringImpl,
+
+    /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
+    exit_called: bool = false,
 
     pub const Status = enum(u8) {
         start,
@@ -431,7 +432,8 @@ pub const WebWorker = struct {
         }
 
         var promise = vm.loadEntryPointForWebWorker(path) catch {
-            vm.exit_handler.exit_code = 1;
+            // If we called process.exit(), don't override the exit code
+            if (!this.exit_called) vm.exit_handler.exit_code = 1;
             this.flushLogs();
             this.exitAndDeinit();
             return;
@@ -503,7 +505,13 @@ pub const WebWorker = struct {
         }
     }
 
-    /// Request a terminate. Must be called from another thread (i.e. for worker.terminate())
+    /// Implement process.exit(). May only be called from the Worker thread.
+    pub fn exit(this: *WebWorker) void {
+        this.exit_called = true;
+        this.notifyNeedTermination();
+    }
+
+    /// Request a terminate from any thread.
     pub fn notifyNeedTermination(this: *WebWorker) callconv(.C) void {
         if (this.status.load(.acquire) == .terminated) {
             return;

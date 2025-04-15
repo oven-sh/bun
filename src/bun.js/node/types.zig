@@ -1892,17 +1892,15 @@ pub const Process = struct {
     // TODO(@190n) this may need to be noreturn
     pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
         var vm = globalObject.bunVM();
+        vm.exit_handler.exit_code = code;
         if (vm.worker) |worker| {
-            vm.exit_handler.exit_code = code;
             // TODO(@190n) we may need to use requestTerminate or throwTerminationException
             // instead to terminate the worker sooner
-            worker.notifyNeedTermination();
-            return;
+            worker.exit();
+        } else {
+            vm.onExit();
+            vm.globalExit();
         }
-
-        vm.exit_handler.exit_code = code;
-        vm.onExit();
-        vm.globalExit();
     }
 
     // TODO: switch this to using *bun.wtf.String when it is added

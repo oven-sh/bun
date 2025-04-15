@@ -531,6 +531,7 @@ class SocketHandle {
       port,
       ipv6Only: addressType === 6,
       allowHalfOpen: self.allowHalfOpen,
+      tls: req.tls,
       socket: {
         open(socket) {
           $debug("Bun.Socket open");
@@ -579,6 +580,41 @@ class SocketHandle {
           self.push(null);
           self.read(0);
         },
+        handshake(socket, success, verifyError) {
+          $debug("Bun.Socket handshake");
+          if (!success && verifyError?.code === "ECONNRESET") {
+            // will be handled in onConnectEnd
+            return;
+          }
+
+          self._securePending = false;
+          self.secureConnecting = false;
+          self._secureEstablished = !!success;
+
+          self.emit("secure", self);
+          self.alpnProtocol = socket.alpnProtocol;
+          const { checkServerIdentity } = self[bunTLSConnectOptions];
+          if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+            const cert = self.getPeerCertificate(true);
+            verifyError = checkServerIdentity(self.servername, cert);
+          }
+          if (self._requestCert || self._rejectUnauthorized) {
+            if (verifyError) {
+              self.authorized = false;
+              self.authorizationError = verifyError.code || verifyError.message;
+              if (self._rejectUnauthorized) {
+                self.destroy(verifyError);
+                return;
+              }
+            } else {
+              self.authorized = true;
+            }
+          } else {
+            self.authorized = true;
+          }
+          self.emit("secureConnect", verifyError);
+          self.removeListener("end", onConnectEnd);
+        },
         error() {
           $debug("Bun.Socket error");
         },
@@ -610,6 +646,7 @@ class SocketHandle {
       hostname: address,
       unix: address,
       allowHalfOpen: self.allowHalfOpen,
+      tls: req.tls,
       socket: {
         open(socket) {
           self._handle = that;
@@ -800,6 +837,7 @@ function Socket(options?) {
   this.pauseOnConnect = false;
   this._peername = null;
   this._sockname = null;
+  this._closeAfterHandlingError = false;
 
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
@@ -927,7 +965,9 @@ Socket.prototype.connect = function connect(...args) {
   const [options, cb] = $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
   const connectListener = cb;
 
-  if (cb !== null) {
+  if (typeof this[bunTlsSymbol] === "function" && cb !== null) {
+    this.once("secureConnect", cb);
+  } else if (cb !== null) {
     this.once("connect", cb);
   }
   if (this._parent?.connecting) {
@@ -960,7 +1000,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
-    internalConnect(this, path);
+    internalConnect(this, options, path);
   }
   return this;
 };
@@ -1424,7 +1464,7 @@ function lookupAndConnect(self, options) {
   if (addressType) {
     process.nextTick(() => {
       if (self.connecting) {
-        internalConnect(self, host, port, addressType, localAddress, localPort);
+        internalConnect(self, options, host, port, addressType, localAddress, localPort);
       }
     });
     return;
@@ -1477,7 +1517,7 @@ function lookupAndConnect(self, options) {
       process.nextTick(destroyNT, self, err);
     } else {
       self._unrefTimer();
-      internalConnect(self, ip, port, addressType, localAddress, localPort);
+      internalConnect(self, options, ip, port, addressType, localAddress, localPort);
     }
   });
 }
@@ -1554,7 +1594,7 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
       const { address: ip, family: addressType } = toAttempt[0];
 
       self._unrefTimer();
-      internalConnect(self, ip, port, addressType, localAddress, localPort);
+      internalConnect(self, options, ip, port, addressType, localAddress, localPort);
 
       return;
     }
@@ -1571,6 +1611,7 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
       timeout,
       [kTimeout]: null,
       errors: [],
+      options,
     };
 
     self._unrefTimer();
@@ -1578,8 +1619,8 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
   });
 }
 
-function internalConnect(self, path);
-function internalConnect(self, address, port, addressType, localAddress, localPort, flags?) {
+function internalConnect(self, options, path);
+function internalConnect(self, options, address, port, addressType, localAddress, localPort, flags?) {
   // TODO return promise from Socket.prototype.connect which wraps _connectReq.
 
   $assert(self.connecting);
@@ -1610,6 +1651,39 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
     }
   }
 
+  //TLS
+  let tls = undefined;
+  let connection = undefined;
+  const bunTLS = self[bunTlsSymbol];
+  if (typeof bunTLS === "function") {
+    tls = bunTLS.$call(self, port, address, true);
+    self._requestCert = true; // Client always request Cert
+    if (tls) {
+      const { rejectUnauthorized, session, checkServerIdentity } = options;
+      if (typeof rejectUnauthorized !== "undefined") {
+        self._rejectUnauthorized = rejectUnauthorized;
+        tls.rejectUnauthorized = rejectUnauthorized;
+      } else {
+        self._rejectUnauthorized = tls.rejectUnauthorized;
+      }
+      tls.requestCert = true;
+      tls.session = session || tls.session;
+      self.servername = tls.servername;
+      tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
+      self[bunTLSConnectOptions] = tls;
+      if (!connection && tls.socket) {
+        connection = tls.socket;
+      }
+    }
+    self.authorized = false;
+    self.secureConnecting = true;
+    self._secureEstablished = false;
+    self._securePending = true;
+    self[kConnectOptions] = options;
+    self.prependListener("end", onConnectEnd);
+  }
+  //TLS
+
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
 
@@ -1626,6 +1700,7 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
     req.localAddress = localAddress;
     req.localPort = localPort;
     req.addressType = addressType;
+    req.tls = tls;
 
     err = self._handle[kConnectTcp](self, addressType, req, address, port);
   } else {
@@ -1633,6 +1708,7 @@ function internalConnect(self, address, port, addressType, localAddress, localPo
     const req = {};
     req.address = address;
     req.oncomplete = afterConnect;
+    req.tls;
 
     err = self._handle[kConnectPipe](self, req, address);
   }
@@ -1709,6 +1785,39 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
+  //TLS
+  let tls = undefined;
+  let connection = undefined;
+  const bunTLS = self[bunTlsSymbol];
+  if (typeof bunTLS === "function") {
+    tls = bunTLS.$call(self, port, address, true);
+    self._requestCert = true; // Client always request Cert
+    if (tls) {
+      const { rejectUnauthorized, session, checkServerIdentity } = context.options;
+      if (typeof rejectUnauthorized !== "undefined") {
+        self._rejectUnauthorized = rejectUnauthorized;
+        tls.rejectUnauthorized = rejectUnauthorized;
+      } else {
+        self._rejectUnauthorized = tls.rejectUnauthorized;
+      }
+      tls.requestCert = true;
+      tls.session = session || tls.session;
+      self.servername = tls.servername;
+      tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
+      self[bunTLSConnectOptions] = tls;
+      if (!connection && tls.socket) {
+        connection = tls.socket;
+      }
+    }
+    self.authorized = false;
+    self.secureConnecting = true;
+    self._secureEstablished = false;
+    self._securePending = true;
+    self[kConnectOptions] = context.options;
+    self.prependListener("end", onConnectEnd);
+  }
+  //TLS
+
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
 
@@ -1720,6 +1829,7 @@ function internalConnectMultiple(context, canceled?) {
   req.localAddress = localAddress;
   req.localPort = localPort;
   req.addressType = addressType;
+  req.tls = tls;
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 

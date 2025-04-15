@@ -6272,6 +6272,11 @@ extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject
     DECLARE_CATCH_SCOPE(globalObject->vm()).clearException();
 }
 
+extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
+}
+
 extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());

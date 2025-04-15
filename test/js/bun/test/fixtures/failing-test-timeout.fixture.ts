@@ -1,4 +1,4 @@
-import { isWindows } from "harness";
+import { isCI, isWindows } from "harness";
 
 jest.setTimeout(5);
 
@@ -8,7 +8,7 @@ describe("test.failing", () => {
   });
 
   // fixme: hangs on windows. Timer callback never fires
-  describe.skipIf(isWindows)("when using a done() callback", () => {
+  describe.skipIf(isWindows && isCI)("when using a done() callback", () => {
     test.failing("fails when an async test never calls done()", async _done => {
       // nada
     });

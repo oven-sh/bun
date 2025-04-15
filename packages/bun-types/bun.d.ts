@@ -1006,7 +1006,7 @@ declare module "bun" {
     end(): ArrayBuffer | Uint8Array;
   }
 
-  const dns: {
+  namespace dns {
     /**
      * Lookup the IP address for a hostname
      *
@@ -1051,7 +1051,7 @@ declare module "bun" {
      * console.log(address); // "19.42.52.62"
      * ```
      */
-    lookup(
+    function lookup(
       hostname: string,
       options?: {
         /**
@@ -1120,12 +1120,12 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    prefetch(hostname: string): void;
+    function prefetch(hostname: string): void;
 
     /**
      * **Experimental API**
      */
-    getCacheStats(): {
+    function getCacheStats(): {
       /**
        * The number of times a cached DNS entry that was already resolved was used.
        */
@@ -1140,7 +1140,7 @@ declare module "bun" {
     ADDRCONFIG: number;
     ALL: number;
     V4MAPPED: number;
-  };
+  }
 
   interface DNSLookup {
     /**

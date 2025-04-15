@@ -1003,6 +1003,9 @@ pub const Formatter = struct {
     stack_check: bun.StackCheck = .{ .cached_stack_end = std.math.maxInt(usize) },
     can_throw_stack_overflow: bool = false,
     error_display_level: FormatOptions.ErrorDisplayLevel = .full,
+    /// If ArrayBuffer-like objects contain ascii text, the buffer is printed as a string.
+    /// Set true in the error printer so that ShellError prints a more readable message.
+    format_buffer_as_text: bool = false,
 
     pub fn deinit(this: *Formatter) void {
         if (bun.take(&this.map_node)) |node| {
@@ -3342,6 +3345,17 @@ pub const Formatter = struct {
                 const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
                 const slice = arrayBuffer.byteSlice();
 
+                if (this.format_buffer_as_text and jsType == .Uint8Array and bun.strings.isValidUTF8(slice)) {
+                    if (comptime enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r><green>", true));
+                    }
+                    JSPrinter.writeJSONString(slice, Writer, writer_, .utf8) catch {};
+                    if (comptime enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r>", true));
+                    }
+                    return;
+                }
+
                 writer.writeAll(
                     if (arrayBuffer.typed_array_type == .Uint8Array and
                         arrayBuffer.value.isBuffer(this.globalThis))
@@ -3353,6 +3367,7 @@ pub const Formatter = struct {
                     writer.print("({d}) []", .{arrayBuffer.len});
                     return;
                 }
+
                 writer.print("({d}) [ ", .{arrayBuffer.len});
 
                 switch (jsType) {

@@ -377,9 +377,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
 }
 
 pub fn deinit(this: *Mv) void {
-    if (this.args.target_fd != null and this.args.target_fd.? != bun.invalid_fd) {
-        _ = Syscall.close(this.args.target_fd.?);
-    }
+    if (this.args.target_fd) |fd| fd.toOptional().close();
 }
 
 const Opts = struct {

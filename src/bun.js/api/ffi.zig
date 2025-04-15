@@ -282,27 +282,27 @@ pub const FFI = struct {
                 // On Alpine and RHEL-based distros, the paths are not suffixed
 
                 if (Environment.isX64) {
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/x86_64-linux-gnu").isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt("/usr/include/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/x86_64-linux-gnu";
-                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include").isTrue()) {
+                    } else if (bun.FD.cwd().directoryExistsAt("/usr/include").isTrue()) {
                         cached_default_system_include_dir = "/usr/include";
                     }
 
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu").isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt("/usr/lib/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/x86_64-linux-gnu";
-                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                    } else if (bun.FD.cwd().directoryExistsAt("/usr/lib64").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib64";
                     }
                 } else if (Environment.isAarch64) {
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu").isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt("/usr/include/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/aarch64-linux-gnu";
-                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include").isTrue()) {
+                    } else if (bun.FD.cwd().directoryExistsAt("/usr/include").isTrue()) {
                         cached_default_system_include_dir = "/usr/include";
                     }
 
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu").isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt("/usr/lib/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/aarch64-linux-gnu";
-                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                    } else if (bun.FD.cwd().directoryExistsAt("/usr/lib64").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib64";
                     }
                 }
@@ -370,13 +370,13 @@ pub const FFI = struct {
                 }
 
                 if (Environment.isAarch64) {
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include").isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt("/opt/homebrew/include").isTrue()) {
                         state.addSysIncludePath("/opt/homebrew/include") catch {
                             debug("TinyCC failed to add library path", .{});
                         };
                     }
 
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib").isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt("/opt/homebrew/lib").isTrue()) {
                         state.addLibraryPath("/opt/homebrew/lib") catch {
                             debug("TinyCC failed to add library path", .{});
                         };
@@ -397,13 +397,13 @@ pub const FFI = struct {
             }
 
             if (Environment.isPosix) {
-                if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include").isTrue()) {
+                if (bun.FD.cwd().directoryExistsAt("/usr/local/include").isTrue()) {
                     state.addSysIncludePath("/usr/local/include") catch {
                         debug("TinyCC failed to add sysinclude path", .{});
                     };
                 }
 
-                if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib").isTrue()) {
+                if (bun.FD.cwd().directoryExistsAt("/usr/local/lib").isTrue()) {
                     state.addLibraryPath("/usr/local/lib") catch {
                         debug("TinyCC failed to add library path", .{});
                     };
@@ -2335,7 +2335,7 @@ const CompilerRT = struct {
             }) catch {};
         }
         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        compiler_rt_dir = bun.default_allocator.dupeZ(u8, bun.getFdPath(bunCC, &path_buf) catch return) catch bun.outOfMemory();
+        compiler_rt_dir = bun.default_allocator.dupeZ(u8, bun.getFdPath(.fromStdDir(bunCC), &path_buf) catch return) catch bun.outOfMemory();
     }
     var create_compiler_rt_dir_once = std.once(createCompilerRTDir);
 

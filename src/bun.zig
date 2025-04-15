@@ -147,133 +147,15 @@ pub const shell = @import("./shell/shell.zig");
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
 
-// make this non-pub after https://github.com/ziglang/zig/issues/18462 is resolved
-pub const FileDescriptorInt = if (Environment.isBrowser)
-    u0
-else if (Environment.isWindows)
-    // On windows, this is a bitcast "bun.FDImpl" struct
-    // Do not bitcast it to *anyopaque manually, but instead use `fdcast()`
-    u64
-else
-    std.posix.fd_t;
+pub const FD = @import("fd.zig").FD;
 
-pub const FD = FileDescriptor;
-pub const FileDescriptor = enum(FileDescriptorInt) {
-    /// Zero is used in old filesystem code to indicate "no file descriptor"
-    /// This is problematic because on POSIX, this is ambiguous with stdin being 0.
-    /// All code that uses this should migrate to invalid_fd to represent invalid states.
-    zero = 0,
-    // Represents an invalid file descriptor. This is used instead of null to
-    // avoid an extra bit.
-    // invalid = @intFromEnum(invalid_fd),
-    _,
-
-    /// Do not use this function in new code.
-    ///
-    /// Interpreting a FD as an integer is almost certainly a mistake.
-    /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
-    ///
-    /// TODO(@paperclover): remove this API.
-    pub fn int(self: FileDescriptor) std.posix.fd_t {
-        if (Environment.isWindows)
-            @compileError("FileDescriptor.int() is not allowed on Windows.");
-        return @intFromEnum(self);
-    }
-
-    pub fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
-        try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
-    }
-
-    pub fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
-        return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
-    }
-
-    /// converts a `bun.FileDescriptor` into the native operating system fd
-    ///
-    /// On non-windows this does nothing, but on windows it converts UV descriptors
-    /// to Windows' *HANDLE, and casts the types for proper usage.
-    ///
-    /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub fn cast(fd: FileDescriptor) std.posix.fd_t {
-        if (!Environment.isWindows) return fd.int();
-        // if not having this check, the cast may crash zig compiler?
-        if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-        return fd.impl().system();
-    }
-
-    pub fn asDir(fd: FileDescriptor) std.fs.Dir {
-        return std.fs.Dir{ .fd = fd.cast() };
-    }
-
-    pub fn asFile(fd: FileDescriptor) std.fs.File {
-        return std.fs.File{ .handle = fd.cast() };
-    }
-
-    pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        try FDImpl.format(fd.impl(), fmt_, options_, writer);
-    }
-
-    pub fn assertValid(fd: FileDescriptor) void {
-        fd.impl().assertValid();
-    }
-
-    pub fn isValid(fd: FileDescriptor) bool {
-        return fd.impl().isValid();
-    }
-
-    pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        assert(fd.impl().kind == kind);
-    }
-
-    pub fn cwd() FileDescriptor {
-        return toFD(std.fs.cwd().fd);
-    }
-
-    pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
-        if (Environment.isPosix) return this.int() == that.int();
-
-        const this_ = FDImpl.decode(this);
-        const that_ = FDImpl.decode(that);
-        return switch (this_.kind) {
-            .system => switch (that_.kind) {
-                .system => this_.value.as_system == that_.value.as_system,
-                .uv => false,
-            },
-            .uv => switch (that_.kind) {
-                .system => false,
-                .uv => this_.value.as_uv == that_.value.as_uv,
-            },
-        };
-    }
-
-    pub fn isStdio(fd: FileDescriptor) bool {
-        // fd.assertValid();
-        const decoded = fd.impl();
-        return switch (Environment.os) {
-            else => decoded.value.as_system < 3,
-            .windows => switch (decoded.kind) {
-                .system => fd == win32.STDIN_FD or
-                    fd == win32.STDOUT_FD or
-                    fd == win32.STDERR_FD,
-                .uv => decoded.value.as_uv < 3,
-            },
-        };
-    }
-
-    pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
-        return FDImpl.decode(value).toJS(global);
-    }
-
-    pub fn impl(fd: FileDescriptor) FDImpl {
-        return FDImpl.decode(fd);
-    }
-};
-
-pub const FDImpl = @import("./fd.zig").FDImpl;
+/// Deprecated: Use `FD` instead.
+pub const FileDescriptor = FD;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
+/// Deprecated: Rename to use `FD` instead.
 pub const StoredFileDescriptorType = FileDescriptor;
 
 /// Thin wrapper around iovec / libuv buffer
@@ -616,7 +498,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
             .{
-                .fd = socketcast(fd),
+                .fd = fd.asSocketFd(),
                 .events = std.posix.POLL.WRNORM,
                 .revents = 0,
             },
@@ -737,9 +619,9 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     return r;
 }
 
-/// on unix, this == std.math.maxInt(i32)
-/// on windows, this is encode(.{ .system, std.math.maxInt(u63) })
-pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
+// TODO: prefer .invalid decl literal over this
+// Please prefer `bun.FD.Optional.none` over this
+pub const invalid_fd: FileDescriptor = .invalid;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
@@ -780,7 +662,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
         }
 
         const fd = try sys.openA(path_, flags, 0).unwrap();
-        return fd.asFile();
+        return fd.stdFile();
     }
 
     return try openFileZ(&try std.posix.toPosixPath(path_), open_flags);
@@ -788,37 +670,37 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
-        return res.asDir();
+        const res = try sys.openDirAtWindowsA(.fromStdDir(dir), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
+        return res.stdDir();
     } else {
-        const fd = try sys.openat(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.asDir();
+        const fd = try sys.openat(.fromStdDir(dir), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+        return fd.stdDir();
     }
 }
 
 pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
     if (comptime !Environment.isWindows) @compileError("use openDir!");
     const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
-    return res.asDir();
+    return res.stdDir();
 }
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
-        return res.asDir();
+        const res = try sys.openDirAtWindowsA(.fromStdDir(dir), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
+        return res.stdDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.asDir();
+        const fd = try sys.openatA(.fromStdDir(dir), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+        return fd.stdDir();
     }
 }
 
 pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
-        return res.asDir();
+        const res = try sys.openDirAtWindowsA(.fromStdDir(dir), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+        return res.stdDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.asDir();
+        const fd = try sys.openatA(.fromStdDir(dir), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+        return fd.stdDir();
     }
 }
 
@@ -828,7 +710,7 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     else
         try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
 
-    return fd.asDir();
+    return fd.stdDir();
 }
 
 pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
@@ -837,7 +719,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     else
         try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
 
-    return fd.asDir();
+    return fd.stdDir();
 }
 
 pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
@@ -893,38 +775,6 @@ pub fn getenvTruthy(key: [:0]const u8) bool {
     if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
     return false;
 }
-
-pub const FDHashMapContext = struct {
-    pub fn hash(_: @This(), fd: FileDescriptor) u64 {
-        // a file descriptor is i32 on linux, u64 on windows
-        // the goal here is to do zero work and widen the 32 bit type to 64
-        // this should compile error if FileDescriptor somehow is larger than 64 bits.
-        comptime assert(@bitSizeOf(FileDescriptor) <= 64);
-        return @intCast(fd.int());
-    }
-    pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
-        return a == b;
-    }
-    pub fn pre(input: FileDescriptor) Prehashed {
-        return Prehashed{
-            .value = @This().hash(.{}, input),
-            .input = input,
-        };
-    }
-
-    pub const Prehashed = struct {
-        value: u64,
-        input: FileDescriptor,
-        pub fn hash(this: @This(), fd: FileDescriptor) u64 {
-            if (fd == this.input) return this.value;
-            return fd;
-        }
-
-        pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
-            return a == b;
-        }
-    };
-};
 
 pub const U32HashMapContext = struct {
     pub fn hash(_: @This(), value: u32) u64 {
@@ -1108,7 +958,7 @@ pub fn StringHashMapUnmanaged(comptime Type: type) type {
 }
 
 pub fn FDHashMap(comptime Type: type) type {
-    return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
+    return std.HashMap(FD, Type, FD.HashMapContext, std.hash_map.default_max_load_percentage);
 }
 
 pub fn U32HashMap(comptime Type: type) type {
@@ -1335,6 +1185,7 @@ pub const FormData = @import("./url.zig").FormData;
 
 var needs_proc_self_workaround: bool = false;
 
+/// TODO: move to bun.sys
 // This is our "polyfill" when /proc/self/fd is not available it's only
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
@@ -1358,14 +1209,13 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     return allocator.dupeZ(u8, temp_slice);
 }
 
+/// TODO: move to bun.sys and add a method onto FileDescriptor
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd_: anytype, buf: *bun.PathBuffer) ![]u8 {
-    const fd = toFD(fd_).cast();
-
+pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
-        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
         const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
         return buf[0..res.written];
     }
@@ -1382,36 +1232,34 @@ pub fn getFdPath(fd_: anytype, buf: *bun.PathBuffer) ![]u8 {
             needs_proc_self_workaround = strings.eql(getenvZ("BUN_NEEDS_PROC_SELF_WORKAROUND") orelse "0", "1");
         }
     } else if (comptime !Environment.isLinux) {
-        return try std.os.getFdPath(fd, buf);
+        return try std.os.getFdPath(fd.native(), buf);
     }
 
     if (needs_proc_self_workaround) {
-        return getFdPathViaCWD(fd, buf);
+        return getFdPathViaCWD(fd.native(), buf);
     }
 
-    return std.os.getFdPath(fd, buf) catch |err| {
+    return std.os.getFdPath(fd.native(), buf) catch |err| {
         if (err == error.FileNotFound and !needs_proc_self_workaround) {
             needs_proc_self_workaround = true;
-            return getFdPathViaCWD(fd, buf);
+            return getFdPathViaCWD(fd.native(), buf);
         }
 
         return err;
     };
 }
 
-pub fn getFdPathZ(fd_: anytype, buf: *PathBuffer) ![:0]u8 {
-    const path_ = try getFdPath(fd_, buf);
-    buf[path_.len] = 0;
-    return buf[0..path_.len :0];
+/// TODO: move to bun.sys and add a method onto FileDescriptor
+pub fn getFdPathZ(fd: FileDescriptor, buf: *PathBuffer) ![:0]u8 {
+    const fd_path = try getFdPath(fd, buf);
+    buf[fd_path.len] = 0;
+    return buf[0..fd_path.len :0];
 }
 
-pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
-    const fd = toFD(fd_).cast();
-
+/// TODO: move to bun.sys and add a method onto FileDescriptor
+pub fn getFdPathW(fd: FileDescriptor, buf: *WPathBuffer) ![]u16 {
     if (comptime Environment.isWindows) {
-        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, buf);
-
-        return wide_slice;
+        return try windows.GetFinalPathNameByHandle(fd.native(), .{}, buf);
     }
 
     @panic("TODO unsupported platform for getFdPathW");
@@ -1744,9 +1592,9 @@ pub fn reloadProcess(
     // macOS doesn't have CLOEXEC, so we must go through posix_spawn
     if (comptime Environment.isMac) {
         var actions = PosixSpawn.Actions.init() catch unreachable;
-        actions.inherit(posix.STDIN_FD) catch unreachable;
-        actions.inherit(posix.STDOUT_FD) catch unreachable;
-        actions.inherit(posix.STDERR_FD) catch unreachable;
+        actions.inherit(.stdin()) catch unreachable;
+        actions.inherit(.stdout()) catch unreachable;
+        actions.inherit(.stderr()) catch unreachable;
 
         var attrs = PosixSpawn.Attr.init() catch unreachable;
         attrs.resetSignals() catch {};
@@ -2039,110 +1887,6 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
     return value;
 }
 
-/// Converts a native file descriptor into a `bun.FileDescriptor`
-///
-/// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-pub fn toFD(fd: anytype) callconv(callconv_inline) FileDescriptor {
-    const T = @TypeOf(fd);
-    if (Environment.isWindows) {
-        return (switch (T) {
-            FDImpl => fd, // TODO: remove the toFD call from these places and make this a @compileError
-            FDImpl.System => FDImpl.fromSystem(fd),
-            FDImpl.UV, i32, comptime_int => FDImpl.fromUV(fd),
-            FileDescriptor => FDImpl.decode(fd),
-            std.fs.Dir => FDImpl.fromSystem(fd.fd),
-            sys.File, std.fs.File => FDImpl.fromSystem(fd.handle),
-            // TODO: remove u32
-            u32 => FDImpl.fromUV(@intCast(fd)),
-            else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
-        }).encode();
-    } else {
-        // TODO: remove intCast. we should not be casting u32 -> i32
-        // even though file descriptors are always positive, linux/mac represents them as signed integers
-        return switch (T) {
-            FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
-            sys.File => fd.handle,
-            std.fs.File => @enumFromInt(fd.handle),
-            std.fs.Dir => @enumFromInt(@as(i32, @intCast(fd.fd))),
-            c_int, i32, u32, comptime_int => @enumFromInt(fd),
-            else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),
-        };
-    }
-}
-
-/// Converts a native file descriptor into a `bun.FileDescriptor`
-///
-/// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-///
-/// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
-pub inline fn toLibUVOwnedFD(fd: anytype) !FileDescriptor {
-    const T = @TypeOf(fd);
-    if (Environment.isWindows) {
-        return (switch (T) {
-            FDImpl.System => try FDImpl.fromSystem(fd).makeLibUVOwned(),
-            FDImpl.UV => FDImpl.fromUV(fd),
-            FileDescriptor => try FDImpl.decode(fd).makeLibUVOwned(),
-            FDImpl => fd.makeLibUVOwned(),
-            else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
-        }).encode();
-    } else {
-        return toFD(fd);
-    }
-}
-
-/// Converts FileDescriptor into a UV file descriptor.
-///
-/// This explicitly is setup to disallow converting a Windows descriptor into a UV
-/// descriptor. If this was allowed, then it would imply the caller still owns the
-/// windows handle, but Win->UV will always invalidate the handle.
-///
-/// In that situation, it is almost impossible to close the handle properly,
-/// you want to use `bun.FDImpl.decode(fd)` or `bun.toLibUVOwnedFD` instead.
-///
-/// This way, you can call .close() on the libuv descriptor.
-pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
-    const T = @TypeOf(fd);
-    if (Environment.isWindows) {
-        const decoded = (switch (T) {
-            FDImpl.System => @compileError("This cast (FDImpl.System -> FDImpl.UV) makes this file descriptor very hard to close. Use toLibUVOwnedFD() and FileDescriptor instead. If you truly need to do this conversion (Chloe will probably reject your PR), use bun.FDImpl.fromSystem(fd).uv()"),
-            FDImpl => fd,
-            FDImpl.UV => return fd,
-            FileDescriptor => FDImpl.decode(fd),
-            else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
-        });
-
-        // Specifically allow these anywhere:
-        if (fd == win32.STDIN_FD) {
-            return 0;
-        }
-
-        if (fd == win32.STDOUT_FD) {
-            return 1;
-        }
-
-        if (fd == win32.STDERR_FD) {
-            return 2;
-        }
-
-        if (Environment.allow_assert) {
-            if (decoded.kind != .uv) {
-                std.debug.panic("uvfdcast({}) called on an windows handle", .{decoded});
-            }
-        }
-        return decoded.uv();
-    } else {
-        return fd.cast();
-    }
-}
-
-pub inline fn socketcast(fd: anytype) std.posix.socket_t {
-    if (Environment.isWindows) {
-        return @ptrCast(FDImpl.decode(fd).system());
-    } else {
-        return fd.cast();
-    }
-}
-
 pub const HOST_NAME_MAX = if (Environment.isWindows)
     // On Windows the maximum length, in bytes, of the string returned in the buffer pointed to by the name parameter is dependent on the namespace provider, but this string must be 256 bytes or less.
     // So if a buffer of 256 bytes is passed in the name parameter and the namelen parameter is set to 256, the buffer size will always be adequate.
@@ -2256,31 +2000,15 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 }
 
 pub const posix = struct {
-    pub const STDIN_FD = toFD(0);
-    pub const STDOUT_FD = toFD(1);
-    pub const STDERR_FD = toFD(2);
-
-    pub fn stdio(i: anytype) FileDescriptor {
-        return switch (i) {
-            1 => STDOUT_FD,
-            2 => STDERR_FD,
-            0 => STDIN_FD,
-            else => @panic("Invalid stdio fd"),
-        };
-    }
-
     pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 };
 
 pub const win32 = struct {
     const w = std.os.windows;
-    pub var STDOUT_FD: FileDescriptor = undefined;
-    pub var STDERR_FD: FileDescriptor = undefined;
-    pub var STDIN_FD: FileDescriptor = undefined;
 
     /// Returns the original mode, or null on failure
-    pub fn updateStdioModeFlags(i: anytype, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
-        const fd = stdio(i);
+    pub fn updateStdioModeFlags(i: bun.FD.Stdio, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
+        const fd = i.fd();
         var original_mode: w.DWORD = 0;
         if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
             if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
@@ -2294,15 +2022,6 @@ pub const win32 = struct {
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
     const watcher_reload_exit: w.DWORD = 3224497970;
-
-    pub fn stdio(i: anytype) FileDescriptor {
-        return switch (i) {
-            0 => STDIN_FD,
-            1 => STDOUT_FD,
-            2 => STDERR_FD,
-            else => @panic("Invalid stdio fd"),
-        };
-    }
 
     pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 
@@ -2486,56 +2205,6 @@ pub const O = sys.O;
 pub const Mode = C.Mode;
 
 pub const windows = @import("./windows.zig");
-
-pub const FDTag = enum {
-    none,
-    stderr,
-    stdin,
-    stdout,
-    pub fn get(fd_: anytype) FDTag {
-        const fd = toFD(fd_);
-        const T = @TypeOf(fd_);
-        if (comptime Environment.isWindows) {
-            if (@typeInfo(T) == .int or @typeInfo(T) == .comptime_int) {
-                switch (fd_) {
-                    0 => return .stdin,
-                    1 => return .stdout,
-                    2 => return .stderr,
-                    else => {},
-                }
-            }
-
-            if (fd == win32.STDOUT_FD) {
-                return .stdout;
-            } else if (fd == win32.STDERR_FD) {
-                return .stderr;
-            } else if (fd == win32.STDIN_FD) {
-                return .stdin;
-            }
-
-            return .none;
-        } else {
-            return switch (fd) {
-                posix.STDIN_FD => FDTag.stdin,
-                posix.STDOUT_FD => FDTag.stdout,
-                posix.STDERR_FD => FDTag.stderr,
-                else => .none,
-            };
-        }
-    }
-};
-
-pub fn fdi32(fd_: anytype) i32 {
-    if (comptime Environment.isPosix) {
-        return @intCast(toFD(fd_));
-    }
-
-    if (comptime @TypeOf(fd_) == *anyopaque) {
-        return @intCast(@intFromPtr(fd_));
-    }
-
-    return @intCast(fd_);
-}
 
 pub const LazyBoolValue = enum {
     unknown,

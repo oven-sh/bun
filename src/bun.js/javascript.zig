@@ -1188,8 +1188,8 @@ pub const VirtualMachine = struct {
                 .json;
 
             IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
-            if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
-                this.initIPCInstance(bun.toFD(fd), mode);
+            if (std.fmt.parseInt(u31, fd_s, 10)) |fd| {
+                this.initIPCInstance(.fromUV(fd), mode);
             } else |_| {
                 Output.warn("Failed to parse IPC channel number '{s}'", .{fd_s});
             }
@@ -4081,12 +4081,15 @@ pub const VirtualMachine = struct {
                     const prev_disable_inspect_custom = formatter.disable_inspect_custom;
                     const prev_quote_strings = formatter.quote_strings;
                     const prev_max_depth = formatter.max_depth;
+                    const prev_format_buffer_as_text = formatter.format_buffer_as_text;
                     formatter.depth += 1;
+                    formatter.format_buffer_as_text = true;
                     defer {
                         formatter.depth -= 1;
                         formatter.max_depth = prev_max_depth;
                         formatter.quote_strings = prev_quote_strings;
                         formatter.disable_inspect_custom = prev_disable_inspect_custom;
+                        formatter.format_buffer_as_text = prev_format_buffer_as_text;
                     }
                     formatter.max_depth = 1;
                     formatter.quote_strings = true;
@@ -4419,7 +4422,8 @@ pub const VirtualMachine = struct {
         /// IPC is put in this "enabled but not started" state when IPC is detected
         /// but the client JavaScript has not yet done `.on("message")`
         waiting: struct {
-            info: IPCInfoType,
+            // TODO: rename to `fd`
+            info: bun.FD,
             mode: IPC.Mode,
         },
         initialized: *IPCInstance,
@@ -4494,8 +4498,7 @@ pub const VirtualMachine = struct {
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    const IPCInfoType = bun.FileDescriptor;
-    pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
+    pub fn initIPCInstance(this: *VirtualMachine, info: bun.FD, mode: IPC.Mode) void {
         IPC.log("initIPCInstance {}", .{info});
         this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
@@ -4928,13 +4931,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
-                                            file_ent.entry.cache.fd = .zero;
+                                            file_ent.entry.cache.fd = .invalid;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
                                             file_hash = Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
-                                                    if (file_descriptors[entry_id] != .zero) {
+                                                    if (file_descriptors[entry_id].isValid()) {
                                                         if (prev_entry_id != entry_id) {
                                                             current_task.append(hashes[entry_id]);
                                                             ctx.removeAtIndex(

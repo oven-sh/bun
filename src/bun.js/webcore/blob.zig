@@ -478,7 +478,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = try bun.FileDescriptor.readFrom(reader, .little);
+                        const fd = try reader.readStruct(bun.FD);
 
                         var path_or_fd = JSC.Node.PathOrFileDescriptor{
                             .fd = fd,
@@ -721,27 +721,26 @@ pub const Blob = struct {
                             );
                         },
                         .fd => |fd| {
-                            const fd_impl = bun.FDImpl.decode(fd);
-                            if (comptime Environment.isWindows) {
-                                if (fd_impl.kind == .uv) {
-                                    try writer.print(
+                            if (Environment.isWindows) {
+                                switch (fd.decodeWindows()) {
+                                    .uv => |uv_file| try writer.print(
                                         comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
-                                        .{fd_impl.uv()},
-                                    );
-                                } else {
-                                    if (Environment.allow_assert) {
-                                        comptime assert(Environment.isWindows);
-                                        @panic("this shouldn't be reachable.");
-                                    }
-                                    try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{any}<r>)<r>", enable_ansi_colors),
-                                        .{fd_impl.system()},
-                                    );
+                                        .{uv_file},
+                                    ),
+                                    .windows => |handle| {
+                                        if (Environment.isDebug) {
+                                            @panic("this shouldn't be reachable.");
+                                        }
+                                        try writer.print(
+                                            comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>0x{x}<r>)<r>", enable_ansi_colors),
+                                            .{@intFromPtr(handle)},
+                                        );
+                                    },
                                 }
                             } else {
                                 try writer.print(
                                     comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
-                                    .{fd_impl.system()},
+                                    .{fd.native()},
                                 );
                             }
                         },
@@ -939,7 +938,7 @@ pub const Blob = struct {
                                         break :err;
                                     },
                                     .result => |fd| {
-                                        _ = bun.sys.close(fd);
+                                        fd.close();
                                         return JSC.JSPromise.resolvedPromiseValue(ctx, .jsNumber(0));
                                     },
                                 }
@@ -1616,11 +1615,10 @@ pub const Blob = struct {
             // we only truncate if it's a path
             // if it's a file descriptor, we assume they want manual control over that behavior
             if (truncate) {
-                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
+                _ = fd.truncate(@intCast(written));
             }
-
             if (needs_open) {
-                _ = bun.sys.close(fd);
+                fd.close();
             }
         }
         if (!str.isEmpty()) {
@@ -1699,11 +1697,7 @@ pub const Blob = struct {
 
         const truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
-        defer {
-            if (needs_open) {
-                _ = bun.sys.close(fd);
-            }
-        }
+        defer if (needs_open) fd.close();
 
         var remain = bytes;
         const end = remain.ptr + remain.len;
@@ -1994,19 +1988,14 @@ pub const Blob = struct {
                     break :brk copy;
                 },
                 .fd => {
-                    const optional_store: ?*Store = switch (bun.FDTag.get(path_or_fd.fd)) {
-                        .stdin => vm.rareData().stdin(),
-                        .stderr => vm.rareData().stderr(),
-                        .stdout => vm.rareData().stdout(),
-                        else => null,
-                    };
-
-                    if (optional_store) |store| {
+                    if (path_or_fd.fd.stdioTag()) |tag| {
+                        const store = switch (tag) {
+                            .std_in => vm.rareData().stdin(),
+                            .std_err => vm.rareData().stderr(),
+                            .std_out => vm.rareData().stdout(),
+                        };
                         store.ref();
-                        return Blob.initWithStore(
-                            store,
-                            globalThis,
-                        );
+                        return Blob.initWithStore(store, globalThis);
                     }
                     break :brk path_or_fd.*;
                 },
@@ -2230,7 +2219,7 @@ pub const Blob = struct {
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try fd.writeTo(writer, .little);
+                            try writer.writeStruct(fd);
                         },
                         .path => |path| {
                             const path_slice = path.slice();
@@ -2428,12 +2417,12 @@ pub const Blob = struct {
 
                     if (is_allowed_to_close_fd and
                         this.opened_fd != invalid_fd and
-                        !this.opened_fd.isStdio())
+                        this.opened_fd.stdioTag() == null)
                     {
                         if (comptime Environment.isWindows) {
-                            bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
+                            bun.Async.Closer.close(this.opened_fd, this.loop);
                         } else {
-                            _ = bun.sys.close(this.opened_fd);
+                            _ = this.opened_fd.closeAllowingBadFileDescriptor(null);
                         }
                         this.opened_fd = invalid_fd;
                     }
@@ -2494,7 +2483,7 @@ pub const Blob = struct {
                     const rc = libuv.uv_fs_read(
                         loop,
                         &this.io_request,
-                        bun.uvfdcast(read_write_loop.source_fd),
+                        read_write_loop.source_fd.uv(),
                         @ptrCast(&read_write_loop.uv_buf),
                         1,
                         -1,
@@ -2541,7 +2530,7 @@ pub const Blob = struct {
                     const rc2 = libuv.uv_fs_write(
                         event_loop.virtual_machine.event_loop_handle.?,
                         &this.io_request,
-                        bun.uvfdcast(destination_fd),
+                        destination_fd.uv(),
                         @ptrCast(&this.read_write_loop.uv_buf),
                         1,
                         -1,
@@ -2592,7 +2581,7 @@ pub const Blob = struct {
                         const rc2 = libuv.uv_fs_write(
                             this.event_loop.virtual_machine.event_loop_handle.?,
                             &this.io_request,
-                            bun.uvfdcast(destination_fd),
+                            destination_fd.uv(),
                             @ptrCast(&this.read_write_loop.uv_buf),
                             1,
                             -1,
@@ -2620,26 +2609,26 @@ pub const Blob = struct {
 
                 pub fn close(this: *ReadWriteLoop) void {
                     if (this.must_close_source_fd) {
-                        if (bun.toLibUVOwnedFD(this.source_fd)) |fd| {
+                        if (this.source_fd.makeLibUVOwned()) |fd| {
                             bun.Async.Closer.close(
-                                bun.uvfdcast(fd),
+                                fd,
                                 bun.Async.Loop.get(),
                             );
                         } else |_| {
-                            _ = bun.sys.close(this.source_fd);
+                            this.source_fd.close();
                         }
                         this.must_close_source_fd = false;
                         this.source_fd = invalid_fd;
                     }
 
                     if (this.must_close_destination_fd) {
-                        if (bun.toLibUVOwnedFD(this.destination_fd)) |fd| {
+                        if (this.destination_fd.makeLibUVOwned()) |fd| {
                             bun.Async.Closer.close(
-                                bun.uvfdcast(fd),
+                                fd,
                                 bun.Async.Loop.get(),
                             );
                         } else |_| {
-                            _ = bun.sys.close(this.destination_fd);
+                            this.destination_fd.close();
                         }
                         this.must_close_destination_fd = false;
                         this.destination_fd = invalid_fd;
@@ -2702,8 +2691,8 @@ pub const Blob = struct {
                             bun.O.WRONLY | bun.O.CREAT,
                         0,
                     )) {
-                        .result => |result| bun.toLibUVOwnedFD(result) catch {
-                            _ = bun.sys.close(result);
+                        .result => |result| result.makeLibUVOwned() catch {
+                            result.close();
                             return .{
                                 .err = .{
                                     .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EMFILE))),
@@ -3137,14 +3126,14 @@ pub const Blob = struct {
             pub fn doCloseFile(this: *CopyFile, comptime which: IOWhich) void {
                 switch (which) {
                     .both => {
-                        _ = bun.sys.close(this.destination_fd);
-                        _ = bun.sys.close(this.source_fd);
+                        this.destination_fd.close();
+                        this.source_fd.close();
                     },
                     .destination => {
-                        _ = bun.sys.close(this.destination_fd);
+                        this.destination_fd.close();
                     },
                     .source => {
-                        _ = bun.sys.close(this.source_fd);
+                        this.source_fd.close();
                     },
                 }
             }
@@ -3163,7 +3152,7 @@ pub const Blob = struct {
                         open_source_flags,
                         0,
                     )) {
-                        .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                        .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                             .result => |result_fd| result_fd,
                             .err => |errno| {
                                 this.system_error = errno.toSystemError();
@@ -3185,7 +3174,7 @@ pub const Blob = struct {
                             open_destination_flags,
                             JSC.Node.default_permission,
                         )) {
-                            .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                            .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                                 .result => |result_fd| result_fd,
                                 .err => |errno| {
                                     this.system_error = errno.toSystemError();
@@ -3197,8 +3186,8 @@ pub const Blob = struct {
                                     .@"continue" => continue,
                                     .fail => {
                                         if (which == .both) {
-                                            _ = bun.sys.close(this.source_fd);
-                                            this.source_fd = .zero;
+                                            this.source_fd.close();
+                                            this.source_fd = .invalid;
                                         }
                                         return bun.errnoToZigErr(errno.errno);
                                     },
@@ -3206,8 +3195,8 @@ pub const Blob = struct {
                                 }
 
                                 if (which == .both) {
-                                    _ = bun.sys.close(this.source_fd);
-                                    this.source_fd = .zero;
+                                    this.source_fd.close();
+                                    this.source_fd = .invalid;
                                 }
 
                                 this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
@@ -4372,10 +4361,10 @@ pub const Blob = struct {
                         }
                     }
 
-                    break :brk switch (bun.FDTag.get(fd)) {
-                        .stdout, .stderr => true,
+                    break :brk if (fd.stdioTag()) |tag| switch (tag) {
+                        .std_out, .std_err => true,
                         else => false,
-                    };
+                    } else false;
                 };
                 var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
                 sink.writer.owns_fd = pathlike != .fd;
@@ -4615,10 +4604,10 @@ pub const Blob = struct {
                     }
                 }
 
-                break :brk switch (bun.FDTag.get(fd)) {
-                    .stdout, .stderr => true,
+                break :brk if (fd.stdioTag()) |tag| switch (tag) {
+                    .std_out, .std_err => true,
                     else => false,
-                };
+                } else false;
             };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
             sink.writer.owns_fd = pathlike != .fd;

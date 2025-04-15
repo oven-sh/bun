@@ -595,7 +595,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
                 0,
             ).unwrap() catch break :use_resolved_path;
 
-            defer _ = bun.sys.close(fd);
+            defer fd.close();
             if (comptime Environment.isWindows) {
                 var wpath: bun.WPathBuffer = undefined;
                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;

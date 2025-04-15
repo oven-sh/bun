@@ -79,7 +79,7 @@ const validateArrayInternal = $newCppFunction("NodeValidator.cpp", "jsFunction_v
 export default {
   /** (value, name) */
   validateObject: function validateObject(value, name) {
-    if (!$isObject(value)) {
+    if (typeof value !== "undefined") {
       return validateObjectInternal.$apply(this, arguments);
     }
   },
@@ -104,7 +104,7 @@ export default {
   checkRangesOrGetDefault: $newCppFunction("NodeValidator.cpp", "jsFunction_checkRangesOrGetDefault", 0),
   /** `(value, name)` */
   validateFunction: function validateFunction(value, name) {
-    if (typeof value !== "function") {
+    if (!$isCallable(value)) {
       return validateFunctionInternal.$apply(this, arguments);
     }
   },

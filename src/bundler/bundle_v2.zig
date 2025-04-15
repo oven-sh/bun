@@ -10795,7 +10795,7 @@ pub const LinkerContext = struct {
         defer trace.end();
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator);
         defer _ = arena.reset(.retain_capacity);
 
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
@@ -10958,7 +10958,7 @@ pub const LinkerContext = struct {
             default_allocator;
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(allocator) catch bun.outOfMemory();
+        var buffer_writer = js_printer.BufferWriter.init(allocator);
         defer _ = arena.reset(.retain_capacity);
         worker.stmt_list.reset();
 

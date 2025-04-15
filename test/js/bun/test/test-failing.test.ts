@@ -1,9 +1,12 @@
 import path from "path";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { $ } from "bun";
 import { fail } from "assert";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures");
+
+const bunTest = (fixture: string) => $.cwd(fixtureDir).env(bunEnv)`${bunExe()} test ${fixture}`.quiet();
+
 describe("test.failing", () => {
   it("is a function", () => {
     expect(test.failing).toBeFunction();
@@ -18,13 +21,13 @@ describe("test.failing", () => {
   });
 
   it("passes if an error is thrown or a promise rejects ", async () => {
-    const result = await $.cwd(fixtureDir)`${bunExe()} test ./failing-test-fails.fixture.ts`.quiet();
+    const result = await bunTest("./failing-test-fails.fixture.ts");
     const stderr = result.stderr.toString();
     expect(stderr).toContain(" 2 pass\n");
   });
 
   it("fails if no error is thrown or promise resolves", async () => {
-    const result = await $.cwd(fixtureDir).nothrow()`${bunExe()} test ./failing-test-passes.fixture.ts`.quiet();
+    const result = await bunTest("./failing-test-passes.fixture.ts");
     const stderr = result.stderr.toString();
     if (result.exitCode === 0) {
       fail("Expected exit code to be non-zero\n\n" + stderr);
@@ -34,7 +37,7 @@ describe("test.failing", () => {
   });
 
   it("timeouts still count as failures", async () => {
-    const result = await $.cwd(fixtureDir).nothrow()`${bunExe()} test ./failing-test-timeout.fixture.ts`.quiet();
+    const result = await bunTest("./failing-test-timeout.fixture.ts");
     const stderr = result.stderr.toString();
     if (result.exitCode === 0) {
       fail("Expected exit code to be non-zero\n\n" + stderr);

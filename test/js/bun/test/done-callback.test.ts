@@ -16,32 +16,56 @@ beforeAll(() => {
 });
 
 describe("basic done() usage", () => {
-  it("test passes when done() is called with no args", done => {
-    done();
-  });
-
-  for (const arg of [null, undefined]) {
-    it(`test passes when done() is called with ${arg}`, done => {
-      done(arg);
+  describe("test will pass", () => {
+    it("when done() is called with no args", done => {
+      done();
     });
-  }
-  it("done(err) fails the test", async () => {
-    const result = await bunTest(`./done-should-fail.fixture.ts`);
-    const stderr = result.stderr.toString();
-    const stdout = result.stdout.toString();
-    try {
-      expect(stderr).toMatch(/ \d fail\n/);
-      expect(stderr).toContain(" 0 pass\n");
-      for (let i = 0; i < 4; i++) {
-        expect(stderr).toContain(`error message ${i + 1}`);
-      }
-      expect(result.exitCode).toBe(1);
-    } catch (e) {
-      console.log(stdout);
-      console.log(stderr);
-      throw e;
+
+    for (const arg of [null, undefined]) {
+      it(`when done() is called with ${arg}`, done => {
+        done(arg);
+      });
     }
-  });
+
+    // NOTE: immediately-resolving promises hit a different codepath
+    it("when a promise resolves then calls done()", done => {
+      return Bun.sleep(5).then(done);
+    });
+
+    it("when a promise resolves immediately then calls done()", done => {
+      return Promise.resolve().then(done);
+    });
+
+    it("when a promise resolves on next tick then calls done()", done => {
+      return new Promise(resolve => {
+        process.nextTick(() => resolve(done()));
+      });
+    });
+
+    it("when done() is called on next tick()", done => {
+      process.nextTick(done);
+    });
+  }); // </ test will pass>
+
+  describe("test will fail", () => {
+    it("done(err) fails the test", async () => {
+      const result = await bunTest(`./done-should-fail.fixture.ts`);
+      const stderr = result.stderr.toString();
+      const stdout = result.stdout.toString();
+      try {
+        expect(stderr).toMatch(/ \d fail\n/);
+        expect(stderr).toContain(" 0 pass\n");
+        for (let i = 0; i < 5; i++) {
+          expect(stderr).toContain(`error message ${i + 1}`);
+        }
+        expect(result.exitCode).toBe(1);
+      } catch (e) {
+        console.log(stdout);
+        console.log(stderr);
+        throw e;
+      }
+    });
+  }); // </ test will fail>
 }); // </ basic done() usage>
 
 describe("done callbacks in sync tests", () => {

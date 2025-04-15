@@ -19,4 +19,8 @@ describe("async test functions", () => {
   test("rejecting a promise fails the test", _done => {
     return Promise.reject(new Error(msg()));
   });
+
+  test("resolving then calling done() with an error fails the test", done => {
+    return Promise.resolve().then(() => done(new Error(msg())));
+  });
 });

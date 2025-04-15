@@ -81,7 +81,7 @@ await client.set("key", "value");
 await client.get("key");
 
 // Explicitly close the connection when done
-client.disconnect();
+client.close();
 ```
 
 You can also manually control the connection lifecycle:

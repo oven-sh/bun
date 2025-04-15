@@ -12,6 +12,9 @@ if (process.argv[2] === "child") {
     socket.destroy();
   });
   process.send({ what: "listening" });
+  const message2 = await new Promise(r => process.once("message", r));
+  console.log("[child] <-", JSON.stringify(message2));
+  handle.close();
 } else if (process.argv[2] === "minimal") {
   const server = createServer();
   server.on("connection", socket => {
@@ -62,12 +65,25 @@ if (process.argv[2] === "child") {
   console.log("[parent] sent server to child");
   console.log("[parent] <- ", JSON.stringify(await new Promise(r => child.once("message", r))));
 
-  for (let i = 0; i < 4; i++) {
-    console.log("[connection] create");
+  // once sent to the child, messages can be handled by either the parent or the child
+  for (let i = 0; i < 128; i++) {
+    // console.log("[connection] create");
     let socket;
-    await new Promise(r => (socket = connect(server.address().port, r)));
-    console.log("[connection] connected");
+    await new Promise(
+      r =>
+        (socket = connect(
+          {
+            port: server.address().port,
+            host: "127.0.0.1",
+          },
+          r,
+        )),
+    );
+    // console.log("[connection] connected");
     await new Promise(r => socket.on("close", r));
-    console.log("[connection] closed");
+    // console.log("[connection] closed");
   }
+
+  server.close();
+  child.send({ what: "close" });
 }

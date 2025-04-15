@@ -470,6 +470,15 @@ extern "C"
       uwsApp->domain(server_name);
     }
   }
+  void uws_app_set_require_host_header(int ssl, uws_app_t *app, bool require_host_header) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setRequireHostHeader(require_host_header);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setRequireHostHeader(require_host_header);
+    }
+  }
 
   void uws_app_destroy(int ssl, uws_app_t *app)
   {

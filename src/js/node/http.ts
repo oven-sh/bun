@@ -111,6 +111,7 @@ const {
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
+  setRequireHostHeader,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -124,6 +125,7 @@ const {
   Blob: (typeof globalThis)["Blob"];
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+  setRequireHostHeader: (server: any, requireHostHeader: boolean) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
 };
 
@@ -1206,6 +1208,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
+      setRequireHostHeader(this[serverSymbol], this.requireHostHeader);
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -2663,7 +2666,6 @@ const kOptions = Symbol("options");
 const kSocketPath = Symbol("socketPath");
 const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
-const kJoinDuplicateHeaders = Symbol("joinDuplicateHeaders");
 
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
@@ -3249,27 +3251,25 @@ function ClientRequest(input, options, cb) {
   }
 
   const _maxHeaderSize = options.maxHeaderSize;
-  // TODO: Validators
-  // if (maxHeaderSize !== undefined)
-  //   validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  const maxHeaderSize = options.maxHeaderSize;
+  if (maxHeaderSize !== undefined) validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  this.maxHeaderSize = maxHeaderSize;
+
   this[kMaxHeaderSize] = _maxHeaderSize;
 
-  // const insecureHTTPParser = options.insecureHTTPParser;
-  // if (insecureHTTPParser !== undefined) {
-  //   validateBoolean(insecureHTTPParser, 'options.insecureHTTPParser');
-  // }
-
-  // this.insecureHTTPParser = insecureHTTPParser;
-  var _joinDuplicateHeaders = options.joinDuplicateHeaders;
-  if (_joinDuplicateHeaders !== undefined) {
-    // TODO: Validators
-    // validateBoolean(
-    //   options.joinDuplicateHeaders,
-    //   "options.joinDuplicateHeaders",
-    // );
+  const insecureHTTPParser = options.insecureHTTPParser;
+  if (insecureHTTPParser !== undefined) {
+    validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
   }
 
-  this[kJoinDuplicateHeaders] = _joinDuplicateHeaders;
+  this.insecureHTTPParser = insecureHTTPParser;
+  const joinDuplicateHeaders = options.joinDuplicateHeaders;
+
+  if (joinDuplicateHeaders !== undefined) {
+    validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+  }
+  this.joinDuplicateHeaders = joinDuplicateHeaders;
+
   if (options.pfx) {
     throw new Error("pfx is not supported");
   }
@@ -3358,7 +3358,14 @@ function ClientRequest(input, options, cb) {
 
   const { headers } = options;
   const headersArray = $isJSArray(headers);
-  if (!headersArray) {
+  if (headersArray) {
+    if (headers.length % 2 !== 0) {
+      throw $ERR_INVALID_ARG_VALUE("options.headers", headers);
+    }
+    for (let i = 0; i < headers.length; i += 2) {
+      this.appendHeader(headers[i], headers[i + 1]);
+    }
+  } else {
     if (headers) {
       for (let key in headers) {
         this.setHeader(key, headers[key]);

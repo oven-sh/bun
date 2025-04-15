@@ -11185,7 +11185,7 @@ pub const PackageManager = struct {
                 .{ root_package_json_source, root_package_json_path }
             else
                 .{ new_package_json_source, manager.original_package_json_path };
-std.mem
+
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             const workspace_package_json_file = (try bun.sys.File.openat(

@@ -1137,9 +1137,9 @@ declare module "bun" {
       totalCount: number;
     };
 
-    ADDRCONFIG: number;
-    ALL: number;
-    V4MAPPED: number;
+    const ADDRCONFIG: number;
+    const ALL: number;
+    const V4MAPPED: number;
   }
 
   interface DNSLookup {

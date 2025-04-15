@@ -840,10 +840,14 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
 
     if (!handle.isUndefinedOrNull()) {
         const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
-        const serialized_handle = serialized_array.getIndex(globalObject, 0);
-        const serialized_message = serialized_array.getIndex(globalObject, 1);
-        handle = serialized_handle;
-        message = serialized_message;
+        if (serialized_array.isUndefinedOrNull()) {
+            handle = .undefined;
+        } else {
+            const serialized_handle = serialized_array.getIndex(globalObject, 0);
+            const serialized_message = serialized_array.getIndex(globalObject, 1);
+            handle = serialized_handle;
+            message = serialized_message;
+        }
     }
 
     var zig_handle: ?Handle = null;

@@ -231,7 +231,7 @@ pub const UpgradedDuplex = struct {
                         this.onInternalReceiveData(payload);
                     } else {
                         // node.js errors in this case with the same error, lets keep it consistent
-                        const error_value = globalObject.ERR_STREAM_WRAP("Stream has StringDecoder set or is in objectMode", .{}).toJS();
+                        const error_value = globalObject.ERR(.STREAM_WRAP, "Stream has StringDecoder set or is in objectMode", .{}).toJS();
                         error_value.ensureStillAlive();
                         this.handlers.onError(this.handlers.ctx, error_value);
                     }
@@ -2523,9 +2523,9 @@ pub const create_bun_socket_error_t = enum(c_int) {
                 bun.debugAssert(false);
                 break :brk .null;
             },
-            .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),
-            .invalid_ca_file => globalObject.ERR_BORINGSSL("Invalid CA file", .{}).toJS(),
-            .invalid_ca => globalObject.ERR_BORINGSSL("Invalid CA", .{}).toJS(),
+            .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
+            .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
+            .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
         };
     }
 };

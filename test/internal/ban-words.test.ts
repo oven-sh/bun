@@ -30,7 +30,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
-  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 310 },
+  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 304 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },

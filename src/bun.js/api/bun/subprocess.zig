@@ -775,7 +775,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     const ipc_data = &(this.ipc_data orelse {
         if (this.hasExited()) {
-            return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
+            return global.ERR(.IPC_CHANNEL_CLOSED, "Subprocess.send() cannot be used after the process has exited.", .{}).throw();
         } else {
             return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
         }

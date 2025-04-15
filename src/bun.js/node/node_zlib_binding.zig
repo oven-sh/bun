@@ -23,7 +23,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data) orelse {
             const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
             defer ty_str.deinit();
-            return globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
+            return globalThis.ERR(.INVALID_ARG_TYPE, "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
         };
         break :blk ZigString.Slice.fromUTF8NeverFree(buffer.slice());
     };
@@ -42,10 +42,10 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const max = std.math.maxInt(u32);
 
         if (@floor(valuef) != valuef) {
-            return globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be an integer. Received {}", .{ "value", valuef }).throw();
+            return globalThis.ERR(.OUT_OF_RANGE, "The value of \"{s}\" is out of range. It must be an integer. Received {}", .{ "value", valuef }).throw();
         }
         if (valuef < min or valuef > max) {
-            return globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ "value", min, max, valuef }).throw();
+            return globalThis.ERR(.OUT_OF_RANGE, "The value of \"{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ "value", min, max, valuef }).throw();
         }
         break :blk @intFromFloat(valuef);
     };
@@ -61,7 +61,7 @@ pub fn CompressionStream(comptime T: type) type {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                return globalThis.ERR_MISSING_ARGS("write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
             }
 
             var in_off: u32 = 0;
@@ -167,7 +167,7 @@ pub fn CompressionStream(comptime T: type) type {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                return globalThis.ERR_MISSING_ARGS("writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
             }
 
             var in_off: u32 = 0;
@@ -371,7 +371,7 @@ pub const SNativeZlib = struct {
         const this_value = callframe.this();
 
         if (arguments.len != 7) {
-            return globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
         }
 
         const windowBits = try validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null);
@@ -400,7 +400,7 @@ pub const SNativeZlib = struct {
         const arguments = callframe.argumentsUndef(2).slice();
 
         if (arguments.len != 2) {
-            return globalThis.ERR_MISSING_ARGS("params(level, strategy)", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "params(level, strategy)", .{}).throw();
         }
 
         const level = try validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null);
@@ -751,7 +751,7 @@ pub const SNativeBrotli = struct {
         const arguments = callframe.argumentsUndef(3).slice();
         const this_value = callframe.this();
         if (arguments.len != 3) {
-            return globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "init(params, writeResult, writeCallback)", .{}).throw();
         }
 
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.

@@ -35,28 +35,34 @@ pub const RedisError = error{
 
 pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: RedisError) JSC.JSValue {
     const error_code: JSC.Error = switch (err) {
-        error.ConnectionClosed => JSC.Error.ERR_REDIS_CONNECTION_CLOSED,
-        error.InvalidResponse => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
-        error.InvalidBulkString => JSC.Error.ERR_REDIS_INVALID_BULK_STRING,
-        error.InvalidArray => JSC.Error.ERR_REDIS_INVALID_ARRAY,
-        error.InvalidInteger => JSC.Error.ERR_REDIS_INVALID_INTEGER,
-        error.InvalidSimpleString => JSC.Error.ERR_REDIS_INVALID_SIMPLE_STRING,
-        error.InvalidErrorString => JSC.Error.ERR_REDIS_INVALID_ERROR_STRING,
-        error.InvalidDouble, error.InvalidBoolean, error.InvalidNull, error.InvalidMap, error.InvalidSet, error.InvalidBigNumber, error.InvalidVerbatimString, error.InvalidBlobError, error.InvalidAttribute, error.InvalidPush => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
-        error.AuthenticationFailed => JSC.Error.ERR_REDIS_AUTHENTICATION_FAILED,
-        error.InvalidCommand => JSC.Error.ERR_REDIS_INVALID_COMMAND,
-        error.InvalidArgument => JSC.Error.ERR_REDIS_INVALID_ARGUMENT,
-        error.UnsupportedProtocol => JSC.Error.ERR_REDIS_INVALID_RESPONSE,
-        error.InvalidResponseType => JSC.Error.ERR_REDIS_INVALID_RESPONSE_TYPE,
-        error.ConnectionTimeout => JSC.Error.ERR_REDIS_CONNECTION_TIMEOUT,
-        error.IdleTimeout => JSC.Error.ERR_REDIS_IDLE_TIMEOUT,
-        error.JSError => {
-            return globalObject.takeException(error.JSError);
-        },
-        error.OutOfMemory => {
-            globalObject.throwOutOfMemory() catch {};
-            return globalObject.takeException(error.JSError);
-        },
+        error.ConnectionClosed => .REDIS_CONNECTION_CLOSED,
+        error.InvalidResponse => .REDIS_INVALID_RESPONSE,
+        error.InvalidBulkString => .REDIS_INVALID_BULK_STRING,
+        error.InvalidArray => .REDIS_INVALID_ARRAY,
+        error.InvalidInteger => .REDIS_INVALID_INTEGER,
+        error.InvalidSimpleString => .REDIS_INVALID_SIMPLE_STRING,
+        error.InvalidErrorString => .REDIS_INVALID_ERROR_STRING,
+        error.InvalidDouble,
+        error.InvalidBoolean,
+        error.InvalidNull,
+        error.InvalidMap,
+        error.InvalidSet,
+        error.InvalidBigNumber,
+        error.InvalidVerbatimString,
+        error.InvalidBlobError,
+        error.InvalidAttribute,
+        error.InvalidPush,
+        => .REDIS_INVALID_RESPONSE,
+        error.AuthenticationFailed => .REDIS_AUTHENTICATION_FAILED,
+        error.InvalidCommand => .REDIS_INVALID_COMMAND,
+        error.InvalidArgument => .REDIS_INVALID_ARGUMENT,
+        error.UnsupportedProtocol => .REDIS_INVALID_RESPONSE,
+        error.InvalidResponseType => .REDIS_INVALID_RESPONSE_TYPE,
+        error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
+        error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
+        error.JSError => return globalObject.takeException(error.JSError),
+        error.OutOfMemory => globalObject.throwOutOfMemory() catch
+            return globalObject.takeException(error.JSError),
     };
 
     if (message) |msg| {

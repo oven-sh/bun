@@ -892,11 +892,11 @@ pub const ValkeyClient = struct {
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
                 } else {
-                    promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection is closed and offline queue is disabled", .{}).toJS());
+                    promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
                 }
             },
             .failed => {
-                promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection has failed", .{}).toJS());
+                promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
             },
         }
 

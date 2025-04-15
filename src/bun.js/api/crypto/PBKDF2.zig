@@ -175,7 +175,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
             const slice = try arg4.toSlice(globalThis, bun.default_allocator);
             defer slice.deinit();
             const name = slice.slice();
-            return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
+            return globalThis.ERR(.CRYPTO_INVALID_DIGEST, "Invalid digest: {s}", .{name}).throw();
         }
         return error.JSError;
     };

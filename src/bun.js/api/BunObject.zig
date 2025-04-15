@@ -892,7 +892,7 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
@@ -916,7 +916,7 @@ export fn Bun__resolveSyncWithPaths(
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
@@ -939,7 +939,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }

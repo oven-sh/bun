@@ -1921,10 +1921,10 @@ pub const Arguments = struct {
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
                         if (str.eqlComptime("junction")) break :link_type .junction;
-                        return ctx.ERR_INVALID_ARG_VALUE("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str}).throw();
+                        return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str}).throw();
                     }
                     // not a string. fallthrough to auto detect.
-                    return ctx.ERR_INVALID_ARG_VALUE("Symlink type must be one of \"dir\", \"file\", or \"junction\".", .{}).throw();
+                    return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\".", .{}).throw();
                 }
                 break :link_type .unspecified;
             };
@@ -2626,7 +2626,7 @@ pub const Arguments = struct {
 
             const buf_len = buffer.slice().len;
             if (buf_len == 0) {
-                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written.", .{}).throw();
+                return ctx.ERR(.INVALID_ARG_VALUE, "The argument 'buffer' is empty and cannot be written.", .{}).throw();
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
             if (@mod(length, 1) != 0) {
@@ -2878,7 +2878,7 @@ pub const Arguments = struct {
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             const allow_string_object = false;
             const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async, allow_string_object) orelse {
-                return ctx.ERR_INVALID_ARG_TYPE("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
+                return ctx.ERR(.INVALID_ARG_TYPE, "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
             return .{
@@ -6572,7 +6572,7 @@ pub const NodeFS = struct {
 
 fn throwInvalidFdError(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError {
     if (value.isNumber()) {
-        return global.ERR_OUT_OF_RANGE("The value of \"fd\" is out of range. It must be an integer. Received {d}", .{bun.fmt.double(value.asNumber())}).throw();
+        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {d}", .{bun.fmt.double(value.asNumber())}).throw();
     }
     return global.throwInvalidArgumentTypeValue("fd", "number", value);
 }

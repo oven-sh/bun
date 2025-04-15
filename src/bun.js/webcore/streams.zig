@@ -1739,7 +1739,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         fn getThis(global: *JSGlobalObject, callframe: *const JSC.CallFrame) bun.JSError!*ThisSink {
             return switch (fromJSExtern(callframe.this())) {
                 .detached => global.throw("This " ++ abi_name ++ " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.", .{}),
-                .cast_failed => global.ERR_INVALID_THIS("Expected " ++ abi_name, .{}).throw(),
+                .cast_failed => global.ERR(.INVALID_THIS, "Expected " ++ abi_name, .{}).throw(),
                 else => |ptr| @ptrFromInt(@intFromEnum(ptr)),
             };
         }
@@ -1762,7 +1762,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
-                return globalThis.throwValue(JSC.toTypeError(.ERR_MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(JSC.toTypeError(.MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             const arg = args[0];
@@ -1770,7 +1770,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             defer arg.ensureStillAlive();
 
             if (arg.isEmptyOrUndefinedOrNull()) {
-                return globalThis.throwValue(JSC.toTypeError(.ERR_STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(JSC.toTypeError(.STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             if (arg.asArrayBuffer(globalThis)) |buffer| {
@@ -1783,7 +1783,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
 
             if (!arg.isString()) {
-                return globalThis.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(JSC.toTypeError(.INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             const str = arg.toString(globalThis);
@@ -1820,7 +1820,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
-                    if (args.len == 0) .ERR_MISSING_ARGS else .ERR_INVALID_ARG_TYPE,
+                    if (args.len == 0) .MISSING_ARGS else .INVALID_ARG_TYPE,
                     "writeUTF8() expects a string",
                     .{},
                     globalThis,
@@ -2002,7 +2002,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 //             JSC.markBinding(@src());
 
 //             var this = @ptrCast(*ThisSocket, @alignCast( fromJS(globalThis, callframe.this()) orelse {
-//                 const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
+//                 const err = JSC.toTypeError(.INVALID_THIS, "Expected Socket", .{}, globalThis);
 //                 globalThis.throwValue( err);
 //                 return .zero;
 //             }));

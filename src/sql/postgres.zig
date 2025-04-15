@@ -50,35 +50,35 @@ pub const AnyPostgresError = error{
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
     const error_code: JSC.Error = switch (err) {
-        error.ConnectionClosed => JSC.Error.ERR_POSTGRES_CONNECTION_CLOSED,
-        error.ExpectedRequest => JSC.Error.ERR_POSTGRES_EXPECTED_REQUEST,
-        error.ExpectedStatement => JSC.Error.ERR_POSTGRES_EXPECTED_STATEMENT,
-        error.InvalidBackendKeyData => JSC.Error.ERR_POSTGRES_INVALID_BACKEND_KEY_DATA,
-        error.InvalidBinaryData => JSC.Error.ERR_POSTGRES_INVALID_BINARY_DATA,
-        error.InvalidByteSequence => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE,
-        error.InvalidByteSequenceForEncoding => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
-        error.InvalidCharacter => JSC.Error.ERR_POSTGRES_INVALID_CHARACTER,
-        error.InvalidMessage => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE,
-        error.InvalidMessageLength => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE_LENGTH,
-        error.InvalidQueryBinding => JSC.Error.ERR_POSTGRES_INVALID_QUERY_BINDING,
-        error.InvalidServerKey => JSC.Error.ERR_POSTGRES_INVALID_SERVER_KEY,
-        error.InvalidServerSignature => JSC.Error.ERR_POSTGRES_INVALID_SERVER_SIGNATURE,
-        error.MultidimensionalArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
-        error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
-        error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
-        error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
-        error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
-        error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
-        error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
-        error.TLSUpgradeFailed => JSC.Error.ERR_POSTGRES_TLS_UPGRADE_FAILED,
-        error.UnexpectedMessage => JSC.Error.ERR_POSTGRES_UNEXPECTED_MESSAGE,
-        error.UNKNOWN_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
-        error.UNSUPPORTED_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
-        error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
-        error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
-        error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
-        error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
-        error.UnknownFormatCode => JSC.Error.ERR_POSTGRES_UNKNOWN_FORMAT_CODE,
+        error.ConnectionClosed => .POSTGRES_CONNECTION_CLOSED,
+        error.ExpectedRequest => .POSTGRES_EXPECTED_REQUEST,
+        error.ExpectedStatement => .POSTGRES_EXPECTED_STATEMENT,
+        error.InvalidBackendKeyData => .POSTGRES_INVALID_BACKEND_KEY_DATA,
+        error.InvalidBinaryData => .POSTGRES_INVALID_BINARY_DATA,
+        error.InvalidByteSequence => .POSTGRES_INVALID_BYTE_SEQUENCE,
+        error.InvalidByteSequenceForEncoding => .POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
+        error.InvalidCharacter => .POSTGRES_INVALID_CHARACTER,
+        error.InvalidMessage => .POSTGRES_INVALID_MESSAGE,
+        error.InvalidMessageLength => .POSTGRES_INVALID_MESSAGE_LENGTH,
+        error.InvalidQueryBinding => .POSTGRES_INVALID_QUERY_BINDING,
+        error.InvalidServerKey => .POSTGRES_INVALID_SERVER_KEY,
+        error.InvalidServerSignature => .POSTGRES_INVALID_SERVER_SIGNATURE,
+        error.MultidimensionalArrayNotSupportedYet => .POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
+        error.NullsInArrayNotSupportedYet => .POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
+        error.Overflow => .POSTGRES_OVERFLOW,
+        error.PBKDFD2 => .POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
+        error.SASL_SIGNATURE_MISMATCH => .POSTGRES_SASL_SIGNATURE_MISMATCH,
+        error.SASL_SIGNATURE_INVALID_BASE64 => .POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
+        error.TLSNotAvailable => .POSTGRES_TLS_NOT_AVAILABLE,
+        error.TLSUpgradeFailed => .POSTGRES_TLS_UPGRADE_FAILED,
+        error.UnexpectedMessage => .POSTGRES_UNEXPECTED_MESSAGE,
+        error.UNKNOWN_AUTHENTICATION_METHOD => .POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
+        error.UNSUPPORTED_AUTHENTICATION_METHOD => .POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
+        error.UnsupportedByteaFormat => .POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
+        error.UnsupportedArrayFormat => .POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
+        error.UnsupportedIntegerSize => .POSTGRES_UNSUPPORTED_INTEGER_SIZE,
+        error.UnsupportedNumericFormat => .POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
+        error.UnknownFormatCode => .POSTGRES_UNKNOWN_FORMAT_CODE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -1470,13 +1470,13 @@ pub const PostgresSQLConnection = struct {
 
         switch (this.status) {
             .connected => {
-                this.failFmt(.ERR_POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+                this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
             },
             else => {
-                this.failFmt(.ERR_POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+                this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
             },
             .sent_startup_message => {
-                this.failFmt(.ERR_POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+                this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
             },
         }
         return .disarm;
@@ -1486,7 +1486,7 @@ pub const PostgresSQLConnection = struct {
         debug("onMaxLifetimeTimeout", .{});
         this.max_lifetime_timer.state = .FIRED;
         if (this.status == .failed) return .disarm;
-        this.failFmt(.ERR_POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+        this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
         return .disarm;
     }
 

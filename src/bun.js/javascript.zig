@@ -450,7 +450,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     const vm = globalObject.bunVM();
     const ipc_instance = vm.getIPCInstance() orelse {
-        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
+        const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(globalObject, callback, ex);
         } else {

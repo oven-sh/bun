@@ -326,10 +326,10 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_closeBody(JSC::
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
-    auto callback = callFrame->argument(0);
+    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     impl.jsUnref(lexicalGlobalObject);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(lexicalGlobalObject, callback); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

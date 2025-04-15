@@ -505,6 +505,16 @@ public:
     // has been allocated from the heap.
     static size_t GetSecureHeapUsed();
 
+    static DataPointer FromSpan(std::span<const uint8_t> span)
+    {
+        if (span.empty()) return {};
+        if (auto dp = Alloc(span.size())) {
+            memcpy(dp.get(), span.data(), span.size());
+            return dp;
+        }
+        return {};
+    }
+
     enum class InitSecureHeapResult {
         FAILED,
         UNABLE_TO_MEMORY_MAP,

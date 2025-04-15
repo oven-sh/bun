@@ -19,13 +19,10 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobal
     JSValue keyValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
-    WTF::Vector<uint8_t> symmetricKey;
-    prepareSecretKey(lexicalGlobalObject, scope, symmetricKey, keyValue, encodingValue, true);
+    KeyObject keyObject = KeyObject::prepareSecretKey(lexicalGlobalObject, scope, keyValue, encodingValue, true);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-
-    KeyObject keyObject = KeyObject::create(WTFMove(symmetricKey));
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
 
     return JSValue::encode(secretKey);

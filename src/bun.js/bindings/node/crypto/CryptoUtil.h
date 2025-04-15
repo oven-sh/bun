@@ -55,7 +55,6 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier = std::nullopt);
 JSValue getStringOption(JSGlobalObject* globalObject, JSValue options, const WTF::ASCIILiteral& name);
-void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key, JSValue encoding, bool bufferOnly = false);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
 

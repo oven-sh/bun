@@ -1052,60 +1052,6 @@ bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& pri
     return privateKey < order;
 }
 
-// takes a key value and encoding value
-// - if key is string, returns the key as a vector of bytes, using encoding if !isUndefined
-// - if key is isAnyArrayBuffer, return the bytes
-// - if !bufferOnly:
-//   - if key is KeyObject with native crypto key, extract the key material
-//   - if key is CryptoKey, ensure `type` is secret, then extract the key material
-// - none matched, throw error for INVALID_ARG_TYPE
-void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key, JSValue encodingValue, bool bufferOnly)
-{
-    // Handle KeyObject (if not bufferOnly)
-    if (!bufferOnly && key.isObject()) {
-        if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
-            auto& handle = keyObject->handle();
-            if (handle.type() != KeyObjectType::Secret) {
-                ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.asymmetricKeyType(globalObject), "secret"_s);
-            }
-
-            out.append(handle.symmetricKey().span());
-            return;
-        }
-    }
-
-    // Handle string or buffer
-    if (key.isString()) {
-        JSString* keyString = key.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
-        RETURN_IF_EXCEPTION(scope, );
-        if (encoding == WebCore::BufferEncodingType::buffer) {
-            encoding = WebCore::BufferEncodingType::utf8;
-        }
-
-        auto keyView = keyString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-
-        // TODO(dylan-conway): add a way to do this with just the Vector. no need to create a buffer
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-        out.append(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() });
-        return;
-    }
-
-    // Handle ArrayBuffer types
-    if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(key)) {
-        out.append(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() });
-        return;
-    }
-
-    // If we got here, the key is not a valid type
-    WTF::String expectedTypes = bufferOnly ? "ArrayBuffer, Buffer, TypedArray, DataView, or a string"_s : "ArrayBuffer, Buffer, TypedArray, DataView, string, CryptoKey, or KeyObject"_s;
-    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, expectedTypes, key);
-}
-
 ByteSource::ByteSource(ByteSource&& other) noexcept
     : data_(other.data_)
     , allocated_data_(other.allocated_data_)

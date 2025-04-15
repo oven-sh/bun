@@ -15,7 +15,7 @@ using namespace ncrypto;
 
 namespace Bun {
 
-HkdfJobCtx::HkdfJobCtx(Digest digest, size_t length, WTF::Vector<uint8_t>&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt)
+HkdfJobCtx::HkdfJobCtx(Digest digest, size_t length, KeyObject&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt)
     : m_digest(digest)
     , m_length(length)
     , m_key(WTFMove(key))
@@ -44,9 +44,11 @@ extern "C" void Bun__HkdfJobCtx__runTask(HkdfJobCtx* ctx, JSGlobalObject* lexica
 }
 void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
+    auto key = m_key.symmetricKey().span();
+
     auto keyBuf = ncrypto::Buffer<const unsigned char> {
-        .data = m_key.data(),
-        .len = m_key.size(),
+        .data = key.data(),
+        .len = key.size(),
     };
     auto infoBuf = ncrypto::Buffer<const unsigned char> {
         .data = m_info.data(),
@@ -130,44 +132,45 @@ void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, 
 }
 
 // similar to prepareSecretKey
-void prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key)
+KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)
 {
-
     if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(key)) {
-        const KeyObject& handle = keyObject->handle();
-        out.append(handle.symmetricKey().span());
-        return;
+        // Node doesn't check for KeyObjectType::Secret, so we don't either
+        return keyObject->handle();
     }
 
     // Handle string or buffer
     if (key.isString()) {
         JSString* keyString = key.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-
+        RETURN_IF_EXCEPTION(scope, {});
         auto keyView = keyString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, {});
 
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, WebCore::BufferEncodingType::utf8));
+        BufferEncodingType encoding = BufferEncodingType::utf8;
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-        out.append(view->span());
-        return;
+
+        Vector<uint8_t> copy;
+        copy.append(view->span());
+        return KeyObject::create(WTFMove(copy));
     }
 
     // Handle ArrayBuffer types
     if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(key)) {
-        out.append(view->span());
-        return;
+        Vector<uint8_t> copy;
+        copy.append(view->span());
+        return KeyObject::create(WTFMove(copy));
     }
 
     if (auto* buf = jsDynamicCast<JSC::JSArrayBuffer*>(key)) {
-        out.append(buf->impl()->span());
-        return;
+        auto* impl = buf->impl();
+        Vector<uint8_t> copy;
+        copy.append(impl->span());
+        return KeyObject::create(WTFMove(copy));
     }
 
-    // If we got here, the key is not a valid type
-    WTF::String expectedTypes
-        = "string, SecretKeyObject, ArrayBuffer, TypedArray, DataView, or Buffer"_s;
-    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "ikm"_s, expectedTypes, key);
+    ERR::INVALID_ARG_TYPE(scope, globalObject, "ikm"_s, "string or an instance of SecretKeyObject, ArrayBuffer, TypedArray, DataView, or Buffer"_s, key);
+    return {};
 }
 
 void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue value, const WTF::ASCIILiteral& name, WTF::Vector<uint8_t>& buffer)
@@ -201,8 +204,7 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
 
     // TODO(dylan-conway): All of these don't need to copy for sync mode
 
-    WTF::Vector<uint8_t> keyData;
-    prepareKey(lexicalGlobalObject, scope, keyData, keyValue);
+    KeyObject keyObject = prepareKey(lexicalGlobalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     WTF::Vector<uint8_t> salt;
@@ -235,7 +237,7 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
         return std::nullopt;
     }
 
-    return HkdfJobCtx(hash, length, WTFMove(keyData), WTFMove(info), WTFMove(salt));
+    return HkdfJobCtx(hash, length, WTFMove(keyObject), WTFMove(info), WTFMove(salt));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

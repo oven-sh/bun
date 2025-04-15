@@ -4,6 +4,7 @@
 #include "helpers.h"
 #include "ncrypto.h"
 #include "CryptoUtil.h"
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -17,7 +18,7 @@ struct HkdfJobCtx {
         Async,
     };
 
-    HkdfJobCtx(ncrypto::Digest digest, size_t length, WTF::Vector<uint8_t>&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt);
+    HkdfJobCtx(ncrypto::Digest digest, size_t length, KeyObject&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt);
     HkdfJobCtx(HkdfJobCtx&&);
     ~HkdfJobCtx();
 
@@ -29,7 +30,7 @@ struct HkdfJobCtx {
 
     ncrypto::Digest m_digest;
     size_t m_length;
-    WTF::Vector<uint8_t> m_key;
+    KeyObject m_key;
     WTF::Vector<uint8_t> m_info;
     WTF::Vector<uint8_t> m_salt;
 

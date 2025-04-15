@@ -368,6 +368,7 @@ pub const SendQueue = struct {
 
     /// returned pointer is invalidated if the queue is modified
     pub fn startMessage(self: *SendQueue, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+        callback.protect(); // now it is owned by the queue and will be unprotected on deinit.
         self.queue.append(.{ .handle = handle, .callback = callback }) catch bun.outOfMemory();
         return &self.queue.items[0];
     }

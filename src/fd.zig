@@ -266,7 +266,7 @@ pub const FD = packed struct(backing_int) {
                         null;
                 },
                 .windows => |handle| result: {
-                    break :result switch (bun.windows.NtClose(handle)) {
+                    break :result switch (bun.c.NtClose(handle)) {
                         .SUCCESS => null,
                         else => |rc| bun.sys.Error{
                             .errno = if (bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno()) |errno| @intFromEnum(errno) else 1,

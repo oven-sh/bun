@@ -8,7 +8,8 @@ const posix = std.posix;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const default_allocator = bun.default_allocator;
-const kernel32 = bun.windows;
+const kernel32 = bun.windows.kernel32;
+const ntdll = bun.windows.ntdll;
 const mem = std.mem;
 const page_size_min = std.heap.page_size_min;
 const mode_t = posix.mode_t;
@@ -43,7 +44,7 @@ pub const syscall = switch (Environment.os) {
     else => @compileError("not implemented"),
 };
 
-/// Non-cancellable verisons of various libc functions are undocumented
+/// Non-cancellable versions of various libc functions are undocumented
 const darwin_nocancel = struct {
     const c = std.c;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
@@ -723,7 +724,7 @@ pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        if (kernel32.SetCurrentDirectory(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
+        if (bun.c.SetCurrentDirectoryW(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
             log("SetCurrentDirectory({s}) = {d}", .{ destination, kernel32.GetLastError() });
             return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
         }
@@ -818,9 +819,9 @@ pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
     } else {
         var statfs_ = mem.zeroes(bun.StatFS);
         const rc = if (Environment.isLinux)
-            C.translated.statfs(path, &statfs_)
+            bun.c.statfs(path, &statfs_)
         else if (Environment.isMac)
-            C.translated.statfs(path, &statfs_)
+            bun.c.statfs(path, &statfs_)
         else
             @compileError("Unsupported platform");
 
@@ -980,8 +981,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            const rc = kernel32.CreateDirectoryW(file_path, null);
-
+            const rc = bun.c.CreateDirectoryW(file_path, null);
             if (Maybe(void).errnoSys(
                 rc,
                 .mkdir,
@@ -3341,21 +3341,21 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             .SecurityQualityOfService = null,
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
-        const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+        const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
         if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
 
-        const is_regular_file = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+        const is_regular_file = basic_info.FileAttributes != bun.c.INVALID_FILE_ATTRIBUTES and
             // from libuv: directories cannot be read-only
             // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
-            (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
-                basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
+            (basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_DIRECTORY == 0 or
+                basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_READONLY == 0);
 
-        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
+        const is_dir = basic_info.FileAttributes != bun.c.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_DIRECTORY != 0 and
+            basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_READONLY == 0;
 
         return if (is_dir) {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
@@ -3746,7 +3746,7 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
     if (Environment.isWindows) {
         var size: windows.LARGE_INTEGER = undefined;
-        if (windows.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
+        if (windows.kernel32.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
             const err = Error.fromCode(windows.getLastErrno(), .fstat);
             log("GetFileSizeEx({}) = {s}", .{ fd, err.name() });
             return .{ .err = err };
@@ -3967,7 +3967,7 @@ pub const File = struct {
         if (Environment.isWindows) {
             const rt = windows.GetFileType(self.handle.cast());
             if (rt == windows.FILE_TYPE_UNKNOWN) {
-                switch (bun.windows.GetLastError()) {
+                switch (windows.GetLastError()) {
                     .SUCCESS => {},
                     else => |err| {
                         return .{ .err = Error.fromCode((bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EUNKNOWN).toE(), .fstat) };

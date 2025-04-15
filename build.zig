@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const Build = std.Build;
 const Step = Build.Step;
 const Compile = Step.Compile;
-const LazyPath = Step.LazyPath;
+const LazyPath = Build.LazyPath;
 const Target = std.Target;
 const ResolvedTarget = std.Build.ResolvedTarget;
 const CrossTarget = std.zig.CrossTarget;
@@ -388,7 +388,22 @@ pub fn build(b: *Build) !void {
     // zig build translate-c-headers
     {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
-        step.dependOn(&b.addInstallFile(getTranslateC(b, b.graph.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+        for ([_]TargetDescription{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
+        }) |t| {
+            const resolved = t.resolveTarget(b);
+            step.dependOn(
+                &b.addInstallFile(getTranslateC(b, resolved, .Debug), b.fmt("translated-c-headers/{s}.zig", .{
+                    resolved.result.zigTriple(b.allocator) catch @panic("OOM"),
+                })).step,
+            );
+        }
     }
 
     // zig build enum-extractor
@@ -405,23 +420,32 @@ pub fn build(b: *Build) !void {
     }
 }
 
-pub fn addMultiCheck(
+const TargetDescription = struct {
+    os: OperatingSystem,
+    arch: Arch,
+    musl: bool = false,
+
+    fn resolveTarget(desc: TargetDescription, b: *Build) std.Build.ResolvedTarget {
+        return b.resolveTargetQuery(.{
+            .os_tag = OperatingSystem.stdOSTag(desc.os),
+            .cpu_arch = desc.arch,
+            .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
+            .os_version_min = getOSVersionMin(desc.os),
+            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
+        });
+    }
+};
+
+fn addMultiCheck(
     b: *Build,
     parent_step: *Step,
     root_build_options: BunBuildOptions,
-    to_check: []const struct { os: OperatingSystem, arch: Arch, musl: bool = false },
+    to_check: []const TargetDescription,
     optimize: []const std.builtin.OptimizeMode,
 ) void {
     for (to_check) |check| {
         for (optimize) |mode| {
-            const check_target = b.resolveTargetQuery(.{
-                .os_tag = OperatingSystem.stdOSTag(check.os),
-                .cpu_arch = check.arch,
-                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_arch_os,
-                .os_version_min = getOSVersionMin(check.os),
-                .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
-            });
-
+            const check_target = check.resolveTarget(b);
             var options: BunBuildOptions = .{
                 .target = check_target,
                 .os = check.os,
@@ -445,7 +469,7 @@ pub fn addMultiCheck(
     }
 }
 
-fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.TranslateC {
+fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c-headers-for-zig.h"),
         .target = target,
@@ -461,7 +485,35 @@ fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.buil
         const str, const value = entry;
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
-    return translate_c;
+
+    if (target.result.os.tag == .windows) {
+        // translate-c is unable to translate the unsuffixed windows functions
+        // like `SetCurrentDirectory` since they are defined with an odd macro
+        // that translate-c doesn't handle.
+        //
+        //     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
+        //
+        // In these cases, it's better to just reference the underlying function
+        // directly: SetCurrentDirectoryW. To make the error better, a post
+        // processing step is applied to the translate-c file.
+        //
+        // Additionally, this step makes it so that decls like NTSTATUS and
+        // HANDLE point to the standard library structures.
+        const helper_exe = b.addExecutable(.{
+            .name = "process_windows_translate_c",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/codegen/process_windows_translate_c.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }),
+        });
+        const in = translate_c.getOutput();
+        const run = b.addRunArtifact(helper_exe);
+        run.addFileArg(in);
+        const out = run.addOutputFileArg("c-headers-for-zig.zig");
+        return out;
+    }
+    return translate_c.getOutput();
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
@@ -526,7 +578,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
 
     const translate_c = getTranslateC(b, opts.target, opts.optimize);
-    obj.root_module.addImport("translated-c-headers", translate_c.createModule());
+    obj.root_module.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 }
 
 const ObjectFormat = enum {

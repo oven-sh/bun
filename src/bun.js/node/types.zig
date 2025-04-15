@@ -1928,7 +1928,7 @@ pub const Process = struct {
             buf2[len2] = 0;
             break :str buf2[0..len2 :0].ptr;
         } else null;
-        _ = bun.windows.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
+        _ = bun.c.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
     }
 
     comptime {

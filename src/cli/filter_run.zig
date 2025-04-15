@@ -411,7 +411,7 @@ const AbortHandler = struct {
             };
             std.posix.sigaction(std.posix.SIG.INT, &action, null);
         } else {
-            const res = bun.windows.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
+            const res = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             if (res == 0) {
                 if (Environment.isDebug) {
                     Output.warn("Failed to set abort handler\n", .{});
@@ -424,7 +424,7 @@ const AbortHandler = struct {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         if (Environment.isWindows) {
             // restores default Ctrl+C behavior
-            _ = bun.windows.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
+            _ = bun.c.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
         }
     }
 };

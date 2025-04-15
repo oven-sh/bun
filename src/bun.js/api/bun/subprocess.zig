@@ -2706,10 +2706,10 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Body = JSC.WebCore.Body;
 const IPClog = Output.scoped(.IPC, false);
 
-const PosixSpawn = bun.posix.spawn;
-const Rusage = bun.posix.spawn.Rusage;
-const Process = bun.posix.spawn.Process;
-const WaiterThread = bun.posix.spawn.WaiterThread;
+const PosixSpawn = bun.spawn;
+const Rusage = bun.spawn.Rusage;
+const Process = bun.spawn.Process;
+const WaiterThread = bun.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

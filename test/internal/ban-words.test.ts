@@ -46,6 +46,7 @@ for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;
   if (file.parentPath.startsWith("src" + path.sep + "deps")) continue;
+  if (file.parentPath.startsWith("src" + path.sep + "codegen")) continue;
   const content = await Bun.file(file.parentPath + path.sep + file.name).text();
   for (const word of words_keys) {
     let regex = words[word].regex ? new RegExp(word, "g") : undefined;

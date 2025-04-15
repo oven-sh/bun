@@ -1627,9 +1627,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }

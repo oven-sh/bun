@@ -1,4 +1,7 @@
-pub usingnamespace JSC.Codegen.JSParsedShellScript;
+pub const js = JSC.Codegen.JSParsedShellScript;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 args: ?*ShellArgs = null,
 /// allocated with arena in jsobjs

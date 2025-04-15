@@ -132,6 +132,7 @@ typedef struct SystemError {
     BunString path;
     BunString syscall;
     BunString hostname;
+    /// MinInt if not specified
     int fd;
     BunString dest;
 } SystemError;

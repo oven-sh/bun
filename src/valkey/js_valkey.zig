@@ -20,7 +20,11 @@ pub const JSValkeyClient = struct {
     },
     ref_count: RefCount,
 
-    pub usingnamespace JSC.Codegen.JSRedisClient;
+    pub const js = JSC.Codegen.JSRedisClient;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
@@ -162,16 +166,16 @@ pub const JSValkeyClient = struct {
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, JSValkeyClient.helloGetCached(this_value) orelse .undefined);
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .undefined);
         }
 
-        if (JSValkeyClient.connectionPromiseGetCached(this_value)) |promise| {
+        if (js.connectionPromiseGetCached(this_value)) |promise| {
             return promise;
         }
 
         const promise_ptr = JSC.JSPromise.create(globalObject);
         const promise = promise_ptr.asValue(globalObject);
-        JSValkeyClient.connectionPromiseSetCached(this_value, globalObject, promise);
+        js.connectionPromiseSetCached(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
@@ -223,26 +227,26 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
-        if (JSValkeyClient.onconnectGetCached(thisValue)) |value| {
+        if (js.onconnectGetCached(thisValue)) |value| {
             return value;
         }
         return .undefined;
     }
 
     pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        JSValkeyClient.onconnectSetCached(thisValue, globalObject, value);
+        js.onconnectSetCached(thisValue, globalObject, value);
         return true;
     }
 
     pub fn getOnClose(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
-        if (JSValkeyClient.oncloseGetCached(thisValue)) |value| {
+        if (js.oncloseGetCached(thisValue)) |value| {
             return value;
         }
         return .undefined;
     }
 
     pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        JSValkeyClient.oncloseSetCached(thisValue, globalObject, value);
+        js.oncloseSetCached(thisValue, globalObject, value);
         return true;
     }
 
@@ -406,16 +410,16 @@ pub const JSValkeyClient = struct {
 
         if (this.this_value.tryGet()) |this_value| {
             const hello_value = value.toJS(globalObject) catch .undefined;
-            JSValkeyClient.helloSetCached(this_value, globalObject, hello_value);
+            js.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
-            if (JSValkeyClient.onconnectGetCached(this_value)) |on_connect| {
+            if (js.onconnectGetCached(this_value)) |on_connect| {
                 const js_value = this_value;
                 js_value.ensureStillAlive();
                 globalObject.queueMicrotask(on_connect, &[_]JSValue{ js_value, hello_value });
             }
 
-            if (JSValkeyClient.connectionPromiseGetCached(this_value)) |promise| {
-                JSValkeyClient.connectionPromiseSetCached(this_value, globalObject, .zero);
+            if (js.connectionPromiseGetCached(this_value)) |promise| {
+                js.connectionPromiseSetCached(this_value, globalObject, .zero);
                 promise.asPromise().?.resolve(globalObject, hello_value);
             }
         }
@@ -456,14 +460,14 @@ pub const JSValkeyClient = struct {
         defer loop.exit();
 
         if (this_jsvalue != .undefined) {
-            if (JSValkeyClient.connectionPromiseGetCached(this_jsvalue)) |promise| {
-                JSValkeyClient.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
+            if (js.connectionPromiseGetCached(this_jsvalue)) |promise| {
+                js.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
                 promise.asPromise().?.reject(globalObject, error_value);
             }
         }
 
         // Call onClose callback if it exists
-        if (JSValkeyClient.oncloseGetCached(this_jsvalue)) |on_close| {
+        if (js.oncloseGetCached(this_jsvalue)) |on_close| {
             _ = on_close.call(
                 globalObject,
                 this_jsvalue,
@@ -484,7 +488,7 @@ pub const JSValkeyClient = struct {
     pub fn failWithJSValue(this: *JSValkeyClient, value: JSValue) void {
         const this_value = this.this_value.tryGet() orelse return;
         const globalObject = this.globalObject;
-        if (JSValkeyClient.oncloseGetCached(this_value)) |on_close| {
+        if (js.oncloseGetCached(this_value)) |on_close| {
             const loop = this.client.vm.eventLoop();
             loop.enter();
             defer loop.exit();

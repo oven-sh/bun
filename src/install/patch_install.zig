@@ -350,7 +350,7 @@ pub const PatchTask = struct {
 
         {
             const patch_pkg_dir = switch (bun.sys.openat(
-                bun.toFD(system_tmpdir.fd),
+                .fromStdDir(system_tmpdir),
                 tempdir_name,
                 bun.O.RDONLY | bun.O.DIRECTORY,
                 0,
@@ -363,7 +363,7 @@ pub const PatchTask = struct {
                     .{resolution_label},
                 ),
             };
-            defer _ = bun.sys.close(patch_pkg_dir);
+            defer patch_pkg_dir.close();
 
             // 4. apply patch
             if (patchfile.apply(this.manager.allocator, patch_pkg_dir)) |e| {
@@ -397,7 +397,7 @@ pub const PatchTask = struct {
                     );
                 },
             };
-            _ = bun.sys.close(buntagfd);
+            buntagfd.close();
         }
 
         // 6. rename to cache dir
@@ -412,9 +412,9 @@ pub const PatchTask = struct {
         );
 
         if (bun.sys.renameatConcurrently(
-            bun.toFD(system_tmpdir.fd),
+            .fromStdDir(system_tmpdir),
             path_in_tmpdir,
-            bun.toFD(this.callback.apply.cache_dir.fd),
+            .fromStdDir(this.callback.apply.cache_dir),
             this.callback.apply.cache_dir_subpath,
             .{ .move_fallback = true },
         ).asErr()) |e| return try log.addErrorFmtOpts(
@@ -490,7 +490,7 @@ pub const PatchTask = struct {
             },
             .result => |fd| fd,
         };
-        defer _ = bun.sys.close(fd);
+        defer fd.close();
 
         var hasher = bun.Wyhash11.init(0);
 

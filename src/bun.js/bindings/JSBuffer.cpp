@@ -299,6 +299,12 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
 uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, uint32_t min, uint32_t max)
 {
     if (UNLIKELY(!value.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (value.isInt32()) {
+        auto value_num = static_cast<int64_t>(value.asInt32());
+        if (UNLIKELY(value_num < static_cast<int64_t>(min) || value_num > static_cast<int64_t>(max))) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+        return static_cast<uint32_t>(value_num);
+    }
+
     auto value_num = value.asNumber();
     if (UNLIKELY(std::fmod(value_num, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (UNLIKELY(value_num < min || value_num > max)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
@@ -308,6 +314,12 @@ uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObjec
 uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, uint32_t min, uint32_t max)
 {
     if (UNLIKELY(!value.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (value.isInt32()) {
+        auto value_num = static_cast<int64_t>(value.asInt32());
+        if (UNLIKELY(value_num < static_cast<int64_t>(min) || value_num > static_cast<int64_t>(max))) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+        return static_cast<uint32_t>(value_num);
+    }
+
     auto value_num = value.asNumber();
     if (UNLIKELY(std::fmod(value_num, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (UNLIKELY(value_num < min || value_num > max)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);

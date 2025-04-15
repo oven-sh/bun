@@ -424,8 +424,8 @@ pub const RuntimeTranspilerStore = struct {
             switch (vm.bun_watcher) {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
-                        const _fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (!_fd.isStdio()) _fd else null;
+                        const watcher_fd = vm.bun_watcher.watchlist().items(.fd)[index];
+                        fd = if (watcher_fd.stdioTag() == null) watcher_fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -449,7 +449,7 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = .zero;
+            var input_file_fd: StoredFileDescriptorType = .invalid;
 
             const is_main = vm.main.len == path.text.len and
                 vm.main_hash == hash and
@@ -465,7 +465,7 @@ pub const RuntimeTranspilerStore = struct {
                 .allocator = allocator,
                 .path = path,
                 .loader = loader,
-                .dirname_fd = .zero,
+                .dirname_fd = .invalid,
                 .file_descriptor = fd,
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
@@ -487,9 +487,9 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             defer {
-                if (should_close_input_file_fd and input_file_fd != .zero) {
-                    _ = bun.sys.close(input_file_fd);
-                    input_file_fd = .zero;
+                if (should_close_input_file_fd and input_file_fd.isValid()) {
+                    input_file_fd.close();
+                    input_file_fd = .invalid;
                 }
             }
 
@@ -508,7 +508,7 @@ pub const RuntimeTranspilerStore = struct {
                 false,
             ) orelse {
                 if (vm.isWatcherEnabled()) {
-                    if (input_file_fd != .zero) {
+                    if (input_file_fd.isValid()) {
                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
                             _ = vm.bun_watcher.addFile(
@@ -516,7 +516,7 @@ pub const RuntimeTranspilerStore = struct {
                                 path.text,
                                 hash,
                                 loader,
-                                .zero,
+                                .invalid,
                                 package_json,
                                 true,
                             );
@@ -529,7 +529,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             if (vm.isWatcherEnabled()) {
-                if (input_file_fd != .zero) {
+                if (input_file_fd.isValid()) {
                     if (!is_node_override and
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
@@ -539,7 +539,7 @@ pub const RuntimeTranspilerStore = struct {
                             path.text,
                             hash,
                             loader,
-                            .zero,
+                            .invalid,
                             package_json,
                             true,
                         );
@@ -719,13 +719,11 @@ pub const ModuleLoader = struct {
         var tmpname_buf: bun.PathBuffer = undefined;
         const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
 
-        const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
+        const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
-        const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return null;
-        defer {
-            _ = bun.sys.close(tmpfile.fd);
-        }
+        const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch return null;
+        defer tmpfile.fd.close();
 
         switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
             &tmpname_buf, // not used
@@ -734,10 +732,8 @@ pub const ModuleLoader = struct {
                 .data = .{
                     .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
                 },
-                .dirfd = bun.toFD(tmpdir.fd),
-                .file = .{
-                    .fd = tmpfile.fd,
-                },
+                .dirfd = tmpdir,
+                .file = .{ .fd = tmpfile.fd },
                 .encoding = .buffer,
             },
         )) {
@@ -1426,7 +1422,7 @@ pub const ModuleLoader = struct {
                             path.text,
                             this.hash,
                             options.Loader.fromAPI(this.loader),
-                            .zero,
+                            .invalid,
                             this.package_json,
                             true,
                         );
@@ -1563,8 +1559,7 @@ pub const ModuleLoader = struct {
                 var package_json: ?*PackageJSON = null;
 
                 if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
-                    const maybe_fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
-                    fd = if (maybe_fd != .zero) maybe_fd else null;
+                    fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index].unwrapValid();
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
@@ -1641,7 +1636,7 @@ pub const ModuleLoader = struct {
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
-                        _ = bun.sys.close(input_file_fd);
+                        input_file_fd.close();
                         input_file_fd = bun.invalid_fd;
                     }
                 }
@@ -1664,7 +1659,7 @@ pub const ModuleLoader = struct {
                         ) orelse {
                             if (comptime !disable_transpilying) {
                                 if (jsc_vm.isWatcherEnabled()) {
-                                    if (input_file_fd != .zero) {
+                                    if (input_file_fd.isValid()) {
                                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                             should_close_input_file_fd = false;
                                             _ = jsc_vm.bun_watcher.addFile(
@@ -1672,7 +1667,7 @@ pub const ModuleLoader = struct {
                                                 path.text,
                                                 hash,
                                                 loader,
-                                                .zero,
+                                                .invalid,
                                                 package_json,
                                                 true,
                                             );
@@ -1707,7 +1702,7 @@ pub const ModuleLoader = struct {
 
                 if (comptime !disable_transpilying) {
                     if (jsc_vm.isWatcherEnabled()) {
-                        if (input_file_fd != .zero) {
+                        if (input_file_fd.isValid()) {
                             if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
                                 _ = jsc_vm.bun_watcher.addFile(
@@ -1715,7 +1710,7 @@ pub const ModuleLoader = struct {
                                     path.text,
                                     hash,
                                     loader,
-                                    .zero,
+                                    .invalid,
                                     package_json,
                                     true,
                                 );
@@ -2134,11 +2129,11 @@ pub const ModuleLoader = struct {
                                         0,
                                     )) {
                                         .err => break :auto_watch,
-                                        .result => |fd| break :brk @enumFromInt(fd.cast()),
+                                        .result => |fd| break :brk fd,
                                     }
                                 } else {
                                     // Otherwise, don't even bother opening it.
-                                    break :brk .zero;
+                                    break :brk .invalid;
                                 }
                             };
                             const hash = bun.Watcher.getHash(path.text);
@@ -2147,7 +2142,7 @@ pub const ModuleLoader = struct {
                                 path.text,
                                 hash,
                                 loader,
-                                .zero,
+                                .invalid,
                                 null,
                                 true,
                             )) {
@@ -2157,8 +2152,8 @@ pub const ModuleLoader = struct {
                                         // opened the file descriptor to
                                         // receive event notifications on
                                         // it, we should close it.
-                                        if (input_fd != .zero) {
-                                            _ = bun.sys.close(bun.toFD(input_fd));
+                                        if (input_fd.isValid()) {
+                                            input_fd.close();
                                         }
                                     }
 

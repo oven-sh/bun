@@ -341,13 +341,13 @@ pub const JSBundler = struct {
 
                 defer path.deinit();
 
-                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                var dir = bun.FD.fromStdDir(std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
                     return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                };
+                });
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
-                const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
+                const rootdir = dir.getFdPath(&rootdir_buf) catch |err| {
                     return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);

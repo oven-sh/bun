@@ -159,7 +159,7 @@ pub const TransformTask = struct {
         const parse_options = Transpiler.Transpiler.ParseOptions{
             .allocator = allocator,
             .macro_remappings = this.macro_map,
-            .dirname_fd = .zero,
+            .dirname_fd = .invalid,
             .file_descriptor = null,
             .loader = this.loader,
             .jsx = jsx,
@@ -807,7 +807,7 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
     const parse_options = Transpiler.Transpiler.ParseOptions{
         .allocator = allocator,
         .macro_remappings = this.transpiler_options.macro_map,
-        .dirname_fd = .zero,
+        .dirname_fd = .invalid,
         .file_descriptor = null,
         .loader = loader orelse this.transpiler_options.default_loader,
         .jsx = jsx,

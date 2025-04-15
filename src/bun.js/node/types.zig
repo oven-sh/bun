@@ -1238,13 +1238,6 @@ pub const ArgumentsSlice = struct {
     }
 };
 
-pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?bun.FileDescriptor {
-    return if (try bun.FDImpl.fromJSValidated(value, ctx)) |fd|
-        fd.encode()
-    else
-        null;
-}
-
 // Equivalent to `toUnixTimestamp`
 //
 // Node.js docs:
@@ -1427,9 +1420,9 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
-        if (try bun.FDImpl.fromJSValidated(first, ctx)) |fd| {
+        if (try bun.FD.fromJSValidated(first, ctx)) |fd| {
             arguments.eat();
-            return JSC.Node.PathOrFileDescriptor{ .fd = fd.encode() };
+            return .{ .fd = fd };
         }
 
         return JSC.Node.PathOrFileDescriptor{

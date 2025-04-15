@@ -17,6 +17,11 @@ const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 pub const log = Output.scoped(.IPC, false);
 
 const IsInternal = enum { internal, external };
+const SerializeAndSendResult = enum {
+    success,
+    failure,
+    backoff,
+};
 
 /// Mode of Inter-Process Communication.
 pub const Mode = enum {
@@ -452,6 +457,11 @@ pub const SendQueue = struct {
         }
         const to_send = first.data.list.items[first.data.cursor..];
         if (to_send.len == 0) {
+            if (this.queue.items.len > 1) {
+                const item = this.queue.orderedRemove(0);
+                item.deinit();
+                return _continueSend(this, socket, reason);
+            }
             return; // nothing to send
         }
         const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send, false);
@@ -537,20 +547,22 @@ const SocketIPCData = struct {
         }
     }
 
-    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, handle: ?Handle) bool {
+    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, handle: ?Handle) SerializeAndSendResult {
         if (Environment.allow_assert) {
             bun.assert(ipc_data.has_written_version == 1);
         }
 
+        const indicate_backoff = ipc_data.send_queue.waiting_for_ack != null and ipc_data.send_queue.queue.items.len > 0;
         const msg = ipc_data.send_queue.startMessage(handle);
         const start_offset = msg.data.list.items.len;
 
-        const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return false;
+        const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return .failure;
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
 
         ipc_data.send_queue.continueSend(global, ipc_data.socket, .new_message_appended);
 
-        return true;
+        if (indicate_backoff) return .backoff;
+        return .success;
     }
 
     pub fn close(this: *SocketIPCData, nextTick: bool) void {
@@ -869,9 +881,9 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         log("sending ipc message with fd: {d}", .{@intFromEnum(zig_handle_resolved.fd)});
     }
 
-    const good = ipc_data.serializeAndSend(globalObject, message, .external, zig_handle);
+    const status = ipc_data.serializeAndSend(globalObject, message, .external, zig_handle);
 
-    if (good) {
+    if (status != .failure) {
         if (callback.isFunction()) {
             JSC.Bun__Process__queueNextTick1(globalObject, callback, .null);
         }
@@ -881,7 +893,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         return doSendErr(globalObject, callback, ex, from);
     }
 
-    return .true;
+    return if (status == .success) .true else .false;
 }
 
 pub const IPCData = if (Environment.isWindows) NamedPipeIPCData else SocketIPCData;

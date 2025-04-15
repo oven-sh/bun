@@ -5,7 +5,6 @@ const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
@@ -1090,7 +1089,10 @@ pub const JSBundler = struct {
 
 const Blob = JSC.WebCore.Blob;
 pub const BuildArtifact = struct {
-    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+    pub const js = JSC.Codegen.JSBuildArtifact;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     blob: JSC.WebCore.Blob,
     loader: options.Loader = .file,

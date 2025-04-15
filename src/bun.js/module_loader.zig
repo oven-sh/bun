@@ -37,7 +37,6 @@ const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
@@ -45,7 +44,6 @@ const JSValue = bun.JSC.JSValue;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const ZigException = bun.JSC.ZigException;
 const ZigStackTrace = bun.JSC.ZigStackTrace;

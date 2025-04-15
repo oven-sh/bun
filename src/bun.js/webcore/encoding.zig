@@ -5,7 +5,6 @@ const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 

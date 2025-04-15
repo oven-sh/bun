@@ -350,7 +350,11 @@ pub const ShellArgs = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
+    pub const js = JSC.Codegen.JSShellInterpreter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the allocator used to allocate interpreter state
@@ -664,8 +668,6 @@ pub const Interpreter = struct {
             }
         }
     };
-
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
 
     const ThisInterpreter = @This();
 
@@ -2031,11 +2033,11 @@ pub const Interpreter = struct {
         fn expandVarArgv(this: *const Expansion, original_int: u8) []const u8 {
             var int = original_int;
             switch (this.base.interpreter.event_loop) {
-                .js => |js| {
+                .js => |event_loop| {
                     if (int == 0) return bun.selfExePath() catch "";
                     int -= 1;
 
-                    const vm = js.virtual_machine;
+                    const vm = event_loop.virtual_machine;
                     if (vm.main.len > 0) {
                         if (int == 0) return vm.main;
                         int -= 1;

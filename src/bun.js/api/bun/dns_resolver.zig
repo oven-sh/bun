@@ -1809,7 +1809,10 @@ pub const DNSResolver = struct {
     pending_addr_cache_cares: AddrPendingCache,
     pending_nameinfo_cache_cares: NameInfoPendingCache,
 
-    pub usingnamespace JSC.Codegen.JSDNSResolver;
+    pub const js = JSC.Codegen.JSDNSResolver;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 

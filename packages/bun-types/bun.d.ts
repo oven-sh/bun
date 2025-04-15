@@ -27,7 +27,7 @@ declare module "bun" {
     | ReadableStreamDefaultReadValueResult<T>
     | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
-  type Transferable = ArrayBuffer | import("worker_threads").MessagePort;
+  type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
@@ -7166,29 +7166,117 @@ declare module "bun" {
 
   type CookieSameSite = "strict" | "lax" | "none";
 
+  /**
+   * A class for working with a single cookie
+   *
+   * @example
+   * ```js
+   * const cookie = new Bun.Cookie("name", "value");
+   * console.log(cookie.toString()); // "name=value; Path=/; SameSite=Lax"
+   * ```
+   */
   class Cookie {
+    /**
+     * Create a new cookie
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
     constructor(name: string, value: string, options?: CookieInit);
+
+    /**
+     * Create a new cookie from a cookie string
+     * @param cookieString - The cookie string
+     */
     constructor(cookieString: string);
+
+    /**
+     * Create a new cookie from a cookie object
+     * @param cookieObject - The cookie object
+     */
     constructor(cookieObject?: CookieInit);
 
+    /**
+     * The name of the cookie
+     */
     readonly name: string;
+
+    /**
+     * The value of the cookie
+     */
     value: string;
+
+    /**
+     * The domain of the cookie
+     */
     domain?: string;
+
+    /**
+     * The path of the cookie
+     */
     path: string;
+
+    /**
+     * The expiration date of the cookie
+     */
     expires?: Date;
+
+    /**
+     * Whether the cookie is secure
+     */
     secure: boolean;
+
+    /**
+     * The same-site attribute of the cookie
+     */
     sameSite: CookieSameSite;
+
+    /**
+     * Whether the cookie is partitioned
+     */
     partitioned: boolean;
+
+    /**
+     * The maximum age of the cookie in seconds
+     */
     maxAge?: number;
+
+    /**
+     * Whether the cookie is HTTP-only
+     */
     httpOnly: boolean;
 
+    /**
+     * Whether the cookie is expired
+     */
     isExpired(): boolean;
 
+    /**
+     * Serialize the cookie to a string
+     */
     serialize(): string;
+
+    /**
+     * Serialize the cookie to a string
+     *
+     * Alias of {@link Cookie.serialize}
+     */
     toString(): string;
+
+    /**
+     * Serialize the cookie to a JSON object
+     */
     toJSON(): CookieInit;
 
+    /**
+     * Parse a cookie string into a Cookie object
+     * @param cookieString - The cookie string
+     */
     static parse(cookieString: string): Cookie;
+
+    /**
+     * Create a new cookie from a name and value and optional options
+     */
     static from(name: string, value: string, options?: CookieInit): Cookie;
   }
 

@@ -1,3 +1,4 @@
 const kDeprecatedReplySymbol = Symbol("deprecatedReply");
+const kHandle = Symbol("kHandle");
 
-export default { kDeprecatedReplySymbol };
+export default { kDeprecatedReplySymbol, kHandle };

@@ -501,7 +501,10 @@ pub const JSGlobalObject = opaque {
     ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
-        _ = this.bunVM().uncaughtException(this, this.takeException(err), false);
+        const exception = this.takeException(err);
+        if (!exception.isTerminationException(this.vm())) {
+            _ = this.bunVM().uncaughtException(this, exception, false);
+        }
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {

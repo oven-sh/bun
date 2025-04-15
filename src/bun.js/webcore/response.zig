@@ -6,7 +6,6 @@ const ZigURL = @import("../../url.zig").URL;
 const http = bun.http;
 const FetchRedirect = http.FetchRedirect;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -59,7 +58,10 @@ const s3 = bun.S3;
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
-    pub usingnamespace JSC.Codegen.JSResponse;
+    pub const js = JSC.Codegen.JSResponse;
+    // NOTE: toJS is overridden
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     body: Body,
     init: Init,
@@ -102,7 +104,7 @@ pub const Response = struct {
 
     pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
         this.calculateEstimatedByteSize();
-        return Response.toJSUnchecked(globalObject, this);
+        return js.toJSUnchecked(globalObject, this);
     }
 
     pub fn getBodyValue(
@@ -330,9 +332,9 @@ pub const Response = struct {
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned response
                     // but especially the original response since it will have a stale .body value now.
-                    Response.bodySetCached(js_wrapper, globalThis, readable.value);
+                    js.bodySetCached(js_wrapper, globalThis, readable.value);
                     if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
-                        Response.bodySetCached(this_value, globalThis, other_readable.value);
+                        js.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }
             }

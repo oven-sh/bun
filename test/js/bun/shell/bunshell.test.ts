@@ -5,7 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -2294,6 +2294,39 @@ echo foo
       .stdout("foo\n")
       .todo("brace grouping not implemented")
       .runAsTest("newlines in brace grouping");
+  });
+});
+
+describe("when a command fails", () => {
+  let e: Bun.$.ShellError;
+
+  beforeAll(async () => {
+    $.throws(true);
+    try {
+      await Bun.$`false`;
+    } catch (err) {
+      e = err as Bun.$.ShellError;
+    } finally {
+      $.nothrow();
+    }
+  });
+
+  it("is an Error instance", () => expect(e).toBeInstanceOf(Error));
+  it("is a ShellError instance", () => expect(e).toBeInstanceOf(Bun.$.ShellError));
+  it("has a stdout buffer", () => expect(e.stdout).toBeInstanceOf(Uint8Array));
+  it("has a stderr buffer", () => expect(e.stderr).toBeInstanceOf(Uint8Array));
+  it("has an exit code of 1", () => expect(e.exitCode).toBe(1));
+  it("is named ShellError", () => expect(e.name).toBe("ShellError"));
+});
+
+describe("ShellError constructor", () => {
+  test.failing("new $.ShellError()", () => {
+    const e = new Bun.$.ShellError();
+    expect(e).toBeInstanceOf(Bun.$.ShellError);
+    expect(e).toBeInstanceOf(Error);
+
+    // TODO(@DonIsaac) fix constructor
+    expect(e.name).toBe("ShellError");
   });
 });
 

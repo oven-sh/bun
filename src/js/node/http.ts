@@ -70,6 +70,9 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kIncomingMessage = Symbol("IncomingMessage");
+const kServerResponse = Symbol("ServerResponse");
+const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -86,10 +89,12 @@ const {
   validateLinkHeaderValue,
   validateObject,
   validateInteger,
+  validateBoolean,
 } = require("internal/validators");
 const { isIP, isIPv6 } = require("node:net");
 const dns = require("node:dns");
 const ObjectKeys = Object.keys;
+const MathMin = Math.min;
 
 const {
   getHeader,
@@ -633,6 +638,77 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
+function storeHTTPOptions(options) {
+  this[kIncomingMessage] = options.IncomingMessage || IncomingMessage;
+  this[kServerResponse] = options.ServerResponse || ServerResponse;
+
+  const maxHeaderSize = options.maxHeaderSize;
+  if (maxHeaderSize !== undefined) validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  this.maxHeaderSize = maxHeaderSize;
+
+  const insecureHTTPParser = options.insecureHTTPParser;
+  if (insecureHTTPParser !== undefined) validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
+  this.insecureHTTPParser = insecureHTTPParser;
+
+  const requestTimeout = options.requestTimeout;
+  if (requestTimeout !== undefined) {
+    validateInteger(requestTimeout, "requestTimeout", 0);
+    this.requestTimeout = requestTimeout;
+  } else {
+    this.requestTimeout = 300_000; // 5 minutes
+  }
+
+  const headersTimeout = options.headersTimeout;
+  if (headersTimeout !== undefined) {
+    validateInteger(headersTimeout, "headersTimeout", 0);
+    this.headersTimeout = headersTimeout;
+  } else {
+    this.headersTimeout = MathMin(60_000, this.requestTimeout); // Minimum between 60 seconds or requestTimeout
+  }
+
+  if (this.requestTimeout > 0 && this.headersTimeout > 0 && this.headersTimeout > this.requestTimeout) {
+    throw $ERR_OUT_OF_RANGE("headersTimeout", "<= requestTimeout", headersTimeout);
+  }
+
+  const keepAliveTimeout = options.keepAliveTimeout;
+  if (keepAliveTimeout !== undefined) {
+    validateInteger(keepAliveTimeout, "keepAliveTimeout", 0);
+    this.keepAliveTimeout = keepAliveTimeout;
+  } else {
+    this.keepAliveTimeout = 5_000; // 5 seconds;
+  }
+
+  const connectionsCheckingInterval = options.connectionsCheckingInterval;
+  if (connectionsCheckingInterval !== undefined) {
+    validateInteger(connectionsCheckingInterval, "connectionsCheckingInterval", 0);
+    this.connectionsCheckingInterval = connectionsCheckingInterval;
+  } else {
+    this.connectionsCheckingInterval = 30_000; // 30 seconds
+  }
+
+  const requireHostHeader = options.requireHostHeader;
+  if (requireHostHeader !== undefined) {
+    validateBoolean(requireHostHeader, "options.requireHostHeader");
+    this.requireHostHeader = requireHostHeader;
+  } else {
+    this.requireHostHeader = true;
+  }
+
+  const joinDuplicateHeaders = options.joinDuplicateHeaders;
+  if (joinDuplicateHeaders !== undefined) {
+    validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+  }
+  this.joinDuplicateHeaders = joinDuplicateHeaders;
+
+  const rejectNonStandardBodyWrites = options.rejectNonStandardBodyWrites;
+  if (rejectNonStandardBodyWrites !== undefined) {
+    validateBoolean(rejectNonStandardBodyWrites, "options.rejectNonStandardBodyWrites");
+    this.rejectNonStandardBodyWrites = rejectNonStandardBodyWrites;
+  } else {
+    this.rejectNonStandardBodyWrites = false;
+  }
+}
+
 type Server = InstanceType<typeof Server>;
 const Server = function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -710,7 +786,7 @@ const Server = function Server(options, callback) {
   }
 
   this[optionsSymbol] = options;
-
+  storeHTTPOptions.$call(this, options);
   if (callback) this.on("request", callback);
   return this;
 } as unknown as typeof import("node:http").Server;
@@ -754,6 +830,8 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
 const ServerPrototype = {
   constructor: Server,
   __proto__: EventEmitter.prototype,
+  [kIncomingMessage]: undefined,
+  [kServerResponse]: undefined,
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -968,6 +1046,7 @@ const ServerPrototype = {
           const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
           const http_res = new ResponseClass(http_req, {
             [kHandle]: handle,
+            [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
           handle.onabort = onServerRequestEvent.bind(socket);
@@ -1973,10 +2052,13 @@ function ServerResponse(req, options) {
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
   if (req.method === "HEAD") this._hasBody = false;
 
-  const handle = options?.[kHandle];
+  if (options) {
+    const handle = options[kHandle];
 
-  if (handle) {
-    this[kHandle] = handle;
+    if (handle) {
+      this[kHandle] = handle;
+    }
+    this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites] ?? false;
   }
 }
 
@@ -2001,6 +2083,7 @@ const ServerResponsePrototype = {
   _removedConnection: false,
   _removedContLen: false,
   _hasBody: true,
+  [kRejectNonStandardBodyWrites]: undefined,
   get headersSent() {
     return (
       this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
@@ -2073,15 +2156,16 @@ const ServerResponsePrototype = {
     }
 
     if (chunk && !this._hasBody) {
-      if (this.req?.method === "HEAD") {
-        chunk = undefined;
-      } else {
+      if (this[kRejectNonStandardBodyWrites]) {
         throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      } else {
+        // node.js just ignore the write in this case
+        chunk = undefined;
       }
     }
 
     if (!handle) {
-      if (typeof callback === "function") {
+      if ($isCallable(callback)) {
         process.nextTick(callback);
       }
       return this;
@@ -2174,7 +2258,12 @@ const ServerResponsePrototype = {
       return false;
     }
     if (chunk && !this._hasBody) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      if (this[kRejectNonStandardBodyWrites]) {
+        throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      } else {
+        // node.js just ignore the write in this case
+        chunk = undefined;
+      }
     }
     let result = 0;
 
@@ -2773,7 +2862,7 @@ function ClientRequest(input, options, cb) {
       }
 
       if (path.startsWith("http://") || path.startsWith("https://")) {
-        return [path`${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
+        return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
         const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;

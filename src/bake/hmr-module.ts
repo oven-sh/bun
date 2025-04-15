@@ -14,6 +14,7 @@ import {
   __name,
   __using,
 } from "../runtime.bun";
+import { mainWebSocket } from "./client/websocket";
 
 /** List of loaded modules. Every `Id` gets one HMRModule, mutated across updates. */
 let registry = new Map<Id, HMRModule>();
@@ -29,6 +30,7 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions;
+let beforeUnload: null | Promise<void> = null;
 
 const enum State {
   Pending,
@@ -221,22 +223,21 @@ export class HMRModule {
     if (event.startsWith("vite:")) {
       event = "bun:" + event.slice(4);
     }
-
-    (eventHandlers[event] ??= []).push(cb);
+    onHotEvent(event, cb);
     this.dispose(() => this.off(event, cb));
   }
 
   off(event: string, cb: HotEventHandler) {
-    const handlers = eventHandlers[event];
-    if (!handlers) return;
-    const index = handlers.indexOf(cb);
-    if (index !== -1) {
-      handlers.splice(index, 1);
-    }
+    offHotEvent(event, cb);
   }
 
-  send(event: string, cb: HotEventHandler) {
-    throw new Error("TODO: implement ImportMetaHot.send");
+  send(event: string, data: any) {
+    if (data && data instanceof ArrayBuffer) {
+      mainWebSocket.send(encodeEvent(event, data));
+    } else {
+      const encodedData = JSON.stringify(data);
+      mainWebSocket.send("E" + event + "\0" + encodedData);
+    }
   }
 
   declare indirectHot: any;
@@ -257,6 +258,30 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
     throw new Error(`The import.meta.hot object cannot be mutated.`);
   },
 });
+
+export function onHotEvent(event: string, cb: HotEventHandler) {
+  const handlers = (eventHandlers[event] ??= []);
+  handlers.push(cb);
+  if (!event.startsWith("bun:")) {
+    if (handlers.length === 1) {
+      mainWebSocket.send("a" + event);
+    }
+  }
+}
+
+export function offHotEvent(event: string, cb: HotEventHandler) {
+  const handlers = eventHandlers[event];
+  if (!handlers) return;
+  const index = handlers.indexOf(cb);
+  if (index !== -1) {
+    handlers.splice(index, 1);
+    if (!event.startsWith("bun:")) {
+      if (handlers.length === 0) {
+        mainWebSocket.send("r" + event);
+      }
+    }
+  }
+}
 
 // TODO: This function is currently recursive.
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
@@ -436,7 +461,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     DEBUG.ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)
-        : list.every(x => x instanceof HMRModule)
+        : list.every(x => x instanceof HMRModule),
     );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
@@ -517,7 +542,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         DEBUG.ASSERT(typeof key === "string");
         // TODO: there is a bug in the way exports are verified. Additionally a
         // possible performance issue. For the meantime, this is disabled since
-        // it was not shipped in the initial 1.2.3 HMR, and real issues will 
+        // it was not shipped in the initial 1.2.3 HMR, and real issues will
         // just throw 'undefined is not a function' or so on.
 
         // if (!availableExportKeys.includes(key)) {
@@ -533,7 +558,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       i = expectedExportKeyEnd;
 
       if (IS_BUN_DEVELOPMENT) {
-        DEBUG.ASSERT(list[list.length - 1] as any instanceof HMRModule);
+        DEBUG.ASSERT((list[list.length - 1] as any) instanceof HMRModule);
       }
     }
   }
@@ -579,7 +604,7 @@ type HotEventHandler = (data: any) => void;
 
 // If updating this, make sure the `devserver.d.ts` types are
 // kept in sync.
-type HMREvent = 
+type HMREvent =
   | "bun:ready"
   | "bun:beforeUpdate"
   | "bun:afterUpdate"
@@ -663,6 +688,12 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
 
   // If roots were hit, print a nice message before reloading.
   if (failures) {
+    // A reload is about to happen, but if that reload doesn't ever happen
+    // (cancel), Bun should propagate this HMR error
+    if (beforeUnload) {
+      await beforeUnload;
+    }
+
     let message =
       "[Bun] Hot update was not accepted because it or its importers do not call `import.meta.hot.accept`. To prevent full page reloads, call `import.meta.hot.accept` in one of the following files to handle the update:\n\n";
 
@@ -670,9 +701,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-        DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-        DEBUG.ASSERT(current);
-        DEBUG.ASSERT(current.selfAccept === null);
+      DEBUG.ASSERT(current);
+      DEBUG.ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
@@ -796,7 +826,7 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
-export function emitEvent(event: HMREvent, data: any) {
+export function emitEvent(event: HMREvent | string, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
   for (const handler of handlers) {
@@ -940,14 +970,43 @@ if (side === "client") {
   registerSynthetic("bun:bake/client", {
     onServerSideReload: cb => (onServerSideReload = cb),
   });
+  window.addEventListener("navigate", ev => {
+    beforeUnload = new Promise(resolve => {
+      function done() {
+        window.removeEventListener("navigatesuccess", done);
+        window.removeEventListener("navigateerror", done);
+        resolve();
+      }
+      window.addEventListener("navigatesuccess", done);
+      window.addEventListener("navigateerror", done);
+    });
+  });
 }
 
 // The following API may be altered at any point.
 // Thankfully, you can just call `import.meta.hot.on`
-let testingHook = globalThis['bun do not use this outside of internal testing or else i\'ll cry'];
+let testingHook = globalThis["bun do not use this outside of internal testing or else i'll cry"];
 testingHook?.({
   onEvent(event: HMREvent, cb) {
     eventHandlers[event] ??= [];
     eventHandlers[event]!.push(cb);
   },
 });
+
+function encodeEvent(event: string, data: ArrayBuffer) {
+  const bytes = new Uint8Array(data.byteLength + 3 + event.length);
+  let j = 0;
+  bytes[j++] = "E".charCodeAt(0);
+  for (let i = 0, eventNameLength = event.length; i < eventNameLength; i++) {
+    bytes[j++] = event.charCodeAt(i);
+  }
+
+  // End of event name
+  bytes[j++] = 0;
+
+  // Binary message
+  bytes[j++] = 0;
+
+  bytes.set(new Uint8Array(data), j);
+  return bytes.buffer;
+}

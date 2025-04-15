@@ -36,7 +36,7 @@ let wait =
         })
     : () => new Promise<void>(done => setTimeout(done, 2_500));
 
-let mainWebSocket: WebSocketWrapper | null = null;
+export let mainWebSocket: WebSocketWrapper = null!;
 
 interface WebSocketWrapper {
   /** When re-connected, this is re-assigned */
@@ -46,16 +46,14 @@ interface WebSocketWrapper {
   [Symbol.dispose](): void;
 }
 
-export function getMainWebSocket(): WebSocketWrapper | null {
-  return mainWebSocket;
-}
-
 export function initWebSocket(
-  handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
+  handlers: Record<number, (dv: any, ws: WebSocket) => void>,
   { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
   let firstConnection = true;
   let closed = false;
+
+  let bufferedMessages: any[] = [];
 
   const wsProxy: WebSocketWrapper = {
     wrapped: null,
@@ -63,13 +61,15 @@ export function initWebSocket(
       const wrapped = this.wrapped;
       if (wrapped && wrapped.readyState === 1) {
         wrapped.send(data);
+      } else {
+        bufferedMessages.push(data);
       }
     },
     close() {
       closed = true;
       this.wrapped?.close();
       if (mainWebSocket === this) {
-        mainWebSocket = null;
+        mainWebSocket = null!;
       }
     },
     [Symbol.dispose]() {
@@ -84,6 +84,10 @@ export function initWebSocket(
   function onFirstOpen() {
     console.info("[Bun] Hot-module-reloading socket connected, waiting for changes...");
     onStatusChange?.(true);
+    for (const message of bufferedMessages) {
+      wsProxy.send(message);
+    }
+    bufferedMessages = [];
   }
 
   function onMessage(ev: MessageEvent<string | ArrayBuffer>) {
@@ -94,6 +98,11 @@ export function initWebSocket(
         console.info("[WS] receive message '" + String.fromCharCode(view.getUint8(0)) + "',", new Uint8Array(data));
       }
       handlers[view.getUint8(0)]?.(view, ws);
+    } else {
+      if (IS_BUN_DEVELOPMENT) {
+        console.info("[WS] receive string message '" + data[0] + "'");
+      }
+      handlers[data.charCodeAt(0)]?.(data, ws);
     }
   }
 
@@ -124,6 +133,10 @@ export function initWebSocket(
         done(true);
         onStatusChange?.(true);
         ws.onerror = onError;
+        for (const message of bufferedMessages) {
+          ws.send(message);
+        }
+        bufferedMessages = [];
       };
       ws.onmessage = onMessage;
       ws.onerror = ev => {

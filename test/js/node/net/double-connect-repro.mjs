@@ -1,5 +1,5 @@
 import { fork } from "child_process";
-import { createServer, connect } from "net";
+import { connect, createServer } from "net";
 
 if (process.argv[2] === "child") {
   // child

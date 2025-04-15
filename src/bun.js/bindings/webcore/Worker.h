@@ -68,8 +68,9 @@ public:
     using ThreadSafeRefCounted::ref;
 
     void terminate();
-    bool wasTerminated() const { return m_terminationFlags & TerminatedFlag; }
+    bool wasTerminated() const;
     bool hasPendingActivity() const;
+    bool isClosingOrTerminated() const;
     bool updatePtr();
 
     String identifier() const { return m_identifier; }

@@ -292,6 +292,11 @@ void Worker::terminate()
 //     }
 // }
 
+bool Worker::wasTerminated() const
+{
+    return m_terminationFlags & TerminatedFlag;
+}
+
 bool Worker::hasPendingActivity() const
 {
     auto onlineClosingFlags = m_onlineClosingFlags.load();
@@ -300,6 +305,11 @@ bool Worker::hasPendingActivity() const
     }
 
     return !(m_terminationFlags & TerminatedFlag);
+}
+
+bool Worker::isClosingOrTerminated() const
+{
+    return m_onlineClosingFlags & ClosingFlag;
 }
 
 void Worker::dispatchEvent(Event& event)

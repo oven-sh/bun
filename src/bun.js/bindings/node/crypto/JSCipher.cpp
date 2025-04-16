@@ -12,6 +12,7 @@
 #include "CryptoUtil.h"
 #include "openssl/rsa.h"
 #include "NodeValidator.h"
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -67,19 +68,51 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
 
-    ncrypto::EVPKeyPointer pkey;
+    KeyObject keyObject;
     switch (keyType) {
     case KeyType::Public: {
-        // TODO: !!!!!!!!!!
+        auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, optionsValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (prepareResult.keyData) {
+            RefPtr<KeyObjectData> data = *prepareResult.keyData;
+            keyObject = KeyObject::create(CryptoKeyType::Public, WTFMove(data));
+        } else {
+            keyObject = KeyObject::getPublicOrPrivateKey(
+                globalObject,
+                scope,
+                prepareResult.keyDataView,
+                CryptoKeyType::Public,
+                prepareResult.formatType,
+                prepareResult.encodingType,
+                prepareResult.cipher,
+                WTFMove(prepareResult.passphrase));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        break;
     }
     case KeyType::Private: {
-        std::optional<ncrypto::EVPKeyPointer> privateKey = preparePrivateKey(lexicalGlobalObject, scope, optionsValue);
-        ASSERT(!!scope.exception() == !privateKey.has_value());
+        auto prepareResult = KeyObject::preparePrivateKey(globalObject, scope, optionsValue);
         RETURN_IF_EXCEPTION(scope, {});
-        pkey = WTFMove(privateKey.value());
+        if (prepareResult.keyData) {
+            RefPtr<KeyObjectData> data = *prepareResult.keyData;
+            keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(data));
+        } else {
+            keyObject = KeyObject::getPublicOrPrivateKey(
+                globalObject,
+                scope,
+                prepareResult.keyDataView,
+                CryptoKeyType::Private,
+                prepareResult.formatType,
+                prepareResult.encodingType,
+                prepareResult.cipher,
+                WTFMove(prepareResult.passphrase));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         break;
     }
     }
+
+    auto& pkey = keyObject.asymmetricKey();
 
     ncrypto::Digest digest;
     int32_t padding = defaultPadding;

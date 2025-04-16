@@ -43,8 +43,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
 
     if (prepareResult.keyData) {
         RefPtr<KeyObjectData> keyData = *prepareResult.keyData;
-        keyData->type = CryptoKeyType::Public;
-        keyObject = KeyObject::create(WTFMove(keyData));
+        keyObject = KeyObject::create(CryptoKeyType::Public, WTFMove(keyData));
     } else {
         keyObject = KeyObject::getPublicOrPrivateKey(
             globalObject,
@@ -79,8 +78,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
 
     if (prepareResult.keyData) {
         auto keyData = *prepareResult.keyData;
-        keyData->type = CryptoKeyType::Private;
-        keyObject = KeyObject::create(WTFMove(keyData));
+        keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(keyData));
     } else {
         keyObject = KeyObject::getPublicOrPrivateKey(
             globalObject,

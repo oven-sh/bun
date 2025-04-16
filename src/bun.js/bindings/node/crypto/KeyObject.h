@@ -15,8 +15,9 @@ namespace Bun {
 class KeyObject {
     WTF_MAKE_TZONE_ALLOCATED(KeyObject);
 
-    KeyObject(RefPtr<KeyObjectData>&& data)
+    KeyObject(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data)
         : m_data(WTFMove(data))
+        , m_type(type)
     {
     }
 
@@ -27,7 +28,7 @@ public:
     static WebCore::ExceptionOr<KeyObject> create(WebCore::CryptoKey&);
     static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey);
-    static KeyObject create(RefPtr<KeyObjectData>&& data);
+    static KeyObject create(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data);
     // static KeyObject createJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
 
     enum class KeyEncodingContext {
@@ -109,13 +110,15 @@ public:
 
     std::optional<bool> equals(const KeyObject& other) const;
 
-    inline WebCore::CryptoKeyType type() const { return m_data->type; }
+    inline WebCore::CryptoKeyType type() const { return m_type; }
+    inline WebCore::CryptoKeyType& type() { return m_type; }
     const WTF::Vector<uint8_t>& symmetricKey() const { return m_data->symmetricKey; }
     const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_data->asymmetricKey; }
     RefPtr<KeyObjectData> data() const { return m_data; }
 
 private:
     RefPtr<KeyObjectData> m_data = nullptr;
+    WebCore::CryptoKeyType m_type = WebCore::CryptoKeyType::Secret;
 };
 
 }

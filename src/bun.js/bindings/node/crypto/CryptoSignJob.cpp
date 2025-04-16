@@ -342,16 +342,15 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     RETURN_IF_EXCEPTION(scope, {});
 
     ClearErrorOnReturn clearError;
+    auto keyType = mode == Mode::Verify
+        ? CryptoKeyType::Public
+        : CryptoKeyType::Private;
 
     KeyObject keyObject;
 
     if (prepareResult.keyData) {
-        keyObject = KeyObject::create(WTFMove(*prepareResult.keyData));
+        keyObject = KeyObject::create(keyType, WTFMove(*prepareResult.keyData));
     } else {
-
-        auto keyType = mode == Mode::Verify
-            ? CryptoKeyType::Public
-            : CryptoKeyType::Private;
 
         keyObject = KeyObject::getPublicOrPrivateKey(
             globalObject,

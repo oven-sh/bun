@@ -310,6 +310,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
 
     if (config.output_key_object) {
         KeyObject keyObject = *this;
+        keyObject.type() = CryptoKeyType::Public;
         Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject);
         JSPublicKeyObject* publicKey = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
         return publicKey;
@@ -642,9 +643,9 @@ static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::Cryp
     }
 }
 
-KeyObject KeyObject::create(RefPtr<KeyObjectData>&& data)
+KeyObject KeyObject::create(CryptoKeyType type, RefPtr<KeyObjectData>&& data)
 {
-    return KeyObject(WTFMove(data));
+    return KeyObject(type, WTFMove(data));
 }
 
 WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
@@ -698,13 +699,13 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
 KeyObject KeyObject::create(WTF::Vector<uint8_t>&& symmetricKey)
 {
     RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
-    return KeyObject(WTFMove(data));
+    return KeyObject(CryptoKeyType::Secret, WTFMove(data));
 }
 
 KeyObject KeyObject::create(CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey)
 {
-    RefPtr<KeyObjectData> data = KeyObjectData::create(type, WTFMove(asymmetricKey));
-    return KeyObject(WTFMove(data));
+    RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(asymmetricKey));
+    return KeyObject(type, WTFMove(data));
 }
 
 void KeyObject::getKeyObjectFromHandle(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, const KeyObject& handle, PrepareAsymmetricKeyMode mode)

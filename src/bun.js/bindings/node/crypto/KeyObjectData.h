@@ -9,13 +9,11 @@ struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
 
     KeyObjectData(WTF::Vector<uint8_t>&& symmetricKey)
         : symmetricKey(WTFMove(symmetricKey))
-        , type(WebCore::CryptoKeyType::Secret)
     {
     }
 
-    KeyObjectData(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey)
+    KeyObjectData(ncrypto::EVPKeyPointer&& asymmetricKey)
         : asymmetricKey(WTFMove(asymmetricKey))
-        , type(type)
     {
     }
 
@@ -27,12 +25,11 @@ public:
         return adoptRef(*new KeyObjectData(WTFMove(symmetricKey)));
     }
 
-    static RefPtr<KeyObjectData> create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey)
+    static RefPtr<KeyObjectData> create(ncrypto::EVPKeyPointer&& asymmetricKey)
     {
-        return adoptRef(*new KeyObjectData(type, WTFMove(asymmetricKey)));
+        return adoptRef(*new KeyObjectData(WTFMove(asymmetricKey)));
     }
 
     WTF::Vector<uint8_t> symmetricKey;
     ncrypto::EVPKeyPointer asymmetricKey;
-    WebCore::CryptoKeyType type;
 };

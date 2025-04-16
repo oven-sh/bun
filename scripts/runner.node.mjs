@@ -677,6 +677,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
+  // Check if this is an ASAN build by examining the executable name
+  const isAsanBuild = /bun-asan(?:\.exe)?$/i.test(execPath);
+
   const bunEnv = {
     ...process.env,
     PATH: path,
@@ -696,6 +699,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };
+  
+  // Set ASAN-specific environment variables if using an ASAN build
+  if (isAsanBuild) {
+    bunEnv.ASAN_OPTIONS = "detect_leaks=0:halt_on_error=0:detect_odr_violation=0";
+  }
 
   if (env) {
     Object.assign(bunEnv, env);
@@ -769,7 +777,10 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
-  const timeout = getTestTimeout(testPath);
+  // Check if we're using an ASAN build by examining the executable name
+  const isAsanBuild = /bun-asan(?:\.exe)?$/i.test(execPath);
+  
+  const timeout = getTestTimeout(testPath, isAsanBuild);
   const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(options["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
@@ -831,16 +842,20 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 
 /**
  * @param {string} testPath
+ * @param {boolean} [isAsanBuild=false]
  * @returns {number}
  */
-function getTestTimeout(testPath) {
+function getTestTimeout(testPath, isAsanBuild = false) {
+  // ASAN builds require significantly more time
+  const asanMultiplier = isAsanBuild ? 2 : 1;
+  
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
-    return integrationTimeout;
+    return integrationTimeout * asanMultiplier;
   }
   if (/napi/i.test(testPath)) {
-    return napiTimeout;
+    return napiTimeout * asanMultiplier;
   }
-  return testTimeout;
+  return testTimeout * asanMultiplier;
 }
 
 /**
@@ -1390,7 +1405,8 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+    // Also match bun-asan for ASAN builds
+    if (/bun(?:-asan)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }

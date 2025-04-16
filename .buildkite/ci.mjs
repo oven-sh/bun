@@ -562,6 +562,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   const { os, profile } = platform;
   const { buildId, unifiedTests, testFiles } = testOptions;
 
+  // Use the proper target key for the step name
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);

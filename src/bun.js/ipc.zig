@@ -358,6 +358,9 @@ pub const SendQueue = struct {
     keep_alive: bun.Async.KeepAlive = .{},
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
     mode: Mode,
+    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
+    incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
+    incoming_fd: ?bun.FileDescriptor = null,
     pub fn init(mode: Mode) @This() {
         return .{ .queue = .init(bun.default_allocator), .mode = mode };
     }
@@ -365,6 +368,8 @@ pub const SendQueue = struct {
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
         self.keep_alive.disable();
+        self.internal_msg_queue.deinit();
+        self.incoming.deinitWithAllocator(bun.default_allocator);
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
     }
 
@@ -531,19 +536,14 @@ const MAX_HANDLE_RETRANSMISSIONS = 3;
 const SocketIPCData = struct {
     socket: Socket,
 
-    incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
-    incoming_fd: ?bun.FileDescriptor = null,
     send_queue: SendQueue,
-    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
     is_server: bool = false,
     close_next_tick: ?JSC.Task = null,
 
     pub fn deinit(ipc_data: *SocketIPCData) void {
-        // ipc_data.socket may already be UAF when this is called
-        ipc_data.internal_msg_queue.deinit();
+        // ipc_data.socket is already freed when this is called
         ipc_data.send_queue.deinit();
-        ipc_data.incoming.deinitWithAllocator(bun.default_allocator);
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if (ipc_data.close_next_tick) |close_next_tick_task| {
@@ -969,7 +969,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         };
                         if (cmd_str.eqlComptime("NODE_HANDLE")) {
                             // Handle NODE_HANDLE message
-                            const ack = ipc.incoming_fd != null;
+                            const ack = ipc.send_queue.incoming_fd != null;
 
                             const packet = if (ack) getAckPacket(ipc.send_queue.mode) else getNackPacket(ipc.send_queue.mode);
                             var handle = SendHandle{ .data = .{}, .handle = null, .callback = .zero };
@@ -984,8 +984,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             if (!ack) return;
 
                             // Get file descriptor and clear it
-                            const fd = ipc.incoming_fd.?;
-                            ipc.incoming_fd = null;
+                            const fd = ipc.send_queue.incoming_fd.?;
+                            ipc.send_queue.incoming_fd = null;
 
                             const target: bun.JSC.JSValue = switch (Context) {
                                 bun.JSC.Subprocess => @as(*bun.JSC.Subprocess, this).toJS(globalThis),
@@ -1045,11 +1045,11 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
             // Decode the message with just the temporary buffer, and if that
             // fails (not enough bytes) then we allocate to .ipc_buffer
-            if (ipc.incoming.len == 0) {
+            if (ipc.send_queue.incoming.len == 0) {
                 while (true) {
                     const result = decodeIPCMessage(ipc.send_queue.mode, data, globalThis) catch |e| switch (e) {
                         error.NotEnoughBytes => {
-                            _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+                            _ = ipc.send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
                             log("hit NotEnoughBytes", .{});
                             return;
                         },
@@ -1075,15 +1075,15 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                 }
             }
 
-            _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+            _ = ipc.send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
 
-            var slice = ipc.incoming.slice();
+            var slice = ipc.send_queue.incoming.slice();
             while (true) {
                 const result = decodeIPCMessage(ipc.send_queue.mode, slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
-                        bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);
-                        ipc.incoming.len = @truncate(slice.len);
+                        bun.copy(u8, ipc.send_queue.incoming.ptr[0..slice.len], slice);
+                        ipc.send_queue.incoming.len = @truncate(slice.len);
                         log("hit NotEnoughBytes2", .{});
                         return;
                     },
@@ -1105,7 +1105,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                     slice = slice[result.bytes_consumed..];
                 } else {
                     // clear the buffer
-                    ipc.incoming.len = 0;
+                    ipc.send_queue.incoming.len = 0;
                     return;
                 }
             }
@@ -1118,10 +1118,10 @@ fn NewSocketIPCHandler(comptime Context: type) type {
         ) void {
             const ipc: *IPCData = this.ipc() orelse return;
             log("onFd: {d}", .{fd});
-            if (ipc.incoming_fd != null) {
+            if (ipc.send_queue.incoming_fd != null) {
                 log("onFd: incoming_fd already set; overwriting", .{});
             }
-            ipc.incoming_fd = @enumFromInt(fd);
+            ipc.send_queue.incoming_fd = @enumFromInt(fd);
         }
 
         pub fn onWritable(
@@ -1177,10 +1177,10 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
     return struct {
         fn onReadAlloc(this: *Context, suggested_size: usize) []u8 {
             const ipc = this.ipc() orelse return "";
-            var available = ipc.incoming.available();
+            var available = ipc.send_queue.incoming.available();
             if (available.len < suggested_size) {
-                ipc.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
-                available = ipc.incoming.available();
+                ipc.send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
+                available = ipc.send_queue.incoming.available();
             }
             log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});
             return available.ptr[0..suggested_size];
@@ -1197,11 +1197,11 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             const ipc = this.ipc() orelse return;
 
             log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
-            ipc.incoming.len += @as(u32, @truncate(buffer.len));
-            var slice = ipc.incoming.slice();
+            ipc.send_queue.incoming.len += @as(u32, @truncate(buffer.len));
+            var slice = ipc.send_queue.incoming.slice();
 
-            bun.assert(ipc.incoming.len <= ipc.incoming.cap);
-            bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
+            bun.assert(ipc.send_queue.incoming.len <= ipc.send_queue.incoming.cap);
+            bun.assert(bun.isSliceInBuffer(buffer, ipc.send_queue.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
                 .pointer => this.globalThis,
@@ -1218,8 +1218,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 const result = decodeIPCMessage(ipc.mode, slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
-                        bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);
-                        ipc.incoming.len = @truncate(slice.len);
+                        bun.copy(u8, ipc.send_queue.incoming.ptr[0..slice.len], slice);
+                        ipc.send_queue.incoming.len = @truncate(slice.len);
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
@@ -1240,7 +1240,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     slice = slice[result.bytes_consumed..];
                 } else {
                     // clear the buffer
-                    ipc.incoming.len = 0;
+                    ipc.send_queue.incoming.len = 0;
                     return;
                 }
             }

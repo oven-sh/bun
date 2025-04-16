@@ -256,6 +256,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
+
+#if ASAN_ENABLED && OS(LINUX)
+    // ASAN interferes with JSC's signal handlers
+    JSC::Options::useWasmFaultSignalHandler() = false;
+    JSC::Options::useWasmFastMemory() = false;
+#endif
+
     JSC::initialize();
     {
 
@@ -281,12 +288,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;
-#endif
-
-#if ASAN_ENABLED && OS(LINUX)
-        // ASAN interferes with JSC's signal handlers
-        JSC::Options::useWasmFaultSignalHandler() = false;
-        JSC::Options::useWasmFastMemory() = false;
 #endif
 
         if (LIKELY(envc > 0)) {

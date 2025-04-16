@@ -60,7 +60,10 @@ function getTargetKey(target) {
   if (baseline) {
     key += "-baseline";
   }
-  if (profile && profile !== "release") {
+  // Special case for ASAN builds
+  if (profile === "asan") {
+    key += "-asan";
+  } else if (profile && profile !== "release") {
     key += `-${profile}`;
   }
   return key;
@@ -79,7 +82,10 @@ function getTargetLabel(target) {
   if (baseline) {
     label += "-baseline";
   }
-  if (profile && profile !== "release") {
+  // Special case for ASAN builds
+  if (profile === "asan") {
+    label += "-asan";
+  } else if (profile && profile !== "release") {
     label += `-${profile}`;
   }
   return label;
@@ -167,7 +173,10 @@ function getPlatformLabel(platform) {
   if (baseline) {
     label += "-baseline";
   }
-  if (profile && profile !== "release") {
+  // Special case for ASAN builds
+  if (profile === "asan") {
+    label += "-asan";
+  } else if (profile && profile !== "release") {
     label += `-${profile}`;
   }
   return label;

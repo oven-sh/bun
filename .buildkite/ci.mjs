@@ -1156,12 +1156,31 @@ async function getPipeline(options = {}) {
 
   if (!buildId) {
     // Log the platforms and profiles being used for debugging
-    console.log("Build platforms:", buildPlatforms.map(p => ({ os: p.os, arch: p.arch, profile: p.profile })));
+    console.log("Build platforms:", buildPlatforms.map(p => ({ os: p.os, arch: p.arch, profile: p.profile, distro: p.distro, release: p.release })));
     console.log("Build profiles:", buildProfiles);
     
+    // First, separate platforms with predefined profiles
+    const platformsWithProfiles = buildPlatforms.filter(platform => platform.profile);
+    const platformsWithoutProfiles = buildPlatforms.filter(platform => !platform.profile);
+
+    // Apply profiles only to platforms without predefined profiles
+    const allPlatformsWithProfiles = [
+      ...platformsWithProfiles,
+      ...platformsWithoutProfiles.flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+    ];
+    
+    // Debug the final list of platforms with their profiles
+    console.log("All platforms with profiles:", allPlatformsWithProfiles.map(p => ({
+      os: p.os, 
+      arch: p.arch, 
+      profile: p.profile, 
+      distro: p.distro,
+      release: p.release,
+      key: `${getTargetKey(p)}${p.distro ? `-${p.distro}-${p.release}` : ""}-build-vendor${p.profile === "asan" ? "-asan" : ""}`
+    })));
+
     steps.push(
-      ...buildPlatforms
-        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+      ...allPlatformsWithProfiles
         .map(target => {
           const imageKey = getImageKey(target);
 
@@ -1197,9 +1216,18 @@ async function getPipeline(options = {}) {
   if (!isMainBranch()) {
     const { skipTests, forceTests, unifiedTests, testFiles } = options;
     if (!skipTests || forceTests) {
+      // First, separate platforms with predefined profiles
+      const testPlatformsWithProfiles = testPlatforms.filter(platform => platform.profile);
+      const testPlatformsWithoutProfiles = testPlatforms.filter(platform => !platform.profile);
+
+      // Apply profiles only to platforms without predefined profiles
+      const allTestPlatformsWithProfiles = [
+        ...testPlatformsWithProfiles,
+        ...testPlatformsWithoutProfiles.flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+      ];
+
       steps.push(
-        ...testPlatforms
-          .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+        ...allTestPlatformsWithProfiles
           .map(target => {
             // Create a unique key for the platform by including distro and release
             const { distro, release, profile } = target;

@@ -4,10 +4,7 @@ if(DEBUG)
 #   set(bun bun-smol-profile)
 #   set(bunStrip bun-smol)
 elseif(RELEASE AND ENABLE_ASAN_RELEASE)
-  set(bun bun-asan-release)
-  if(ENABLE_ASSERTIONS)
-    set(bun bun-asan-release-assert)
-  endif()
+  set(bun bun-asan)
   # Set a distinct name for stripped ASAN build
   set(bunStrip bun-asan)
 elseif(ENABLE_VALGRIND)
@@ -65,6 +62,14 @@ set(BUN_ERROR_OUTPUTS
   ${BUN_ERROR_OUTPUT}/index.js
   ${BUN_ERROR_OUTPUT}/bun-error.css
 )
+
+set(DEFAULT_ENABLE_ZIG_ASAN OFF)
+if (ENABLE_ASAN_RELEASE)
+  set(DEFAULT_ENABLE_ZIG_ASAN ON)
+  set(ENABLE_LOGS ON)
+endif()
+
+optionx(ENABLE_ZIG_ASAN BOOL "If Zig ASAN should be enabled" DEFAULT ${DEFAULT_ENABLE_ZIG_ASAN})
 
 register_bun_install(
   CWD
@@ -606,6 +611,7 @@ register_command(
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}

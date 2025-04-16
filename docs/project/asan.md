@@ -26,6 +26,7 @@ Bun CI includes ASAN builds to catch memory errors. These builds are configured 
 - Assertions enabled for both Bun and WebKit
 
 The CI pipeline automatically:
+
 - Builds a special ASAN-enabled release build for Linux
 - Runs all tests to thoroughly check for memory issues
 - Uses reduced parallelism to avoid memory pressure during testing
@@ -61,11 +62,11 @@ When running an ASAN build, you can configure behavior with environment variable
 
 ```bash
 # Basic ASAN options - leak detection disabled (recommended)
-ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:detect_odr_violation=0 ./build/bun-asan-release-assert
+ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:detect_odr_violation=0 ./build/bun-asan
 
 # If you really need leak detection (will produce A LOT of noise)
-# ASAN_OPTIONS=detect_leaks=1:leak_check_at_exit=1:halt_on_error=0 ./build/bun-asan-release-assert
-# LSAN_OPTIONS=suppressions=lsan.supp:print_suppressions=1 ./build/bun-asan-release-assert
+# ASAN_OPTIONS=detect_leaks=1:leak_check_at_exit=1:halt_on_error=0 ./build/bun-asan
+# LSAN_OPTIONS=suppressions=lsan.supp:print_suppressions=1 ./build/bun-asan
 ```
 
 > **Warning**: Enabling leak detection will generate excessive noise due to deliberately uncollected memory in WebKit and other components. It's recommended to keep leak detection disabled and focus on other memory errors like use-after-free, buffer overflows, etc.
@@ -97,12 +98,14 @@ ASAN can detect several types of memory errors:
 5. **Use-after-return**: When a function returns a pointer to stack memory that's no longer valid
 
 When an error is detected, ASAN will print a helpful report showing:
+
 - The type of error
 - The memory address where the error occurred
 - A stack trace showing the code path that led to the error
 - Information about the memory allocation/deallocation (if relevant)
 
 Example error output:
+
 ```
 ==1234==ERROR: AddressSanitizer: heap-use-after-free on address 0x614000000044 at pc 0x55d8e2ac1f14...
 READ of size 4 at 0x614000000044 thread T0
@@ -123,6 +126,7 @@ READ of size 4 at 0x7f7ddab8c084 thread T0
 ```
 
 Key components of the report:
+
 - Error type (heap-use-after-free, heap-buffer-overflow, etc.)
 - Operation (READ/WRITE) and size
 - Stack trace showing where the error occurred

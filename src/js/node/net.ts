@@ -587,6 +587,22 @@ Socket.prototype.address = function address() {
   };
 };
 
+Socket.prototype._onTimeout = function () {
+  // if there is pending data, write is in progress
+  // so we suppress the timeout
+  if (this._pendingData) {
+    return;
+  }
+
+  const handle = this._handle;
+  // if there is a handle, and it has pending data,
+  // we suppress the timeout because a write is in progress
+  if (handle && handle.bufferedAmount > 0) {
+    return;
+  }
+  this.emit("timeout");
+};
+
 Object.defineProperty(Socket.prototype, "bufferSize", {
   get: function () {
     return this.writableLength;

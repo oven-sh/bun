@@ -563,7 +563,7 @@ function getBuildBunStep(platform, options) {
  * @returns {Step}
  */
 function getTestBunStep(platform, options, testOptions = {}) {
-  const { asan } = platform;
+  const { asan, os } = platform;
   const { buildId, unifiedTests, testFiles } = testOptions;
 
   // Use the proper target key for the step name

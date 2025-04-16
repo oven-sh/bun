@@ -237,6 +237,9 @@ var FakeSocket = class Socket extends Duplex {
   connect(port, host, connectListener) {
     return this;
   }
+  _onTimeout = function () {
+    this.emit("timeout");
+  };
 
   _destroy(err, callback) {
     const socketData = this[kInternalSocketData];
@@ -380,6 +383,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onCloseForDestroy(closeCallback) {
     this.#onClose();
     $isCallable(closeCallback) && closeCallback();
+  }
+
+  _onTimeout() {
+    const handle = this[kHandle];
+    const response = handle?.response;
+    // if there is a response, and it has pending data,
+    // we suppress the timeout because a write is in progress
+    if (response && response.bufferedAmount > 0) {
+      return;
+    }
+    this.emit("timeout");
+  }
+  _unrefTimer() {
+    // for compatibility
   }
 
   address() {

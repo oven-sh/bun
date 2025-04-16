@@ -382,7 +382,7 @@ pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSV
 
 pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
     if (this.flags.request_has_completed or this.flags.socket_closed) {
-        return JSC.JSValue.jsNull();
+        return JSC.JSValue.jsNumber(0);
     }
 
     return JSC.JSValue.jsNumber(this.raw_response.getBufferedAmount());

@@ -91,6 +91,9 @@ function generate(ssl) {
       bytesWritten: {
         getter: "getBytesWritten",
       },
+      bufferedAmount: {
+        getter: "getBufferedAmount",
+      },
       setNoDelay: {
         fn: "setNoDelay",
         length: 1,

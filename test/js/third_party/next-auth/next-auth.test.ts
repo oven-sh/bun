@@ -8,7 +8,9 @@ describe("next-auth", () => {
       allowErrors: true,
       savesLockfile: false,
     });
-    const result = bunRun(join(import.meta.dir, "fixture", "server.js"));
+    const result = bunRun(join(import.meta.dir, "fixture", "server.js"), {
+      AUTH_SECRET: "I7Jiq12TSMlPlAzyVAT+HxYX7OQb/TTqIbfTTpr1rg8=",
+    });
     expect(result.stderr).toBe("");
     expect(result.stdout).toBeDefined();
     const lines = result.stdout?.split("\n") ?? [];

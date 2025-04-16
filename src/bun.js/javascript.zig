@@ -4485,7 +4485,7 @@ pub const VirtualMachine = struct {
                 var instance = IPCInstance.new(.{
                     .globalThis = this.global,
                     .context = {},
-                    .data = .{ .mode = opts.mode },
+                    .data = .{ .send_queue = .init(opts.mode) },
                 });
 
                 this.ipc = .{ .initialized = instance };

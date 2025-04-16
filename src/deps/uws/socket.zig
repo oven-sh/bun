@@ -134,9 +134,9 @@ pub const Socket = opaque {
         return rc;
     }
 
-    pub fn writeFd(this: *Socket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
-        const rc = us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), @intFromEnum(file_descriptor));
-        debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, @intFromEnum(file_descriptor), rc });
+    pub fn writeFd(this: *Socket, data: []const u8, file_descriptor: bun.FD) i32 {
+        const rc = us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
+        debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, file_descriptor.native(), rc });
         return rc;
     }
 
@@ -159,8 +159,8 @@ pub const Socket = opaque {
         us_socket_sendfile_needs_more(this);
     }
 
-    pub fn getFd(this: *Socket) bun.FileDescriptor {
-        return @enumFromInt(us_socket_get_fd(this));
+    pub fn getFd(this: *Socket) bun.FD {
+        return .fromUV(us_socket_get_fd(this));
     }
 
     extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;

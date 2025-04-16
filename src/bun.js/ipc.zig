@@ -883,7 +883,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
     }
 
     if (zig_handle) |zig_handle_resolved| {
-        log("sending ipc message with fd: {d}", .{@intFromEnum(zig_handle_resolved.fd)});
+        log("sending ipc message with fd: {d}", .{zig_handle_resolved.fd.native()});
     }
 
     const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
@@ -1131,7 +1131,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             if (ipc.send_queue.incoming_fd != null) {
                 log("onFd: incoming_fd already set; overwriting", .{});
             }
-            ipc.send_queue.incoming_fd = @enumFromInt(fd);
+            ipc.send_queue.incoming_fd = bun.FD.fromNative(fd);
         }
 
         pub fn onWritable(

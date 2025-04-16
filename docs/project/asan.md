@@ -35,7 +35,14 @@ The CI pipeline automatically:
 
 ## Local ASAN Builds
 
-To build Bun with ASAN locally:
+To build Bun with ASAN locally, you can use the npm script:
+
+```bash
+# Build a release build with ASAN and assertions (recommended)
+bun run build:asan
+```
+
+Or manually with CMake:
 
 ```bash
 # Debug build with ASAN
@@ -45,7 +52,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN_RELEASE=ON
 
 # Release build with ASAN and assertions
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN_RELEASE=ON -DENABLE_ASSERTIONS=ON
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN_RELEASE=ON -DENABLE_ASSERTIONS=ON -DENABLE_LTO=OFF
 ```
 
 ## Running with ASAN

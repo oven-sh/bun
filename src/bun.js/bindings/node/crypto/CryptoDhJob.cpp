@@ -125,7 +125,7 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
         return std::nullopt;
     }
 
-    static constexpr auto supportedKeyTypes = std::array {
+    static auto supportedKeyTypes = std::array {
         EVP_PKEY_DH,
         EVP_PKEY_EC,
         EVP_PKEY_X448,

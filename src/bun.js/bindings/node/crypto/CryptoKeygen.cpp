@@ -113,7 +113,7 @@ std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         V::validateInteger(scope, globalObject, lengthValue, "options.length"_s, jsNumber(8), jsNumber(std::numeric_limits<int32_t>::max()), &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        return SecretKeyJobCtx(length);
+        return SecretKeyJobCtx(length / CHAR_BIT);
     }
 
     if (typeView == "aes"_s) {
@@ -122,7 +122,7 @@ std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         V::validateOneOf(scope, globalObject, "options.length"_s, lengthValue, { 128, 192, 256 }, &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        return SecretKeyJobCtx(length);
+        return SecretKeyJobCtx(length / CHAR_BIT);
     }
 
     ERR::INVALID_ARG_VALUE(scope, globalObject, "type"_s, typeValue, "must be a supported key type"_s);

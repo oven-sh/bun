@@ -144,10 +144,10 @@ pub const SyscallAccessor = struct {
     const Handle = struct {
         value: bun.FileDescriptor,
 
-        const zero = Handle{ .value = bun.FileDescriptor.zero };
+        const empty: Handle = .{ .value = .invalid };
 
-        pub fn isZero(this: Handle) bool {
-            return this.value == bun.FileDescriptor.zero;
+        pub fn isEmpty(this: Handle) bool {
+            return !this.value.isValid();
         }
 
         pub fn eql(this: Handle, other: Handle) bool {
@@ -163,7 +163,7 @@ pub const SyscallAccessor = struct {
         }
 
         pub inline fn iterate(dir: Handle) DirIter {
-            return .{ .value = DirIterator.WrappedIterator.init(dir.value.asDir()) };
+            return .{ .value = DirIterator.WrappedIterator.init(dir.value.stdDir()) };
         }
     };
 
@@ -190,7 +190,7 @@ pub const SyscallAccessor = struct {
     }
 
     pub fn close(handle: Handle) ?Syscall.Error {
-        return Syscall.close(handle.value);
+        return handle.value.closeAllowingBadFileDescriptor(@returnAddress());
     }
 
     pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {
@@ -206,9 +206,9 @@ pub const DirEntryAccessor = struct {
     const Handle = struct {
         value: ?*FS.DirEntry,
 
-        const zero = Handle{ .value = null };
+        const empty: Handle = .{ .value = null };
 
-        pub fn isZero(this: Handle) bool {
+        pub fn isEmpty(this: Handle) bool {
             return this.value == null;
         }
 
@@ -276,7 +276,7 @@ pub const DirEntryAccessor = struct {
     }
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
-        return openat(Handle.zero, path);
+        return openat(.empty, path);
     }
 
     pub fn openat(handle: Handle, path_: [:0]const u8) !Maybe(Handle) {
@@ -296,7 +296,7 @@ pub const DirEntryAccessor = struct {
         };
         switch (res.*) {
             .entries => |entry| {
-                return .{ .result = Handle{ .value = entry } };
+                return .{ .result = .{ .value = entry } };
             },
             .err => |err| {
                 return err.original_err;
@@ -434,7 +434,7 @@ pub fn GlobWalker_(
         pub const Iterator = struct {
             walker: *GlobWalker,
             iter_state: IterState = .get_next,
-            cwd_fd: Accessor.Handle = Accessor.Handle.zero,
+            cwd_fd: Accessor.Handle = .empty,
             empty_dir_path: [0:0]u8 = [0:0]u8{},
             /// This is to make sure in debug/tests that we are closing file descriptors
             /// We should only have max 2 open at a time. One for the cwd, and one for the
@@ -561,13 +561,13 @@ pub fn GlobWalker_(
             }
 
             pub fn closeCwdFd(this: *Iterator) void {
-                if (this.cwd_fd.isZero()) return;
+                if (this.cwd_fd.isEmpty()) return;
                 _ = Accessor.close(this.cwd_fd);
                 if (comptime count_fds) this.fds_open -= 1;
             }
 
             pub fn closeDisallowingCwd(this: *Iterator, fd: Accessor.Handle) void {
-                if (fd.isZero() or fd.eql(this.cwd_fd)) return;
+                if (fd.isEmpty() or fd.eql(this.cwd_fd)) return;
                 _ = Accessor.close(fd);
                 if (comptime count_fds) this.fds_open -= 1;
             }
@@ -587,7 +587,7 @@ pub fn GlobWalker_(
             ) !Maybe(void) {
                 log("transition => {s}", .{work_item.path});
                 this.iter_state = .{ .directory = .{
-                    .fd = Accessor.Handle.zero,
+                    .fd = .empty,
                     .iter = undefined,
                     .path = undefined,
                     .dir_path = undefined,
@@ -693,7 +693,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                 this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
                 this.iter_state.directory.at_cwd = false;
-                this.iter_state.directory.fd = Accessor.Handle.zero;
+                this.iter_state.directory.fd = .empty;
 
                 log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
 

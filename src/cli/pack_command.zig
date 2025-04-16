@@ -1623,17 +1623,17 @@ pub const PackCommand = struct {
             while (pack_queue.removeOrNull()) |pathname| {
                 defer if (log_level.showProgress()) node.completeOne();
 
-                const file = bun.sys.openat(bun.toFD(root_dir.fd), pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
+                const file = bun.sys.openat(.fromStdDir(root_dir), pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
                     Output.err(err, "failed to open file: \"{s}\"", .{pathname});
                     Global.crash();
                 };
 
-                const fd = bun.sys.toLibUVOwnedFD(file, .open, .close_on_fail).unwrap() catch |err| {
+                const fd = file.makeLibUVOwnedForSyscall(.open, .close_on_fail).unwrap() catch |err| {
                     Output.err(err, "failed to open file: \"{s}\"", .{pathname});
                     Global.crash();
                 };
 
-                defer _ = bun.sys.close(fd);
+                defer fd.close();
 
                 const stat = bun.sys.sys_uv.fstat(fd).unwrap() catch |err| {
                     Output.err(err, "failed to stat file: \"{s}\"", .{pathname});
@@ -1659,7 +1659,7 @@ pub const PackCommand = struct {
             while (bundled_pack_queue.removeOrNull()) |pathname| {
                 defer if (log_level.showProgress()) node.completeOne();
 
-                const file = File.openat(root_dir, pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
+                const file = File.openat(.fromStdDir(root_dir), pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
                     Output.err(err, "failed to open file: \"{s}\"", .{pathname});
                     Global.crash();
                 };
@@ -1945,7 +1945,7 @@ pub const PackCommand = struct {
         root_dir: std.fs.Dir,
         edited_package_json: string,
     ) OOM!*Archive.Entry {
-        const stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
+        const stat = bun.sys.fstatat(.fromStdDir(root_dir), "package.json").unwrap() catch |err| {
             Output.err(err, "failed to stat package.json", .{});
             Global.crash();
         };
@@ -2279,7 +2279,7 @@ pub const PackCommand = struct {
             default,
             @".npmignore",
             @".gitignore",
-            /// Exlusion pattern in "files" field within `package.json`
+            /// Exclusion pattern in "files" field within `package.json`
             @"package.json",
         };
 
@@ -2287,7 +2287,7 @@ pub const PackCommand = struct {
 
         fn ignoreFileFail(dir: std.fs.Dir, ignore_kind: Kind, reason: enum { read, open }, err: anyerror) noreturn {
             var buf: PathBuffer = undefined;
-            const dir_path = bun.getFdPath(dir, &buf) catch "";
+            const dir_path = bun.getFdPath(.fromStdDir(dir), &buf) catch "";
             Output.err(err, "failed to {s} {s} at: \"{s}{s}{s}\"", .{
                 @tagName(reason),
                 @tagName(ignore_kind),
@@ -2384,16 +2384,17 @@ pub const PackCommand = struct {
 
     fn printArchivedFilesAndPackages(
         ctx: *Context,
-        root_dir: std.fs.Dir,
+        root_dir_std: std.fs.Dir,
         comptime is_dry_run: bool,
         pack_list: if (is_dry_run) *PackQueue else PackList,
         package_json_len: usize,
     ) void {
+        const root_dir = bun.FD.fromStdDir(root_dir_std);
         if (ctx.manager.options.log_level == .silent) return;
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime is_dry_run) {
-            const package_json_stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
+            const package_json_stat = root_dir.statat("package.json").unwrap() catch |err| {
                 Output.err(err, "failed to stat package.json", .{});
                 Global.crash();
             };
@@ -2406,7 +2407,7 @@ pub const PackCommand = struct {
             });
 
             while (pack_list.removeOrNull()) |filename| {
-                const stat = bun.sys.fstatat(bun.toFD(root_dir), filename).unwrap() catch |err| {
+                const stat = root_dir.statat(filename).unwrap() catch |err| {
                     Output.err(err, "failed to stat file: \"{s}\"", .{filename});
                     Global.crash();
                 };

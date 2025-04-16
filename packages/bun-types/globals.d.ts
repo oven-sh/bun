@@ -3,16 +3,15 @@ declare module "bun" {
     type NodeWorkerThreadsWorker = import("node:worker_threads").Worker;
     type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
 
-    type NodePerfHooksPerformance = import("node:perf_hooks").Performance;
     type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
       "Performance",
-      NodePerfHooksPerformance
+      import("perf_hooks").Performance
     >;
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
 
-    type LibEmptyOrWSWebSocket = LibDomIsLoaded extends true ? {} : import("ws").WebSocket;
+    type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
     type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
 
@@ -25,10 +24,6 @@ declare module "bun" {
     type LibEmptyOrNodeWritableStream<T> = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").WritableStream<T>;
-
-    type LibEmptyOrNodeTransformStream<I, O> = LibDomIsLoaded extends true
-      ? {}
-      : import("node:stream/web").TransformStream<I, O>;
 
     type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort;
   }
@@ -68,15 +63,71 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface WebSocket extends Bun.__internal.LibEmptyOrWSWebSocket {}
+/**
+ * A WebSocket client implementation.
+ */
+interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
 /**
  * A WebSocket client implementation
- *
- * If `DOM` is included in tsconfig `lib`, this falls back to the default DOM global `WebSocket`.
- * Otherwise (when outside of a browser environment), this will be the `WebSocket`
- * implementation from the `ws` package, which Bun implements.
  */
-declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
+declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
+  "WebSocket",
+  {
+    prototype: WebSocket;
+
+    /**
+     * Creates a new WebSocket instance with the given URL and options.
+     *
+     * @param url The URL to connect to.
+     * @param options The options to use for the connection.
+     *
+     * @example
+     * ```ts
+     * const ws = new WebSocket("wss://dev.local", {
+     *  protocols: ["proto1", "proto2"],
+     *  headers: {
+     *    "Cookie": "session=123456",
+     *  },
+     * });
+     * ```
+     */
+    new (url: string | URL, options?: Bun.WebSocketOptions): WebSocket;
+
+    /**
+     * Creates a new WebSocket instance with the given URL and protocols.
+     *
+     * @param url The URL to connect to.
+     * @param protocols The protocols to use for the connection.
+     *
+     * @example
+     * ```ts
+     * const ws = new WebSocket("wss://dev.local");
+     * const ws = new WebSocket("wss://dev.local", ["proto1", "proto2"]);
+     * ```
+     */
+    new (url: string | URL, protocols?: string | string[]): WebSocket;
+
+    /**
+     * The connection is not yet open
+     */
+    readonly CONNECTING: 0;
+
+    /**
+     * The connection is open and ready to communicate
+     */
+    readonly OPEN: 1;
+
+    /**
+     * The connection is in the process of closing
+     */
+    readonly CLOSING: 2;
+
+    /**
+     * The connection is closed or couldn't be opened
+     */
+    readonly CLOSED: 3;
+  }
+>;
 
 interface Crypto {
   readonly subtle: SubtleCrypto;
@@ -225,26 +276,24 @@ interface File extends Blob {
   readonly lastModified: number;
   readonly name: string;
 }
-
-declare var File: typeof globalThis extends { onabort: any }
-  ? typeof globalThis extends { File: infer T }
-    ? T
-    : never
-  : {
-      prototype: File;
-      /**
-       * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-       *
-       * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-       * @param `name` - The name of the file
-       * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-       */
-      new (
-        parts: Bun.BlobPart[],
-        name: string,
-        options?: BlobPropertyBag & { lastModified?: Date | number | undefined },
-      ): File;
-    };
+declare var File: Bun.__internal.UseLibDomIfAvailable<
+  "File",
+  {
+    prototype: File;
+    /**
+     * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     *
+     * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param `name` - The name of the file
+     * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     */
+    new (
+      parts: Bun.BlobPart[],
+      name: string,
+      options?: BlobPropertyBag & { lastModified?: Date | number | undefined },
+    ): File;
+  }
+>;
 
 /**
  * ShadowRealms are a distinct global environment, with its own global object

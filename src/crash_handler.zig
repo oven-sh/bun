@@ -1415,9 +1415,9 @@ fn report(url: []const u8) void {
                 .hStdInput = null,
                 .hStdOutput = null,
                 .hStdError = null,
-                // .hStdInput = bun.win32.STDIN_FD.cast(),
-                // .hStdOutput = bun.win32.STDOUT_FD.cast(),
-                // .hStdError = bun.win32.STDERR_FD.cast(),
+                // .hStdInput = bun.FD.stdin().native(),
+                // .hStdOutput = bun.FD.stdout().native(),
+                // .hStdError = bun.FD.stderr().native(),
             };
             var cmd_line = std.BoundedArray(u16, 4096){};
             cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));

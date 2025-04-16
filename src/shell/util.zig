@@ -17,10 +17,11 @@ const posix = std.posix;
 pub const OutKind = enum {
     stdout,
     stderr,
+
     pub fn toFd(this: OutKind) bun.FileDescriptor {
         return switch (this) {
-            .stdout => bun.STDOUT_FD,
-            .stderr => bun.STDERR_FD,
+            .stdout => .stdout(),
+            .stderr => .stderr(),
         };
     }
 };

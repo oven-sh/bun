@@ -1282,6 +1282,9 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
+    if (!socket._httpMessage) {
+      req.assignSocket(socket);
+    }
     // socket is actually fake so we use internal http_res
     const response = socket._httpMessage;
 

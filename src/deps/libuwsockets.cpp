@@ -1720,6 +1720,16 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
+  void uws_res_flush_headers(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->flushHeaders();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res; 
+      uwsRes->flushHeaders();
+    }
+  }
+
   void *uws_res_get_native_handle(int ssl, uws_res_r res)
   {
     if (ssl)

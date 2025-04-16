@@ -999,6 +999,11 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
 
+pub fn flushHeaders(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    this.raw_response.flushHeaders();
+    return .undefined;
+}
+
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).slice();
     //We dont wanna a paused socket when we call end, so is important to resume the socket

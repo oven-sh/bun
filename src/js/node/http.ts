@@ -245,7 +245,6 @@ var FakeSocket = class Socket extends Duplex {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
-    console.log("destroy", err);
   }
 
   _final(callback) {}

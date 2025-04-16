@@ -5,8 +5,6 @@ if(DEBUG)
 #   set(bunStrip bun-smol)
 elseif(RELEASE AND ENABLE_ASAN_RELEASE)
   set(bun bun-asan)
-  # Set a distinct name for stripped ASAN build
-  set(bunStrip bun-asan)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)

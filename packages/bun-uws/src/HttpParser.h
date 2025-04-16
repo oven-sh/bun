@@ -483,6 +483,17 @@ namespace uWS
                 }
                 return 0;
             }
+            /* No request headers found */
+            size_t buffer_size = end - postPaddedBuffer;
+            if(buffer_size < 2) {
+                /* Fragmented request */
+                err = HTTP_ERROR_400_BAD_REQUEST;
+                return 0;
+            }
+            if(buffer_size >= 2 && postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
+                /* No headers found */
+                return (unsigned int) ((postPaddedBuffer + 2) - start);
+            }
             headers++;
 
             for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
@@ -579,7 +590,6 @@ namespace uWS
         data[length] = '\r';
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         bool isAncientHTTP = false;
-
         for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, isAncientHTTP)); ) {
             data += consumed;
             length -= consumed;
@@ -595,6 +605,7 @@ namespace uWS
 
             /* Add all headers to bloom filter */
             req->bf.reset();
+            
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }

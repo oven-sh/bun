@@ -2353,7 +2353,7 @@ pub fn spawnMaybeSync(
                 posix_ipc_info = IPC.Socket.from(socket);
                 subprocess.ipc_data = .{
                     .socket = posix_ipc_info,
-                    .mode = mode,
+                    .send_queue = .init(mode),
                 };
             }
         }

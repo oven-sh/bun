@@ -138,7 +138,7 @@ const advanced = struct {
         @panic("TODO: advanced getNackPacket");
     }
 
-    pub fn serialize(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+    pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         const serialized = value.serialize(global) orelse
             return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
@@ -241,7 +241,7 @@ const json = struct {
         return IPCDecodeError.NotEnoughBytes;
     }
 
-    pub fn serialize(_: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+    pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
         value.jsonStringify(global, 0, &out);
         defer out.deref();
@@ -285,22 +285,22 @@ pub fn getVersionPacket(mode: Mode) []const u8 {
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serialize(data: *IPCData, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-    return switch (data.mode) {
-        .advanced => advanced.serialize(data, writer, global, value, is_internal),
-        .json => json.serialize(data, writer, global, value, is_internal),
+pub fn serialize(mode: Mode, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+    return switch (mode) {
+        .advanced => advanced.serialize(writer, global, value, is_internal),
+        .json => json.serialize(writer, global, value, is_internal),
     };
 }
 
-pub fn getAckPacket(data: *IPCData) []const u8 {
-    return switch (data.mode) {
+pub fn getAckPacket(mode: Mode) []const u8 {
+    return switch (mode) {
         .advanced => advanced.getAckPacket(),
         .json => json.getAckPacket(),
     };
 }
 
-pub fn getNackPacket(data: *IPCData) []const u8 {
-    return switch (data.mode) {
+pub fn getNackPacket(mode: Mode) []const u8 {
+    return switch (mode) {
         .advanced => advanced.getNackPacket(),
         .json => json.getNackPacket(),
     };
@@ -356,8 +356,10 @@ pub const SendQueue = struct {
 
     retry_count: u32 = 0,
     keep_alive: bun.Async.KeepAlive = .{},
-    pub fn init() @This() {
-        return .{ .queue = .init(bun.default_allocator) };
+    has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    mode: Mode,
+    pub fn init(mode: Mode) @This() {
+        return .{ .queue = .init(bun.default_allocator), .mode = mode };
     }
     pub fn deinit(self: *@This()) void {
         for (self.queue.items) |*item| item.deinit();
@@ -368,12 +370,25 @@ pub const SendQueue = struct {
 
     /// returned pointer is invalidated if the queue is modified
     pub fn startMessage(self: *SendQueue, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+        if (Environment.allow_assert) bun.debugAssert(self.has_written_version == 1);
         callback.protect(); // now it is owned by the queue and will be unprotected on deinit.
         self.queue.append(.{ .handle = handle, .callback = callback }) catch bun.outOfMemory();
         return &self.queue.items[0];
     }
+    /// returned pointer is invalidated if the queue is modified
+    pub fn insertMessage(this: *SendQueue, message: SendHandle) void {
+        if (Environment.allow_assert) bun.debugAssert(this.has_written_version == 1);
+        if (this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) {
+            // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
+            this.queue.insert(0, message) catch bun.outOfMemory();
+        } else {
+            // insert at index 1 (we are in the middle of sending an ack/nack to the other process)
+            bun.debugAssert(this.queue.items[0].isAckNack());
+            this.queue.insert(1, message) catch bun.outOfMemory();
+        }
+    }
 
-    pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, socket: anytype, ack_nack: enum { ack, nack }) void {
+    pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, socket: SocketType, ack_nack: enum { ack, nack }) void {
         if (this.waiting_for_ack == null) {
             log("onAckNack: ack received but not waiting for ack", .{});
             return;
@@ -389,16 +404,8 @@ pub const SendQueue = struct {
             if (this.retry_count < MAX_HANDLE_RETRANSMISSIONS) {
                 // retry sending the message
                 item.data.cursor = 0;
-                if (this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) {
-                    // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
-                    this.queue.insert(0, item.*) catch bun.outOfMemory();
-                    this.waiting_for_ack = null;
-                } else {
-                    // insert at index 1 (we are in the middle of sending an ack/nack to the other process)
-                    bun.debugAssert(this.queue.items[0].isAckNack());
-                    this.queue.insert(1, item.*) catch bun.outOfMemory();
-                    this.waiting_for_ack = null;
-                }
+                this.insertMessage(item.*);
+                this.waiting_for_ack = null;
                 return this.continueSend(global, socket, .new_message_appended);
             }
             // too many retries; give up
@@ -436,7 +443,7 @@ pub const SendQueue = struct {
         new_message_appended,
         on_writable,
     };
-    fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, socket: anytype, reason: ContinueSendReason) void {
+    fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, socket: SocketType, reason: ContinueSendReason) void {
         if (this.queue.items.len == 0) {
             return; // nothing to send
         }
@@ -487,22 +494,46 @@ pub const SendQueue = struct {
             return;
         }
     }
-    fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: anytype, reason: ContinueSendReason) void {
+    fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: SocketType, reason: ContinueSendReason) void {
         this._continueSend(global, socket, reason);
         this.updateRef(global);
     }
+    pub fn writeVersionPacket(this: *SendQueue, global: *JSGlobalObject, socket: SocketType) void {
+        bun.debugAssert(this.has_written_version == 0);
+        bun.debugAssert(this.queue.items.len == 0);
+        bun.debugAssert(this.waiting_for_ack == null);
+        const bytes = getVersionPacket(this.mode);
+        if (bytes.len > 0) {
+            this.queue.append(.{ .handle = null, .callback = .null }) catch bun.outOfMemory();
+            this.queue.items[this.queue.items.len - 1].data.write(bytes) catch bun.outOfMemory();
+            this.continueSend(global, socket, .new_message_appended);
+        }
+        if (Environment.allow_assert) this.has_written_version = 1;
+    }
+    pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle, socket: SocketType) SerializeAndSendResult {
+        const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
+        const msg = self.startMessage(callback, handle);
+        const start_offset = msg.data.list.items.len;
+
+        const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
+        bun.assert(msg.data.list.items.len == start_offset + payload_length);
+
+        self.continueSend(global, socket, .new_message_appended);
+
+        if (indicate_backoff) return .backoff;
+        return .success;
+    }
 };
+const SocketType = Socket;
 const MAX_HANDLE_RETRANSMISSIONS = 3;
 
 /// Used on POSIX
 const SocketIPCData = struct {
     socket: Socket,
-    mode: Mode,
 
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     incoming_fd: ?bun.FileDescriptor = null,
-    send_queue: SendQueue = .init(),
-    has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    send_queue: SendQueue,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
     is_server: bool = false,
@@ -522,36 +553,11 @@ const SocketIPCData = struct {
     }
 
     pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 0);
-        }
-        const bytes = getVersionPacket(this.mode);
-        if (bytes.len > 0) {
-            const msg = this.send_queue.startMessage(.null, null);
-            msg.data.write(bytes) catch bun.outOfMemory();
-            this.send_queue.continueSend(global, this.socket, .new_message_appended);
-        }
-        if (Environment.allow_assert) {
-            this.has_written_version = 1;
-        }
+        this.send_queue.writeVersionPacket(global, this.socket);
     }
 
     pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
-        if (Environment.allow_assert) {
-            bun.assert(ipc_data.has_written_version == 1);
-        }
-
-        const indicate_backoff = ipc_data.send_queue.waiting_for_ack != null and ipc_data.send_queue.queue.items.len > 0;
-        const msg = ipc_data.send_queue.startMessage(callback, handle);
-        const start_offset = msg.data.list.items.len;
-
-        const payload_length = serialize(ipc_data, &msg.data, global, value, is_internal) catch return .failure;
-        bun.assert(msg.data.list.items.len == start_offset + payload_length);
-
-        ipc_data.send_queue.continueSend(global, ipc_data.socket, .new_message_appended);
-
-        if (indicate_backoff) return .backoff;
-        return .success;
+        return ipc_data.send_queue.serializeAndSend(global, value, is_internal, callback, handle, ipc_data.socket);
     }
 
     pub fn close(this: *SocketIPCData, nextTick: bool) void {
@@ -937,7 +943,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             this.handleIPCClose();
         }
 
-        fn handleIPCMessage(this: *Context, message: DecodedIPCMessage, socket: anytype, globalThis: *JSC.JSGlobalObject) void {
+        fn handleIPCMessage(this: *Context, message: DecodedIPCMessage, socket: SocketType, globalThis: *JSC.JSGlobalObject) void {
             const ipc: *IPCData = this.ipc() orelse return;
             if (message == .data) handle_message: {
                 // TODO: get property 'cmd' from the message, read as a string
@@ -965,16 +971,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             // Handle NODE_HANDLE message
                             const ack = ipc.incoming_fd != null;
 
-                            const packet = if (ack) getAckPacket(ipc) else getNackPacket(ipc);
+                            const packet = if (ack) getAckPacket(ipc.send_queue.mode) else getNackPacket(ipc.send_queue.mode);
                             var handle = SendHandle{ .data = .{}, .handle = null, .callback = .zero };
                             handle.data.write(packet) catch bun.outOfMemory();
 
                             // Insert at appropriate position in send queue
-                            if (ipc.send_queue.queue.items.len == 0 or ipc.send_queue.queue.items[0].data.cursor == 0) {
-                                ipc.send_queue.queue.insert(0, handle) catch bun.outOfMemory();
-                            } else {
-                                ipc.send_queue.queue.insert(1, handle) catch bun.outOfMemory();
-                            }
+                            ipc.send_queue.insertMessage(handle);
 
                             // Send if needed
                             ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
@@ -1045,7 +1047,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             // fails (not enough bytes) then we allocate to .ipc_buffer
             if (ipc.incoming.len == 0) {
                 while (true) {
-                    const result = decodeIPCMessage(ipc.mode, data, globalThis) catch |e| switch (e) {
+                    const result = decodeIPCMessage(ipc.send_queue.mode, data, globalThis) catch |e| switch (e) {
                         error.NotEnoughBytes => {
                             _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
                             log("hit NotEnoughBytes", .{});
@@ -1077,7 +1079,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
             var slice = ipc.incoming.slice();
             while (true) {
-                const result = decodeIPCMessage(ipc.mode, slice, globalThis) catch |e| switch (e) {
+                const result = decodeIPCMessage(ipc.send_queue.mode, slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
                         bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);

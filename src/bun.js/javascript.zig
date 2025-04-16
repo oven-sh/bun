@@ -4477,7 +4477,7 @@ pub const VirtualMachine = struct {
                 };
                 socket.setTimeout(0);
 
-                instance.data = .{ .socket = socket, .mode = opts.mode };
+                instance.data = .{ .socket = socket, .send_queue = .init(opts.mode) };
 
                 break :instance instance;
             },

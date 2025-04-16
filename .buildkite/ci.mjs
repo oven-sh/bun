@@ -437,10 +437,11 @@ function getBuildEnv(target, options) {
  */
 function getBuildVendorStep(platform, options) {
   // Ensure ASAN builds have unique step keys
-  const stepKey = platform.profile === "asan" 
-    ? `${getTargetKey(platform)}-build-vendor-asan` 
-    : `${getTargetKey(platform)}-build-vendor`;
-  
+  const stepKey =
+    platform.profile === "asan"
+      ? `${getTargetKey(platform)}-build-vendor-asan`
+      : `${getTargetKey(platform)}-build-vendor`;
+
   return {
     key: stepKey,
     label: `${getTargetLabel(platform)} - build-vendor`,
@@ -459,10 +460,9 @@ function getBuildVendorStep(platform, options) {
  */
 function getBuildCppStep(platform, options) {
   // Ensure ASAN builds have unique step keys
-  const stepKey = platform.profile === "asan" 
-    ? `${getTargetKey(platform)}-build-cpp-asan` 
-    : `${getTargetKey(platform)}-build-cpp`;
-    
+  const stepKey =
+    platform.profile === "asan" ? `${getTargetKey(platform)}-build-cpp-asan` : `${getTargetKey(platform)}-build-cpp`;
+
   return {
     key: stepKey,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -500,12 +500,11 @@ function getBuildToolchain(target) {
  */
 function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
-  
+
   // Ensure ASAN builds have unique step keys
-  const stepKey = platform.profile === "asan" 
-    ? `${getTargetKey(platform)}-build-zig-asan` 
-    : `${getTargetKey(platform)}-build-zig`;
-    
+  const stepKey =
+    platform.profile === "asan" ? `${getTargetKey(platform)}-build-zig-asan` : `${getTargetKey(platform)}-build-zig`;
+
   return {
     key: stepKey,
     label: `${getTargetLabel(platform)} - build-zig`,
@@ -527,16 +526,16 @@ function getLinkBunStep(platform, options) {
   // Ensure ASAN builds have unique step keys
   const isAsan = platform.profile === "asan";
   const asanSuffix = isAsan ? "-asan" : "";
-  
+
   const stepKey = `${getTargetKey(platform)}-build-bun`;
-  
+
   // Create dependencies with the ASAN suffix if this is an ASAN build
   const dependencies = [
     `${getTargetKey(platform)}-build-vendor${isAsan ? asanSuffix : ""}`,
     `${getTargetKey(platform)}-build-cpp${isAsan ? asanSuffix : ""}`,
     `${getTargetKey(platform)}-build-zig${isAsan ? asanSuffix : ""}`,
   ];
-  
+
   return {
     key: stepKey,
     label: `${getTargetLabel(platform)} - build-bun`,

@@ -441,9 +441,8 @@ function getBuildVendorStep(platform, options) {
 
   // Build a key that includes important differentiators
   const distroKey = distro ? `-${distro}-${release}` : "";
-  const asanKey = profile === "asan" ? "-asan" : "";
 
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-vendor${asanKey}`;
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-vendor`;
 
   return {
     key: stepKey,
@@ -467,9 +466,8 @@ function getBuildCppStep(platform, options) {
 
   // Build a key that includes important differentiators
   const distroKey = distro ? `-${distro}-${release}` : "";
-  const asanKey = profile === "asan" ? "-asan" : "";
 
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-cpp${asanKey}`;
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-cpp`;
 
   return {
     key: stepKey,
@@ -514,9 +512,8 @@ function getBuildZigStep(platform, options) {
 
   // Build a key that includes important differentiators
   const distroKey = distro ? `-${distro}-${release}` : "";
-  const asanKey = profile === "asan" ? "-asan" : "";
 
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-zig${asanKey}`;
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-zig`;
 
   return {
     key: stepKey,
@@ -541,21 +538,25 @@ function getLinkBunStep(platform, options) {
 
   // Build keys that include important differentiators
   const distroKey = distro ? `-${distro}-${release}` : "";
-  const asanKey = profile === "asan" ? "-asan" : "";
 
   // Create unique step key for this specific platform configuration
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-bun${asanKey}`;
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-bun`;
 
   // Create dependency keys with the same pattern
   const dependencies = [
-    `${getTargetKey(platform)}${distroKey}-build-vendor${asanKey}`,
-    `${getTargetKey(platform)}${distroKey}-build-cpp${asanKey}`,
-    `${getTargetKey(platform)}${distroKey}-build-zig${asanKey}`,
+    `${getTargetKey(platform)}${distroKey}-build-vendor`,
+    `${getTargetKey(platform)}${distroKey}-build-cpp`,
+    `${getTargetKey(platform)}${distroKey}-build-zig`,
   ];
+
+  let label = `${getTargetLabel(platform)} - build-bun`;
+  if (profile === "asan") {
+    label += " (ASAN)";
+  }
 
   return {
     key: stepKey,
-    label: `${getTargetLabel(platform)} - build-bun`,
+    label,
     depends_on: dependencies,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
@@ -574,9 +575,15 @@ function getLinkBunStep(platform, options) {
  * @returns {Step}
  */
 function getBuildBunStep(platform, options) {
+  const { profile } = platform;
+  const stepKey = `${getTargetKey(platform)}-build-bun`;
+  let label = `${getTargetLabel(platform)} - build-bun`;
+  if (profile === "asan") {
+    label += " (ASAN)";
+  }
   return {
-    key: `${getTargetKey(platform)}-build-bun`,
-    label: `${getTargetLabel(platform)} - build-bun`,
+    key: stepKey,
+    label,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -611,18 +618,23 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
-
-  // For ASAN builds, we don't filter tests - run all of them
-  // Only adjust timeout and parallelism to accommodate ASAN's overhead
-
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
   }
 
+  let label = `${getPlatformLabel(platform)} - test-bun`;
+  let key = `${getPlatformKey(platform)}`;
+  if (profile === "asan") {
+    label += " (ASAN)";
+    key += "-asan";
+  }
+
+  key += "-test-bun";
+
   return {
-    key: `${getPlatformKey(platform)}-test-bun`,
-    label: `${getPlatformLabel(platform)} - test-bun`,
+    key,
+    label,
     depends_on: depends,
     agents: getTestAgent(platform, options),
     retry: getRetry(),
@@ -1155,106 +1167,47 @@ async function getPipeline(options = {}) {
   }
 
   if (!buildId) {
-    // Log the platforms and profiles being used for debugging
-    console.log(
-      "Build platforms:",
-      buildPlatforms.map(p => ({ os: p.os, arch: p.arch, profile: p.profile, distro: p.distro, release: p.release })),
-    );
-    console.log("Build profiles:", buildProfiles);
-
-    // First, separate platforms with predefined profiles
-    const platformsWithProfiles = buildPlatforms.filter(platform => platform.profile);
-    const platformsWithoutProfiles = buildPlatforms.filter(platform => !platform.profile);
-
-    // Apply profiles only to platforms without predefined profiles
-    const allPlatformsWithProfiles = [
-      ...platformsWithProfiles,
-      ...platformsWithoutProfiles.flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile }))),
-    ];
-
-    // Debug the final list of platforms with their profiles
-    console.log(
-      "All platforms with profiles:",
-      allPlatformsWithProfiles.map(p => ({
-        os: p.os,
-        arch: p.arch,
-        profile: p.profile,
-        distro: p.distro,
-        release: p.release,
-        key: `${getTargetKey(p)}${p.distro ? `-${p.distro}-${p.release}` : ""}-build-vendor${p.profile === "asan" ? "-asan" : ""}`,
-      })),
-    );
-
     steps.push(
-      ...allPlatformsWithProfiles.map(target => {
-        const imageKey = getImageKey(target);
+      ...buildPlatforms
+        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+        .map(target => {
+          const imageKey = getImageKey(target);
 
-        // Create a unique key for the platform by including distro and release
-        const { distro, release, profile } = target;
-
-        // Build a key that includes important differentiators to ensure uniqueness
-        const distroKey = distro ? `-${distro}-${release}` : "";
-        const asanKey = profile === "asan" ? "-asan" : "";
-
-        // Create a truly unique group key
-        const groupKey = `${getTargetKey(target)}${distroKey}-group${asanKey}`;
-
-        return getStepWithDependsOn(
-          {
-            key: groupKey,
-            group: getTargetLabel(target),
-            steps: unifiedBuilds
-              ? [getBuildBunStep(target, options)]
-              : [
-                  getBuildVendorStep(target, options),
-                  getBuildCppStep(target, options),
-                  getBuildZigStep(target, options),
-                  getLinkBunStep(target, options),
-                ],
-          },
-          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
-        );
-      }),
+          return getStepWithDependsOn(
+            {
+              key: getTargetKey(target),
+              group: getTargetLabel(target),
+              steps: unifiedBuilds
+                ? [getBuildBunStep(target, options)]
+                : [
+                    getBuildVendorStep(target, options),
+                    getBuildCppStep(target, options),
+                    getBuildZigStep(target, options),
+                    getLinkBunStep(target, options),
+                  ],
+            },
+            imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+          );
+        }),
     );
   }
 
   if (!isMainBranch()) {
     const { skipTests, forceTests, unifiedTests, testFiles } = options;
     if (!skipTests || forceTests) {
-      // First, separate platforms with predefined profiles
-      const testPlatformsWithProfiles = testPlatforms.filter(platform => platform.profile);
-      const testPlatformsWithoutProfiles = testPlatforms.filter(platform => !platform.profile);
-
-      // Apply profiles only to platforms without predefined profiles
-      const allTestPlatformsWithProfiles = [
-        ...testPlatformsWithProfiles,
-        ...testPlatformsWithoutProfiles.flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile }))),
-      ];
-
       steps.push(
-        ...allTestPlatformsWithProfiles.map(target => {
-          // Create a unique key for the platform by including distro and release
-          const { distro, release, profile } = target;
-
-          // Build a key that includes important differentiators to ensure uniqueness
-          const distroKey = distro ? `-${distro}-${release}` : "";
-          const asanKey = profile === "asan" ? "-asan" : "";
-
-          // Create a truly unique group key for test steps
-          const groupKey = `${getTargetKey(target)}${distroKey}-test-group${asanKey}`;
-
-          return {
-            key: groupKey,
+        ...testPlatforms
+          .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+          .map(target => ({
+            key: getTargetKey(target),
             group: getTargetLabel(target),
             steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
-          };
-        }),
+          })),
       );
     }
   }
 
   if (isMainBranch()) {
-    // Include ASAN builds in release artifacts - useful for debugging memory issues
     steps.push(getReleaseStep(buildPlatforms, options));
   }
 

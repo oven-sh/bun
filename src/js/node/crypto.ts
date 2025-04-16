@@ -2,6 +2,7 @@
 const StreamModule = require("node:stream");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { defineCustomPromisifyArgs } = require("internal/promisify");
 const { CryptoHasher } = Bun;
 
 const {
@@ -35,9 +36,6 @@ const {
   privateDecrypt,
 
   KeyObject,
-  SecretKeyObject,
-  PublicKeyObject,
-  PrivateKeyObject,
 
   createSecretKey,
   createPublicKey,
@@ -137,12 +135,10 @@ crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
 crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
-// crypto_exports.SecretKeyObject = SecretKeyObject;
-// crypto_exports.PublicKeyObject = PublicKeyObject;
-// crypto_exports.PrivateKeyObject = PrivateKeyObject;
 
 crypto_exports.generateKey = generateKey;
 crypto_exports.generateKeySync = generateKeySync;
+defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
 crypto_exports.generateKeyPair = generateKeyPair;
 crypto_exports.generateKeyPairSync = generateKeyPairSync;
 

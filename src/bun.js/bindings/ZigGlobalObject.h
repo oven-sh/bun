@@ -576,7 +576,6 @@ public:
     LazyClassStructure m_JSSecretKeyObjectClassStructure;
     LazyClassStructure m_JSPublicKeyObjectClassStructure;
     LazyClassStructure m_JSPrivateKeyObjectClassStructure;
-    LazyClassStructure m_JSKeyObjectHandleClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

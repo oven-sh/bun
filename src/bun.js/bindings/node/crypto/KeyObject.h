@@ -4,6 +4,7 @@
 #include "ncrypto.h"
 #include "ExceptionOr.h"
 #include "CryptoKeyType.h"
+#include "KeyObjectData.h"
 
 namespace WebCore {
 class CryptoKey;
@@ -11,42 +12,11 @@ class CryptoKey;
 
 namespace Bun {
 
-struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
-    WTF_MAKE_TZONE_ALLOCATED(KeyObjectData);
-
-    KeyObjectData(WTF::Vector<uint8_t>&& symmetricKey)
-        : symmetricKey(WTFMove(symmetricKey))
-    {
-    }
-
-    KeyObjectData(ncrypto::EVPKeyPointer&& asymmetricKey)
-        : asymmetricKey(WTFMove(asymmetricKey))
-    {
-    }
-
-public:
-    ~KeyObjectData() = default;
-
-    static RefPtr<KeyObjectData> create(WTF::Vector<uint8_t>&& symmetricKey)
-    {
-        return adoptRef(*new KeyObjectData(WTFMove(symmetricKey)));
-    }
-
-    static RefPtr<KeyObjectData> create(ncrypto::EVPKeyPointer&& asymmetricKey)
-    {
-        return adoptRef(*new KeyObjectData(WTFMove(asymmetricKey)));
-    }
-
-    WTF::Vector<uint8_t> symmetricKey;
-    ncrypto::EVPKeyPointer asymmetricKey;
-};
-
 class KeyObject {
     WTF_MAKE_TZONE_ALLOCATED(KeyObject);
 
-    KeyObject(WebCore::CryptoKeyType type, RefPtr<KeyObjectData> data)
-        : m_type(type)
-        , m_data(data)
+    KeyObject(RefPtr<KeyObjectData>&& data)
+        : m_data(WTFMove(data))
     {
     }
 
@@ -57,6 +27,7 @@ public:
     static WebCore::ExceptionOr<KeyObject> create(WebCore::CryptoKey&);
     static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey);
+    static KeyObject create(RefPtr<KeyObjectData>&& data);
     // static KeyObject createJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
 
     enum class KeyEncodingContext {
@@ -74,16 +45,17 @@ public:
 
 private:
     // Helpers for `prepareAsymmetricKey`
-    static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk, WebCore::CryptoKeyType type, PrepareAsymmetricKeyMode mode);
+    static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk, PrepareAsymmetricKeyMode mode);
     static void getKeyObjectFromHandle(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, const KeyObject& handle, PrepareAsymmetricKeyMode mode);
 
+public:
     static ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig getPrivateKeyEncoding(
         JSC::JSGlobalObject*,
         JSC::ThrowScope&,
         ncrypto::EVPKeyPointer::PKFormatType formatType,
         std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType,
-        JSC::GCOwnedDataScope<WTF::StringView> cipherView,
-        std::optional<std::span<const uint8_t>> passphrase,
+        const EVP_CIPHER* cipher,
+        std::optional<ncrypto::DataPointer> passphrase,
         KeyEncodingContext ctx);
 
     static void getKeyFormatAndType(
@@ -99,13 +71,21 @@ private:
         WebCore::CryptoKeyType keyType,
         ncrypto::EVPKeyPointer::PKFormatType formatType,
         std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType,
-        JSC::GCOwnedDataScope<WTF::StringView> cipherView,
-        std::optional<std::span<const uint8_t>> passphrase);
+        const EVP_CIPHER* cipher,
+        std::optional<ncrypto::DataPointer> passphrase);
 
-public:
-    static KeyObject prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, WebCore::CryptoKeyType type, PrepareAsymmetricKeyMode mode);
-    static KeyObject preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
-    static KeyObject preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
+    struct PrepareAsymmetricKeyResult {
+        std::optional<RefPtr<KeyObjectData>> keyData { std::nullopt };
+        JSC::GCOwnedDataScope<std::span<const uint8_t>> keyDataView { nullptr, {} };
+        ncrypto::EVPKeyPointer::PKFormatType formatType;
+        std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType { std::nullopt };
+        const EVP_CIPHER* cipher { nullptr };
+        std::optional<ncrypto::DataPointer> passphrase = { std::nullopt };
+    };
+
+    static PrepareAsymmetricKeyResult prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode);
+    static PrepareAsymmetricKeyResult preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
+    static PrepareAsymmetricKeyResult preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
     static KeyObject prepareSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, JSC::JSValue encodingValue, bool bufferOnly = false);
 
     JSC::JSValue exportJwkEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
@@ -129,14 +109,12 @@ public:
 
     std::optional<bool> equals(const KeyObject& other) const;
 
-    inline WebCore::CryptoKeyType type() const { return m_type; }
-
+    inline WebCore::CryptoKeyType type() const { return m_data->type; }
     const WTF::Vector<uint8_t>& symmetricKey() const { return m_data->symmetricKey; }
     const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_data->asymmetricKey; }
     RefPtr<KeyObjectData> data() const { return m_data; }
 
 private:
-    WebCore::CryptoKeyType m_type = WebCore::CryptoKeyType::Secret;
     RefPtr<KeyObjectData> m_data = nullptr;
 };
 

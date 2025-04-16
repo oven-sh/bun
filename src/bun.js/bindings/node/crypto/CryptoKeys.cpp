@@ -36,8 +36,27 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
 
     JSValue keyValue = callFrame->argument(0);
 
-    KeyObject keyObject = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, CryptoKeyType::Public, KeyObject::PrepareAsymmetricKeyMode::CreatePublic);
+    auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePublic);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+    KeyObject keyObject;
+
+    if (prepareResult.keyData) {
+        RefPtr<KeyObjectData> keyData = *prepareResult.keyData;
+        keyData->type = CryptoKeyType::Public;
+        keyObject = KeyObject::create(WTFMove(keyData));
+    } else {
+        keyObject = KeyObject::getPublicOrPrivateKey(
+            globalObject,
+            scope,
+            prepareResult.keyDataView,
+            CryptoKeyType::Public,
+            prepareResult.formatType,
+            prepareResult.encodingType,
+            prepareResult.cipher,
+            WTFMove(prepareResult.passphrase));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject);
     JSPublicKeyObject* publicKey = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
@@ -53,7 +72,27 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
 
     JSValue keyValue = callFrame->argument(0);
 
-    KeyObject keyObject = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, CryptoKeyType::Private, KeyObject::PrepareAsymmetricKeyMode::CreatePrivate);
+    auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePrivate);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    KeyObject keyObject;
+
+    if (prepareResult.keyData) {
+        auto keyData = *prepareResult.keyData;
+        keyData->type = CryptoKeyType::Private;
+        keyObject = KeyObject::create(WTFMove(keyData));
+    } else {
+        keyObject = KeyObject::getPublicOrPrivateKey(
+            globalObject,
+            scope,
+            prepareResult.keyDataView,
+            CryptoKeyType::Private,
+            prepareResult.formatType,
+            prepareResult.encodingType,
+            prepareResult.cipher,
+            WTFMove(prepareResult.passphrase));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     Structure* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(lexicalGlobalObject);
     JSPrivateKeyObject* privateKey = JSPrivateKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));

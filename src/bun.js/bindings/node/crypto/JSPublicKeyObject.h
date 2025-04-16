@@ -10,7 +10,6 @@
 #include "openssl/ssl.h"
 #include "JSKeyObject.h"
 #include "KeyObject.h"
-#include "JSKeyObjectHandle.h"
 
 namespace Bun {
 

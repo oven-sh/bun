@@ -55,6 +55,7 @@
 #include "CryptoGenKeyPair.h"
 #include "CryptoKeys.h"
 #include "CryptoDhJob.h"
+#include "CryptoSignJob.h"
 
 using namespace JSC;
 

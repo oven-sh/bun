@@ -10,7 +10,6 @@
 #include "openssl/bn.h"
 #include "openssl/err.h"
 #include "ncrypto.h"
-#include "JSKeyObjectHandle.h"
 #include "JSCryptoKey.h"
 #include "JSSecretKeyObject.h"
 #include "JSPublicKeyObject.h"

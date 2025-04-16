@@ -172,7 +172,6 @@
 #include "JSSecretKeyObject.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
-#include "JSKeyObjectHandle.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2941,11 +2940,6 @@ void GlobalObject::finishCreation(VM& vm)
             setupPrivateKeyObjectClassStructure(init);
         });
 
-    m_JSKeyObjectHandleClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupKeyObjectHandleClassStructure(init);
-        });
-
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -4134,7 +4128,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSSecretKeyObjectClassStructure.visit(visitor);
     thisObject->m_JSPublicKeyObjectClassStructure.visit(visitor);
     thisObject->m_JSPrivateKeyObjectClassStructure.visit(visitor);
-    thisObject->m_JSKeyObjectHandleClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);
     thisObject->m_bigintStatValues.visit(visitor);
     thisObject->m_statFsValues.visit(visitor);

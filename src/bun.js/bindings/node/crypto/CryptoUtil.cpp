@@ -379,10 +379,9 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint
     throwException(globalObject, scope, errorObject);
 }
 
-std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue options, WTF::ASCIILiteral name)
+std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, WTF::ASCIILiteral name)
 {
     JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = options.get(globalObject, JSC::Identifier::fromString(vm, name));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -398,29 +397,28 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue o
     return value.asInt32();
 }
 
-int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey)
+int32_t getPadding(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, const ncrypto::EVPKeyPointer& pkey)
 {
-    auto padding = getIntOption(globalObject, options, "padding"_s);
+    auto padding = getIntOption(globalObject, scope, options, "padding"_s);
     return padding.value_or(pkey.getDefaultSignPadding());
 }
 
-std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options)
+std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
-    return getIntOption(globalObject, options, "saltLength"_s);
+    return getIntOption(globalObject, scope, options, "saltLength"_s);
 }
 
-NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValue options)
+DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (!options.isObject() || options.asCell()->type() != JSC::JSType::FinalObjectType) {
-        return NodeCryptoKeys::DSASigEnc::DER;
+        return DSASigEnc::DER;
     }
 
     JSValue dsaEncoding = options.get(globalObject, Identifier::fromString(globalObject->vm(), "dsaEncoding"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (dsaEncoding.isUndefined()) {
-        return NodeCryptoKeys::DSASigEnc::DER;
+        return DSASigEnc::DER;
     }
 
     if (!dsaEncoding.isString()) {
@@ -428,15 +426,17 @@ NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValu
         return {};
     }
 
-    WTF::String dsaEncodingStr = dsaEncoding.toWTFString(globalObject);
+    auto* dsaEncodingStr = dsaEncoding.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto dsaEncodingView = dsaEncodingStr->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (dsaEncodingStr == "der"_s) {
-        return NodeCryptoKeys::DSASigEnc::DER;
+    if (dsaEncodingView == "der"_s) {
+        return DSASigEnc::DER;
     }
 
-    if (dsaEncodingStr == "ieee-p1363"_s) {
-        return NodeCryptoKeys::DSASigEnc::P1363;
+    if (dsaEncodingView == "ieee-p1363"_s) {
+        return DSASigEnc::P1363;
     }
 
     Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.dsaEncoding"_s, dsaEncoding);
@@ -967,20 +967,17 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!passphraseValue.isUndefined()) {
         JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
-        config.passphrase = DataPointer::Alloc(passphraseView->byteLength());
+        config.passphrase = DataPointer::FromSpan(passphraseView->span());
         if (!*config.passphrase) {
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        memcpy(config.passphrase->get(), passphraseView->vector(), passphraseView->byteLength());
     }
 
     if (config.output_key_object) {
         if (!isInput) {
         }
     } else {
-        // bool needsPassphrase = false;
-
         if (!isInput) {
             if (cipherValue.isString()) {
                 JSString* cipherString = cipherValue.toString(globalObject);
@@ -992,7 +989,6 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
                     ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
                     return;
                 }
-                // needsPassphrase = true;
             } else {
                 config.cipher = nullptr;
             }

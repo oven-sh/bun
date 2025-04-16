@@ -61,7 +61,7 @@ void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 
     memcpy(buf->data(), m_result.data(), m_result.size());
 
-    JSValue result = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, buf->byteLength());
+    JSValue result = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, m_result.size());
 
     Bun__EventLoop__runCallback2(
         lexicalGlobalObject,
@@ -182,7 +182,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
 
     memcpy(buf->data(), ctx->m_result.data(), ctx->m_result.size());
 
-    JSValue result = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, buf->byteLength());
+    JSValue result = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, ctx->m_result.size());
     return JSValue::encode(result);
 }
 

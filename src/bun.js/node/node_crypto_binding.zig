@@ -111,6 +111,7 @@ pub const EcKeyPairJob = ExternCryptoJob("EcKeyPairJob");
 pub const NidKeyPairJob = ExternCryptoJob("NidKeyPairJob");
 pub const DhKeyPairJob = ExternCryptoJob("DhKeyPairJob");
 pub const DhJob = ExternCryptoJob("DhJob");
+pub const SignJob = ExternCryptoJob("SignJob");
 
 comptime {
     _ = CheckPrimeJob;
@@ -123,6 +124,7 @@ comptime {
     _ = NidKeyPairJob;
     _ = DhKeyPairJob;
     _ = DhJob;
+    _ = SignJob;
 }
 
 fn CryptoJob(comptime Ctx: type) type {

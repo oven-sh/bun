@@ -9,7 +9,6 @@
 #include "BunClientData.h"
 #include "openssl/ssl.h"
 #include "JSKeyObject.h"
-#include "JSKeyObjectHandle.h"
 
 namespace Bun {
 

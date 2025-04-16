@@ -35,7 +35,7 @@ import {
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
- * @typedef {"release" | "assert" | "debug" | "asan"} Profile
+ * @typedef {"release" | "assert" | "debug"} Profile
  */
 
 /**
@@ -45,6 +45,7 @@ import {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {boolean} [asan]
  */
 
 /**
@@ -52,7 +53,7 @@ import {
  * @returns {string}
  */
 function getTargetKey(target) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, asan } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
@@ -60,12 +61,15 @@ function getTargetKey(target) {
   if (baseline) {
     key += "-baseline";
   }
-  // Special case for ASAN builds
-  if (profile === "asan") {
+
+  if (asan) {
     key += "-asan";
-  } else if (profile && profile !== "release") {
+  }
+
+  if (profile && profile !== "release") {
     key += `-${profile}`;
   }
+
   return key;
 }
 
@@ -74,7 +78,7 @@ function getTargetKey(target) {
  * @returns {string}
  */
 function getTargetLabel(target) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, asan } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -82,10 +86,12 @@ function getTargetLabel(target) {
   if (baseline) {
     label += "-baseline";
   }
-  // Special case for ASAN builds
-  if (profile === "asan") {
+
+  if (asan) {
     label += "-asan";
-  } else if (profile && profile !== "release") {
+  }
+
+  if (profile && profile !== "release") {
     label += `-${profile}`;
   }
   return label;
@@ -112,7 +118,7 @@ const buildPlatforms = [
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", asan: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
@@ -131,6 +137,7 @@ const testPlatforms = [
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", asan: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
@@ -167,17 +174,16 @@ function getPlatformKey(platform) {
  * @returns {string}
  */
 function getPlatformLabel(platform) {
-  const { os, arch, baseline, profile, distro, release } = platform;
+  const { os, arch, baseline, asan, distro, release } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
   // Special case for ASAN builds
-  if (profile === "asan") {
-    label += "-asan";
-  } else if (profile && profile !== "release") {
-    label += `-${profile}`;
+  if (asan) {
+    label += " (ASAN)";
   }
+
   return label;
 }
 
@@ -413,7 +419,7 @@ function getBuildEnv(target, options) {
   };
 
   // ASAN configuration
-  if (profile === "asan") {
+  if (asan) {
     env.ENABLE_ASAN_RELEASE = "ON";
     env.ENABLE_ASSERTIONS = "ON";
     env.CMAKE_BUILD_TYPE = "Release";
@@ -575,7 +581,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
 
   let label = `${getPlatformLabel(platform)} - test-bun`;
   let key = `${getPlatformKey(platform)}`;
-  if (profile === "asan") {
+  if (asan) {
     label += " (ASAN)";
     key += "-asan";
   }
@@ -590,8 +596,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     // Use reduced parallelism for ASAN builds to avoid running out of memory
-    parallelism: unifiedTests ? undefined : profile === "asan" ? 6 : os === "darwin" ? 2 : 10,
-    timeout_in_minutes: profile === "asan" ? 90 : 30, // ASAN builds take significantly longer
+    parallelism: unifiedTests ? undefined : asan ? 6 : os === "darwin" ? 2 : 10,
+    timeout_in_minutes: asan ? 90 : 30, // ASAN builds take significantly longer
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
@@ -1058,7 +1064,7 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
-    buildProfiles: ["release", "asan"],
+    buildProfiles: ["release"],
   };
 }
 

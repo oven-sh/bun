@@ -470,7 +470,7 @@ pub const SendQueue = struct {
             itm.complete(global);
             return _continueSend(this, global, socket, reason);
         }
-        const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send, false);
+        const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send);
         if (n == to_send.len) {
             if (first.handle) |_| {
                 // the message was fully written, but it had a handle.
@@ -532,7 +532,7 @@ pub const SendQueue = struct {
 const WindowsSocketType = bun.io.StreamingWriter(NamedPipeIPCData, NamedPipeIPCData.onWrite, NamedPipeIPCData.onError, null, NamedPipeIPCData.onPipeClose);
 const SocketType = struct {
     const Backing = switch (Environment.isWindows) {
-        true => *const WindowsSocketType,
+        true => *WindowsSocketType,
         false => Socket,
     };
     backing: Backing,
@@ -550,14 +550,17 @@ const SocketType = struct {
     }
     fn writeFd(this: @This(), data: []const u8, fd: bun.FileDescriptor) i32 {
         return switch (Environment.isWindows) {
-            true => @compileError("Not implemented"),
+            true => @panic("TODO writeFd on Windows"),
             false => this.backing.writeFd(data, fd),
         };
     }
-    fn write(this: @This(), data: []const u8, close_on_end: bool) i32 {
+    fn write(this: @This(), data: []const u8) i32 {
         return switch (Environment.isWindows) {
-            true => @compileError("Not implemented"),
-            false => this.backing.write(data, close_on_end),
+            true => {
+                this.backing.outgoing.write(data) catch bun.outOfMemory();
+                return @intCast(data.len);
+            },
+            false => this.backing.write(data, false),
         };
     }
 };
@@ -692,7 +695,7 @@ const NamedPipeIPCData = struct {
     }
 
     pub fn writeVersionPacket(this: *NamedPipeIPCData, global: *JSC.JSGlobalObject) void {
-        this.send_queue.writeVersionPacket(global, &this.writer);
+        this.send_queue.writeVersionPacket(global, .wrap(&this.writer));
     }
 
     pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
@@ -700,11 +703,11 @@ const NamedPipeIPCData = struct {
             bun.assert(this.has_written_version == 1);
         }
         if (this.disconnected) {
-            return false;
+            return .failure;
         }
         // ref because we have pending data
         this.writer.source.?.pipe.ref();
-        return this.send_queue.serializeAndSend(global, value, is_internal, callback, handle, this.writer.source.?.pipe);
+        return this.send_queue.serializeAndSend(global, value, is_internal, callback, handle, .wrap(&this.writer));
     }
 
     pub fn close(this: *NamedPipeIPCData, nextTick: bool) void {

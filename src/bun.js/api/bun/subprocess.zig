@@ -2327,7 +2327,7 @@ pub fn spawnMaybeSync(
         .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
         .ipc_data = if (!is_sync and comptime Environment.isWindows)
             if (maybe_ipc_mode) |ipc_mode| .{
-                .mode = ipc_mode,
+                .send_queue = .init(ipc_mode),
             } else null
         else
             null,

@@ -598,9 +598,8 @@ namespace uWS
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-
             /* Break if no host header (but we can have empty string which is different from nullptr) */
-            if (requireHostHeader && !req->getHeader("host").data()) {
+            if (!isAncientHTTP && requireHostHeader && !req->getHeader("host").data()) {
                 return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
             }
 

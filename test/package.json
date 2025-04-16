@@ -97,9 +97,7 @@
     "xml2js": "0.6.2",
     "yargs": "17.7.2",
     "next": "15.3.0",
-    "next-auth": "5.0.0-beta.25",
-    "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "next-auth": "5.0.0-beta.25"
   },
   "private": true,
   "scripts": {

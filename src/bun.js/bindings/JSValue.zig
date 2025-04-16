@@ -2428,7 +2428,7 @@ pub const JSValue = enum(i64) {
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
         bun.assert(this.isNumber());
-        return bun.FDImpl.fromUV(this.toInt32()).encode();
+        return .fromUV(this.toInt32());
     }
 
     pub inline fn toU16(this: JSValue) u16 {

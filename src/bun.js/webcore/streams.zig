@@ -628,22 +628,18 @@ pub const StreamStart = union(Tag) {
                         };
                     }
 
-                    if (bun.FDImpl.fromJS(fd_value)) |fd| {
+                    if (bun.FD.fromJS(fd_value)) |fd| {
                         return .{
                             .FileSink = .{
                                 .chunk_size = chunk_size,
-                                .input_path = .{
-                                    .fd = fd.encode(),
-                                },
+                                .input_path = .{ .fd = fd },
                             },
                         };
                     } else {
-                        return .{
-                            .err = Syscall.Error{
-                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
-                                .syscall = .write,
-                            },
-                        };
+                        return .{ .err = Syscall.Error{
+                            .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                            .syscall = .write,
+                        } };
                     }
                 }
 
@@ -3634,13 +3630,13 @@ pub const FileSink = struct {
         if (comptime Environment.isPosix) {
             switch (bun.sys.fstat(fd)) {
                 .err => |err| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     return .{ .err = err };
                 },
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode);
                     if (!this.pollable) {
-                        isatty = std.posix.isatty(fd.int());
+                        isatty = std.posix.isatty(fd.native());
                     }
 
                     if (isatty) {
@@ -3664,7 +3660,7 @@ pub const FileSink = struct {
                         const flags = switch (bun.sys.getFcntlFlags(fd)) {
                             .result => |flags| flags,
                             .err => |err| {
-                                _ = bun.sys.close(fd);
+                                fd.close();
                                 return .{ .err = err };
                             },
                         };
@@ -3694,7 +3690,7 @@ pub const FileSink = struct {
                     this.pollable,
                 )) {
                     .err => |err| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return .{ .err = err };
                     },
                     .result => {
@@ -3710,7 +3706,7 @@ pub const FileSink = struct {
             this.pollable,
         )) {
             .err => |err| {
-                _ = bun.sys.close(fd);
+                fd.close();
                 return .{ .err = err };
             },
             .result => {
@@ -3996,10 +3992,9 @@ pub const FileSink = struct {
 
     fn getFd(this: *const @This()) i32 {
         if (Environment.isWindows) {
-            const fd_impl = this.fd.impl();
-            return switch (fd_impl.kind) {
-                .system => -1, // TODO:
-                .uv => fd_impl.value.as_uv,
+            return switch (this.fd.decodeWindows()) {
+                .windows => -1, // TODO:
+                .uv => |num| num,
             };
         }
         return this.fd.cast();
@@ -4094,14 +4089,14 @@ pub const FileReader = struct {
             var file_buf: bun.PathBuffer = undefined;
             var is_nonblocking = false;
 
-            const fd = if (file.pathlike == .fd)
-                if (file.pathlike.fd.isStdio()) brk: {
+            const fd: bun.FD = if (file.pathlike == .fd)
+                if (file.pathlike.fd.stdioTag() != null) brk: {
                     if (comptime Environment.isPosix) {
-                        const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.int(), bun.O.RDONLY);
+                        const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.native(), bun.O.RDONLY);
                         if (rc > -1) {
                             is_nonblocking = true;
                             file.is_atty = true;
-                            break :brk bun.toFD(rc);
+                            break :brk .fromNative(rc);
                         }
                     }
                     break :brk file.pathlike.fd;
@@ -4112,18 +4107,17 @@ pub const FileReader = struct {
                         return .{ .err = duped.err.withFd(file.pathlike.fd) };
                     }
 
-                    const fd = duped.result;
-
+                    const fd: bun.FD = duped.result;
                     if (comptime Environment.isPosix) {
-                        if (bun.FDTag.get(fd) == .none) {
-                            is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
+                        if (fd.stdioTag() == null) {
+                            is_nonblocking = switch (fd.getFcntlFlags()) {
                                 .result => |flags| (flags & bun.O.NONBLOCK) != 0,
                                 .err => false,
                             };
                         }
                     }
 
-                    break :brk switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {
+                    break :brk switch (fd.makeLibUVOwnedForSyscall(.dup, .close_on_fail)) {
                         .result => |owned_fd| owned_fd,
                         .err => |err| {
                             return .{ .err = err };
@@ -4139,9 +4133,9 @@ pub const FileReader = struct {
 
             if (comptime Environment.isPosix) {
                 if ((file.is_atty orelse false) or
-                    (fd.int() < 3 and std.posix.isatty(fd.cast())) or
+                    (fd.stdioTag() != null and std.posix.isatty(fd.cast())) or
                     (file.pathlike == .fd and
-                        bun.FDTag.get(file.pathlike.fd) != .none and
+                        file.pathlike.fd.stdioTag() != null and
                         std.posix.isatty(file.pathlike.fd.cast())))
                 {
                     // var termios = std.mem.zeroes(std.posix.termios);
@@ -4154,7 +4148,7 @@ pub const FileReader = struct {
                 const stat: bun.Stat = switch (Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
-                        _ = Syscall.close(fd);
+                        fd.close();
                         return .{ .err = err };
                     },
                 };

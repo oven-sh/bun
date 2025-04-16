@@ -96,7 +96,11 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 pub const NodeJSFS = struct {
     node_fs: JSC.Node.NodeFS = .{},
 
-    pub usingnamespace JSC.Codegen.JSNodeJSFS;
+    pub const js = JSC.Codegen.JSNodeJSFS;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub const new = bun.TrivialNew(@This());
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {

@@ -213,12 +213,13 @@ pub const Archiver = struct {
         contents: MutableString,
         filename_hash: u64 = 0,
         found: bool = false,
-        fd: FileDescriptorType = .zero,
+        fd: FileDescriptorType,
+
         pub fn init(filepath: bun.OSPathSlice, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
                 .filename_hash = bun.hash(std.mem.sliceAsBytes(filepath)),
-                .fd = .zero,
+                .fd = .invalid,
                 .found = false,
             };
         }
@@ -450,11 +451,11 @@ pub const Archiver = struct {
                         .sym_link => {
                             const link_target = entry.symlink();
                             if (Environment.isPosix) {
-                                bun.sys.symlinkat(link_target, bun.toFD(dir_fd), path).unwrap() catch |err| brk: {
+                                bun.sys.symlinkat(link_target, .fromNative(dir_fd), path).unwrap() catch |err| brk: {
                                     switch (err) {
                                         error.EPERM, error.ENOENT => {
                                             dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                            break :brk try bun.sys.symlinkat(link_target, bun.toFD(dir_fd), path).unwrap();
+                                            break :brk try bun.sys.symlinkat(link_target, .fromNative(dir_fd), path).unwrap();
                                         },
                                         else => return err,
                                     }
@@ -470,41 +471,39 @@ pub const Archiver = struct {
                             // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(entry.perm() | 0o666);
 
-                            const file_handle_native = brk: {
-                                if (Environment.isWindows) {
-                                    const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
-                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags, 0)) {
-                                        .result => |fd| break :brk fd,
-                                        .err => |e| switch (e.errno) {
-                                            @intFromEnum(bun.C.E.PERM), @intFromEnum(bun.C.E.NOENT) => {
-                                                bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
-                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), path, flags, 0).unwrap();
-                                            },
-                                            else => {
-                                                return bun.errnoToZigErr(e.errno);
-                                            },
+                            const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
+                            const file_handle_native: bun.FD = if (Environment.isWindows)
+                                switch (bun.sys.openatWindows(.fromNative(dir_fd), path, flags, 0)) {
+                                    .result => |fd| fd,
+                                    .err => |e| switch (e.errno) {
+                                        @intFromEnum(bun.C.E.PERM),
+                                        @intFromEnum(bun.C.E.NOENT),
+                                        => brk: {
+                                            bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                                            break :brk try bun.sys.openatWindows(.fromNative(dir_fd), path, flags, 0).unwrap();
                                         },
-                                    }
-                                } else {
-                                    break :brk (dir.createFileZ(path, .{ .truncate = true, .mode = mode }) catch |err| {
-                                        switch (err) {
-                                            error.AccessDenied, error.FileNotFound => {
-                                                dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                                break :brk (try dir.createFileZ(path, .{
-                                                    .truncate = true,
-                                                    .mode = mode,
-                                                })).handle;
-                                            },
-                                            else => {
-                                                return err;
-                                            },
-                                        }
-                                    }).handle;
+                                        else => return bun.errnoToZigErr(e.errno),
+                                    },
                                 }
-                            };
+                            else
+                                .fromStdFile(dir.createFileZ(path, .{
+                                    .truncate = true,
+                                    .mode = mode,
+                                }) catch |err|
+                                    switch (err) {
+                                        error.AccessDenied, error.FileNotFound => brk: {
+                                            dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
+                                            break :brk try dir.createFileZ(path, .{
+                                                .truncate = true,
+                                                .mode = mode,
+                                            });
+                                        },
+                                        else => return err,
+                                    });
+
                             const file_handle = brk: {
-                                errdefer _ = bun.sys.close(file_handle_native);
-                                break :brk try bun.toLibUVOwnedFD(file_handle_native);
+                                errdefer _ = file_handle_native.close();
+                                break :brk try file_handle_native.makeLibUVOwned();
                             };
 
                             var plucked_file = false;
@@ -522,7 +521,7 @@ pub const Archiver = struct {
                                 // But this approach does not actually solve the problem, it just
                                 // defers the close to a different thread. And since we are already
                                 // on a worker thread, that doesn't help us.
-                                _ = bun.sys.close(file_handle);
+                                file_handle.close();
                             };
 
                             const size: usize = @intCast(@max(entry.size(), 0));
@@ -567,7 +566,7 @@ pub const Archiver = struct {
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (archive.readDataIntoFd(bun.uvfdcast(file_handle))) {
+                                    switch (archive.readDataIntoFd(file_handle.uv())) {
                                         .eof => break :loop,
                                         .ok => break :possibly_retry,
                                         .retry => {

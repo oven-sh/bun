@@ -50,7 +50,6 @@ std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::Thr
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding = false);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
-std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier = std::nullopt);
 JSValue getStringOption(JSGlobalObject* globalObject, JSValue options, const WTF::ASCIILiteral& name);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);

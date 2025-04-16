@@ -17,6 +17,7 @@
 #include "JSVerify.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyRSA.h"
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -429,13 +430,26 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    // Get key argument
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options);
-    ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
-    if (!maybeKeyPtr) {
-        return {};
+    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    KeyObject keyObject;
+    if (prepareResult.keyData) {
+        keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(*prepareResult.keyData));
+    } else {
+        keyObject = KeyObject::getPublicOrPrivateKey(
+            lexicalGlobalObject,
+            scope,
+            prepareResult.keyDataView,
+            CryptoKeyType::Private,
+            prepareResult.formatType,
+            prepareResult.encodingType,
+            prepareResult.cipher,
+            WTFMove(prepareResult.passphrase));
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
+
+    const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);

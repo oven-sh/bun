@@ -3053,7 +3053,11 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.getRemoteSocketInfo(),
         };
     }
-
+    pub fn flushHeaders(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.flushHeaders(),
+        };
+    }
     pub fn getWriteOffset(this: AnyResponse) u64 {
         return switch (this) {
             inline else => |resp| resp.getWriteOffset(),
@@ -3576,6 +3580,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
             }
 
+            pub fn flushHeaders(res: *Response) void {
+                uws_res_flush_headers(ssl_flag, res.downcast());
+            }
+
             pub fn state(res: *const Response) State {
                 return uws_res_state(ssl_flag, @as(*const uws_res, @ptrCast(@alignCast(res))));
             }
@@ -3987,6 +3995,7 @@ extern fn uws_res_try_end(
     total: usize,
     close: bool,
 ) bool;
+extern fn uws_res_flush_headers(ssl: i32, res: *uws_res) void;
 extern fn uws_res_pause(ssl: i32, res: *uws_res) void;
 extern fn uws_res_resume(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write_continue(ssl: i32, res: *uws_res) void;

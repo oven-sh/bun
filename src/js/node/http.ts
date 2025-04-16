@@ -245,6 +245,7 @@ var FakeSocket = class Socket extends Duplex {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
+    console.log("destroy", err);
   }
 
   _final(callback) {}
@@ -2485,9 +2486,12 @@ const ServerResponsePrototype = {
     this._implicitHeader();
 
     const handle = this[kHandle];
-    if (handle && !this.headersSent) {
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+    if (handle) {
+      if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
+        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      }
+      handle.flushHeaders();
     }
   },
 } satisfies typeof import("node:http").ServerResponse.prototype;

@@ -142,13 +142,10 @@
 /**
  * @param {unknown} message
  * @param {Handle} handle
- * @returns {[unknown, Serialized]}
+ * @param {{ keepOpen?: boolean } | undefined} options
+ * @returns {[unknown, Serialized] | null}
  */
-export function serialize(
-  message,
-  handle,
-  options?: { keepOpen?: boolean },
-): [unknown, { cmd: "NODE_HANDLE"; message: unknown; type: "net.Socket" }] | null {
+export function serialize(message, handle, options) {
   const net = require("node:net");
   const dgram = require("node:dgram");
   if (handle instanceof net.Server) {

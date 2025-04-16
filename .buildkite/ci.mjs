@@ -1138,15 +1138,25 @@ async function getPipeline(options = {}) {
   }
 
   if (!buildId) {
+    // Log the platforms and profiles being used for debugging
+    console.log("Build platforms:", buildPlatforms.map(p => ({ os: p.os, arch: p.arch, profile: p.profile })));
+    console.log("Build profiles:", buildProfiles);
+    
     steps.push(
       ...buildPlatforms
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
         .map(target => {
           const imageKey = getImageKey(target);
 
+          // Create a unique group key for ASAN builds
+          const isAsan = target.profile === "asan";
+          const groupKey = isAsan 
+            ? `${getTargetKey(target)}-group` 
+            : getTargetKey(target);
+            
           return getStepWithDependsOn(
             {
-              key: getTargetKey(target),
+              key: groupKey,
               group: getTargetLabel(target),
               steps: unifiedBuilds
                 ? [getBuildBunStep(target, options)]
@@ -1169,11 +1179,19 @@ async function getPipeline(options = {}) {
       steps.push(
         ...testPlatforms
           .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
-          .map(target => ({
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
-          })),
+          .map(target => {
+            // Create a unique group key for ASAN builds
+            const isAsan = target.profile === "asan";
+            const groupKey = isAsan 
+              ? `${getTargetKey(target)}-test-group` 
+              : getTargetKey(target);
+              
+            return {
+              key: groupKey,
+              group: getTargetLabel(target),
+              steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
+            };
+          }),
       );
     }
   }

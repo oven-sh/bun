@@ -403,19 +403,19 @@ function getBuildEnv(target, options) {
     ABI: isMusl ? "musl" : undefined,
     CMAKE_TLS_VERIFY: "0",
   };
-  
+
   // ASAN configuration
   if (profile === "asan") {
     env.ENABLE_ASAN_RELEASE = "ON";
     env.ENABLE_ASSERTIONS = "ON";
     env.CMAKE_BUILD_TYPE = "Release";
-    
+
     // ASAN runtime options - disable leak detection to avoid excessive noise
     env.ASAN_OPTIONS = "detect_leaks=0:halt_on_error=0:detect_odr_violation=0";
     // Don't need LSAN options if we've disabled leak detection
     // env.LSAN_OPTIONS = "suppressions=lsan.supp:print_suppressions=0";
   }
-  
+
   return env;
 }
 
@@ -558,7 +558,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
-  
+
   // For ASAN builds, we don't filter tests - run all of them
   // Only adjust timeout and parallelism to accommodate ASAN's overhead
 

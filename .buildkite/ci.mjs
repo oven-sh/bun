@@ -436,16 +436,8 @@ function getBuildEnv(target, options) {
  * @returns {Step}
  */
 function getBuildVendorStep(platform, options) {
-  // Create a unique key for the platform by including distro and release
-  const { distro, release, profile } = platform;
-
-  // Build a key that includes important differentiators
-  const distroKey = distro ? `-${distro}-${release}` : "";
-
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-vendor`;
-
   return {
-    key: stepKey,
+    key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
@@ -461,16 +453,8 @@ function getBuildVendorStep(platform, options) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
-  // Create a unique key for the platform by including distro and release
-  const { distro, release, profile } = platform;
-
-  // Build a key that includes important differentiators
-  const distroKey = distro ? `-${distro}-${release}` : "";
-
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-cpp`;
-
   return {
-    key: stepKey,
+    key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
@@ -482,7 +466,6 @@ function getBuildCppStep(platform, options) {
     command: "bun run build:ci --target bun",
   };
 }
-
 /**
  * @param {Target} target
  * @returns {string}
@@ -506,17 +489,8 @@ function getBuildToolchain(target) {
  */
 function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
-
-  // Create a unique key for the platform by including distro and release
-  const { distro, release, profile } = platform;
-
-  // Build a key that includes important differentiators
-  const distroKey = distro ? `-${distro}-${release}` : "";
-
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-zig`;
-
   return {
-    key: stepKey,
+    key: `${getTargetKey(platform)}-build-zig`,
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
     retry: getRetry(),
@@ -533,31 +507,14 @@ function getBuildZigStep(platform, options) {
  * @returns {Step}
  */
 function getLinkBunStep(platform, options) {
-  // Create a unique key for the platform by including distro and release
-  const { distro, release, profile } = platform;
-
-  // Build keys that include important differentiators
-  const distroKey = distro ? `-${distro}-${release}` : "";
-
-  // Create unique step key for this specific platform configuration
-  const stepKey = `${getTargetKey(platform)}${distroKey}-build-bun`;
-
-  // Create dependency keys with the same pattern
-  const dependencies = [
-    `${getTargetKey(platform)}${distroKey}-build-vendor`,
-    `${getTargetKey(platform)}${distroKey}-build-cpp`,
-    `${getTargetKey(platform)}${distroKey}-build-zig`,
-  ];
-
-  let label = `${getTargetLabel(platform)} - build-bun`;
-  if (profile === "asan") {
-    label += " (ASAN)";
-  }
-
   return {
-    key: stepKey,
-    label,
-    depends_on: dependencies,
+    key: `${getTargetKey(platform)}-build-bun`,
+    label: `${getTargetLabel(platform)} - build-bun`,
+    depends_on: [
+      `${getTargetKey(platform)}-build-vendor`,
+      `${getTargetKey(platform)}-build-cpp`,
+      `${getTargetKey(platform)}-build-zig`,
+    ],
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),

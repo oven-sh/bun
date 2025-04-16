@@ -2183,7 +2183,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 #endif
         scope.throwException(globalObject, exception->value());
@@ -2249,7 +2249,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 #endif
         scope.throwException(globalObject, exception->value());
@@ -2329,7 +2329,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         RETURN_IF_EXCEPTION(scope, {});
 
         if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 #endif
             scope.throwException(globalObject, exception->value());

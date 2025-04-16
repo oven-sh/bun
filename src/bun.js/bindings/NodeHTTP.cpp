@@ -912,6 +912,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         args.append(jsBoolean(true));
         args.append(jsUndefined());
     }
+    args.append(jsBoolean(request->isAncient()));
 
     WTF::NakedPtr<JSC::Exception> exception;
     JSValue returnValue = AsyncContextFrame::call(globalObject, callbackObject, jsUndefined(), args, exception);

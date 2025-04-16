@@ -811,19 +811,22 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            blk: {
-                const resource = std.posix.rlimit_resource.STACK;
-                const limit = try std.posix.getrlimit(resource);
-                Limit.stack_before = limit;
-                if (limit.cur < limit.max) {
-                    var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = limit.max;
-                    new_limit.max = limit.max;
+            if (!bun.Environment.enable_asan) {
+                blk: {
+                    const resource = std.posix.rlimit_resource.STACK;
+                    const limit = try std.posix.getrlimit(resource);
+                    Limit.stack_before = limit;
+                    if (limit.cur < limit.max) {
+                        var new_limit = std.mem.zeroes(std.posix.rlimit);
+                        new_limit.cur = limit.max;
+                        new_limit.max = limit.max;
 
-                    std.posix.setrlimit(resource, new_limit) catch break :blk;
-                    Limit.stack = limit.max;
+                        std.posix.setrlimit(resource, new_limit) catch break :blk;
+                        Limit.stack = limit.max;
+                    }
                 }
             }
+
             var file_limit: usize = 0;
             blk: {
                 const resource = std.posix.rlimit_resource.NOFILE;

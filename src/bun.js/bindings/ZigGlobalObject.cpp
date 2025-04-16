@@ -283,6 +283,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
 
+#if ASAN_ENABLED && OS(LINUX)
+        // ASAN interferes with JSC's signal handlers
+        JSC::Options::useWasmFaultSignalHandler() = false;
+        JSC::Options::useWasmFastMemory() = false;
+#endif
+
         if (LIKELY(envc > 0)) {
             while (envc--) {
                 const char* env = (const char*)envp[envc];

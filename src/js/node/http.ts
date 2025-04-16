@@ -3725,7 +3725,7 @@ function _writeHead(statusCode, reason, obj, response) {
 
         for (let n = 0; n < obj.length; n += 2) {
           k = obj[n + 0];
-          if (k) response.setHeader(k, obj[n + 1]);
+          if (k) response.appendHeader(k, obj[n + 1]);
         }
       }
     } else if (obj) {

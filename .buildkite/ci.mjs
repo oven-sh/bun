@@ -35,7 +35,7 @@ import {
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
- * @typedef {"release" | "assert" | "debug"} Profile
+ * @typedef {"release" | "assert" | "debug" | "asan"} Profile
  */
 
 /**
@@ -106,6 +106,8 @@ const buildPlatforms = [
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // Add ASAN build for Linux x64
+  { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
@@ -391,7 +393,7 @@ function getBuildEnv(target, options) {
     CMAKE_BUILD_TYPE = "MinSizeRel";
   }
 
-  return {
+  const env = {
     CMAKE_BUILD_TYPE,
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
     ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
@@ -401,6 +403,20 @@ function getBuildEnv(target, options) {
     ABI: isMusl ? "musl" : undefined,
     CMAKE_TLS_VERIFY: "0",
   };
+  
+  // ASAN configuration
+  if (profile === "asan") {
+    env.ENABLE_ASAN_RELEASE = "ON";
+    env.ENABLE_ASSERTIONS = "ON";
+    env.CMAKE_BUILD_TYPE = "Release";
+    
+    // ASAN runtime options - disable leak detection to avoid excessive noise
+    env.ASAN_OPTIONS = "detect_leaks=0:halt_on_error=0:detect_odr_violation=0";
+    // Don't need LSAN options if we've disabled leak detection
+    // env.LSAN_OPTIONS = "suppressions=lsan.supp:print_suppressions=0";
+  }
+  
+  return env;
 }
 
 /**
@@ -532,7 +548,7 @@ function getBuildBunStep(platform, options) {
  * @returns {Step}
  */
 function getTestBunStep(platform, options, testOptions = {}) {
-  const { os } = platform;
+  const { os, profile } = platform;
   const { buildId, unifiedTests, testFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
@@ -542,6 +558,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
+  
+  // For ASAN builds, we don't filter tests - run all of them
+  // Only adjust timeout and parallelism to accommodate ASAN's overhead
 
   const depends = [];
   if (!buildId) {
@@ -555,7 +574,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
+    // Use reduced parallelism for ASAN builds to avoid running out of memory
+    parallelism: unifiedTests ? undefined : profile === "asan" ? 6 : os === "darwin" ? 2 : 10,
+    timeout_in_minutes: profile === "asan" ? 90 : 30, // ASAN builds take significantly longer
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
@@ -827,6 +848,10 @@ function getOptionsStep() {
           {
             label: `${getEmoji("debug")} Debug`,
             value: "debug",
+          },
+          {
+            label: `🔍 ASAN Release with Assertions`,
+            value: "asan",
           },
         ],
       },
@@ -1118,6 +1143,7 @@ async function getPipeline(options = {}) {
   }
 
   if (isMainBranch()) {
+    // Include ASAN builds in release artifacts - useful for debugging memory issues
     steps.push(getReleaseStep(buildPlatforms, options));
   }
 

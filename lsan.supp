@@ -1,0 +1,9 @@
+# LSAN suppressions file for Bun
+# Add known false positives or acceptable leaks here
+
+# WebKit leaks
+leak:WebCore::
+leak:JSC::
+
+# Known acceptable leaks in tests
+leak:bun_test_internal

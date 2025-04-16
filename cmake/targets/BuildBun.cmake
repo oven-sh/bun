@@ -3,6 +3,13 @@ if(DEBUG)
 # elseif(ENABLE_SMOL)
 #   set(bun bun-smol-profile)
 #   set(bunStrip bun-smol)
+elseif(RELEASE AND ENABLE_ASAN_RELEASE)
+  set(bun bun-asan-release)
+  if(ENABLE_ASSERTIONS)
+    set(bun bun-asan-release-assert)
+  endif()
+  # Set a distinct name for stripped ASAN build
+  set(bunStrip bun-asan)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -930,6 +937,16 @@ if(NOT WIN32)
       -Wno-nullability-completeness
       -Werror
     )
+    
+    # Apply ASAN in release builds if enabled
+    if (ENABLE_ASAN_RELEASE)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
+      )
+    endif()
   endif()
 else()
   target_compile_options(${bun} PUBLIC
@@ -1265,6 +1282,9 @@ if(NOT BUN_CPP_ONLY)
     endif()
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
+    endif()
+    if(ENABLE_ASAN_RELEASE)
+      set(bunTriplet ${bunTriplet}-asan)
     endif()
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
     set(bunFiles ${bunExe} features.json)

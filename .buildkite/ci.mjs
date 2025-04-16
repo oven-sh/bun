@@ -532,15 +532,9 @@ function getLinkBunStep(platform, options) {
  * @returns {Step}
  */
 function getBuildBunStep(platform, options) {
-  const { profile } = platform;
-  const stepKey = `${getTargetKey(platform)}-build-bun`;
-  let label = `${getTargetLabel(platform)} - build-bun`;
-  if (profile === "asan") {
-    label += " (ASAN)";
-  }
   return {
-    key: stepKey,
-    label,
+    key: `${getTargetKey(platform)}-build-bun`,
+    label: `${getTargetLabel(platform)} - build-bun`,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),

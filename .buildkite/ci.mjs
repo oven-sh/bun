@@ -411,7 +411,7 @@ function getBuildEnv(target, options) {
     env.CMAKE_BUILD_TYPE = "Release";
     // Disable LTO for ASAN builds as it's not necessary and can complicate debugging
     env.ENABLE_LTO = "OFF";
-    
+
     // Set ASAN runtime options to disable leak detection (too noisy)
     env.ASAN_OPTIONS = "detect_leaks=0:halt_on_error=0:detect_odr_violation=0";
     // Don't need LSAN options if we've disabled leak detection

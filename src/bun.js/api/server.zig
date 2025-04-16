@@ -42,14 +42,12 @@ const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const HTTP = bun.http;
 const FetchEvent = WebCore.FetchEvent;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const Node = bun.JSC.Node;
@@ -1934,7 +1932,7 @@ pub const HTTPStatusText = struct {
 };
 
 fn NewFlags(comptime debug_mode: bool) type {
-    return packed struct {
+    return packed struct(u16) {
         has_marked_complete: bool = false,
         has_marked_pending: bool = false,
         has_abort_handler: bool = false,
@@ -1954,9 +1952,24 @@ fn NewFlags(comptime debug_mode: bool) type {
         has_written_status: bool = false,
         response_protected: bool = false,
         aborted: bool = false,
-        has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+        has_finalized: bun.DebugOnly(bool) = if (Environment.isDebug) false,
 
         is_error_promise_pending: bool = false,
+
+        _padding: PaddingInt = 0,
+
+        const PaddingInt = brk: {
+            var size: usize = 2;
+            if (Environment.isDebug) {
+                size -= 1;
+            }
+
+            if (debug_mode) {
+                size -= 1;
+            }
+
+            break :brk std.meta.Int(.unsigned, size);
+        };
     };
 }
 
@@ -2398,7 +2411,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             ctxLog("deinit<d> ({*})<r>", .{this});
-            if (comptime Environment.allow_assert)
+            if (comptime Environment.isDebug)
                 assert(this.flags.has_finalized);
 
             this.request_body_buf.clearAndFree(this.allocator);
@@ -2809,7 +2822,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.server != null);
             const globalThis = this.server.?.globalThis;
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }
@@ -2890,7 +2903,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // use node syscall so that we don't segfault on BADF
             if (sendfile.auto_close)
-                _ = bun.sys.close(sendfile.fd);
+                sendfile.fd.close();
         }
         const separator: string = "\r\n";
         const separator_iovec = [1]std.posix.iovec_const{.{
@@ -3041,7 +3054,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toJSC(globalThis));
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
                     return;
                 },
@@ -3050,7 +3063,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isMac) {
                 if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
 
                     var err = bun.sys.Error{
@@ -3069,7 +3082,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isLinux) {
                 if (!(bun.isRegularFile(stat.mode) or std.posix.S.ISFIFO(stat.mode) or std.posix.S.ISSOCK(stat.mode))) {
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
 
                     var err = bun.sys.Error{
@@ -5806,7 +5819,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     false,
                 );
             } else {
-                const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
+                const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(bun.JSC.C.JSValueGetType(ctx, first_arg.asRef()));
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
 
                 return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, err);
@@ -6389,7 +6402,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var stack_fallback = std.heap.stackFallback(8192, this.allocator);
             const allocator = stack_fallback.get();
 
-            const buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
+            const buffer_writer = js_printer.BufferWriter.init(allocator);
             var writer = js_printer.BufferPrinter.init(buffer_writer);
             defer writer.ctx.buffer.deinit();
             var source = logger.Source.initEmptyFile("info.json");
@@ -6445,6 +6458,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 globalThis,
                 thisObject,
                 this.config.onNodeHTTPRequest,
+                if (bun.http.Method.find(req.method())) |method|
+                    method.toJS(globalThis)
+                else
+                    .undefined,
                 req,
                 resp,
                 upgrade_ctx,
@@ -7611,6 +7628,7 @@ extern fn NodeHTTPServer__onRequest_http(
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
+    methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
@@ -7622,6 +7640,7 @@ extern fn NodeHTTPServer__onRequest_https(
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
+    methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,

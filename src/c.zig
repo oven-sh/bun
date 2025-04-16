@@ -161,8 +161,8 @@ pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, 
         .result => |f| f,
         .err => |e| return .{ .err = e },
     };
-    defer _ = bun.sys.close(in_handle);
-    _ = bun.sys.unlinkat(from_dir, filename);
+    defer in_handle.close();
+    _ = from_dir.unlinkat(filename);
     return copyFileZSlowWithHandle(in_handle, to_dir, destination);
 }
 
@@ -202,13 +202,13 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             .result => |fd| fd,
             .err => |e| return .{ .err = e },
         };
-        defer _ = bun.sys.close(out_handle);
+        defer out_handle.close();
 
         if (comptime Environment.isLinux) {
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
 
-        switch (bun.copyFile(in_handle.cast(), out_handle.cast())) {
+        switch (bun.copyFile(in_handle, out_handle)) {
             .err => |e| return .{ .err = e },
             .result => {},
         }

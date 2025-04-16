@@ -1,7 +1,11 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
-pub usingnamespace JSC.Codegen.JSSubprocess;
+pub const js = JSC.Codegen.JSSubprocess;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -46,12 +50,13 @@ stdout_maxbuf: ?*MaxBuf = null,
 stderr_maxbuf: ?*MaxBuf = null,
 exited_due_to_maxbuf: ?MaxBuf.Kind = null,
 
-pub const Flags = packed struct {
+pub const Flags = packed struct(u8) {
     is_sync: bool = false,
     killed: bool = false,
     has_stdin_destructor_called: bool = false,
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
+    _: u3 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -77,7 +82,11 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 }
 
 pub const ResourceUsage = struct {
-    pub usingnamespace JSC.Codegen.JSResourceUsage;
+    pub const js = JSC.Codegen.JSResourceUsage;
+    pub const toJS = ResourceUsage.js.toJS;
+    pub const fromJS = ResourceUsage.js.fromJS;
+    pub const fromJSDirect = ResourceUsage.js.fromJSDirect;
+
     rusage: Rusage,
 
     pub fn getCPUTime(
@@ -190,9 +199,9 @@ pub const StdioKind = enum {
 
     pub fn toFd(this: @This()) bun.FileDescriptor {
         return switch (this) {
-            .stdin => bun.STDIN_FD,
-            .stdout => bun.STDOUT_FD,
-            .stderr => bun.STDERR_FD,
+            .stdin => .stdin(),
+            .stdout => .stdout(),
+            .stderr => .stderr(),
         };
     }
 
@@ -452,7 +461,7 @@ const Readable = union(enum) {
         switch (this.*) {
             .memfd => |fd| {
                 this.* = .{ .closed = {} };
-                _ = bun.sys.close(fd);
+                fd.close();
             },
             .fd => |_| {
                 this.* = .{ .closed = {} };
@@ -468,7 +477,7 @@ const Readable = union(enum) {
         switch (this.*) {
             .memfd => |fd| {
                 this.* = .{ .closed = {} };
-                _ = bun.sys.close(fd);
+                fd.close();
             },
             .fd => {
                 this.* = .{ .closed = {} };
@@ -1289,7 +1298,7 @@ const Writable = union(enum) {
         const process: *Subprocess = @fieldParentPtr("stdin", this);
 
         if (process.this_jsvalue != .zero) {
-            if (Subprocess.stdinGetCached(process.this_jsvalue)) |existing_value| {
+            if (js.stdinGetCached(process.this_jsvalue)) |existing_value| {
                 JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
             }
         }
@@ -1497,7 +1506,7 @@ const Writable = union(enum) {
                 this.buffer.deref();
             },
             .memfd => |fd| {
-                _ = bun.sys.close(fd);
+                fd.close();
                 this.* = .{ .ignore = {} };
             },
             .ignore => {},
@@ -1511,7 +1520,7 @@ const Writable = union(enum) {
                 _ = pipe.end(null);
             },
             .memfd => |fd| {
-                _ = bun.sys.close(fd);
+                fd.close();
                 this.* = .{ .ignore = {} };
             },
             .fd => {
@@ -1717,7 +1726,7 @@ pub fn finalizeStreams(this: *Subprocess) void {
                     item.buffer.close(onPipeClose);
                 }
             } else {
-                _ = bun.sys.close(item);
+                item.close();
             }
         }
         this.stdio_pipes.clearAndFree(bun.default_allocator);
@@ -2077,7 +2086,7 @@ pub fn spawnMaybeSync(
                 if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                     if (stdio_val.jsType().isArray()) {
                         var stdio_iter = stdio_val.arrayIterator(globalThis);
-                        var i: u32 = 0;
+                        var i: u31 = 0;
                         while (stdio_iter.next()) |value| : (i += 1) {
                             try stdio[i].extract(globalThis, i, value);
                             if (i == 2)
@@ -2184,7 +2193,7 @@ pub fn spawnMaybeSync(
         if (should_close_memfd) {
             inline for (0..stdio.len) |fd_index| {
                 if (stdio[fd_index] == .memfd) {
-                    _ = bun.sys.close(stdio[fd_index].memfd);
+                    stdio[fd_index].memfd.close();
                     stdio[fd_index] = .ignore;
                 }
             }
@@ -2204,12 +2213,12 @@ pub fn spawnMaybeSync(
         //
         // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
         env_array.ensureUnusedCapacity(allocator, 3) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
-        const ipc_fd: u32 = brk: {
+        const ipc_fd: i32 = brk: {
             if (ipc_channel == -1) {
                 // If the user didn't specify an IPC channel, we need to add one
                 ipc_channel = @intCast(extra_fds.items.len);
                 var ipc_extra_fd_default = Stdio{ .ipc = {} };
-                const fd: u32 = @intCast(ipc_channel + 3);
+                const fd: i32 = ipc_channel + 3;
                 switch (ipc_extra_fd_default.asSpawnOption(fd)) {
                     .result => |opt| {
                         try extra_fds.append(opt);

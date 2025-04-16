@@ -582,7 +582,7 @@ pub const Repository = extern struct {
                 "-c core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
-                try bun.getFdPath(repo_dir.fd, &final_path_buf),
+                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
                 target,
             }) catch |err| {
                 log.addErrorFmt(

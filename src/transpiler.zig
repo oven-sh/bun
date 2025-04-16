@@ -704,7 +704,7 @@ pub const Transpiler = struct {
                         );
                 }
 
-                const buffer_writer = try js_printer.BufferWriter.init(transpiler.allocator);
+                const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (transpiler.options.target) {
@@ -796,12 +796,14 @@ pub const Transpiler = struct {
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (transpiler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
                         .pathname = pathname,
-                        .dir = dir,
+                        .dir = if (transpiler.options.output_dir_handle) |output_handle|
+                            .fromStdDir(output_handle)
+                        else
+                            .invalid,
                         .is_outdir = true,
                     },
                 };

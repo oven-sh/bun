@@ -120,7 +120,7 @@ pub const PatchFile = struct {
                         .result => |fd| fd,
                         .err => |e| return e.withoutPath(),
                     };
-                    defer _ = bun.sys.close(newfile_fd);
+                    defer newfile_fd.close();
 
                     const hunk = part.file_creation.hunk orelse {
                         continue;
@@ -192,7 +192,7 @@ pub const PatchFile = struct {
                             .err => |e| return e.withoutPath(),
                             .result => |f| f,
                         };
-                        defer _ = bun.sys.close(fd);
+                        defer fd.close();
                         if (bun.sys.fchmod(fd, newmode.toBunMode()).asErr()) |e| {
                             return e.withoutPath();
                         }
@@ -242,7 +242,7 @@ pub const PatchFile = struct {
         // to use the arena
         const use_arena: bool = stat.size <= PAGE_SIZE;
         const file_alloc = if (use_arena) arena.allocator() else bun.default_allocator;
-        const filebuf = patch_dir.asDir().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch return .{ .err = bun.sys.Error.fromCode(.INVAL, .read).withPath(file_path) };
+        const filebuf = patch_dir.stdDir().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch return .{ .err = bun.sys.Error.fromCode(.INVAL, .read).withPath(file_path) };
         defer file_alloc.free(filebuf);
 
         var file_line_count: usize = 0;
@@ -323,9 +323,7 @@ pub const PatchFile = struct {
             .err => |e| return .{ .err = e.withPath(file_path) },
             .result => |fd| fd,
         };
-        defer {
-            _ = bun.sys.close(file_fd);
-        }
+        defer file_fd.close();
 
         const contents = std.mem.join(bun.default_allocator, "\n", lines.items) catch bun.outOfMemory();
         defer bun.default_allocator.free(contents);
@@ -1121,8 +1119,9 @@ pub const TestingAPIs = struct {
         pub fn deinit(this: *ApplyArgs) void {
             this.patchfile_txt.deinit();
             this.patchfile.deinit(bun.default_allocator);
-            if (bun.FileDescriptor.cwd().eq(this.dirfd)) {
-                _ = bun.sys.close(this.dirfd);
+            // TODO: HAVE @zackradisic REVIEW THIS DIFF
+            if (bun.FileDescriptor.cwd() != this.dirfd) {
+                this.dirfd.close();
             }
         }
     };
@@ -1193,8 +1192,9 @@ pub const TestingAPIs = struct {
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
         const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
-            if (bun.FileDescriptor.cwd().eq(dir_fd)) {
-                _ = bun.sys.close(dir_fd);
+            // TODO: HAVE @zackradisic REVIEW THIS DIFF
+            if (bun.FileDescriptor.cwd() != dir_fd) {
+                dir_fd.close();
             }
 
             patchfile_src.deinit();

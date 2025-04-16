@@ -509,7 +509,7 @@ describe("express.text()", function () {
   });
 });
 
-function createApp(options) {
+function createApp(options?) {
   var app = express();
 
   app.use(express.text(options));

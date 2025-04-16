@@ -89,10 +89,7 @@ const assert = bun.assert;
 ///
 /// Functions which accept a `_: OutputNeedsIOSafeGuard` parameter can
 /// safely assume the stdout/stderr they are working with require IO.
-pub const OutputNeedsIOSafeGuard = struct {
-    /// Dummy zero sized field to prevent it from being trivial to create this type (by doing `.{}`)
-    __i_know_what_i_am_doing_it_needs_io_yes: u0,
-};
+pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
 
 pub const ExitCode = u16;
 
@@ -174,7 +171,7 @@ const CowFd = struct {
 
     pub fn deinit(this: *CowFd) void {
         assert(this.refcount == 0);
-        _ = bun.sys.close(this.__fd);
+        this.__fd.close();
         bun.default_allocator.destroy(this);
     }
 };
@@ -353,7 +350,11 @@ pub const ShellArgs = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
+    pub const js = JSC.Codegen.JSShellInterpreter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the allocator used to allocate interpreter state
@@ -614,7 +615,7 @@ pub const Interpreter = struct {
                     return Maybe(void).initErr(err);
                 },
             };
-            _ = Syscall.close2(this.cwd_fd);
+            _ = this.cwd_fd.closeAllowingBadFileDescriptor(null);
 
             this.__prev_cwd.clearRetainingCapacity();
             this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
@@ -667,8 +668,6 @@ pub const Interpreter = struct {
             }
         }
     };
-
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
 
     const ThisInterpreter = @This();
 
@@ -1070,13 +1069,13 @@ pub const Interpreter = struct {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDOUT_FD)) {
+            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout())) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDERR_FD)) {
+            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr())) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
@@ -2034,11 +2033,11 @@ pub const Interpreter = struct {
         fn expandVarArgv(this: *const Expansion, original_int: u8) []const u8 {
             var int = original_int;
             switch (this.base.interpreter.event_loop) {
-                .js => |js| {
+                .js => |event_loop| {
                     if (int == 0) return bun.selfExePath() catch "";
                     int -= 1;
 
-                    const vm = js.virtual_machine;
+                    const vm = event_loop.virtual_machine;
                     if (vm.main.len > 0) {
                         if (int == 0) return vm.main;
                         int -= 1;
@@ -3086,20 +3085,18 @@ pub const Interpreter = struct {
                     if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
                         return .{ .err = Syscall.Error.fromCode(e, .pipe) };
                     }
-                    pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
-                    pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
+                    pipe[0] = .fromUV(fds[0]);
+                    pipe[1] = .fromUV(fds[1]);
                 } else {
-                    const fds: [2]bun.FileDescriptor = switch (bun.sys.socketpair(
+                    switch (bun.sys.socketpair(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,
                         0,
                         .blocking,
                     )) {
-                        .result => |fds| .{ bun.toFD(fds[0]), bun.toFD(fds[1]) },
+                        .result => |fds| pipe.* = fds,
                         .err => |err| return .{ .err = err },
-                    };
-
-                    pipe.* = fds;
+                    }
                 }
                 set_count.* += 1;
             }
@@ -4880,7 +4877,7 @@ pub const Interpreter = struct {
                     }
                 } else {
                     log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
-                    _ = bun.sys.close(this.fd);
+                    this.fd.close();
                 }
             }
             this.buf.deinit(bun.default_allocator);
@@ -5057,7 +5054,7 @@ pub fn MaybeChild(comptime T: type) type {
 }
 
 fn closefd(fd: bun.FileDescriptor) void {
-    if (Syscall.close2(fd)) |err| {
+    if (fd.closeAllowingBadFileDescriptor(null)) |err| {
         log("ERR closefd: {}\n", .{err});
     }
 }
@@ -5334,12 +5331,12 @@ pub const ShellSyscall = struct {
                         .err => |e| return .{ .err = e },
                     };
                     return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
-                        .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                        .result => |fd| fd.makeLibUVOwnedForSyscall(.open, .close_on_fail),
                         .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
                 return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
-                    .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                    .result => |fd| fd.makeLibUVOwnedForSyscall(.open, .close_on_fail),
                     .err => |e| .{ .err = e.withPath(path) },
                 };
             }
@@ -5357,7 +5354,7 @@ pub const ShellSyscall = struct {
             .err => |e| return .{ .err = e.withPath(path) },
         };
         if (bun.Environment.isWindows) {
-            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
+            return fd.makeLibUVOwnedForSyscall(.open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -5368,7 +5365,7 @@ pub const ShellSyscall = struct {
             .err => |e| return .{ .err = e },
         };
         if (bun.Environment.isWindows) {
-            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
+            return fd.makeLibUVOwnedForSyscall(.open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -5376,7 +5373,7 @@ pub const ShellSyscall = struct {
     pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             return switch (Syscall.dup(fd)) {
-                .result => |duped_fd| bun.sys.toLibUVOwnedFD(duped_fd, .dup, .close_on_fail),
+                .result => |duped_fd| duped_fd.makeLibUVOwnedForSyscall(.dup, .close_on_fail),
                 .err => |e| .{ .err = e },
             };
         }
@@ -5572,8 +5569,10 @@ pub fn FlagParser(comptime Opts: type) type {
 }
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
-    if (bun.Environment.isWindows) return false;
-    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int());
-    // macos allows regular files to be pollable: ISREG(mode) == true
-    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int()) or posix.S.ISREG(mode);
+    return switch (bun.Environment.os) {
+        .windows, .wasm => false,
+        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
+        // macos allows regular files to be pollable: ISREG(mode) == true
+        .mac => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.S.ISREG(mode) or posix.isatty(fd.native()),
+    };
 }

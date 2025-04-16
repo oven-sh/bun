@@ -426,8 +426,9 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
-    pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
-        return @as(C_API.JSContextRef, @ptrCast(this));
+    // TODO: delete these two fns
+    pub fn ref(this: *JSGlobalObject) *JSGlobalObject {
+        return this;
     }
     pub const ctx = ref;
 
@@ -458,6 +459,18 @@ pub const JSGlobalObject = opaque {
 
     pub fn clearException(this: *JSGlobalObject) void {
         return JSGlobalObject__clearException(this);
+    }
+
+    /// Clear the currently active exception off the VM unless it is a
+    /// termination exception.
+    ///
+    /// Returns `true` if the exception was cleared, `false` if it was a
+    /// termination exception. Use `clearException` to unconditionally clear
+    /// exceptions.
+    ///
+    /// It is safe to call this function when no exception is present.
+    pub fn clearExceptionExceptTermination(this: *JSGlobalObject) bool {
+        return JSGlobalObject__clearExceptionExceptTermination(this);
     }
 
     /// Clears the current exception and returns that value. Requires compile-time
@@ -655,6 +668,9 @@ pub const JSGlobalObject = opaque {
             }
         }
         const field_name = comptime range.field_name;
+        if (comptime field_name.len == 0) {
+            @compileError("field_name must not be empty");
+        }
         const always_allow_zero = comptime range.always_allow_zero;
         const min = range.min;
         const max = range.max;
@@ -727,6 +743,7 @@ pub const JSGlobalObject = opaque {
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
     extern fn JSGlobalObject__clearException(*JSGlobalObject) void;
+    extern fn JSGlobalObject__clearExceptionExceptTermination(*JSGlobalObject) bool;
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;

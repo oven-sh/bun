@@ -497,7 +497,7 @@ pub const StringOrBuffer = union(enum) {
         return result;
     }
 
-    pub fn toJS(this: *StringOrBuffer, ctx: JSC.C.JSContextRef) JSC.JSValue {
+    pub fn toJS(this: *StringOrBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             inline .threadsafe_string, .string => |*str| {
                 return str.transferToJS(ctx);
@@ -962,11 +962,11 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!?PathLike {
+    pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!?PathLike {
         return fromJSWithAllocator(ctx, arguments, bun.default_allocator);
     }
 
-    pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?PathLike {
+    pub fn fromJSWithAllocator(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?PathLike {
         const arg = arguments.next() orelse return null;
         switch (arg.jsType()) {
             .Uint8Array,
@@ -1063,7 +1063,7 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef) bun.JSError!void {
+    pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: *JSC.JSGlobalObject) bun.JSError!void {
         switch (zig_str.len) {
             0...bun.MAX_PATH_BYTES => return,
             else => {
@@ -1075,7 +1075,7 @@ pub const Valid = struct {
         comptime unreachable;
     }
 
-    pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef) bun.JSError!void {
+    pub fn pathStringLength(len: usize, ctx: *JSC.JSGlobalObject) bun.JSError!void {
         switch (len) {
             0...bun.MAX_PATH_BYTES => return,
             else => {
@@ -1087,11 +1087,11 @@ pub const Valid = struct {
         comptime unreachable;
     }
 
-    pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef) bun.JSError!void {
+    pub fn pathString(zig_str: JSC.ZigString, ctx: *JSC.JSGlobalObject) bun.JSError!void {
         return pathStringLength(zig_str.len, ctx);
     }
 
-    pub fn pathBuffer(buffer: Buffer, ctx: JSC.C.JSContextRef) bun.JSError!void {
+    pub fn pathBuffer(buffer: Buffer, ctx: *JSC.JSGlobalObject) bun.JSError!void {
         const slice = buffer.slice();
         switch (slice.len) {
             0 => {
@@ -1238,13 +1238,6 @@ pub const ArgumentsSlice = struct {
     }
 };
 
-pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?bun.FileDescriptor {
-    return if (try bun.FDImpl.fromJSValidated(value, ctx)) |fd|
-        fd.encode()
-    else
-        null;
-}
-
 // Equivalent to `toUnixTimestamp`
 //
 // Node.js docs:
@@ -1339,7 +1332,7 @@ fn timeLikeFromNow() TimeLike {
     };
 }
 
-pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode {
+pub fn modeFromJS(ctx: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!?Mode {
     const mode_int = if (value.isNumber()) brk: {
         const m = try validators.validateUint32(ctx, value, "mode", .{}, false);
         break :brk @as(Mode, @truncate(m));
@@ -1424,12 +1417,12 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?JSC.Node.PathOrFileDescriptor {
+    pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
-        if (try bun.FDImpl.fromJSValidated(first, ctx)) |fd| {
+        if (try bun.FD.fromJSValidated(first, ctx)) |fd| {
             arguments.eat();
-            return JSC.Node.PathOrFileDescriptor{ .fd = fd.encode() };
+            return .{ .fd = fd };
         }
 
         return JSC.Node.PathOrFileDescriptor{
@@ -1529,7 +1522,7 @@ pub const FileSystemFlags = enum(c_int) {
         .{ "SA+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
     });
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
+    pub fn fromJS(ctx: *JSC.JSGlobalObject, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
                 return ctx.throwValue(ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());

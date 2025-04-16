@@ -112,7 +112,6 @@ const buildPlatforms = [
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  // Add ASAN build for Linux x64
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
@@ -1059,7 +1058,7 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
-    buildProfiles: ["release"],
+    buildProfiles: ["release", "asan"],
   };
 }
 

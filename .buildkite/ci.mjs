@@ -436,11 +436,14 @@ function getBuildEnv(target, options) {
  * @returns {Step}
  */
 function getBuildVendorStep(platform, options) {
-  // Ensure ASAN builds have unique step keys
-  const stepKey =
-    platform.profile === "asan"
-      ? `${getTargetKey(platform)}-build-vendor-asan`
-      : `${getTargetKey(platform)}-build-vendor`;
+  // Create a unique key for the platform by including distro and release
+  const { distro, release, profile } = platform;
+  
+  // Build a key that includes important differentiators
+  const distroKey = distro ? `-${distro}-${release}` : "";
+  const asanKey = profile === "asan" ? "-asan" : "";
+  
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-vendor${asanKey}`;
 
   return {
     key: stepKey,
@@ -459,9 +462,14 @@ function getBuildVendorStep(platform, options) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
-  // Ensure ASAN builds have unique step keys
-  const stepKey =
-    platform.profile === "asan" ? `${getTargetKey(platform)}-build-cpp-asan` : `${getTargetKey(platform)}-build-cpp`;
+  // Create a unique key for the platform by including distro and release
+  const { distro, release, profile } = platform;
+  
+  // Build a key that includes important differentiators
+  const distroKey = distro ? `-${distro}-${release}` : "";
+  const asanKey = profile === "asan" ? "-asan" : "";
+  
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-cpp${asanKey}`;
 
   return {
     key: stepKey,
@@ -501,9 +509,14 @@ function getBuildToolchain(target) {
 function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
 
-  // Ensure ASAN builds have unique step keys
-  const stepKey =
-    platform.profile === "asan" ? `${getTargetKey(platform)}-build-zig-asan` : `${getTargetKey(platform)}-build-zig`;
+  // Create a unique key for the platform by including distro and release
+  const { distro, release, profile } = platform;
+  
+  // Build a key that includes important differentiators
+  const distroKey = distro ? `-${distro}-${release}` : "";
+  const asanKey = profile === "asan" ? "-asan" : "";
+  
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-zig${asanKey}`;
 
   return {
     key: stepKey,
@@ -523,17 +536,21 @@ function getBuildZigStep(platform, options) {
  * @returns {Step}
  */
 function getLinkBunStep(platform, options) {
-  // Ensure ASAN builds have unique step keys
-  const isAsan = platform.profile === "asan";
-  const asanSuffix = isAsan ? "-asan" : "";
+  // Create a unique key for the platform by including distro and release
+  const { distro, release, profile } = platform;
+  
+  // Build keys that include important differentiators
+  const distroKey = distro ? `-${distro}-${release}` : "";
+  const asanKey = profile === "asan" ? "-asan" : "";
+  
+  // Create unique step key for this specific platform configuration
+  const stepKey = `${getTargetKey(platform)}${distroKey}-build-bun${asanKey}`;
 
-  const stepKey = `${getTargetKey(platform)}-build-bun`;
-
-  // Create dependencies with the ASAN suffix if this is an ASAN build
+  // Create dependency keys with the same pattern
   const dependencies = [
-    `${getTargetKey(platform)}-build-vendor${isAsan ? asanSuffix : ""}`,
-    `${getTargetKey(platform)}-build-cpp${isAsan ? asanSuffix : ""}`,
-    `${getTargetKey(platform)}-build-zig${isAsan ? asanSuffix : ""}`,
+    `${getTargetKey(platform)}${distroKey}-build-vendor${asanKey}`,
+    `${getTargetKey(platform)}${distroKey}-build-cpp${asanKey}`,
+    `${getTargetKey(platform)}${distroKey}-build-zig${asanKey}`,
   ];
 
   return {
@@ -1148,11 +1165,15 @@ async function getPipeline(options = {}) {
         .map(target => {
           const imageKey = getImageKey(target);
 
-          // Create a unique group key for ASAN builds
-          const isAsan = target.profile === "asan";
-          const groupKey = isAsan 
-            ? `${getTargetKey(target)}-group` 
-            : getTargetKey(target);
+          // Create a unique key for the platform by including distro and release
+          const { distro, release, profile } = target;
+          
+          // Build a key that includes important differentiators to ensure uniqueness
+          const distroKey = distro ? `-${distro}-${release}` : "";
+          const asanKey = profile === "asan" ? "-asan" : "";
+          
+          // Create a truly unique group key
+          const groupKey = `${getTargetKey(target)}${distroKey}-group${asanKey}`;
             
           return getStepWithDependsOn(
             {
@@ -1180,11 +1201,15 @@ async function getPipeline(options = {}) {
         ...testPlatforms
           .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
           .map(target => {
-            // Create a unique group key for ASAN builds
-            const isAsan = target.profile === "asan";
-            const groupKey = isAsan 
-              ? `${getTargetKey(target)}-test-group` 
-              : getTargetKey(target);
+            // Create a unique key for the platform by including distro and release
+            const { distro, release, profile } = target;
+            
+            // Build a key that includes important differentiators to ensure uniqueness
+            const distroKey = distro ? `-${distro}-${release}` : "";
+            const asanKey = profile === "asan" ? "-asan" : "";
+            
+            // Create a truly unique group key for test steps
+            const groupKey = `${getTargetKey(target)}${distroKey}-test-group${asanKey}`;
               
             return {
               key: groupKey,

@@ -664,6 +664,7 @@ public:
 
     size_t byteLength() const;
 
+    static DataPointer toHex(const BIGNUM* bn);
     DataPointer toHex() const;
     DataPointer encode() const;
     DataPointer encodePadded(size_t size) const;

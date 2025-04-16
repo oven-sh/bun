@@ -442,6 +442,14 @@ int BignumPointer::operator<=>(const BIGNUM* other) const noexcept
     return BN_cmp(bn_.get(), other);
 }
 
+DataPointer BignumPointer::toHex(const BIGNUM* bn)
+{
+    if (bn == nullptr) return {};
+    char* hex = BN_bn2hex(bn);
+    if (!hex) return {};
+    return DataPointer(hex, strlen(hex));
+}
+
 DataPointer BignumPointer::toHex() const
 {
     if (!bn_) return {};
@@ -2796,7 +2804,7 @@ EVPKeyPointer::operator Dsa() const
 bool EVPKeyPointer::validateDsaParameters() const
 {
     if (!pkey_) return false;
-    /* Validate DSA2 parameters from FIPS 186-4 */
+        /* Validate DSA2 parameters from FIPS 186-4 */
 #if OPENSSL_VERSION_MAJOR >= 3
     if (EVP_default_properties_is_fips_enabled(nullptr) && EVP_PKEY_DSA == id()) {
 #else

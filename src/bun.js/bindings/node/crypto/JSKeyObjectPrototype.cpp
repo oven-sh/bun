@@ -44,7 +44,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectPrototype_equals, (JSGlobalObject * globalOb
     JSValue otherKeyObjectValue = callFrame->argument(0);
     JSKeyObject* otherKeyObject = jsDynamicCast<JSKeyObject*>(otherKeyObjectValue);
     if (!otherKeyObject) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "otherKeyObject"_s, "KeyObject"_s, otherKeyObjectValue);
+        return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "otherKeyObject"_s, "KeyObject"_s, otherKeyObjectValue);
     }
 
     KeyObject& thisHandle = thisObject->handle();

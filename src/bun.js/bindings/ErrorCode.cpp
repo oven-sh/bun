@@ -966,7 +966,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     builder.append(reason);
     builder.append(". Received "_s);
 
-    JSValueToStringSafe(globalObject, builder, value);
+    JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));

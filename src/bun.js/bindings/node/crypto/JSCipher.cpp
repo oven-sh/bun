@@ -121,23 +121,25 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        padding = paddingValue.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!paddingValue.isUndefined()) {
+            padding = paddingValue.toInt32(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         JSValue oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!oaepHashValue.isUndefined()) {
             V::validateString(scope, lexicalGlobalObject, oaepHashValue, "options.oaepHash"_s);
             RETURN_IF_EXCEPTION(scope, {});
-        }
-        JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        digest = ncrypto::Digest::FromName(oaepHashView);
-        if (!digest) {
-            ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
-            return {};
+            JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            digest = ncrypto::Digest::FromName(oaepHashView);
+            if (!digest) {
+                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
+                return {};
+            }
         }
 
         encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
@@ -154,7 +156,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSArrayBufferView* buffer = getArrayBufferOrView(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (operation == CipherOperation::decrypt && keyType == KeyType::Private && padding == RSA_PKCS1_PADDING) {
+    if (operation == CipherOperation::sign && keyType == KeyType::Private && padding == RSA_PKCS1_PADDING) {
         ncrypto::EVPKeyCtxPointer ctx = pkey.newCtx();
 
         if (!ctx.initForDecrypt()) {
@@ -223,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicEncrypt, (JSC::JSGlobalObject * globalObject, J
 }
 JSC_DEFINE_HOST_FUNCTION(jsPublicDecrypt, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(rsaFunction(globalObject, callFrame, KeyType::Public, CipherOperation::decrypt, RSA_PKCS1_PADDING));
+    return JSValue::encode(rsaFunction(globalObject, callFrame, KeyType::Public, CipherOperation::recover, RSA_PKCS1_PADDING));
 }
 JSC_DEFINE_HOST_FUNCTION(jsPrivateEncrypt, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -231,7 +233,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateEncrypt, (JSC::JSGlobalObject * globalObject, 
 }
 JSC_DEFINE_HOST_FUNCTION(jsPrivateDecrypt, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(rsaFunction(globalObject, callFrame, KeyType::Private, CipherOperation::recover, RSA_PKCS1_OAEP_PADDING));
+    return JSValue::encode(rsaFunction(globalObject, callFrame, KeyType::Private, CipherOperation::decrypt, RSA_PKCS1_OAEP_PADDING));
 }
 
 } // namespace Bun

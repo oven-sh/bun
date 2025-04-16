@@ -125,17 +125,15 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
         return std::nullopt;
     }
 
-    static auto supportedKeyTypes = std::array {
-        EVP_PKEY_DH,
+    static constexpr auto supportedKeyTypes = std::to_array<int>({ EVP_PKEY_DH,
         EVP_PKEY_EC,
         EVP_PKEY_X448,
-        EVP_PKEY_X25519
-    };
+        EVP_PKEY_X25519 });
 
     int privateKeyType = privateKey.asymmetricKey().id();
     int publicKeyType = publicKey.asymmetricKey().id();
 
-    if (privateKeyType != publicKeyType || !std::find(supportedKeyTypes.begin(), supportedKeyTypes.end(), privateKeyType)) {
+    if (privateKeyType != publicKeyType || std::ranges::find(supportedKeyTypes, privateKeyType) != supportedKeyTypes.end()) {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, privateKeyValue, "must be a supported key type"_s);
     }
 

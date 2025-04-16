@@ -412,46 +412,46 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
+    auto exportBuffer = [this, lexicalGlobalObject, globalObject, &scope]() -> JSValue {
+        auto key = symmetricKey();
+        auto buf = ArrayBuffer::tryCreateUninitialized(key.size(), 1);
+        if (!buf) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
+        memcpy(buf->data(), key.data(), key.size());
+        return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, key.size());
+    };
+
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
         RETURN_IF_EXCEPTION(scope, {});
         JSObject* options = jsDynamicCast<JSObject*>(optionsValue);
-        bool jwk = false;
 
         JSValue formatValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (formatValue.isString()) {
-            auto* formatString = formatValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto formatView = formatString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+        if (!formatValue.isUndefined()) {
+            if (formatValue.isString()) {
+                auto* formatString = formatValue.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto formatView = formatString->view(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
 
-            if (formatView != "buffer"_s && formatView != "jwk"_s) {
-                jwk = true;
-                ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "options.format"_s, formatValue, "must be one of: undefined, 'buffer', 'jwk'"_s);
-                return {};
+                if (formatView == "jwk"_s) {
+                    return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Secret, false);
+                }
+
+                if (formatView == "buffer"_s) {
+                    return exportBuffer();
+                }
             }
 
-        } else if (!formatValue.isUndefined()) {
             ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "options.format"_s, formatValue, "must be one of: undefined, 'buffer', 'jwk'"_s);
             return {};
         }
-
-        if (jwk) {
-            return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Secret, false);
-        }
     }
 
-    auto key = symmetricKey();
-
-    RefPtr<ArrayBuffer> buf = JSC::ArrayBuffer::tryCreateUninitialized(key.size(), 1);
-    if (!buf) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return {};
-    }
-    memcpy(buf->data(), key.data(), key.size());
-
-    return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, key.size());
+    return exportBuffer();
 }
 
 JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
@@ -500,15 +500,13 @@ void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope
 
     result->putDirect(vm, Identifier::fromString(vm, "modulusLength"_s), jsNumber(ncrypto::BignumPointer::GetBitCount(pubKey.n)));
 
-    Vector<uint8_t> publicExponentBuf;
-    if (!publicExponentBuf.tryGrow(ncrypto::BignumPointer::GetByteCount(pubKey.e))) {
-        throwOutOfMemoryError(globalObject, scope);
+    auto publicExponentHex = BignumPointer::toHex(pubKey.e);
+    if (!publicExponentHex) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create publicExponent"_s);
         return;
     }
-    ncrypto::BignumPointer::EncodePaddedInto(pubKey.e, publicExponentBuf.data(), publicExponentBuf.size());
 
-    // TODO: this probably is broken!
-    JSValue publicExponent = JSBigInt::parseInt(globalObject, vm, publicExponentBuf.span(), 10, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+    JSValue publicExponent = JSBigInt::parseInt(globalObject, vm, publicExponentHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
     if (!publicExponent) {
         ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create public exponent"_s);
         return;

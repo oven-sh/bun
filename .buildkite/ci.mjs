@@ -395,7 +395,7 @@ function getTestAgent(platform, options) {
  * @returns {Record<string, string | undefined>}
  */
 function getBuildEnv(target, options) {
-  const { profile, baseline, abi } = target;
+  const { profile, baseline, abi, asan } = target;
   const release = !profile || profile === "release";
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;

@@ -79,7 +79,7 @@ else()
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
 endif()
 
-if(ENABLE_ASAN)
+if(ENABLE_ASAN OR ENABLE_ASAN_RELEASE)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 

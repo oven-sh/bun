@@ -122,8 +122,15 @@ pub const FD = packed struct(backing_int) {
 
     /// When calling fd function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the `bun.FD`.
+    /// Asserts the fd is valid.
     pub fn native(fd: FD) fd_t {
         if (Environment.isDebug and !@inComptime()) bun.assert(fd.isValid());
+        return fd.nativeAllowInvalid();
+    }
+    /// Deprecated: renamed to `native` because it is unclear what `cast` would cast to.
+    pub const cast = native;
+
+    pub fn nativeAllowInvalid(fd: FD) fd_t {
         return switch (os) {
             else => fd.value.as_system,
             .windows => switch (fd.decodeWindows()) {
@@ -132,8 +139,6 @@ pub const FD = packed struct(backing_int) {
             },
         };
     }
-    /// Deprecated: renamed to `native` because it is unclear what `cast` would cast to.
-    pub const cast = native;
 
     /// When calling fd function, you should consider the FD struct to now be
     /// invalid. Calling `.close()` on the FD at that point may not work.

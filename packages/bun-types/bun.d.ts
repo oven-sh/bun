@@ -2462,13 +2462,13 @@ declare module "bun" {
    * Basic usage - Bundle a single entrypoint and check results
    * ```ts
    * const result = await Bun.build({
-   *  entrypoints: ['./src/index.tsx'],
-   *  outdir: './dist'
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist'
    * });
    *
    * if (!result.success) {
-   *  console.error('Build failed:', result.logs);
-   *  process.exit(1);
+   *   console.error('Build failed:', result.logs);
+   *   process.exit(1);
    * }
    * ```
    *

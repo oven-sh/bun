@@ -258,9 +258,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     WTF::initializeMainThread();
 
 #if ASAN_ENABLED && OS(LINUX)
-    // ASAN interferes with JSC's signal handlers
-    JSC::Options::useWasmFaultSignalHandler() = false;
-    JSC::Options::useWasmFastMemory() = false;
+    {
+        JSC::Options::AllowUnfinalizedAccessScope scope;
+
+        // ASAN interferes with JSC's signal handlers
+        JSC::Options::useWasmFaultSignalHandler() = false;
+        JSC::Options::useWasmFastMemory() = false;
+    }
 #endif
 
     JSC::initialize();

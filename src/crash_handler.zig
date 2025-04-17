@@ -815,7 +815,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
 var did_register_sigaltstack = false;
 var sigaltstack: [512 * 1024]u8 = undefined;
 
-pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
+fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
     if (act) |act_| {
         if (!did_register_sigaltstack) {
             var stack: std.c.stack_t = .{
@@ -840,6 +840,7 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
 var windows_segfault_handle: ?windows.HANDLE = null;
 
 pub fn resetOnPosix() void {
+    if (bun.Environment.enable_asan) return;
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = handleSegfaultPosix },
         .mask = std.posix.empty_sigset,
@@ -863,6 +864,7 @@ pub fn init() void {
 
 pub fn resetSegfaultHandler() void {
     if (!enable) return;
+    if (bun.Environment.enable_asan) return;
 
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {
@@ -1368,6 +1370,9 @@ fn isReportingEnabled() bool {
 
     // Debug builds shouldn't report to the default url by default
     if (bun.Environment.isDebug)
+        return false;
+
+    if (bun.Environment.enable_asan)
         return false;
 
     // Honor DO_NOT_TRACK

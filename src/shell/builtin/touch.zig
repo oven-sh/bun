@@ -255,7 +255,7 @@ pub const ShellTouchTask = struct {
                 const perm = 0o664;
                 switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         break :out;
                     },
                     .err => |e| {

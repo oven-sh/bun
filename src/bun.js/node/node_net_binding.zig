@@ -81,7 +81,7 @@ pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
     const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
 
-    net.put(global, "SocketAddress", SocketAddress.getConstructor(global));
+    net.put(global, "SocketAddress", SocketAddress.js.getConstructor(global));
 
     return net;
 }

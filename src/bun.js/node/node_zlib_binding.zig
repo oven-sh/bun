@@ -156,7 +156,7 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
             this_value.ensureStillAlive();
 
-            const write_callback: JSC.JSValue = T.writeCallbackGetCached(this_value).?;
+            const write_callback: JSC.JSValue = T.js.writeCallbackGetCached(this_value).?;
 
             vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
@@ -248,13 +248,13 @@ pub fn CompressionStream(comptime T: type) type {
 
         pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
             if (value.isFunction()) {
-                T.errorCallbackSetCached(this_value, globalObject, value);
+                T.js.errorCallbackSetCached(this_value, globalObject, value);
             }
             return true;
         }
 
         pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
-            return T.errorCallbackGetCached(this_value) orelse .undefined;
+            return T.js.errorCallbackGetCached(this_value) orelse .undefined;
         }
 
         /// returns true if no error was detected/emitted
@@ -272,7 +272,8 @@ pub fn CompressionStream(comptime T: type) type {
             var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
             const code_value = code_str.transferToJS(globalThis);
 
-            const callback: JSC.JSValue = T.errorCallbackGetCached(this_value) orelse Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
+            const callback: JSC.JSValue = T.js.errorCallbackGetCached(this_value) orelse
+                Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
             _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
@@ -315,7 +316,11 @@ pub const SNativeZlib = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    pub usingnamespace JSC.Codegen.JSNativeZlib;
+    pub const js = JSC.Codegen.JSNativeZlib;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub usingnamespace CompressionStream(@This());
 
     ref_count: RefCount,
@@ -379,11 +384,11 @@ pub const SNativeZlib = struct {
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
-        SNativeZlib.writeCallbackSetCached(this_value, globalThis, writeCallback);
+        js.writeCallbackSetCached(this_value, globalThis, writeCallback);
 
         // Keep the dictionary alive by keeping a reference to it in the JS object.
         if (dictionary != null) {
-            SNativeZlib.dictionarySetCached(this_value, globalThis, arguments[6]);
+            js.dictionarySetCached(this_value, globalThis, arguments[6]);
         }
 
         this.stream.init(level, windowBits, memLevel, strategy, dictionary);
@@ -685,7 +690,11 @@ pub const SNativeBrotli = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    pub usingnamespace JSC.Codegen.JSNativeBrotli;
+    pub const js = JSC.Codegen.JSNativeBrotli;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub usingnamespace CompressionStream(@This());
 
     ref_count: RefCount,
@@ -751,7 +760,7 @@ pub const SNativeBrotli = struct {
 
         this.write_result = writeResult;
 
-        SNativeBrotli.writeCallbackSetCached(this_value, globalThis, writeCallback);
+        js.writeCallbackSetCached(this_value, globalThis, writeCallback);
 
         var err = this.stream.init();
         if (err.isError()) {

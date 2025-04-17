@@ -250,7 +250,7 @@ pub const StepPosition = enum {
     /// The first rise occurs at input progress value of 0 and the last rise occurs at input progress value of 1.
     @"jump-both",
 
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     const Map = bun.ComptimeEnumMap(enum {
         start,

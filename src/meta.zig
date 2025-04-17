@@ -284,6 +284,7 @@ pub fn isSimpleEqlType(comptime T: type) bool {
         .int => true,
         .float => true,
         .@"enum" => true,
+        .@"struct" => |struct_info| struct_info.layout == .@"packed",
         else => false,
     };
 }

@@ -137,7 +137,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
-pub const Bitflags = @import("./bitflags.zig").Bitflags;
+pub const bits = @import("bits.zig");
 pub const css = @import("./css/css_parser.zig");
 pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
@@ -3659,7 +3659,9 @@ pub inline fn take(val: anytype) ?@typeInfo(@typeInfo(@TypeOf(val)).pointer.chil
 /// This function deinitializes the value and sets the optional to null.
 pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
     if (val.*) |*v| {
-        v.deinit(allocator);
+        if (@hasDecl(@TypeOf(v.*), "deinit")) {
+            v.deinit(allocator);
+        }
         val.* = null;
     }
 }

@@ -43,12 +43,14 @@ pub const ColorScheme = packed struct(u8) {
     only: bool = false,
     __unused: u5 = 0,
 
-    pub usingnamespace css.Bitflags(@This());
+    pub fn eql(a: ColorScheme, b: ColorScheme) bool {
+        return a == b;
+    }
 
     const Map = bun.ComptimeEnumMap(enum { normal, only, light, dark });
 
     pub fn parse(input: *css.Parser) css.Result(ColorScheme) {
-        var res = ColorScheme.empty();
+        var res = ColorScheme{};
         const ident = switch (input.expectIdent()) {
             .result => |ident| ident,
             .err => |e| return .{ .err = e },
@@ -56,9 +58,9 @@ pub const ColorScheme = packed struct(u8) {
 
         if (Map.get(ident)) |value| switch (value) {
             .normal => return .{ .result = res },
-            .only => res.insert(ColorScheme{ .only = true }),
-            .light => res.insert(ColorScheme{ .light = true }),
-            .dark => res.insert(ColorScheme{ .dark = true }),
+            .only => res.only = true,
+            .light => res.light = true,
+            .dark => res.dark = true,
         };
 
         while (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |i| {
@@ -66,14 +68,14 @@ pub const ColorScheme = packed struct(u8) {
                 .normal => return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 .only => {
                     // Only must be at the start or the end, not in the middle
-                    if (res.contains(ColorScheme{ .only = true })) {
+                    if (res.only) {
                         return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
                     }
-                    res.insert(ColorScheme{ .only = true });
+                    res.only = true;
                     return .{ .result = res };
                 },
-                .light => res.insert(ColorScheme{ .light = true }),
-                .dark => res.insert(ColorScheme{ .dark = true }),
+                .light => res.light = true,
+                .dark => res.dark = true,
             };
         }
 
@@ -81,22 +83,22 @@ pub const ColorScheme = packed struct(u8) {
     }
 
     pub fn toCss(this: *const ColorScheme, comptime W: type, dest: *Printer(W)) css.PrintErr!void {
-        if (this.isEmpty()) {
+        if (this.* == ColorScheme{}) {
             return dest.writeStr("normal");
         }
 
-        if (this.contains(ColorScheme{ .light = true })) {
+        if (this.light) {
             try dest.writeStr("light");
-            if (this.contains(ColorScheme{ .dark = true })) {
+            if (this.dark) {
                 try dest.writeChar(' ');
             }
         }
 
-        if (this.contains(ColorScheme{ .dark = true })) {
+        if (this.dark) {
             try dest.writeStr("dark");
         }
 
-        if (this.contains(ColorScheme{ .only = true })) {
+        if (this.only) {
             try dest.writeStr(" only");
         }
     }
@@ -177,7 +179,7 @@ pub const ColorSchemeHandler = struct {
             .@"color-scheme" => |*color_scheme_| {
                 const color_scheme: *const ColorScheme = color_scheme_;
                 if (!context.targets.isCompatible(css.compat.Feature.light_dark)) {
-                    if (color_scheme.contains(ColorScheme{ .light = true })) {
+                    if (color_scheme.light) {
                         dest.append(
                             context.allocator,
                             defineVar(context.allocator, "--buncss-light", .{ .ident = "initial" }),
@@ -187,7 +189,7 @@ pub const ColorSchemeHandler = struct {
                             defineVar(context.allocator, "--buncss-dark", .{ .whitespace = " " }),
                         ) catch bun.outOfMemory();
 
-                        if (color_scheme.contains(ColorScheme{ .dark = true })) {
+                        if (color_scheme.dark) {
                             context.addDarkRule(
                                 context.allocator,
                                 defineVar(context.allocator, "--buncss-light", .{ .whitespace = " " }),
@@ -197,7 +199,7 @@ pub const ColorSchemeHandler = struct {
                                 defineVar(context.allocator, "--buncss-dark", .{ .ident = "initial" }),
                             );
                         }
-                    } else if (color_scheme.contains(ColorScheme{ .dark = true })) {
+                    } else if (color_scheme.dark) {
                         dest.append(context.allocator, defineVar(context.allocator, "--buncss-light", .{ .whitespace = " " })) catch bun.outOfMemory();
                         dest.append(context.allocator, defineVar(context.allocator, "--buncss-dark", .{ .ident = "initial" })) catch bun.outOfMemory();
                     }

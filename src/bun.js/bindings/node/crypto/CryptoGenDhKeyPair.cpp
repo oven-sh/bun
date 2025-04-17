@@ -37,10 +37,10 @@ DhKeyPairJob* DhKeyPairJob::create(JSGlobalObject* globalObject, DhKeyPairJobCtx
     return Bun__DhKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
-extern "C" void Bun__DHKeyPairJob__schedule(DhKeyPairJob* job);
+extern "C" void Bun__DhKeyPairJob__schedule(DhKeyPairJob* job);
 void DhKeyPairJob::schedule()
 {
-    Bun__DHKeyPairJob__schedule(this);
+    Bun__DhKeyPairJob__schedule(this);
 }
 
 extern "C" void Bun__DhKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, DhKeyPairJobCtx* ctx, EncodedJSValue callback);

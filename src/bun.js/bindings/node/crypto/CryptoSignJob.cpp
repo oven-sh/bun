@@ -284,13 +284,10 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     auto dsaSigEnc = getDSASigEnc(globalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Vector<uint8_t> signature;
+    GCOwnedDataScope<std::span<const uint8_t>> signatureView = { nullptr, {} };
     if (mode == Mode::Verify) {
-        if (auto* view = jsDynamicCast<JSArrayBufferView*>(signatureValue)) {
-            signature.append(view->span());
-        } else {
-            ERR::INVALID_ARG_INSTANCE(scope, globalObject, "signature"_s, "Buffer, TypedArray, or DataView"_s, signatureValue);
-        }
+        signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined(), true);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto prepareResult = mode == Mode::Verify
@@ -336,6 +333,18 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     }
 
     if (mode == Mode::Verify) {
+        Vector<uint8_t> signature;
+        if (keyObject.asymmetricKey().isSigVariant() && dsaSigEnc == DSASigEnc::P1363) {
+            convertP1363ToDER(
+                ncrypto::Buffer<const uint8_t> {
+                    .data = signatureView->data(),
+                    .len = signatureView->size(),
+                },
+                keyObject.asymmetricKey(),
+                signature);
+        } else {
+            signature.append(std::span { signatureView->data(), signatureView->size() });
+        }
 
         return SignJobCtx(
             mode,

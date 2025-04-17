@@ -54,7 +54,7 @@ void RsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJo
 ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_variant == RsaKeyVariant::RSA_PSS ? EVP_PKEY_RSA_PSS : EVP_PKEY_RSA);
-    if (!ctx.initForKeygen() || !ctx.setRsaKeygenBits(m_modulusLength)) {
+    if (!ctx || !ctx.initForKeygen() || !ctx.setRsaKeygenBits(m_modulusLength)) {
         m_opensslError = ERR_get_error();
         return {};
     }

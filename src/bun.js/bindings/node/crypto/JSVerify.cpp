@@ -306,10 +306,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
 }
 
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
-    const ncrypto::EVPKeyPointer& pkey,
-    WTF::Vector<uint8_t>& derBuffer);
-
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
@@ -496,62 +492,6 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
 
     throwCryptoError(lexicalGlobalObject, scope, publicRes.openssl_error.value_or(0), "Failed to read public key"_s);
     return std::nullopt;
-}
-
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
-    const ncrypto::EVPKeyPointer& pkey,
-    WTF::Vector<uint8_t>& derBuffer)
-{
-    // Get the size of r and s components from the key
-    auto bytesOfRS = pkey.getBytesOfRS();
-    if (!bytesOfRS) {
-        // If we can't get the bytes of RS, this is not a signature variant
-        // that we can convert. Return false to indicate that the original
-        // signature should be used.
-        return false;
-    }
-
-    size_t bytesOfRSValue = bytesOfRS.value();
-
-    // Check if the signature size is valid (should be 2 * bytesOfRS)
-    if (p1363Sig.len != 2 * bytesOfRSValue) {
-        // If the signature size doesn't match what we expect, return false
-        // to indicate that the original signature should be used.
-        return false;
-    }
-
-    // Create BignumPointers for r and s components
-    ncrypto::BignumPointer r(p1363Sig.data, bytesOfRSValue);
-    if (!r) {
-        return false;
-    }
-
-    ncrypto::BignumPointer s(p1363Sig.data + bytesOfRSValue, bytesOfRSValue);
-    if (!s) {
-        return false;
-    }
-
-    // Create a new ECDSA_SIG structure and set r and s components
-    auto asn1_sig = ncrypto::ECDSASigPointer::New();
-    if (!asn1_sig) {
-        return false;
-    }
-
-    if (!asn1_sig.setParams(WTFMove(r), WTFMove(s))) {
-        return false;
-    }
-
-    // Encode the signature in DER format
-    auto buf = asn1_sig.encode();
-    if (buf.len < 0) {
-        return false;
-    }
-
-    if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
-        return false;
-    }
-
-    return true;
 }
 
 } // namespace Bun

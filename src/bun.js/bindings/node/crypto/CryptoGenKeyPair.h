@@ -26,6 +26,8 @@ public:
     void runFromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
     void deinit();
 
+    int err() const { return m_opensslError; };
+
     ncrypto::EVPKeyPointer::PublicKeyEncodingConfig m_publicKeyEncoding;
     ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig m_privateKeyEncoding;
 

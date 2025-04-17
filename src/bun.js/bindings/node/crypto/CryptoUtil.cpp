@@ -443,6 +443,62 @@ DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSV
     return {};
 }
 
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
+    const ncrypto::EVPKeyPointer& pkey,
+    WTF::Vector<uint8_t>& derBuffer)
+{
+    // Get the size of r and s components from the key
+    auto bytesOfRS = pkey.getBytesOfRS();
+    if (!bytesOfRS) {
+        // If we can't get the bytes of RS, this is not a signature variant
+        // that we can convert. Return false to indicate that the original
+        // signature should be used.
+        return false;
+    }
+
+    size_t bytesOfRSValue = bytesOfRS.value();
+
+    // Check if the signature size is valid (should be 2 * bytesOfRS)
+    if (p1363Sig.len != 2 * bytesOfRSValue) {
+        // If the signature size doesn't match what we expect, return false
+        // to indicate that the original signature should be used.
+        return false;
+    }
+
+    // Create BignumPointers for r and s components
+    ncrypto::BignumPointer r(p1363Sig.data, bytesOfRSValue);
+    if (!r) {
+        return false;
+    }
+
+    ncrypto::BignumPointer s(p1363Sig.data + bytesOfRSValue, bytesOfRSValue);
+    if (!s) {
+        return false;
+    }
+
+    // Create a new ECDSA_SIG structure and set r and s components
+    auto asn1_sig = ncrypto::ECDSASigPointer::New();
+    if (!asn1_sig) {
+        return false;
+    }
+
+    if (!asn1_sig.setParams(WTFMove(r), WTFMove(s))) {
+        return false;
+    }
+
+    // Encode the signature in DER format
+    auto buf = asn1_sig.encode();
+    if (buf.len < 0) {
+        return false;
+    }
+
+    if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
+        return false;
+    }
+
+    return true;
+}
+
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
 {
     if (value.isString()) {
@@ -474,13 +530,18 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 }
 
 // maybe replace other getArrayBufferOrView
-GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue)
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly)
 {
     using Return = GCOwnedDataScope<std::span<const uint8_t>>;
 
     if (auto* view = jsDynamicCast<JSArrayBufferView*>(dataValue)) {
         return { view, view->span() };
     }
+
+    if (arrayBufferViewOnly) {
+        ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
+        return { nullptr, {} };
+    };
 
     if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(dataValue)) {
         return { arrayBuffer, arrayBuffer->impl()->span() };

@@ -19,12 +19,9 @@ namespace Bun {
 
 void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& keyCtx)
 {
-    if (!keyCtx) {
-        return;
-    }
-
     EVP_PKEY* pkey = nullptr;
     if (!EVP_PKEY_keygen(keyCtx.get(), &pkey)) {
+        m_opensslError = ERR_get_error();
         return;
     }
 
@@ -223,12 +220,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
@@ -241,12 +238,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
@@ -259,12 +256,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
@@ -277,12 +274,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
@@ -295,12 +292,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
-            throwCryptoError(globalObject, scope, ERR_get_error());
+            throwCryptoError(globalObject, scope, ctx->err());
             return JSValue::encode({});
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);

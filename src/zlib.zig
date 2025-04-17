@@ -1,7 +1,7 @@
 // @link "deps/zlib/libz.a"
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const mimalloc = @import("./allocators/mimalloc.zig");
 

@@ -628,7 +628,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const FFIObject = @This();
 const Bun = JSC.API.Bun;
 

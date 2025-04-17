@@ -337,7 +337,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 const TextDecoder = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;
 const MutableString = bun.MutableString;

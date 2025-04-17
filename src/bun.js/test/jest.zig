@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const Api = @import("../../api/schema.zig").Api;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const is_darwin = @import("builtin").target.isDarwin();
 

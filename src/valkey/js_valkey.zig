@@ -855,7 +855,7 @@ const Options = struct {
 };
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const valkey = @import("valkey.zig");
 const protocol = @import("valkey_protocol.zig");
 const JSC = bun.JSC;

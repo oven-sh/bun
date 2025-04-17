@@ -1125,7 +1125,7 @@ else if (bun.Environment.isWindows)
 else
     @compileError("Unsupported platform");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;

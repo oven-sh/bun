@@ -23,7 +23,7 @@
 const DiffMatchPatch = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const testing = std.testing;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const DiffList = ArrayListUnmanaged(Diff);

@@ -9,11 +9,9 @@ const { Server: NetServer, Socket: NetSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
-const SymbolReplace = Symbol.replace;
-const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
+const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
-
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeIncludes = String.prototype.includes;
@@ -23,7 +21,6 @@ const StringPrototypeSubstring = String.prototype.substring;
 const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
-
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeForEach = Array.prototype.forEach;

@@ -1716,7 +1716,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count });
+            log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count.active_counts });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();

@@ -522,7 +522,7 @@ class SocketHandle {
   }
 
   [kConnectTcp](self, addressType, req, address, port) {
-    $debug("SocketHandle.kConnectTcp");
+    $debug("SocketHandle.kConnectTcp", addressType, address, port);
     $assert(this.#promise == null);
     $assert(this.#socket == null);
     const that = this;
@@ -615,11 +615,21 @@ class SocketHandle {
           self.emit("secureConnect", verifyError);
           self.removeListener("end", onConnectEnd);
         },
-        error() {
+        error(socket, error, ignoreHadError) {
           $debug("Bun.Socket error");
+          if (self._hadError && !ignoreHadError) return;
+          self._hadError = true;
+
+          const callback = self[kwriteCallback];
+          if (callback) {
+            self[kwriteCallback] = null;
+            callback(error);
+          }
+          self.emit("error", error);
         },
         timeout() {
           $debug("Bun.Socket timeout");
+          self.emit("timeout", self);
         },
       },
     }).then(sock => {
@@ -703,6 +713,10 @@ class SocketHandle {
     });
     return 0;
   }
+  [Symbol.dispose]() {
+    $assert(this.#socket != null);
+    this.#socket[Symbol.dispose]();
+  }
   setNoDelay(arg) {
     $debug("SocketHandle.setNoDelay");
     $assert(this.#socket != null);
@@ -753,6 +767,76 @@ class SocketHandle {
     $assert(this.#socket != null);
     return this.#socket.unref();
   }
+  //TLS
+  getPeerCertificate() {
+    $assert(this.#socket != null);
+    return this.#socket.getPeerCertificate();
+  }
+  getTLSFinishedMessage() {
+    $assert(this.#socket != null);
+    return this.#socket.getTLSFinishedMessage();
+  }
+  getTLSPeerFinishedMessage() {
+    $assert(this.#socket != null);
+    return this.#socket.getTLSPeerFinishedMessage();
+  }
+  getEphemeralKeyInfo() {
+    $assert(this.#socket != null);
+    return this.#socket.getEphemeralKeyInfo();
+  }
+  getCipher() {
+    $assert(this.#socket != null);
+    return this.#socket.getCipher();
+  }
+  renegotiate() {
+    $assert(this.#socket != null);
+    return this.#socket.renegotiate();
+  }
+  disableRenegotiation() {
+    $assert(this.#socket != null);
+    return this.#socket.disableRenegotiation();
+  }
+  setVerifyMode() {
+    $assert(this.#socket != null);
+    return this.#socket.setVerifyMode();
+  }
+  getSession() {
+    $assert(this.#socket != null);
+    return this.#socket.getSession();
+  }
+  setSession() {
+    $assert(this.#socket != null);
+    return this.#socket.setSession();
+  }
+  getTLSTicket() {
+    $assert(this.#socket != null);
+    return this.#socket.getTLSTicket();
+  }
+  exportKeyingMaterial() {
+    $assert(this.#socket != null);
+    return this.#socket.exportKeyingMaterial();
+  }
+  setMaxSendFragment(size: number) {
+    $assert(this.#socket != null);
+    return this.#socket.setMaxSendFragment(size);
+  }
+  getSharedSigalgs() {
+    $assert(this.#socket != null);
+    return this.#socket.getSharedSigalgs();
+  }
+  getTLSVersion() {
+    $assert(this.#socket != null);
+    return this.#socket.getTLSVersion();
+  }
+  getX509Certificate() {
+    $assert(this.#socket != null);
+    return this.#socket.getX509Certificate();
+  }
+  getPeerX509Certificate() {
+    $assert(this.#socket != null);
+    return this.#socket.getPeerX509Certificate();
+  }
+  //TLS
   get bytesWritten() {
     return this.#socket?.bytesWritten;
   }
@@ -774,6 +858,14 @@ class SocketHandle {
   get remotePort() {
     return this.#socket?.remotePort;
   }
+  //TLS
+  get authorized() {
+    return this.#socket?.authorized;
+  }
+  get alpnProtocol() {
+    return this.#socket?.alpnProtocol;
+  }
+  //TLS
 }
 
 function Socket(options?) {
@@ -849,6 +941,7 @@ function Socket(options?) {
 
   if (socket instanceof Socket) {
     this[ksocket] = socket;
+    this._handle = socket;
   }
   if (onread) {
     if (typeof onread !== "object") {
@@ -972,9 +1065,6 @@ Socket.prototype.connect = function connect(...args) {
   }
   if (this._parent?.connecting) {
     return this;
-  }
-  if (options.port === undefined && options.path == null) {
-    throw $ERR_MISSING_ARGS(["options", "port", "path"]);
   }
   if (this.write !== Socket.prototype.write) {
     this.write = Socket.prototype.write;

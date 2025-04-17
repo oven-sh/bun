@@ -2660,9 +2660,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+        const name_str = name_value.toStringOrNull(globalThis) orelse return .zero;
 
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "non-empty string");

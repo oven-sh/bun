@@ -1766,7 +1766,8 @@ pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
             } };
         }
     }
-    return Maybe(void).errnoSysP(syscall.access(path, mode), .access, path) orelse .{ .result = {} };
+    // TODO: fix that bun's std library fork has a different parameter type.
+    return Maybe(void).errnoSysP(syscall.access(path, @bitCast(mode)), .access, path) orelse .{ .result = {} };
 }
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {

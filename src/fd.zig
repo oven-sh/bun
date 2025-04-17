@@ -1,4 +1,8 @@
-const backing_int = if (is_posix) c_int else u64;
+/// Remove once https://github.com/ziglang/zig/pull/23341/files merges
+/// This does not affect Bun's CI which runs release builds only (and uses Arm macs which do not crash)
+const workaround_linux = is_posix and @import("builtin").mode == .Debug and !@import("builtin").cpu.arch.isAARCH64();
+
+const backing_int = if (is_posix and !workaround_linux) c_int else u64;
 const WindowsHandleNumber = u63;
 const HandleNumber = if (is_posix) c_int else WindowsHandleNumber;
 /// Abstraction over file descriptors. On POSIX, fd is a wrapper around a "fd_t",
@@ -21,7 +25,7 @@ pub const FD = packed struct(backing_int) {
     value: Value,
     kind: Kind,
     pub const Kind = if (is_posix)
-        enum(u0) { system }
+        enum(if (workaround_linux) u32 else u0) { system }
     else
         enum(u1) { system = 0, uv = 1 };
     pub const Value = if (is_posix)
@@ -395,7 +399,7 @@ pub const FD = packed struct(backing_int) {
         pub fn hash(_: @This(), fd: FD) u64 {
             // a file descriptor is i32 on linux, u64 on windows
             // the goal here is to do zero work and widen the 32 bit type to 64
-            return @as(if (os == .windows) u64 else u32, @bitCast(fd));
+            return @as(if (backing_int == u64) u64 else u32, @bitCast(fd));
         }
 
         pub fn eql(_: @This(), a: FD, b: FD) bool {

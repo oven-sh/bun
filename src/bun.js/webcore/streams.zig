@@ -3429,8 +3429,8 @@ pub const FileSink = struct {
     const log = Output.scoped(.FileSink, false);
 
     // TODO: this usingnamespace is load-bearing, likely due to a compiler bug.
+    const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
     pub usingnamespace brk: {
-        const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
         break :brk struct {
             pub const ref = RefCount.ref;
             pub const deref = RefCount.deref;

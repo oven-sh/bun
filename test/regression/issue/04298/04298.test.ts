@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("node:http should not crash when server throws, and should abruptly close the socket", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
   await using server = spawn({
     cwd: import.meta.dirname,
     cmd: [bunExe(), "04298.fixture.js"],
@@ -12,12 +12,12 @@ test("node:http should not crash when server throws, and should abruptly close t
     ipc(url) {
       resolve(url);
     },
-    onExit(exitCode, signalCode) {
+    onExit(proc, exitCode, signalCode) {
       if (signalCode || exitCode !== 0) {
         reject(new Error(`process exited with code ${signalCode || exitCode}`));
       }
     },
   });
   const url = await promise;
-  const response = await fetch(url);
+  const response = await fetch(url).catch(() => {});
 });

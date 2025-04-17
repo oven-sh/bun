@@ -27,7 +27,7 @@ declare module "bun" {
     | ReadableStreamDefaultReadValueResult<T>
     | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
-  type Transferable = ArrayBuffer | import("worker_threads").MessagePort;
+  type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
@@ -581,7 +581,10 @@ declare module "bun" {
     },
   ): number;
 
-  const TOML: {
+  /**
+   * TOML related APIs
+   */
+  namespace TOML {
     /**
      * Parse a TOML string into a JavaScript object.
      *
@@ -590,8 +593,8 @@ declare module "bun" {
      * @param input The TOML string to parse
      * @returns A JavaScript object
      */
-    parse(input: string): object;
-  };
+    export function parse(input: string): object;
+  }
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -1001,7 +1004,8 @@ declare module "bun" {
     end(): ArrayBuffer | Uint8Array;
   }
 
-  const dns: {
+  /** DNS Related APIs */
+  namespace dns {
     /**
      * Lookup the IP address for a hostname
      *
@@ -1046,7 +1050,7 @@ declare module "bun" {
      * console.log(address); // "19.42.52.62"
      * ```
      */
-    lookup(
+    function lookup(
       hostname: string,
       options?: {
         /**
@@ -1115,12 +1119,12 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    prefetch(hostname: string): void;
+    function prefetch(hostname: string): void;
 
     /**
      * **Experimental API**
      */
-    getCacheStats(): {
+    function getCacheStats(): {
       /**
        * The number of times a cached DNS entry that was already resolved was used.
        */
@@ -1132,10 +1136,10 @@ declare module "bun" {
       totalCount: number;
     };
 
-    ADDRCONFIG: number;
-    ALL: number;
-    V4MAPPED: number;
-  };
+    const ADDRCONFIG: number;
+    const ALL: number;
+    const V4MAPPED: number;
+  }
 
   interface DNSLookup {
     /**
@@ -1184,7 +1188,7 @@ declare module "bun" {
    * ```
    */
   interface BunFile extends Blob {
-    /**.p
+    /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
@@ -1197,7 +1201,6 @@ declare module "bun" {
      */
     slice(begin?: number, end?: number, contentType?: string): BunFile;
 
-    /** */
     /**
      * Offset any operation on the file starting at `begin`
      *
@@ -1211,6 +1214,8 @@ declare module "bun" {
     slice(begin?: number, contentType?: string): BunFile;
 
     /**
+     * Slice the file from the beginning to the end, optionally with a new MIME type.
+     *
      * @param contentType - MIME type for the new BunFile
      */
     slice(contentType?: string): BunFile;
@@ -1271,7 +1276,7 @@ declare module "bun" {
     unlink(): Promise<void>;
 
     /**
-     * Deletes the file. ( same as unlink )
+     * Deletes the file (same as unlink)
      */
     delete(): Promise<void>;
 
@@ -7366,34 +7371,133 @@ declare module "bun" {
 
   type CookieSameSite = "strict" | "lax" | "none";
 
+  /**
+   * A class for working with a single cookie
+   *
+   * @example
+   * ```js
+   * const cookie = new Bun.Cookie("name", "value");
+   * console.log(cookie.toString()); // "name=value; Path=/; SameSite=Lax"
+   * ```
+   */
   class Cookie {
+    /**
+     * Create a new cookie
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
     constructor(name: string, value: string, options?: CookieInit);
+
+    /**
+     * Create a new cookie from a cookie string
+     * @param cookieString - The cookie string
+     */
     constructor(cookieString: string);
+
+    /**
+     * Create a new cookie from a cookie object
+     * @param cookieObject - The cookie object
+     */
     constructor(cookieObject?: CookieInit);
 
+    /**
+     * The name of the cookie
+     */
     readonly name: string;
+
+    /**
+     * The value of the cookie
+     */
     value: string;
+
+    /**
+     * The domain of the cookie
+     */
     domain?: string;
+
+    /**
+     * The path of the cookie
+     */
     path: string;
+
+    /**
+     * The expiration date of the cookie
+     */
     expires?: Date;
+
+    /**
+     * Whether the cookie is secure
+     */
     secure: boolean;
+
+    /**
+     * The same-site attribute of the cookie
+     */
     sameSite: CookieSameSite;
+
+    /**
+     * Whether the cookie is partitioned
+     */
     partitioned: boolean;
+
+    /**
+     * The maximum age of the cookie in seconds
+     */
     maxAge?: number;
+
+    /**
+     * Whether the cookie is HTTP-only
+     */
     httpOnly: boolean;
 
+    /**
+     * Whether the cookie is expired
+     */
     isExpired(): boolean;
 
+    /**
+     * Serialize the cookie to a string
+     *
+     * @example
+     * ```ts
+     * const cookie = Bun.Cookie.from("session", "abc123", {
+     *   domain: "example.com",
+     *   path: "/",
+     *   secure: true,
+     *   httpOnly: true
+     * }).serialize(); // "session=abc123; Domain=example.com; Path=/; Secure; HttpOnly; SameSite=Lax"
+     * ```
+     */
     serialize(): string;
+
+    /**
+     * Serialize the cookie to a string
+     *
+     * Alias of {@link Cookie.serialize}
+     */
     toString(): string;
+
+    /**
+     * Serialize the cookie to a JSON object
+     */
     toJSON(): CookieInit;
 
+    /**
+     * Parse a cookie string into a Cookie object
+     * @param cookieString - The cookie string
+     */
     static parse(cookieString: string): Cookie;
+
+    /**
+     * Create a new cookie from a name and value and optional options
+     */
     static from(name: string, value: string, options?: CookieInit): Cookie;
   }
 
   /**
    * A Map-like interface for working with collections of cookies.
+   *
    * Implements the `Iterable` interface, allowing use with `for...of` loops.
    */
   class CookieMap implements Iterable<[string, string]> {

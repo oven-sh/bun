@@ -9,13 +9,14 @@ const JSGlobalObject = JSC.JSGlobalObject;
 pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
-    code: String = String.empty,
-    message: String = String.empty,
-    path: String = String.empty,
-    syscall: String = String.empty,
-    hostname: String = String.empty,
-    fd: bun.FileDescriptor = bun.toFD(-1),
-    dest: String = String.empty,
+    code: String = .empty,
+    message: String = .empty,
+    path: String = .empty,
+    syscall: String = .empty,
+    hostname: String = .empty,
+    /// MinInt = no file descriptor
+    fd: c_int = std.math.minInt(c_int),
+    dest: String = .empty,
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {

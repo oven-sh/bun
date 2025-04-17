@@ -11,7 +11,7 @@ declare module "bun" {
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
 
-    type LibEmptyOrWSWebSocket = LibDomIsLoaded extends true ? {} : import("ws").WebSocket;
+    type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
     type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
 
@@ -63,15 +63,71 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface WebSocket extends Bun.__internal.LibEmptyOrWSWebSocket {}
+/**
+ * A WebSocket client implementation.
+ */
+interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
 /**
  * A WebSocket client implementation
- *
- * If `DOM` is included in tsconfig `lib`, this falls back to the default DOM global `WebSocket`.
- * Otherwise (when outside of a browser environment), this will be the `WebSocket`
- * implementation from the `ws` package, which Bun implements.
  */
-declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
+declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
+  "WebSocket",
+  {
+    prototype: WebSocket;
+
+    /**
+     * Creates a new WebSocket instance with the given URL and options.
+     *
+     * @param url The URL to connect to.
+     * @param options The options to use for the connection.
+     *
+     * @example
+     * ```ts
+     * const ws = new WebSocket("wss://dev.local", {
+     *  protocols: ["proto1", "proto2"],
+     *  headers: {
+     *    "Cookie": "session=123456",
+     *  },
+     * });
+     * ```
+     */
+    new (url: string | URL, options?: Bun.WebSocketOptions): WebSocket;
+
+    /**
+     * Creates a new WebSocket instance with the given URL and protocols.
+     *
+     * @param url The URL to connect to.
+     * @param protocols The protocols to use for the connection.
+     *
+     * @example
+     * ```ts
+     * const ws = new WebSocket("wss://dev.local");
+     * const ws = new WebSocket("wss://dev.local", ["proto1", "proto2"]);
+     * ```
+     */
+    new (url: string | URL, protocols?: string | string[]): WebSocket;
+
+    /**
+     * The connection is not yet open
+     */
+    readonly CONNECTING: 0;
+
+    /**
+     * The connection is open and ready to communicate
+     */
+    readonly OPEN: 1;
+
+    /**
+     * The connection is in the process of closing
+     */
+    readonly CLOSING: 2;
+
+    /**
+     * The connection is closed or couldn't be opened
+     */
+    readonly CLOSED: 3;
+  }
+>;
 
 interface Crypto {
   readonly subtle: SubtleCrypto;

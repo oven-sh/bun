@@ -5,7 +5,6 @@ const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
@@ -341,13 +340,13 @@ pub const JSBundler = struct {
 
                 defer path.deinit();
 
-                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                var dir = bun.FD.fromStdDir(std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
                     return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                };
+                });
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
-                const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
+                const rootdir = dir.getFdPath(&rootdir_buf) catch |err| {
                     return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);
@@ -1090,7 +1089,10 @@ pub const JSBundler = struct {
 
 const Blob = JSC.WebCore.Blob;
 pub const BuildArtifact = struct {
-    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+    pub const js = JSC.Codegen.JSBuildArtifact;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     blob: JSC.WebCore.Blob,
     loader: options.Loader = .file,

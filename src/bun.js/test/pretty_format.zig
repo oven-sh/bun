@@ -2063,7 +2063,7 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("Anything");
             }
         } else if (value.as(expect.ExpectAny)) |matcher| {
-            const constructor_value = expect.ExpectAny.constructorValueGetCached(value) orelse return true;
+            const constructor_value = expect.ExpectAny.js.constructorValueGetCached(value) orelse return true;
 
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
@@ -2081,8 +2081,8 @@ pub const JestPrettyFormat = struct {
             this.addForNewLine(1);
             writer.writeAll(">");
         } else if (value.as(expect.ExpectCloseTo)) |matcher| {
-            const number_value = expect.ExpectCloseTo.numberValueGetCached(value) orelse return true;
-            const digits_value = expect.ExpectCloseTo.digitsValueGetCached(value) orelse return true;
+            const number_value = expect.ExpectCloseTo.js.numberValueGetCached(value) orelse return true;
+            const digits_value = expect.ExpectCloseTo.js.digitsValueGetCached(value) orelse return true;
 
             const number = number_value.toInt32();
             const digits = digits_value.toInt32();
@@ -2097,7 +2097,7 @@ pub const JestPrettyFormat = struct {
             }
             writer.print("{d} ({d} digit{s})", .{ number, digits, if (digits == 1) "" else "s" });
         } else if (value.as(expect.ExpectObjectContaining)) |matcher| {
-            const object_value = expect.ExpectObjectContaining.objectValueGetCached(value) orelse return true;
+            const object_value = expect.ExpectObjectContaining.js.objectValueGetCached(value) orelse return true;
 
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
@@ -2109,7 +2109,7 @@ pub const JestPrettyFormat = struct {
             }
             this.printAs(.Object, @TypeOf(writer_), writer_, object_value, .Object, enable_ansi_colors) catch {}; // TODO:
         } else if (value.as(expect.ExpectStringContaining)) |matcher| {
-            const substring_value = expect.ExpectStringContaining.stringValueGetCached(value) orelse return true;
+            const substring_value = expect.ExpectStringContaining.js.stringValueGetCached(value) orelse return true;
 
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
@@ -2121,7 +2121,7 @@ pub const JestPrettyFormat = struct {
             }
             this.printAs(.String, @TypeOf(writer_), writer_, substring_value, .String, enable_ansi_colors) catch {}; // TODO:
         } else if (value.as(expect.ExpectStringMatching)) |matcher| {
-            const test_value = expect.ExpectStringMatching.testValueGetCached(value) orelse return true;
+            const test_value = expect.ExpectStringMatching.js.testValueGetCached(value) orelse return true;
 
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
@@ -2140,8 +2140,8 @@ pub const JestPrettyFormat = struct {
             const printed = instance.customPrint(value, this.globalThis, writer_, true) catch unreachable;
             if (!printed) { // default print (non-overridden by user)
                 const flags = instance.flags;
-                const args_value = expect.ExpectCustomAsymmetricMatcher.capturedArgsGetCached(value) orelse return true;
-                const matcher_fn = expect.ExpectCustomAsymmetricMatcher.matcherFnGetCached(value) orelse return true;
+                const args_value = expect.ExpectCustomAsymmetricMatcher.js.capturedArgsGetCached(value) orelse return true;
+                const matcher_fn = expect.ExpectCustomAsymmetricMatcher.js.matcherFnGetCached(value) orelse return true;
                 const matcher_name = matcher_fn.getName(this.globalThis);
 
                 printAsymmetricMatcherPromisePrefix(flags, this, writer);

@@ -23,7 +23,10 @@ const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepoin
 
 const Arena = std.heap.ArenaAllocator;
 
-pub usingnamespace JSC.Codegen.JSGlob;
+pub const js = JSC.Codegen.JSGlob;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,

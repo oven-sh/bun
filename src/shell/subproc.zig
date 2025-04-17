@@ -287,7 +287,7 @@ pub const ShellSubprocess = struct {
                     this.buffer.deref();
                 },
                 .memfd => |fd| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     this.* = .{ .ignore = {} };
                 },
                 .ignore => {},
@@ -301,7 +301,7 @@ pub const ShellSubprocess = struct {
                     _ = pipe.end(null);
                 },
                 inline .memfd, .fd => |fd| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     this.* = .{ .ignore = {} };
                 },
                 .buffer => {
@@ -419,7 +419,7 @@ pub const ShellSubprocess = struct {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
                     this.* = .{ .closed = {} };
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 },
                 .pipe => {
                     this.pipe.close();
@@ -432,7 +432,7 @@ pub const ShellSubprocess = struct {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
                     this.* = .{ .closed = {} };
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -797,7 +797,7 @@ pub const ShellSubprocess = struct {
             if (should_close_memfd) {
                 inline for (0..spawn_args.stdio.len) |fd_index| {
                     if (spawn_args.stdio[fd_index] == .memfd) {
-                        _ = bun.sys.close(spawn_args.stdio[fd_index].memfd);
+                        spawn_args.stdio[fd_index].memfd.close();
                         spawn_args.stdio[fd_index] = .ignore;
                     }
                 }

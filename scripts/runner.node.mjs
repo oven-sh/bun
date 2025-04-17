@@ -699,10 +699,10 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };
-  
+
   // Set ASAN-specific environment variables if using an ASAN build
   if (isAsanBuild) {
-    bunEnv.ASAN_OPTIONS = "detect_leaks=0:halt_on_error=0:detect_odr_violation=0";
+    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
   }
 
   if (env) {
@@ -779,7 +779,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
   // Check if we're using an ASAN build by examining the executable name
   const isAsanBuild = /bun-asan(?:\.exe)?$/i.test(execPath);
-  
+
   const timeout = getTestTimeout(testPath, isAsanBuild);
   const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(options["cwd"], testPath);
@@ -848,7 +848,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath, isAsanBuild = false) {
   // ASAN builds require significantly more time
   const asanMultiplier = isAsanBuild ? 2 : 1;
-  
+
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout * asanMultiplier;
   }

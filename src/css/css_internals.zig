@@ -169,9 +169,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
                 const str = bunstr.toUTF8(bun.default_allocator);
                 defer str.deinit();
                 if (std.mem.eql(u8, str.slice(), "DEEP_SELECTOR_COMBINATOR")) {
-                    opts.flags.insert(bun.css.ParserFlags{
-                        .deep_selector_combinator = true,
-                    });
+                    opts.flags.deep_selector_combinator = true;
                 } else {
                     return globalThis.throw("invalid flag: {s}", .{str.slice()});
                 }

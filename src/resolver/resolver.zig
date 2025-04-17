@@ -672,17 +672,17 @@ pub const Resolver = struct {
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .resolver = .{
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .resolver = .{
             .source_dir = source_dir,
             .import_path = import_path,
             .kind = kind,
         } };
-        defer if (Environment.isDebug) {
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
 
-        if (Environment.isDebug and bun.CLI.debug_flags.hasResolveBreakpoint(import_path)) {
+        if (Environment.show_crash_trace and bun.CLI.debug_flags.hasResolveBreakpoint(import_path)) {
             bun.Output.debug("Resolving <green>{s}<r> from <blue>{s}<r>", .{
                 import_path,
                 source_dir,

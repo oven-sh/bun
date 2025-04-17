@@ -31,5 +31,5 @@ public:
     }
 
     WTF::Vector<uint8_t> symmetricKey;
-    ncrypto::EVPKeyPointer asymmetricKey;
+    const ncrypto::EVPKeyPointer asymmetricKey;
 };

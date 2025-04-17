@@ -1,6 +1,7 @@
 #include "CryptoSignJob.h"
 #include "NodeValidator.h"
 #include "KeyObject.h"
+#include "JSVerify.h"
 
 using namespace JSC;
 using namespace ncrypto;

@@ -120,6 +120,8 @@ pub const Version = struct {
 };
 
 pub const UpgradeCommand = struct {
+    pub const Bun__githubBaselineURL = Version.Bun__githubBaselineURL;
+
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;

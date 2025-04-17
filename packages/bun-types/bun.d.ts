@@ -1185,7 +1185,7 @@ declare module "bun" {
    * ```
    */
   interface BunFile extends Blob {
-    /**.p
+    /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
@@ -1198,7 +1198,6 @@ declare module "bun" {
      */
     slice(begin?: number, end?: number, contentType?: string): BunFile;
 
-    /** */
     /**
      * Offset any operation on the file starting at `begin`
      *
@@ -1212,6 +1211,8 @@ declare module "bun" {
     slice(begin?: number, contentType?: string): BunFile;
 
     /**
+     * Slice the file from the beginning to the end, optionally with a new MIME type.
+     *
      * @param contentType - MIME type for the new BunFile
      */
     slice(contentType?: string): BunFile;
@@ -1272,7 +1273,7 @@ declare module "bun" {
     unlink(): Promise<void>;
 
     /**
-     * Deletes the file. ( same as unlink )
+     * Deletes the file (same as unlink)
      */
     delete(): Promise<void>;
 

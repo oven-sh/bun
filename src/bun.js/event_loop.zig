@@ -1526,11 +1526,6 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
 
         this.tickImmediateTasks(ctx);
-        if (comptime Environment.isPosix) {
-            if (this.immediate_tasks.items.len > 0) {
-                this.wakeup();
-            }
-        }
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1553,6 +1548,7 @@ pub const EventLoop = struct {
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
+
             loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
             if (comptime Environment.isDebug) {
@@ -1611,11 +1607,6 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
 
         this.tickImmediateTasks(ctx);
-        if (comptime Environment.isPosix) {
-            if (this.immediate_tasks.items.len > 0) {
-                this.wakeup();
-            }
-        }
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;

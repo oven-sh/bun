@@ -1,3 +1,4 @@
+import { dns as bun_dns } from "bun";
 import * as dns from "node:dns";
 import { expectType } from "./utilities";
 
@@ -15,3 +16,4 @@ expectType(Bun.dns.getCacheStats()).is<{
 }>();
 
 expectType(Bun.dns.V4MAPPED).is<number>();
+expectType(bun_dns.prefetch("bun.sh")).is<void>();

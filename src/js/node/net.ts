@@ -28,6 +28,7 @@ const {
   upgradeDuplexToTLS,
   isNamedPipeSocket,
   normalizedArgsSymbol,
+  getBufferedAmount,
 } = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener, SocketHandler } from "bun";
@@ -597,7 +598,7 @@ Socket.prototype._onTimeout = function () {
   const handle = this._handle;
   // if there is a handle, and it has pending data,
   // we suppress the timeout because a write is in progress
-  if (handle && handle.bufferedAmount > 0) {
+  if (handle && getBufferedAmount(handle) > 0) {
     return;
   }
   this.emit("timeout");

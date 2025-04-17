@@ -2876,12 +2876,6 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             return JSC.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
-        pub fn getBufferedAmount(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            return JSC.JSValue.jsNumber(this.buffered_data_for_node_net.len);
-        }
 
         pub fn getALPNProtocol(
             this: *This,
@@ -4488,11 +4482,28 @@ pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     }
     return JSC.JSValue.jsBoolean(false);
 }
+
+pub fn jsGetBufferedAmount(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    JSC.markBinding(@src());
+
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 1) {
+        return global.throwNotEnoughArguments("getBufferedAmount", 1, arguments.len);
+    }
+    const socket = arguments.ptr[0];
+    if (socket.as(TCPSocket)) |this| {
+        return JSC.JSValue.jsNumber(this.buffered_data_for_node_net.len);
+    } else if (socket.as(TLSSocket)) |this| {
+        return JSC.JSValue.jsNumber(this.buffered_data_for_node_net.len);
+    }
+    return JSC.JSValue.jsNumber(0);
+}
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         JSC.JSFunction.create(global, "addServerName", jsAddServerName, 3, .{}),
         JSC.JSFunction.create(global, "upgradeDuplexToTLS", jsUpgradeDuplexToTLS, 2, .{}),
         JSC.JSFunction.create(global, "isNamedPipeSocket", jsIsNamedPipeSocket, 1, .{}),
+        JSC.JSFunction.create(global, "getBufferedAmount", jsGetBufferedAmount, 1, .{}),
     });
 }
 

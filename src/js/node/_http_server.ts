@@ -500,7 +500,6 @@ const ServerResponsePrototype = {
     if (handle && !this.headersSent) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-      handle.startBody();
     }
   },
 } satisfies typeof import("node:http").ServerResponse.prototype;

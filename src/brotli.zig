@@ -1,33 +1,8 @@
 const bun = @import("root").bun;
 const std = @import("std");
 pub const c = struct {
-    pub const brotli_decoder = @import("./deps/brotli_decoder.zig");
-    pub const brotli_encoder = @import("./deps/brotli_encoder.zig");
-    
-    // Re-export needed types/functions from brotli_decoder.zig
-    pub const BrotliDecoder = brotli_decoder.BrotliDecoder;
-    pub const BrotliDecoderParameter = brotli_decoder.BrotliDecoderParameter;
-    pub const BrotliDecoderResult = brotli_decoder.BrotliDecoderResult;
-    pub const BrotliDecoderErrorCode = brotli_decoder.BrotliDecoderErrorCode;
-    pub const BrotliDecoderErrorCode2 = brotli_decoder.BrotliDecoderErrorCode2;
-    
-    // Re-export needed types/functions from brotli_encoder.zig
-    pub const BrotliEncoder = brotli_encoder.BrotliEncoder;
-    pub const BrotliEncoderMode = brotli_encoder.BrotliEncoderMode;
-    pub const BrotliEncoderParameter = brotli_encoder.BrotliEncoderParameter;
-    
-    // Re-export external C functions from brotli_encoder.zig
-    pub const BrotliEncoderCreateInstance = brotli_encoder.BrotliEncoderCreateInstance;
-    pub const BrotliEncoderDestroyInstance = brotli_encoder.BrotliEncoderDestroyInstance;
-    pub const BrotliEncoderCompressStream = brotli_encoder.BrotliEncoderCompressStream;
-    pub const BrotliEncoderSetParameter = brotli_encoder.BrotliEncoderSetParameter;
-    
-    // Re-export external C functions from brotli_decoder.zig
-    pub const BrotliDecoderCreateInstance = brotli_decoder.BrotliDecoderCreateInstance;
-    pub const BrotliDecoderDestroyInstance = brotli_decoder.BrotliDecoderDestroyInstance;
-    pub const BrotliDecoderDecompressStream = brotli_decoder.BrotliDecoderDecompressStream;
-    pub const BrotliDecoderGetErrorCode = brotli_decoder.BrotliDecoderGetErrorCode;
-    pub const BrotliDecoderSetParameter = brotli_decoder.BrotliDecoderSetParameter;
+    pub usingnamespace @import("./deps/brotli_decoder.zig");
+    pub usingnamespace @import("./deps/brotli_encoder.zig");
 };
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;

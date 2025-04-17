@@ -222,6 +222,7 @@ export function parseHandle(target, serialized, fd) {
           emit(target, serialized.message, server);
         },
       );
+      return;
     }
     case "net.Socket": {
       throw new Error("TODO case net.Socket");

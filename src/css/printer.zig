@@ -122,7 +122,7 @@ pub fn Printer(comptime Writer: type) type {
         col: u32 = 0,
         minify: bool,
         targets: Targets,
-        vendor_prefix: css.VendorPrefix = css.VendorPrefix.empty(),
+        vendor_prefix: css.VendorPrefix = .{},
         in_calc: bool = false,
         css_module: ?css.CssModule = null,
         dependencies: ?ArrayList(css.Dependency) = null,

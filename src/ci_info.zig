@@ -6,7 +6,7 @@
 // `name.toLowerCase().split(' ').join('-')`
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 
 var ci_name: ?[]const u8 = null;

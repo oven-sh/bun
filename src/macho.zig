@@ -4,7 +4,7 @@ const fs = std.fs;
 const io = std.io;
 const macho = std.macho;
 const Allocator = mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;

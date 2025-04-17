@@ -803,7 +803,7 @@ pub const JSGlobalObject = opaque {
 const CommonStrings = JSC.CommonStrings;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;

@@ -2,7 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 const windows = bun.windows;
 const c = bun.c;

@@ -107,5 +107,5 @@ const Impl = opaque {
     extern fn Bun__StrongRef__clear(this: *Impl) void;
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;

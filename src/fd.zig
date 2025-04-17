@@ -640,7 +640,7 @@ const uv_file = bun.windows.libuv.uv_file;
 const assert = bun.assert;
 const E = std.posix.E;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Environment = bun.Environment;
 const is_posix = Environment.isPosix;

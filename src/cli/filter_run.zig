@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;

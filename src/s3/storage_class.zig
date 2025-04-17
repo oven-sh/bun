@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const StorageClass = enum {
     STANDARD,

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 pub const ErrorCodeAndMessage = struct {
     code: []const u8,

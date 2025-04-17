@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const windows = std.os.windows;
 const win32 = windows;

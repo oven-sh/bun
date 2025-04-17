@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
 const logger = bun.logger;

@@ -965,7 +965,7 @@ const JSValkeyClient = JSC.API.Valkey;
 
 const JSC = bun.JSC;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const protocol = @import("valkey_protocol.zig");
 const js_valkey = @import("js_valkey.zig");
 const debug = bun.Output.scoped(.Redis, false);

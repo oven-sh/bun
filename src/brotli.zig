@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 pub const c = @import("./deps/brotli_c.zig");
 const BrotliDecoder = c.BrotliDecoder;

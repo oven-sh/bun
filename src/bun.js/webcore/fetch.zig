@@ -2732,7 +2732,7 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
     }
 }
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const string = bun.string;

@@ -49,7 +49,7 @@ pub fn deinit(this: *HMAC) void {
     bun.destroy(this);
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const BoringSSL = bun.BoringSSL.c;
 const JSC = bun.JSC;
 const EVP = JSC.API.Bun.Crypto.EVP;

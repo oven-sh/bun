@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Command = bun.CLI.Command;
 const Output = bun.Output;
 const Global = bun.Global;

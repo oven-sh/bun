@@ -18,7 +18,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
-/// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
+/// When updating this, make sure to adjust SetupZig.cmake
 const recommended_zig_version = "0.14.0";
 
 comptime {
@@ -517,29 +517,40 @@ fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.buil
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
-    const obj = b.addObject(.{
-        .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
-        .root_source_file = switch (opts.os) {
-            .wasm => b.path("root_wasm.zig"),
-            else => b.path("src/main.zig"),
-            // else => b.path("root_css.zig"),
-        },
+    // Create `@import("bun")`, containing most of Bun's code.
+    const bun = b.createModule(.{
+        .root_source_file = b.path("src/bun.zig"),
+    });
+    bun.addImport("bun", bun); // allow circular "bun" import
+    addInternalImports(b, bun, opts);
+
+    const root = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+
+        // Root module gets compilation flags. Forwarded as default to dependencies.
         .target = opts.target,
         .optimize = opts.optimize,
-        .use_llvm = !opts.no_llvm,
-        .use_lld = if (opts.os == .mac) false else !opts.no_llvm,
+    });
+    root.addImport("bun", bun);
 
-        // https://github.com/ziglang/zig/issues/17430
-        .pic = true,
-
-        .omit_frame_pointer = false,
-        .strip = false, // stripped at the end
+    const obj = b.addObject(.{
+        .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
+        .root_module = root,
     });
     configureObj(b, opts, obj);
     return obj;
 }
 
 fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
+    // Flags on root module get used for the compilation
+    obj.root_module.omit_frame_pointer = false;
+    obj.root_module.strip = false; // stripped at the end
+    // https://github.com/ziglang/zig/issues/17430
+    obj.root_module.pic = true;
+
+    // Object options
+    obj.use_llvm = !opts.no_llvm;
+    obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
     if (opts.enable_asan) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
@@ -550,7 +561,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     }
     obj.bundle_compiler_rt = false;
     obj.bundle_ubsan_rt = false;
-    obj.root_module.omit_frame_pointer = false;
 
     // Link libc
     if (opts.os != .wasm) {
@@ -560,6 +570,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     // Disable stack probing on x86 so we don't need to include compiler_rt
     if (opts.arch.isX86()) {
+        // TODO: enable on debug please.
         obj.root_module.stack_check = false;
         obj.root_module.stack_protector = false;
     }
@@ -574,15 +585,18 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.root_module.valgrind = true;
         }
     }
-    addInternalPackages(b, obj, opts);
-    obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
-
-    const translate_c = getTranslateC(b, opts.target, opts.optimize);
-    obj.root_module.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 }
 
 const ObjectFormat = enum {
+    /// Emitting LLVM bc files could allow a stronger LTO pass, however it
+    /// doesn't yet work. It is left accessible with `-Dobj_format=bc` or in
+    /// CMake with `-DZIG_OBJECT_FORMAT=bc`.
+    ///
+    /// To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of
+    /// LLVM 18.1.7 does not compatible with what bitcode Zig 0.13 outputs (has LLVM 18.1.7)
+    /// Change to "bc" to experiment, "Invalid record" means it is not valid output.
     bc,
+    /// Emit a .o / .obj file for the bun-zig object.
     obj,
 };
 
@@ -612,8 +626,13 @@ fn exists(path: []const u8) bool {
     return true;
 }
 
-fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
+fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     const os = opts.os;
+
+    mod.addImport("build_options", opts.buildOptionsModule(b));
+
+    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
@@ -621,7 +640,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         else => null,
     };
     if (zlib_internal_path) |path| {
-        obj.root_module.addAnonymousImport("zlib-internal", .{
+        mod.addAnonymousImport("zlib-internal", .{
             .root_source_file = b.path(path),
         });
     }
@@ -631,7 +650,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .windows => "src/async/windows_event_loop.zig",
         else => "src/async/stub_event_loop.zig",
     };
-    obj.root_module.addAnonymousImport("async", .{
+    mod.addAnonymousImport("async", .{
         .root_source_file = b.path(async_path),
     });
 
@@ -679,7 +698,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
                 entry.import
             else
                 entry.file;
-            obj.root_module.addAnonymousImport(import_path, .{
+            mod.addAnonymousImport(import_path, .{
                 .root_source_file = .{ .cwd_relative = path },
             });
         }
@@ -689,15 +708,36 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
         .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
     }) |entry| {
-        obj.root_module.addAnonymousImport(entry.import, .{
+        mod.addAnonymousImport(entry.import, .{
             .root_source_file = entry.file,
         });
     }
 
     if (os == .windows) {
-        obj.root_module.addAnonymousImport("bun_shim_impl.exe", .{
+        mod.addAnonymousImport("bun_shim_impl.exe", .{
             .root_source_file = opts.windowsShim(b).exe.getEmittedBin(),
         });
+    }
+
+    // Finally, make it so all modules share the same import table.
+    propagateImports(mod) catch @panic("OOM");
+}
+
+/// Makes all imports of `source_mod` visible to all of its dependencies.
+/// Does not replace existing imports.
+fn propagateImports(source_mod: *Module) !void {
+    var seen = std.AutoHashMap(*Module, void).init(source_mod.owner.graph.arena);
+    defer seen.deinit();
+    var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
+    defer queue.deinit();
+    try queue.appendSlice(source_mod.import_table.values());
+    while (queue.pop()) |mod| {
+        if ((try seen.getOrPut(mod)).found_existing) continue;
+        try queue.appendSlice(mod.import_table.values());
+
+        for (source_mod.import_table.keys(), source_mod.import_table.values()) |k, v|
+            if (mod.import_table.get(k) == null)
+                mod.addImport(k, v);
     }
 }
 
@@ -727,30 +767,34 @@ const WindowsShim = struct {
 
         const exe = b.addExecutable(.{
             .name = "bun_shim_impl",
-            .root_source_file = path,
-            .target = target,
-            .optimize = .ReleaseFast,
+            .root_module = b.createModule(.{
+                .root_source_file = path,
+                .target = target,
+                .optimize = .ReleaseFast,
+                .unwind_tables = .none,
+                .omit_frame_pointer = true,
+                .strip = true,
+                .sanitize_thread = false,
+                .single_threaded = true,
+                .link_libc = false,
+            }),
+            .linkage = .static,
             .use_llvm = true,
             .use_lld = true,
-            .unwind_tables = .none,
-            .omit_frame_pointer = true,
-            .strip = true,
-            .linkage = .static,
-            .sanitize_thread = false,
-            .single_threaded = true,
-            .link_libc = false,
         });
 
         const dbg = b.addExecutable(.{
             .name = "bun_shim_debug",
-            .root_source_file = path,
-            .target = target,
-            .optimize = .Debug,
+            .root_module = b.createModule(.{
+                .root_source_file = path,
+                .target = target,
+                .optimize = .Debug,
+                .single_threaded = true,
+                .link_libc = false,
+            }),
+            .linkage = .static,
             .use_llvm = true,
             .use_lld = true,
-            .linkage = .static,
-            .single_threaded = true,
-            .link_libc = false,
         });
 
         return .{ .exe = exe, .dbg = dbg };

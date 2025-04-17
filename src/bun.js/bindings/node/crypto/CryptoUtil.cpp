@@ -473,6 +473,50 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
 }
 
+// maybe replace other getArrayBufferOrView
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue)
+{
+    using Return = GCOwnedDataScope<std::span<const uint8_t>>;
+
+    if (auto* view = jsDynamicCast<JSArrayBufferView*>(dataValue)) {
+        return { view, view->span() };
+    }
+
+    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(dataValue)) {
+        return { arrayBuffer, arrayBuffer->impl()->span() };
+    }
+
+    if (dataValue.isString()) {
+        auto* str = dataValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+        auto strView = str->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+
+        BufferEncodingType encoding = BufferEncodingType::utf8;
+        if (encodingValue.isString()) {
+            auto* encodingString = encodingValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+            auto encodingView = encodingString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+
+            if (encodingView != "buffer"_s) {
+                encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
+                RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+            }
+        }
+
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, encoding));
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+
+        if (auto* view = jsDynamicCast<JSArrayBufferView*>(buffer)) {
+            return { view, view->span() };
+        }
+    }
+
+    ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+    return Return(nullptr, {});
+}
+
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
 {
     if (value.isString()) {

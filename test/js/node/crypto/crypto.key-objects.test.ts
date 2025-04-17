@@ -631,7 +631,7 @@ describe("crypto.KeyObjects", () => {
         type: "pkcs8",
         passphrase: "super-secret",
       });
-    }).toThrow(/cipher is required when passphrase is specified/);
+    }).toThrow("The property 'options.cipher' is invalid. Received undefined");
   });
 
   test("secret export buffer format (default)", async () => {

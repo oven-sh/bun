@@ -116,7 +116,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
 
     ncrypto::Digest digest;
     int32_t padding = defaultPadding;
-    JSArrayBufferView* oaepLabel = nullptr;
+    GCOwnedDataScope<std::span<const uint8_t>> oaepLabel = { nullptr, {} };
     JSValue encodingValue = jsUndefined();
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
@@ -148,15 +148,15 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!oaepLabelValue.isUndefined()) {
-            oaepLabel = getArrayBufferOrView(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
+            oaepLabel = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
-    JSArrayBufferView* buffer = getArrayBufferOrView(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
+    auto buffer = getArrayBufferOrView2(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (operation == CipherOperation::sign && keyType == KeyType::Private && padding == RSA_PKCS1_PADDING) {
+    if (operation == CipherOperation::decrypt && keyType == KeyType::Private && padding == RSA_PKCS1_PADDING) {
         ncrypto::EVPKeyCtxPointer ctx = pkey.newCtx();
 
         if (!ctx.initForDecrypt()) {
@@ -164,17 +164,14 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             return {};
         }
 
-        if (!ctx.setRsaImplicitRejection()) {
-            throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "RSA_PKCS1_PADDING is not longer supported for private decryption"_s);
-            return {};
-        }
+        throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "RSA_PKCS1_PADDING is not longer supported for private decryption"_s);
     }
 
     ncrypto::Buffer<const void> labelBuf = {};
-    if (oaepLabel) {
+    if (oaepLabel.owner) {
         labelBuf = {
-            .data = oaepLabel->vector(),
-            .len = oaepLabel->byteLength(),
+            .data = oaepLabel->data(),
+            .len = oaepLabel->size(),
         };
     }
 
@@ -185,8 +182,8 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     };
 
     ncrypto::Buffer<const void> bufferBuf {
-        .data = reinterpret_cast<const void*>(buffer->vector()),
-        .len = buffer->byteLength(),
+        .data = buffer->data(),
+        .len = buffer->size(),
     };
 
     ncrypto::DataPointer result;

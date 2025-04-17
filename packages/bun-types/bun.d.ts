@@ -6088,6 +6088,22 @@ declare module "bun" {
      * The per-instance data context
      */
     data?: Data;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false`, the socket automatically closes both ends of the connection when
+     * either side closes.
+     *
+     * @default false
+     */
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6164,22 +6180,6 @@ declare module "bun" {
      * @default false
      */
     exclusive?: boolean;
-    /**
-     * Whether to allow half-open connections.
-     *
-     * A half-open connection occurs when one end of the connection has called `close()`
-     * or sent a FIN packet, while the other end remains open. When set to `true`:
-     *
-     * - The socket won't automatically send FIN when the remote side closes its end
-     * - The local side can continue sending data even after the remote side has closed
-     * - The application must explicitly call `end()` to fully close the connection
-     *
-     * When `false` (default), the socket automatically closes both ends of the connection
-     * when either side closes.
-     *
-     * @default false
-     */
-    allowHalfOpen?: boolean;
     reusePort?: boolean;
     ipv6Only?: boolean;
   }

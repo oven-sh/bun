@@ -146,6 +146,10 @@
  * @returns {[unknown, Serialized] | null}
  */
 export function serialize(message, handle, options) {
+  // sending file descriptors is not supported yet
+  return null; // send the message without the file descriptor
+
+  /*
   const net = require("node:net");
   const dgram = require("node:dgram");
   if (handle instanceof net.Server) {
@@ -153,7 +157,6 @@ export function serialize(message, handle, options) {
     const server = handle as unknown as (typeof net)["Server"] & { _handle: Bun.TCPSocketListener<unknown> };
     return [server._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
   } else if (handle instanceof net.Socket) {
-    if (true) throw new Error("TODO serialize net.Socket");
     const new_message: { cmd: "NODE_HANDLE"; message: unknown; type: "net.Socket"; key?: string } = {
       cmd: "NODE_HANDLE",
       message,
@@ -200,6 +203,7 @@ export function serialize(message, handle, options) {
   } else {
     throw $ERR_INVALID_HANDLE_TYPE();
   }
+  */
 }
 /**
  * @param {Serialized} serialized

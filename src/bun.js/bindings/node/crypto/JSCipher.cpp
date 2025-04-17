@@ -164,7 +164,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             return {};
         }
 
-        throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "RSA_PKCS1_PADDING is not longer supported for private decryption"_s);
+        throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "RSA_PKCS1_PADDING is no longer supported for private decryption"_s);
     }
 
     ncrypto::Buffer<const void> labelBuf = {};

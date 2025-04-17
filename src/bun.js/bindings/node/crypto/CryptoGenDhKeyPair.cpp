@@ -71,7 +71,6 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
     } else if (std::get_if<int>(&m_prime)) {
         auto paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_DH);
 
-        // TODO: this might not work with BoringSSL!!!!
         int* primeLength = std::get_if<int>(&m_prime);
         if (!paramCtx.initForParamgen() || !paramCtx.setDhParameters(*primeLength, m_generator)) {
             m_opensslError = ERR_get_error();

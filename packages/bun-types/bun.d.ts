@@ -581,7 +581,10 @@ declare module "bun" {
     },
   ): number;
 
-  const TOML: {
+  /**
+   * TOML related APIs
+   */
+  namespace TOML {
     /**
      * Parse a TOML string into a JavaScript object.
      *
@@ -590,8 +593,8 @@ declare module "bun" {
      * @param input The TOML string to parse
      * @returns A JavaScript object
      */
-    parse(input: string): object;
-  };
+    export function parse(input: string): object;
+  }
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`

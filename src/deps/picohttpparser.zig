@@ -1,5 +1,3 @@
-pub usingnamespace @import("std").zig.c_builtins;
-
 pub const struct_phr_header = extern struct {
     name: [*c]const u8,
     name_len: usize,

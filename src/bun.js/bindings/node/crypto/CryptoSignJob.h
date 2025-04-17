@@ -62,6 +62,7 @@ public:
 
     std::optional<ByteSource> m_signResult = { std::nullopt };
     std::optional<bool> m_verifyResult = { std::nullopt };
+    int m_opensslError = 0;
 };
 
 struct SignJob {

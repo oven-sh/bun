@@ -31,7 +31,8 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_verifyResult) {
-        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "verify operation failed"_s);
+        throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "verify operation failed"_s);
+        return JSValue::encode({});
     }
 
     return JSValue::encode(jsBoolean(*ctx->m_verifyResult));
@@ -58,7 +59,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_signResult) {
-        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "sign operation failed"_s);
+        throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "sign operation failed"_s);
+        return JSValue::encode({});
     }
 
     auto& result = ctx->m_signResult.value();
@@ -88,6 +90,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     ClearErrorOnReturn clearError;
     auto context = EVPMDCtxPointer::New();
     if (UNLIKELY(!context)) {
+        m_opensslError = ERR_get_error();
         return;
     }
 
@@ -104,12 +107,14 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
 
     if (!ctx) {
+        m_opensslError = ERR_get_error();
         return;
     }
 
     int32_t padding = m_padding.value_or(key.getDefaultSignPadding());
 
     if (key.isRsaVariant() && !EVPKeyCtxPointer::setRsaPadding(*ctx, padding, m_saltLength)) {
+        m_opensslError = ERR_get_error();
         return;
     }
 
@@ -123,6 +128,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         if (key.isOneShotVariant()) {
             auto data = context.signOneShot(dataBuf);
             if (!data) {
+                m_opensslError = ERR_get_error();
                 return;
             }
 
@@ -130,6 +136,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         } else {
             auto data = context.sign(dataBuf);
             if (!data) {
+                m_opensslError = ERR_get_error();
                 return;
             }
 
@@ -138,11 +145,13 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
             if (key.isSigVariant() && m_dsaSigEnc == DSASigEnc::P1363) {
                 uint32_t n = key.getBytesOfRS().value_or(NoDsaSignature);
                 if (n == NoDsaSignature) {
+                    m_opensslError = ERR_get_error();
                     return;
                 }
 
                 auto p1363Buffer = DataPointer::Alloc(n * 2);
                 if (!p1363Buffer) {
+                    m_opensslError = ERR_get_error();
                     return;
                 }
 
@@ -154,6 +163,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
                 };
 
                 if (!ncrypto::extractP1363(sigBuf, reinterpret_cast<uint8_t*>(p1363Buffer.get()), n)) {
+                    m_opensslError = ERR_get_error();
                     return;
                 }
 
@@ -174,6 +184,9 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
             .len = m_signature.size(),
         };
         m_verifyResult = context.verify(dataBuf, sigBuf);
+        if (!m_verifyResult.has_value()) {
+            m_opensslError = ERR_get_error();
+        }
         break;
     }
     }
@@ -185,10 +198,13 @@ extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* glob
 }
 void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
+    VM& vm = lexicalGlobalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
     switch (m_mode) {
     case Mode::Sign: {
         if (!m_signResult) {
-            auto* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "sign operation failed"_s);
+            JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
             Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
             return;
         }
@@ -210,7 +226,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     }
     case Mode::Verify: {
         if (!m_verifyResult) {
-            auto* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "verify operation failed"_s);
+            JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
             Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
             return;
         }

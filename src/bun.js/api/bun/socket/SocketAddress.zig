@@ -6,7 +6,11 @@
 //! Requires updating bindgen.
 const SocketAddress = @This();
 const validators = @import("./../../../node/util/validators.zig");
-pub usingnamespace JSC.Codegen.JSSocketAddress;
+pub const js = JSC.Codegen.JSSocketAddress;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 pub const new = bun.TrivialNew(SocketAddress);
 
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.

@@ -81,7 +81,7 @@ await client.set("key", "value");
 await client.get("key");
 
 // Explicitly close the connection when done
-client.disconnect();
+client.close();
 ```
 
 You can also manually control the connection lifecycle:
@@ -96,7 +96,7 @@ await client.connect();
 await client.set("key", "value");
 
 // Disconnect when done
-client.disconnect();
+client.close();
 ```
 
 ## Basic Operations
@@ -241,7 +241,7 @@ client.onclose = error => {
 
 // Manually connect/disconnect
 await client.connect();
-client.disconnect();
+client.close();
 ```
 
 ### Connection Status and Monitoring

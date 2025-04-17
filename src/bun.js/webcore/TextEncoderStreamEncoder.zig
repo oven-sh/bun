@@ -2,7 +2,11 @@ pending_lead_surrogate: ?u16 = null,
 
 const log = Output.scoped(.TextEncoderStreamEncoder, false);
 
-pub usingnamespace JSC.Codegen.JSTextEncoderStreamEncoder;
+pub const js = JSC.Codegen.JSTextEncoderStreamEncoder;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 pub const new = bun.TrivialNew(TextEncoderStreamEncoder);
 
 pub fn finalize(this: *TextEncoderStreamEncoder) void {

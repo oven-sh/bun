@@ -45,7 +45,7 @@ pub const GetAddrInfo = struct {
         return hasher.final();
     }
 
-    pub const Options = packed struct {
+    pub const Options = packed struct(u64) {
         family: Family = .unspecified,
         /// Leaving this unset leads to many duplicate addresses returned.
         /// Node hardcodes to `SOCK_STREAM`.
@@ -56,6 +56,7 @@ pub const GetAddrInfo = struct {
         protocol: Protocol = .unspecified,
         backend: Backend = Backend.default,
         flags: std.c.AI = .{},
+        _: u24 = 0,
 
         pub fn toLibC(this: Options) ?std.c.addrinfo {
             if (this.family == .unspecified and this.socktype == .unspecified and this.protocol == .unspecified and this.flags == std.c.AI{}) {

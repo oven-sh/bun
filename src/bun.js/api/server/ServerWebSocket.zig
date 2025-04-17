@@ -27,7 +27,11 @@ inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
     return this.flags.websocket();
 }
 
-pub usingnamespace JSC.Codegen.JSServerWebSocket;
+pub const js = JSC.Codegen.JSServerWebSocket;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 pub const new = bun.TrivialNew(ServerWebSocket);
 
 pub fn memoryCost(this: *const ServerWebSocket) usize {
@@ -64,7 +68,7 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     this.flags.opened = false;
     if (value_to_cache != .zero) {
         const current_this = this.getThisValue();
-        ServerWebSocket.dataSetCached(current_this, globalObject, value_to_cache);
+        js.dataSetCached(current_this, globalObject, value_to_cache);
     }
 
     if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
@@ -289,7 +293,7 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
     const signal = this.signal;
     this.signal = null;
 
-    if (ServerWebSocket.socketGetCached(this.getThisValue())) |socket| {
+    if (js.socketGetCached(this.getThisValue())) |socket| {
         Bun__callNodeHTTPServerSocketOnClose(socket);
     }
 
@@ -1032,7 +1036,7 @@ pub fn setData(
     value: JSC.JSValue,
 ) callconv(.C) bool {
     log("setData()", .{});
-    ServerWebSocket.dataSetCached(this.this_value, globalObject, value);
+    js.dataSetCached(this.this_value, globalObject, value);
     return true;
 }
 

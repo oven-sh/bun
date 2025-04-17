@@ -28,7 +28,7 @@ pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
         null;
 }
 
-pub const IndexType = packed struct {
+pub const IndexType = packed struct(u32) {
     index: u31,
     is_overflow: bool = false,
 };

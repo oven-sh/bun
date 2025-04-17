@@ -530,7 +530,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             };
             const save_dir = save_dir_it;
-            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+            const tmpdir_path = bun.FD.fromStdDir(save_dir).getFdPath(&tmpdir_path_buf) catch |err| {
                 Output.errGeneric("Failed to read temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
@@ -809,7 +809,7 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                C.moveFileZ(.fromStdDir(save_dir), exe, .fromStdDir(target_dir), target_filename) catch |err| {
                     defer save_dir_.deleteTree(version_name) catch {};
 
                     if (comptime Environment.isWindows) {
@@ -997,7 +997,7 @@ pub const upgrade_js_bindings = struct {
         );
 
         switch (bun.windows.Win32Error.fromNTStatus(rc)) {
-            .SUCCESS => tempdir_fd = bun.toFD(fd),
+            .SUCCESS => tempdir_fd = .fromNative(fd),
             else => {},
         }
 
@@ -1008,7 +1008,7 @@ pub const upgrade_js_bindings = struct {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
 
         return .undefined;

@@ -23,14 +23,14 @@ pub const LinuxMemFdAllocator = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    fd: bun.FileDescriptor = .zero,
     ref_count: RefCount,
+    fd: bun.FileDescriptor = .invalid,
     size: usize = 0,
 
     var memfd_counter = std.atomic.Value(usize).init(0);
 
     fn deinit(this: *LinuxMemFdAllocator) void {
-        _ = bun.sys.close(this.fd);
+        this.fd.close();
         bun.destroy(this);
     }
 
@@ -153,13 +153,13 @@ pub const LinuxMemFdAllocator = struct {
                     }
 
                     bun.Output.debugWarn("Failed to write to memfd: {}", .{err});
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     return .{ .err = err };
                 },
                 .result => |result| {
                     if (result == 0) {
                         bun.Output.debugWarn("Failed to write to memfd: EOF", .{});
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return .{ .err = bun.sys.Error.fromCode(.NOMEM, .write) };
                     }
                     written += @intCast(result);

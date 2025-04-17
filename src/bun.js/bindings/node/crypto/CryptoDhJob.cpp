@@ -102,13 +102,13 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
 
     JSKeyObject* privateKeyObject = jsDynamicCast<JSKeyObject*>(privateKeyValue);
     if (!privateKeyObject) {
-        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, publicKeyValue);
+        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, privateKeyValue);
         return std::nullopt;
     }
 
     JSKeyObject* publicKeyObject = jsDynamicCast<JSKeyObject*>(publicKeyValue);
     if (!publicKeyObject) {
-        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.publicKey"_s, privateKeyValue);
+        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.publicKey"_s, publicKeyValue);
         return std::nullopt;
     }
 
@@ -133,8 +133,9 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
     int privateKeyType = privateKey.asymmetricKey().id();
     int publicKeyType = publicKey.asymmetricKey().id();
 
-    if (privateKeyType != publicKeyType || std::ranges::find(supportedKeyTypes, privateKeyType) != supportedKeyTypes.end()) {
+    if (privateKeyType != publicKeyType || std::ranges::find(supportedKeyTypes, privateKeyType) == supportedKeyTypes.end()) {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, privateKeyValue, "must be a supported key type"_s);
+        return std::nullopt;
     }
 
     return DhJobCtx(privateKey.data(), publicKey.data());

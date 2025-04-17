@@ -539,7 +539,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
     }
 
     if (arrayBufferViewOnly) {
-        ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
+        ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
         return { nullptr, {} };
     };
 

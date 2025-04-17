@@ -42,8 +42,8 @@ pub const OutlineStyle = union(enum) {
     /// A value equivalent to the `border-style` property.
     line_style: LineStyle,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn default() @This() {
         return .{ .line_style = .none };

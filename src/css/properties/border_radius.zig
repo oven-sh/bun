@@ -38,7 +38,7 @@ pub const BorderRadius = struct {
     /// The x and y radius values for the bottom left corner.
     bottom_left: Size2D(LengthPercentage),
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius", PropertyFieldMap);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .top_left = "border-top-left-radius",
@@ -203,10 +203,10 @@ pub const BorderRadiusHandler = struct {
                     },
                     prefix,
                 } }) catch bun.outOfMemory();
-                top_left.?[1].remove(intersection);
-                top_right.?[1].remove(intersection);
-                bottom_right.?[1].remove(intersection);
-                bottom_left.?[1].remove(intersection);
+                bun.bits.remove(VendorPrefix, &top_left.?[1], intersection);
+                bun.bits.remove(VendorPrefix, &top_right.?[1], intersection);
+                bun.bits.remove(VendorPrefix, &bottom_right.?[1], intersection);
+                bun.bits.remove(VendorPrefix, &bottom_left.?[1], intersection);
             }
         }
 
@@ -237,7 +237,7 @@ pub const BorderRadiusHandler = struct {
             if (logical_supported) {
                 d.append(ctx.allocator, v) catch bun.outOfMemory();
             } else {
-                const prefix = ctx.targets.prefixes(css.VendorPrefix.empty(), css.prefixes.Feature.border_radius);
+                const prefix = ctx.targets.prefixes(css.VendorPrefix{}, css.prefixes.Feature.border_radius);
                 switch (v) {
                     .@"border-start-start-radius",
                     .@"border-start-end-radius",
@@ -267,7 +267,7 @@ pub const BorderRadiusHandler = struct {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if (@field(self, prop)) |*existing| {
-            if (!existing.*[0].eql(val) and !existing.*[1].contains(vp)) {
+            if (!existing.*[0].eql(val) and !bun.bits.contains(VendorPrefix, existing.*[1], vp)) {
                 self.flush(d, ctx);
             }
         }

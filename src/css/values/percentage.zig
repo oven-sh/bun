@@ -471,8 +471,8 @@ pub const NumberOrPercentage = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
     //     _ = input; // autofix

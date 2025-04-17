@@ -47,8 +47,8 @@ pub const TrackSizing = union(enum) {
     /// A list of grid tracks.
     tracklist: TrackList,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 };
 
 /// A [`<track-list>`](https://drafts.csswg.org/css-grid-2/#typedef-track-list) value,
@@ -449,8 +449,8 @@ pub const RepeatCount = union(enum) {
     /// The `auto-fit` keyword.
     @"auto-fit",
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
         return css.implementEql(@This(), this, other);

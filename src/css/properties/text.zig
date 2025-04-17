@@ -279,7 +279,12 @@ pub const Direction = enum {
     /// This value sets inline base direction (bidi directionality) to line-right-to-line-left.
     rtl,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [unicode-bidi](https://drafts.csswg.org/css-writing-modes-3/#unicode-bidi) property.

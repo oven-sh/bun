@@ -664,7 +664,10 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
 
         const ThisHasher = @This();
 
-        pub usingnamespace @field(JSC.Codegen, "JS" ++ name);
+        pub const js = @field(JSC.Codegen, "JS" ++ name);
+        pub const toJS = js.toJS;
+        pub const fromJS = js.fromJS;
+        pub const fromJSDirect = js.fromJSDirect;
 
         pub const digest = JSC.wrapInstanceMethod(ThisHasher, "digest_", false);
         pub const hash = JSC.wrapStaticMethod(ThisHasher, "hash_", false);

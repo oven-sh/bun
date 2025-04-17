@@ -313,8 +313,6 @@ pub fn untrackFunction(
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
-pub usingnamespace @import("./JSPropertyIterator.zig");
-
 // DOMCall Fields
 const Bun = JSC.API.Bun;
 pub const __DOMCall_ptr = Bun.FFIObject.dom_call;

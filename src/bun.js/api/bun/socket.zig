@@ -1331,7 +1331,16 @@ fn selectALPNCallback(
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         const This = @This();
+        pub const js = if (!ssl)
+            JSC.Codegen.JSTCPSocket
+        else
+            JSC.Codegen.JSTLSSocket;
+        pub const toJS = js.toJS;
+        pub const fromJS = js.fromJS;
+        pub const fromJSDirect = js.fromjsDirect;
+
         pub const new = bun.TrivialNew(@This());
+
         const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
@@ -1405,11 +1414,6 @@ fn NewSocket(comptime ssl: bool) type {
             allow_half_open: bool = false,
             _: u7 = 0,
         };
-
-        pub usingnamespace if (!ssl)
-            JSC.Codegen.JSTCPSocket
-        else
-            JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
             return this.has_pending_activity.load(.acquire);

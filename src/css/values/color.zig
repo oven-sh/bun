@@ -547,7 +547,7 @@ pub const CssColor = union(enum) {
 
         if (fallbacks.oklab) {
             if (!targets.shouldCompileSame(.oklab_colors)) {
-                fallbacks.lab = false;
+                fallbacks = fallbacks.difference(ColorFallbackKind.andBelow(.{ .lab = true }));
             }
         }
 

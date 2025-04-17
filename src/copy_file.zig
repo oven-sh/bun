@@ -4,7 +4,7 @@
 const std = @import("std");
 const posix = std.posix;
 const math = std.math;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 const Environment = bun.Environment;
 

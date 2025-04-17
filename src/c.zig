@@ -9,15 +9,15 @@
 //! different definitions between platforms, as well as very common mistakes
 //! that can be made when porting definitions. It also keeps code much cleaner.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = @import("./env.zig");
 
 pub const translated = @import("translated-c-headers");
 
 const PlatformSpecific = switch (Environment.os) {
-    .mac => @import("./darwin_c.zig"),
-    .linux => @import("./linux_c.zig"),
-    .windows => @import("./windows_c.zig"),
+    .mac => @import("darwin_c.zig"),
+    .linux => @import("linux_c.zig"),
+    .windows => @import("windows_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;

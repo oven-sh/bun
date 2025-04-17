@@ -12,7 +12,7 @@
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 const expected_version = 13;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Output = bun.Output;
 const JSC = bun.JSC;

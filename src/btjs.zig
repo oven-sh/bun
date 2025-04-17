@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 extern const jsc_llint_begin: u8;
 extern const jsc_llint_end: u8;

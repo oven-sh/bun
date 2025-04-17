@@ -779,7 +779,7 @@ pub inline fn bltn(this: *Ls) *Builtin {
 
 const Ls = @This();
 const log = bun.Output.scoped(.ls, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

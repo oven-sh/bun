@@ -1014,29 +1014,27 @@ declare module "bun" {
      * @param hostname The hostname to lookup
      * @param options Options for the lookup
      *
-     * ## Example
-     *
+     * @example
+     * ## Basic usage
      * ```js
      * const [{ address }] = await Bun.dns.lookup('example.com');
      * ```
      *
-     * ### Filter results to IPv4:
-     *
+     * ## Filter results to IPv4
      * ```js
      * import { dns } from 'bun';
      * const [{ address }] = await dns.lookup('example.com', {family: 4});
      * console.log(address); // "123.122.22.126"
      * ```
      *
-     * ### Filter results to IPv6:
-     *
+     * ## Filter results to IPv6
      * ```js
      * import { dns } from 'bun';
      * const [{ address }] = await dns.lookup('example.com', {family: 6});
      * console.log(address); // "2001:db8::1"
      * ```
      *
-     * #### DNS resolver client
+     * ## DNS resolver client
      *
      * Bun supports three DNS resolvers:
      * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
@@ -2236,8 +2234,8 @@ declare module "bun" {
    * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
    * work on this.
    *
-   * ### Example with argon2
-   *
+   * @example
+   * ## Example with argon2
    * ```ts
    * import {password} from "bun";
    *
@@ -2246,7 +2244,7 @@ declare module "bun" {
    * console.log(verify); // true
    * ```
    *
-   * ### Example with bcrypt
+   * ## Example with bcrypt
    * ```ts
    * import {password} from "bun";
    *
@@ -2308,6 +2306,7 @@ declare module "bun" {
      * console.log(hash); // $argon2id$v=1...
      * const verify = await password.verify("hello world", hash);
      * ```
+     *
      * ## Example with bcrypt
      * ```ts
      * import {password} from "bun";
@@ -2341,7 +2340,8 @@ declare module "bun" {
      * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
-     * ### Example with argon2
+     * @example
+     * ## Example with argon2
      *
      * ```ts
      * import {password} from "bun";
@@ -2351,7 +2351,7 @@ declare module "bun" {
      * console.log(verify); // true
      * ```
      *
-     * ### Example with bcrypt
+     * ## Example with bcrypt
      * ```ts
      * import {password} from "bun";
      *
@@ -2386,7 +2386,8 @@ declare module "bun" {
      * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
-     * ### Example with argon2
+     * @example
+     * ## Example with argon2
      *
      * ```ts
      * import {password} from "bun";
@@ -2396,7 +2397,7 @@ declare module "bun" {
      * console.log(verify); // true
      * ```
      *
-     * ### Example with bcrypt
+     * ## Example with bcrypt
      * ```ts
      * import {password} from "bun";
      *
@@ -5529,7 +5530,6 @@ declare module "bun" {
      * @param specifier The module specifier to register the callback for
      * @param callback The function to run when the module is imported or required
      *
-     * ### Example
      * @example
      * ```ts
      * Bun.plugin({

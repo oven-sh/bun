@@ -46,8 +46,7 @@ declare module "bun" {
      * @param newEnv Default environment variables to use for shells created by this instance.
      * @default process.env
      *
-     * ## Example
-     *
+     * @example
      * ```js
      * import {$} from 'bun';
      * $.env({ BUN: "bun" });

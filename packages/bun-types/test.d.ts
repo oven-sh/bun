@@ -29,11 +29,14 @@ declare module "bun:test" {
      *
      * This is useful for mocking modules.
      *
+     * If the module is already loaded, exports are overwritten with the return
+     * value of `factory`. If the export didn't exist before, it will not be
+     * added to existing import statements. This is due to how ESM works.
+     *
      * @param id module ID to mock
      * @param factory a function returning an object that will be used as the exports of the mocked module
      *
      * @example
-     * ## Example
      * ```ts
      * import { mock } from "bun:test";
      *
@@ -47,12 +50,6 @@ declare module "bun:test" {
      *
      * console.log(await readFile("hello.txt", "utf8")); // hello world
      * ```
-     *
-     * ## More notes
-     *
-     * If the module is already loaded, exports are overwritten with the return
-     * value of `factory`. If the export didn't exist before, it will not be
-     * added to existing import statements. This is due to how ESM works.
      */
     module(id: string, factory: () => any): void | Promise<void>;
     /**
@@ -593,8 +590,6 @@ declare module "bun:test" {
      * @returns never
      *
      * @example
-     * ## Example
-     *
      * ```ts
      * import { expect, test } from "bun:test";
      *

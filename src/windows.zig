@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const windows = std.os.windows;
 const win32 = windows;
 pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;

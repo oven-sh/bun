@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const strings = bun.strings;
@@ -843,7 +843,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
-        if (comptime @hasDecl(@import("root").bun, "bindgen")) {
+        if (comptime @hasDecl(@import("bun"), "bindgen")) {
             return undefined;
         }
 

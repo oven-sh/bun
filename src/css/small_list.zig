@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const css = @import("./css_parser.zig");
 const Printer = css.Printer;
 const Parser = css.Parser;

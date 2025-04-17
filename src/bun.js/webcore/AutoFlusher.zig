@@ -22,5 +22,5 @@ pub fn registerDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Ty
     bun.assert(!vm.eventLoop().deferred_tasks.postTask(this, @ptrCast(&Type.onAutoFlush)));
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;

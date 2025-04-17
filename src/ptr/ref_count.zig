@@ -499,6 +499,6 @@ pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const AllocationScope = bun.AllocationScope;

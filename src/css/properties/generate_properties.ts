@@ -1780,7 +1780,7 @@ generateCode({
 
 function prelude() {
   return /* zig */ `const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");

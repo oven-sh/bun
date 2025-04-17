@@ -5,7 +5,7 @@ const string = bun.string;
 const HTTPClient = @import("../http.zig");
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 content: StringBuilder = .{},
 header_count: u64 = 0,

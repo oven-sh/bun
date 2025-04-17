@@ -22,5 +22,5 @@ pub fn deinit(this: *@This()) void {
     }
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uws = bun.uws;

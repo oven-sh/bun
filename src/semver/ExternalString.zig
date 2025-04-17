@@ -12,11 +12,11 @@ pub const ExternalString = extern struct {
         return lhs.value.order(&rhs.value, lhs_buf, rhs_buf);
     }
 
-    /// ExternalString but without the hash
+    /// Create an `ExternalString`, calculating its hash.
     pub inline fn from(in: string) ExternalString {
         return ExternalString{
             .value = String.init(in, in),
-            .hash = bun.Wyhash.hash(0, in),
+            .hash = String.Builder.stringHash(in),
         };
     }
 

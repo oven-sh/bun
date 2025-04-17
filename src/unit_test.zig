@@ -5,6 +5,7 @@ const t = std.testing;
 test {
     _ = @import("shell/braces.zig");
     _ = @import("bun.js/node/assert/myers_diff.zig");
+    _ = @import("semver/Version.zig");
 }
 
 test "basic string usage" {

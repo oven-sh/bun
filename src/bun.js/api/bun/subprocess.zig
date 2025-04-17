@@ -913,6 +913,8 @@ pub const StaticPipeWriter = NewStaticPipeWriter(Subprocess);
 
 pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
     return struct {
+        const This = @This();
+
         writer: IOWriter = .{},
         stdio_result: StdioResult,
         source: Source = .{ .detached = {} },
@@ -922,20 +924,18 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         buffer: []const u8 = "",
 
         // It seems there is a bug in the Zig compiler. We'll get back to this one later
-        const WriterRefCount = bun.ptr.RefCount(This, "ref_count", _deinit, .{});
-        pub usingnamespace bun.ptr.RefCount(This, "ref_count", _deinit, .{});
+        const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});
+        pub usingnamespace bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});
 
-        const This = @This();
         const print = bun.Output.scoped(.StaticPipeWriter, false);
 
-        pub const IOWriter = bun.io.BufferedWriter(
-            This,
-            onWrite,
-            onError,
-            onClose,
-            getBuffer,
-            flush,
-        );
+        pub const IOWriter = bun.io.BufferedWriter(@This(), .{
+            .onWritable = null,
+            .getBuffer = getBuffer,
+            .onClose = onClose,
+            .onError = onError,
+            .onWrite = onWrite,
+        });
         pub const Poll = IOWriter;
 
         pub fn updateRef(this: *This, add: bool) void {

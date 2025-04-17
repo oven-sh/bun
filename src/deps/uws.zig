@@ -558,7 +558,12 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
     vm: *bun.JSC.VirtualMachine, //TODO: create a timeout version that dont need the JSC VM
 
-    writer: bun.io.StreamingWriter(WindowsNamedPipe, onWrite, onError, onWritable, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(@This(), .{
+        .onClose = onClose,
+        .onWritable = onWritable,
+        .onError = onError,
+        .onWrite = onWrite,
+    }) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     ssl_error: CertError = .{},

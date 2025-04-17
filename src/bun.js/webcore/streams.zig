@@ -3429,15 +3429,20 @@ pub const FileSink = struct {
     const log = Output.scoped(.FileSink, false);
 
     // TODO: this usingnamespace is load-bearing, likely due to a compiler bug.
+    const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
     pub usingnamespace brk: {
-        const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
         break :brk struct {
             pub const ref = RefCount.ref;
             pub const deref = RefCount.deref;
         };
     };
 
-    pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
+    pub const IOWriter = bun.io.StreamingWriter(@This(), .{
+        .onClose = onClose,
+        .onWritable = onReady,
+        .onError = onError,
+        .onWrite = onWrite,
+    });
     pub const Poll = IOWriter;
 
     pub fn memoryCost(this: *const FileSink) usize {

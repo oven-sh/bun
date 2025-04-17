@@ -31,18 +31,17 @@ pub fn PosixPipeWriter(
     comptime onWrite: fn (*This, written: usize, status: WriteStatus) void,
     comptime registerPoll: ?fn (*This) void,
     comptime onError: fn (*This, bun.sys.Error) void,
-    comptime onWritable: fn (*This) void,
+    comptime _: fn (*This) void,
     comptime getFileType: *const fn (*This) FileType,
 ) type {
-    _ = onWritable; // autofix
     return struct {
-        pub fn _tryWrite(this: *This, force_sync: bool, buf_: []const u8) WriteResult {
+        fn tryWrite(this: *This, force_sync: bool, buf_: []const u8) WriteResult {
             return switch (if (!force_sync) getFileType(this) else .file) {
-                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
+                inline else => |ft| return tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
             };
         }
 
-        fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
 
             var offset: usize = 0;
@@ -147,7 +146,7 @@ pub fn PosixPipeWriter(
             var drained: usize = 0;
 
             while (drained < trimmed.len) {
-                const attempt = _tryWrite(parent, parent.getForceSync(), trimmed[drained..]);
+                const attempt = tryWrite(parent, parent.getForceSync(), trimmed[drained..]);
                 switch (attempt) {
                     .pending => |pending| {
                         drained += pending;
@@ -178,15 +177,18 @@ pub fn PosixPipeWriter(
 
 const PollOrFd = @import("./pipes.zig").PollOrFd;
 
-pub fn PosixBufferedWriter(
-    comptime Parent: type,
-    comptime onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: *const fn (*Parent, bun.sys.Error) void,
-    comptime onClose: ?*const fn (*Parent) void,
-    comptime getBuffer: *const fn (*Parent) []const u8,
-    comptime onWritable: ?*const fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
     return struct {
+        const PosixWriter = @This();
+        const onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: *const fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onClose: ?*const fn (*Parent) void = function_table.onClose;
+        const getBuffer: *const fn (*Parent) []const u8 = function_table.getBuffer;
+        const onWritable: ?*const fn (*Parent) void = function_table.onWritable;
+
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
         is_done: bool = false,
@@ -194,11 +196,13 @@ pub fn PosixBufferedWriter(
         closed_without_reporting: bool = false,
         close_fd: bool = true,
 
+        const internals = PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+        pub const onPoll = internals.onPoll;
+        pub const drainBufferedData = internals.drainBufferedData;
+
         pub fn memoryCost(_: *const @This()) usize {
             return @sizeOf(@This());
         }
-
-        const PosixWriter = @This();
 
         pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
 
@@ -294,8 +298,6 @@ pub fn PosixBufferedWriter(
             return getBuffer(this.parent);
         }
 
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType);
-
         pub fn end(this: *PosixWriter) void {
             if (this.is_done) {
                 return;
@@ -375,21 +377,26 @@ pub fn PosixBufferedWriter(
     };
 }
 
-pub fn PosixStreamingWriter(
-    comptime Parent: type,
-    comptime onWrite: fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: fn (*Parent, bun.sys.Error) void,
-    comptime onReady: ?fn (*Parent) void,
-    comptime onClose: fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anytype) type {
     return struct {
+        const onWrite: fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onReady: ?fn (*Parent) void = function_table.onReady;
+        const onClose: fn (*Parent) void = function_table.onClose;
+
         outgoing: StreamBuffer = .{},
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
         is_done: bool = false,
         closed_without_reporting: bool = false,
-
         force_sync: bool = false,
+
+        const internals = PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+        pub const onPoll = internals.onPoll;
+        pub const drainBufferedData = internals.drainBufferedData;
 
         pub fn getForceSync(this: *const @This()) bool {
             return this.force_sync;
@@ -515,7 +522,7 @@ pub fn PosixStreamingWriter(
 
             const buf_len = this.outgoing.size() - before_len;
 
-            return this._maybeWriteNewlyBufferedData(buf_len);
+            return this.maybeWriteNewlyBufferedData(buf_len);
         }
 
         pub fn writeLatin1(this: *PosixWriter, buf: []const u8) WriteResult {
@@ -536,10 +543,10 @@ pub fn PosixStreamingWriter(
 
             const buf_len = this.outgoing.size() - before_len;
 
-            return this._maybeWriteNewlyBufferedData(buf_len);
+            return this.maybeWriteNewlyBufferedData(buf_len);
         }
 
-        fn _maybeWriteNewlyBufferedData(this: *PosixWriter, buf_len: usize) WriteResult {
+        fn maybeWriteNewlyBufferedData(this: *PosixWriter, buf_len: usize) WriteResult {
             bun.assert(!this.is_done);
 
             if (this.shouldBuffer(0)) {
@@ -549,13 +556,13 @@ pub fn PosixStreamingWriter(
                 return .{ .wrote = buf_len };
             }
 
-            return @This()._tryWriteNewlyBufferedData(this, this.outgoing.slice());
+            return this.tryWriteNewlyBufferedData(this.outgoing.slice());
         }
 
-        fn _tryWriteNewlyBufferedData(this: *PosixWriter, buf: []const u8) WriteResult {
+        fn tryWriteNewlyBufferedData(this: *PosixWriter, buf: []const u8) WriteResult {
             bun.assert(!this.is_done);
 
-            const rc = @This()._tryWrite(this, this.force_sync, buf);
+            const rc = internals.tryWrite(this, this.force_sync, buf);
 
             switch (rc) {
                 .wrote => |amt| {
@@ -614,10 +621,10 @@ pub fn PosixStreamingWriter(
                     return .{ .err = bun.sys.Error.oom };
                 };
 
-                return this._tryWriteNewlyBufferedData(this.outgoing.slice());
+                return this.tryWriteNewlyBufferedData(this.outgoing.slice());
             }
 
-            const rc = @This()._tryWrite(this, this.force_sync, buf);
+            const rc = internals.tryWrite(this, this.force_sync, buf);
 
             switch (rc) {
                 .pending => |amt| {
@@ -649,8 +656,6 @@ pub fn PosixStreamingWriter(
 
             return rc;
         }
-
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
 
         pub fn flush(this: *PosixWriter) WriteResult {
             if (this.closed_without_reporting or this.is_done) {
@@ -919,14 +924,10 @@ fn BaseWindowsPipeWriter(
     };
 }
 
-pub fn WindowsBufferedWriter(
-    comptime Parent: type,
-    comptime onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: *const fn (*Parent, bun.sys.Error) void,
-    comptime onClose: ?*const fn (*Parent) void,
-    comptime getBuffer: *const fn (*Parent) []const u8,
-    comptime onWritable: ?*const fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
     return struct {
         source: ?Source = null,
         owns_fd: bool = true,
@@ -936,6 +937,12 @@ pub fn WindowsBufferedWriter(
         write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
         write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
         pending_payload_size: usize = 0,
+
+        const onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: *const fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onClose: ?*const fn (*Parent) void = function_table.onClose;
+        const getBuffer: *const fn (*Parent) []const u8 = function_table.getBuffer;
+        const onWritable: ?*const fn (*Parent) void = function_table.onWritable;
 
         const WindowsWriter = @This();
 
@@ -1179,15 +1186,18 @@ pub const StreamBuffer = struct {
     }
 };
 
-pub fn WindowsStreamingWriter(
-    comptime Parent: type,
-    /// reports the amount written and done means that we dont have any other pending data to send (but we may send more data)
-    comptime onWrite: fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: fn (*Parent, bun.sys.Error) void,
-    comptime onWritable: ?fn (*Parent) void,
-    comptime onClose: fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) type {
     return struct {
+        /// reports the amount written and done means that we dont have any
+        /// other pending data to send (but we may send more data)
+        const onWrite: fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onWritable: ?fn (*Parent) void = function_table.onWritable;
+        const onClose: fn (*Parent) void = function_table.onClose;
+
         source: ?Source = null,
         /// if the source of this writer is a file descriptor, calling end() will not close it.
         /// if it is a path, then we claim ownership and the backing fd will be closed by end().

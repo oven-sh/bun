@@ -1082,7 +1082,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     }
                     const obj = server.toJS(globalObject);
                     if (route_list_object != .zero) {
-                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                        ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
                     server.js_value.set(globalObject, obj);
 

@@ -3141,7 +3141,11 @@ pub fn ReadableStreamSource(
 
         const supports_ref = setRefUnrefFn != null;
 
-        pub usingnamespace @field(JSC.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
+        pub const js = @field(JSC.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
+        pub const toJS = js.toJS;
+        pub const fromJS = js.fromJS;
+        pub const fromJSDirect = js.fromJSDirect;
+
         pub const drainFromJS = JSReadableStreamSource.drain;
         pub const startFromJS = JSReadableStreamSource.start;
         pub const pullFromJS = JSReadableStreamSource.pull;
@@ -3220,7 +3224,7 @@ pub fn ReadableStreamSource(
                     },
                     .pending => {
                         const out = result.toJS(globalThis);
-                        ReadableStreamSourceType.pendingPromiseSetCached(this_jsvalue, globalThis, out);
+                        js.pendingPromiseSetCached(this_jsvalue, globalThis, out);
                         return out;
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
@@ -3263,7 +3267,7 @@ pub fn ReadableStreamSource(
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
-                    ReadableStreamSourceType.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
+                    js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
                     return true;
                 }
 
@@ -3272,7 +3276,7 @@ pub fn ReadableStreamSource(
                     return false;
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
-                ReadableStreamSourceType.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
+                js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
                 return true;
             }
 
@@ -3289,7 +3293,7 @@ pub fn ReadableStreamSource(
 
                 JSC.markBinding(@src());
 
-                if (ReadableStreamSourceType.onDrainCallbackGetCached(this.this_jsvalue)) |val| {
+                if (js.onDrainCallbackGetCached(this.this_jsvalue)) |val| {
                     return val;
                 }
 
@@ -4635,7 +4639,7 @@ pub const FileReader = struct {
                 const this_value = this.parent().this_jsvalue;
                 const globalThis = this.parent().globalThis;
                 if (this_value != .zero) {
-                    if (Source.onDrainCallbackGetCached(this_value)) |cb| {
+                    if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
                         const buffered = this.buffered;
                         this.buffered = .{};
                         this.parent().incrementCount();

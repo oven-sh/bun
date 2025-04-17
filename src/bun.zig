@@ -3579,7 +3579,7 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
 
 pub const S3 = @import("./s3/client.zig");
-pub const ptr = @import("./ptr.zig");
+pub const ptr = @import("ptr.zig");
 
 const Allocator = std.mem.Allocator;
 

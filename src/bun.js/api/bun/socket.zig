@@ -875,7 +875,7 @@ pub const Listener = struct {
         this_socket.ref();
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
-            Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
+            Socket.js.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
         }
         return this_socket;
     }
@@ -901,7 +901,7 @@ pub const Listener = struct {
         this_socket.ref();
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
-            Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
+            Socket.js.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
         }
         if (socket.ext(**anyopaque)) |ctx| {
             ctx.* = bun.cast(**anyopaque, this_socket);
@@ -1150,7 +1150,7 @@ pub const Listener = struct {
                         .server_name = server_name,
                         .socket_context = null,
                     });
-                    TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
+                    TLSSocket.js.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
                     tls.poll_ref.ref(handlers.vm);
                     tls.ref();
                     if (connection == .unix) {
@@ -1177,7 +1177,7 @@ pub const Listener = struct {
                         .socket_context = null,
                     });
                     tcp.ref();
-                    TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
+                    TCPSocket.js.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
                     tcp.poll_ref.ref(handlers.vm);
 
                     if (connection == .unix) {
@@ -1250,7 +1250,7 @@ pub const Listener = struct {
                     .socket_context = socket_context, // owns the socket context
                 });
 
-                SocketType.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
+                SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
                 socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
                     socket.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
@@ -2017,7 +2017,7 @@ fn NewSocket(comptime ssl: bool) type {
             value: JSC.JSValue,
         ) callconv(.C) bool {
             log("setData()", .{});
-            This.dataSetCached(this.this_value, globalObject, value);
+            This.js.dataSetCached(this.this_value, globalObject, value);
             return true;
         }
 
@@ -3614,7 +3614,7 @@ fn NewSocket(comptime ssl: bool) type {
             // Do not create the JS Wrapper object until _after_ we've validated the TLS config.
             // Otherwise, JSC will GC it and the lifetime gets very complicated.
             const tls_js_value = tls.getThisValue(globalObject);
-            TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
+            TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
 
             tls.socket = new_socket;
             const new_context = new_socket.context().?;
@@ -3656,7 +3656,7 @@ fn NewSocket(comptime ssl: bool) type {
             const raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this_js)) |raw_default_data| {
                 raw_default_data.ensureStillAlive();
-                TLSSocket.dataSetCached(raw_js_value, globalObject, raw_default_data);
+                TLSSocket.js.dataSetCached(raw_js_value, globalObject, raw_default_data);
             }
 
             // marks both as active
@@ -4429,7 +4429,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         .socket_context = null, // only set after the wrapTLS
     });
     const tls_js_value = tls.getThisValue(globalObject);
-    TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
+    TLSSocket.js.dataSetCached(tls_js_value, globalObject, default_data);
 
     var duplexContext = DuplexUpgradeContext.new(.{
         .upgrade = undefined,

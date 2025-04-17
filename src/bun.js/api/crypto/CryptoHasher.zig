@@ -768,7 +768,7 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.JSObject,
         ) JSC.JSValue {
-            return ThisHasher.getConstructor(globalObject);
+            return ThisHasher.js.getConstructor(globalObject);
         }
 
         pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

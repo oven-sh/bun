@@ -29,7 +29,7 @@ pub const CommonStrings = struct {
 };
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VM = JSC.VM;

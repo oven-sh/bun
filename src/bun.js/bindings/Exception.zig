@@ -1,5 +1,5 @@
 const JSC = bun.JSC;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigStackTrace = @import("ZigStackTrace.zig").ZigStackTrace;
 const JSValue = JSC.JSValue;

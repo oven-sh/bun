@@ -672,7 +672,7 @@ pub const Mv = @import("./builtin/mv.zig");
 // --- End Shell Builtin Commands ---
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const shell = bun.shell;
 const Interpreter = shell.interpret.Interpreter;

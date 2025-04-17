@@ -43,4 +43,4 @@ fn freeStr(this: *RefCountedStr) void {
 }
 
 const RefCountedStr = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");

@@ -478,7 +478,7 @@ pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     }
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
 const EnvMap = shell.EnvMap;

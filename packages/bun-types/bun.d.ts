@@ -7253,6 +7253,16 @@ declare module "bun" {
 
     /**
      * Serialize the cookie to a string
+     *
+     * @example
+     * ```ts
+     * const cookie = Bun.Cookie.from("session", "abc123", {
+     *   domain: "example.com",
+     *   path: "/",
+     *   secure: true,
+     *   httpOnly: true
+     * }).serialize(); // "session=abc123; Domain=example.com; Path=/; Secure; HttpOnly; SameSite=Lax"
+     * ```
      */
     serialize(): string;
 

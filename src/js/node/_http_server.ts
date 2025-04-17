@@ -58,7 +58,6 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 
 let cluster;
-const nop = () => {};
 
 function emitCloseServer(self: Server) {
   callCloseCallback(self);
@@ -593,7 +592,7 @@ const Server = function Server(options, callback) {
     if (key) {
       if (!isValidTLSArray(key)) {
         throw new TypeError(
-          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "key argument must be a string, Buffer, TypedArray or BunFile, or an array containing string, Buffer, TypedArray or BunFile",
         );
       }
       this[isTlsSymbol] = true;
@@ -602,7 +601,7 @@ const Server = function Server(options, callback) {
     if (cert) {
       if (!isValidTLSArray(cert)) {
         throw new TypeError(
-          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "cert argument must be a string, Buffer, TypedArray or BunFile, or an array containing string, Buffer, TypedArray or BunFile",
         );
       }
       this[isTlsSymbol] = true;
@@ -612,19 +611,19 @@ const Server = function Server(options, callback) {
     if (ca) {
       if (!isValidTLSArray(ca)) {
         throw new TypeError(
-          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "ca argument must be a string, Buffer, TypedArray or BunFile, or an array containing string, Buffer, TypedArray or BunFile",
         );
       }
       this[isTlsSymbol] = true;
     }
     let passphrase = options.passphrase;
     if (passphrase && typeof passphrase !== "string") {
-      throw new TypeError("passphrase argument must be an string");
+      throw new TypeError("passphrase argument must be a string");
     }
 
     let serverName = options.servername;
     if (serverName && typeof serverName !== "string") {
-      throw new TypeError("servername argument must be an string");
+      throw new TypeError("serverName argument must be a string");
     }
 
     let secureOptions = options.secureOptions || 0;

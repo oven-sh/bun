@@ -429,7 +429,9 @@ function ClientRequest(input, options, cb) {
 
             if (!!$debug) globalReportError(err);
 
-            this.emit("error", err);
+            try {
+              this.emit("error", err);
+            } catch (e) {}
           })
           .finally(() => {
             if (!keepOpen) {

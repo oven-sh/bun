@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);

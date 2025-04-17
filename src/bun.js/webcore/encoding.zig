@@ -9,7 +9,7 @@ const JSC = bun.JSC;
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;

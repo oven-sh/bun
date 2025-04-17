@@ -5,7 +5,7 @@ const Output = @import("output.zig");
 const use_mimalloc = bun.use_mimalloc;
 const StringTypes = @import("./string_types.zig");
 const Mimalloc = bun.Mimalloc;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const version_string = Environment.version_string;
 

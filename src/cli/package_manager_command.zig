@@ -1,6 +1,6 @@
 const std = @import("std");
 const Progress = std.Progress;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const string = bun.string;

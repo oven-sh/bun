@@ -1195,7 +1195,7 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
 
 // --
 const log = bun.Output.scoped(.Rm, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

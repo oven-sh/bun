@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uv = bun.windows.libuv;
 
 const log = bun.Output.scoped(.PipeSource, true);

@@ -392,6 +392,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     int length;
+                    #if !defined(_WIN32)
                     if(s->context->is_ipc) {
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
@@ -419,8 +420,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                         }
                     }else{
+                    #endif
                         length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                    #if !defined(_WIN32)
                     }
+                    #endif
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);

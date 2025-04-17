@@ -374,6 +374,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     return written < 0 ? 0 : written;
 }
 
+#if !defined(_WIN32)
 int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, int fd) {
     if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
         return 0;
@@ -407,6 +408,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, 
     
     return sent < 0 ? 0 : sent;
 }
+#endif
 
 void *us_socket_ext(int ssl, struct us_socket_t *s) {
 #ifndef LIBUS_NO_SSL

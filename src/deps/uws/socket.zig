@@ -135,6 +135,7 @@ pub const Socket = opaque {
     }
 
     pub fn writeFd(this: *Socket, data: []const u8, file_descriptor: bun.FD) i32 {
+        if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
         const rc = us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
         debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, file_descriptor.native(), rc });
         return rc;

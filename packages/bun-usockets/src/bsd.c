@@ -725,6 +725,7 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     }
 }
 
+#if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
     while (1) {
         ssize_t ret = recvmsg(fd, msg, flags);
@@ -736,6 +737,7 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
         return ret;
     }
 }
+#endif
 
 #if !defined(_WIN32)
 #include <sys/uio.h>
@@ -795,6 +797,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
     }
 }
 
+#if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
     while (1) {
         ssize_t rc = sendmsg(fd, msg, flags);
@@ -806,6 +809,7 @@ ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int fl
         return rc;
     }
 }
+#endif
 
 int bsd_would_block() {
 #ifdef _WIN32

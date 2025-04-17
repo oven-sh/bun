@@ -58,10 +58,12 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
         auto prime = primeFixedValue->clone();
         auto bnG = ncrypto::BignumPointer::New();
         if (!prime || !bnG || !bnG.setWord(m_generator)) {
+            m_opensslError = ERR_get_error();
             return {};
         }
         auto dh = ncrypto::DHPointer::New(WTFMove(prime), WTFMove(bnG));
         if (!dh) {
+            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -72,6 +74,7 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
         // TODO: this might not work with BoringSSL!!!!
         int* primeLength = std::get_if<int>(&m_prime);
         if (!paramCtx.initForParamgen() || !paramCtx.setDhParameters(*primeLength, m_generator)) {
+            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -79,11 +82,13 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
     }
 
     if (!keyParams) {
+        m_opensslError = ERR_get_error();
         return {};
     }
 
     ncrypto::EVPKeyCtxPointer ctx = keyParams.newCtx();
     if (!ctx.initForKeygen()) {
+        m_opensslError = ERR_get_error();
         return {};
     }
 

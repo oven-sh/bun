@@ -55,18 +55,21 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_variant == RsaKeyVariant::RSA_PSS ? EVP_PKEY_RSA_PSS : EVP_PKEY_RSA);
     if (!ctx.initForKeygen() || !ctx.setRsaKeygenBits(m_modulusLength)) {
+        m_opensslError = ERR_get_error();
         return {};
     }
 
     if (m_exponent != ncrypto::EVPKeyCtxPointer::kDefaultRsaExponent) {
         auto bn = ncrypto::BignumPointer::New();
         if (!bn.setWord(m_exponent) || !ctx.setRsaKeygenPubExp(WTFMove(bn))) {
+            m_opensslError = ERR_get_error();
             return {};
         }
     }
 
     if (m_variant == RsaKeyVariant::RSA_PSS) {
         if (m_md && !ctx.setRsaPssKeygenMd(m_md)) {
+            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -76,6 +79,7 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
         }
 
         if (mgf1Md && !ctx.setRsaPssKeygenMgf1Md(mgf1Md)) {
+            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -85,6 +89,7 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
         }
 
         if (saltLength >= 0 && !ctx.setRsaPssSaltlen(saltLength)) {
+            m_opensslError = ERR_get_error();
             return {};
         }
     }

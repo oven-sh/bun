@@ -704,6 +704,7 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
                 }
             } else if (!passphraseValue.isUndefined()) {
                 ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);
+                return;
             }
         }
 
@@ -717,10 +718,6 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
         JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
         config.passphrase = DataPointer::FromSpan(passphraseView->span());
-        if (!*config.passphrase) {
-            throwOutOfMemoryError(globalObject, scope);
-            return;
-        }
     }
 
     if (config.output_key_object) {

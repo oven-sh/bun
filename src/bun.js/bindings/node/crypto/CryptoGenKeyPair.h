@@ -31,6 +31,7 @@ public:
 
     // keyObj is set after work is done
     KeyObject m_keyObj;
+    int m_opensslError = 0;
 };
 
 KeyEncodingConfig parseKeyEncodingConfig(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyTypeValue, JSC::JSValue optionsValue);

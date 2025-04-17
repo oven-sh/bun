@@ -54,6 +54,7 @@ ncrypto::EVPKeyCtxPointer NidKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_id);
     if (!ctx.initForKeygen()) {
+        m_opensslError = ERR_get_error();
         return {};
     }
     return ctx;

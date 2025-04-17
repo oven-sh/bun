@@ -54,16 +54,19 @@ ncrypto::EVPKeyCtxPointer DsaKeyPairJobCtx::setup()
     ncrypto::EVPKeyCtxPointer paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_DSA);
 
     if (!paramCtx || paramCtx.initForParamgen() || !paramCtx.setDsaParameters(m_modulusLength, m_divisorLength)) {
+        m_opensslError = ERR_get_error();
         return {};
     }
 
     auto keyParams = paramCtx.paramgen();
     if (!keyParams) {
+        m_opensslError = ERR_get_error();
         return {};
     }
 
     ncrypto::EVPKeyCtxPointer keyCtx = keyParams.newCtx();
     if (!keyCtx.initForKeygen()) {
+        m_opensslError = ERR_get_error();
         return {};
     }
 

@@ -42,7 +42,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     };
 
     if (!m_keyObj.data()) {
-        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s);
+        JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "key generation failed"_s);
         Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
         return;
     }
@@ -137,6 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     KeyEncodingConfig config = parseKeyEncodingConfig(globalObject, scope, typeValue, optionsValue);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, globalObject, optionsValue, "options"_s);

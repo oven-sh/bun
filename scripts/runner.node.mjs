@@ -168,7 +168,7 @@ async function runTests() {
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
-  isAsanBuild = path.basename(execPath).includes("asan");
+  isAsanBuild = basename(execPath).includes("asan");
 
   !isQuiet && console.log("Bun:", execPath);
 

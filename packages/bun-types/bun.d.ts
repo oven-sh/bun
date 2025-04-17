@@ -2235,7 +2235,7 @@ declare module "bun" {
    * work on this.
    *
    * @example
-   * ## Example with argon2
+   * **Example with argon2**
    * ```ts
    * import {password} from "bun";
    *
@@ -2244,7 +2244,7 @@ declare module "bun" {
    * console.log(verify); // true
    * ```
    *
-   * ## Example with bcrypt
+   * **Example with bcrypt**
    * ```ts
    * import {password} from "bun";
    *
@@ -2299,7 +2299,8 @@ declare module "bun" {
      *
      * @returns A promise that resolves to the hashed password
      *
-     * ## Example with argon2
+     * @example
+     * **Example with argon2**
      * ```ts
      * import {password} from "bun";
      * const hash = await password.hash("hello world");
@@ -2307,7 +2308,7 @@ declare module "bun" {
      * const verify = await password.verify("hello world", hash);
      * ```
      *
-     * ## Example with bcrypt
+     * **Example with bcrypt**
      * ```ts
      * import {password} from "bun";
      * const hash = await password.hash("hello world", "bcrypt");
@@ -2341,8 +2342,7 @@ declare module "bun" {
      * work on this.
      *
      * @example
-     * ## Example with argon2
-     *
+     * **Example with argon2**
      * ```ts
      * import {password} from "bun";
      *
@@ -2351,7 +2351,7 @@ declare module "bun" {
      * console.log(verify); // true
      * ```
      *
-     * ## Example with bcrypt
+     * **Example with bcrypt**
      * ```ts
      * import {password} from "bun";
      *
@@ -2387,8 +2387,7 @@ declare module "bun" {
      * work on this.
      *
      * @example
-     * ## Example with argon2
-     *
+     * **Example with argon2**
      * ```ts
      * import {password} from "bun";
      *
@@ -2397,7 +2396,7 @@ declare module "bun" {
      * console.log(verify); // true
      * ```
      *
-     * ## Example with bcrypt
+     * **Example with bcrypt**
      * ```ts
      * import {password} from "bun";
      *
@@ -3246,13 +3245,15 @@ declare module "bun" {
     /**
      * Uniquely identify a server instance with an ID
      *
-     * ### When bun is started with the `--hot` flag
+     * ---
+     *
+     * **When bun is started with the `--hot` flag**:
      *
      * This string will be used to hot reload the server without interrupting
      * pending requests or websockets. If not provided, a value will be
      * generated. To disable hot reloading, set this value to `null`.
      *
-     * ### When bun is not started with the `--hot` flag
+     * **When bun is not started with the `--hot` flag**:
      *
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */

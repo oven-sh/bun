@@ -111,22 +111,19 @@ declare module "bun" {
        * Automatically calls {@link quiet} to disable echoing to stdout.
        * @param encoding - The encoding to use when decoding the output
        * @returns A promise that resolves with stdout as a string
+       *
        * @example
-       *
-       * ## Read as UTF-8 string
-       *
+       * **Read as UTF-8 string**
        * ```ts
        * const output = await $`echo hello`.text();
        * console.log(output); // "hello\n"
        * ```
        *
-       * ## Read as base64 string
-       *
+       * **Read as base64 string**
        * ```ts
        * const output = await $`echo ${atob("hello")}`.text("base64");
        * console.log(output); // "hello\n"
        * ```
-       *
        */
       text(encoding?: BufferEncoding): Promise<string>;
 
@@ -198,22 +195,19 @@ declare module "bun" {
        *
        * @param encoding - The encoding to use when decoding the output
        * @returns Stdout as a string with the given encoding
+       *
        * @example
-       *
-       * ## Read as UTF-8 string
-       *
+       * **Read as UTF-8 string**
        * ```ts
        * const output = await $`echo hello`;
        * console.log(output.text()); // "hello\n"
        * ```
        *
-       * ## Read as base64 string
-       *
+       * **Read as base64 string**
        * ```ts
        * const output = await $`echo ${atob("hello")}`;
        * console.log(output.text("base64")); // "hello\n"
        * ```
-       *
        */
       text(encoding?: BufferEncoding): string;
 
@@ -279,22 +273,19 @@ declare module "bun" {
        *
        * @param encoding - The encoding to use when decoding the output
        * @returns Stdout as a string with the given encoding
+       *
        * @example
-       *
-       * ## Read as UTF-8 string
-       *
+       * **Read as UTF-8 string**
        * ```ts
        * const output = await $`echo hello`;
        * console.log(output.text()); // "hello\n"
        * ```
        *
-       * ## Read as base64 string
-       *
+       * **Read as base64 string**
        * ```ts
        * const output = await $`echo ${atob("hello")}`;
        * console.log(output.text("base64")); // "hello\n"
        * ```
-       *
        */
       text(encoding?: BufferEncoding): string;
 

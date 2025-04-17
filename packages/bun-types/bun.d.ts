@@ -1001,6 +1001,7 @@ declare module "bun" {
     end(): ArrayBuffer | Uint8Array;
   }
 
+  /** DNS Related APIs */
   namespace dns {
     /**
      * Lookup the IP address for a hostname

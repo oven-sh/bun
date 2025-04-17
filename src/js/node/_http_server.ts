@@ -1,6 +1,6 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
-const { validateObject, validateLinkHeaderValue, validateBoolean } = require("internal/validators");
+const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 

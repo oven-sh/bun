@@ -155,6 +155,8 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+let isAsanBuild = false;
+
 /**
  *
  * @returns {Promise<TestResult[]>}
@@ -166,6 +168,8 @@ async function runTests() {
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
+  isAsanBuild = path.basename(execPath).includes("asan");
+
   !isQuiet && console.log("Bun:", execPath);
 
   const revision = getRevision(execPath);
@@ -677,8 +681,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
-  // Check if this is an ASAN build by examining the executable name
-  const isAsanBuild = /bun-asan(?:\.exe)?$/i.test(execPath);
 
   const bunEnv = {
     ...process.env,
@@ -777,9 +779,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
-  // Check if we're using an ASAN build by examining the executable name
-  const isAsanBuild = /bun-asan(?:\.exe)?$/i.test(execPath);
-
   const timeout = getTestTimeout(testPath, isAsanBuild);
   const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(options["cwd"], testPath);
@@ -1704,6 +1703,10 @@ function getExitCode(outcome) {
 // A flaky segfault, sigtrap, or sigill must never be ignored.
 // If it happens in CI, it will happen to our users.
 function isAlwaysFailure(error) {
+  if (isAsanBuild) {
+    return true;
+  }
+
   error = ((error || "") + "").toLowerCase().trim();
   return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
 }

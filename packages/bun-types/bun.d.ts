@@ -2460,7 +2460,7 @@ declare module "bun" {
    *
    * @example
    * Basic usage - Bundle a single entrypoint and check results
-   * ```ts
+   *```ts
    * const result = await Bun.build({
    *   entrypoints: ['./src/index.tsx'],
    *   outdir: './dist'
@@ -2470,37 +2470,37 @@ declare module "bun" {
    *   console.error('Build failed:', result.logs);
    *   process.exit(1);
    * }
-   * ```
+   *```
    *
    * @example
    * Set up multiple entrypoints with code splitting enabled
-   * ```ts
+   *```ts
    * await Bun.build({
-   *  entrypoints: ['./src/app.tsx', './src/admin.tsx'],
-   *  outdir: './dist',
-   *  splitting: true,
-   *  sourcemap: "external"
+   *   entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+   *   outdir: './dist',
+   *   splitting: true,
+   *   sourcemap: "external"
    * });
-   * ```
+   *```
    *
    * @example
    * Configure minification and optimization settings
-   * ```ts
+   *```ts
    * await Bun.build({
-   *  entrypoints: ['./src/index.tsx'],
-   *  outdir: './dist',
-   *  minify: {
-   *    whitespace: true,
-   *    identifiers: true,
-   *    syntax: true
-   *  },
-   *  drop: ['console', 'debugger']
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   minify: {
+   *     whitespace: true,
+   *     identifiers: true,
+   *     syntax: true
+   *   },
+   *   drop: ['console', 'debugger']
    * });
-   * ```
+   *```
    *
    * @example
    * Set up custom loaders and mark packages as external
-   * ```ts
+   *```ts
    * await Bun.build({
    *   entrypoints: ['./src/index.tsx'],
    *   outdir: './dist',
@@ -2512,11 +2512,11 @@ declare module "bun" {
    *   },
    *   external: ['react', 'react-dom']
    * });
-   * ```
+   *```
    *
    * @example
    * Configure environment variable handling with different modes
-   * ```ts
+   *```ts
    * // Inline all environment variables
    * await Bun.build({
    *   entrypoints: ['./src/index.tsx'],
@@ -2530,40 +2530,40 @@ declare module "bun" {
    *   outdir: './dist',
    *   env: 'PUBLIC_*'
    * });
-   * ```
+   *```
    *
    * @example
    * Set up custom naming patterns for all output types
-   * ```ts
+   *```ts
    * await Bun.build({
-   *  entrypoints: ['./src/index.tsx'],
-   *  outdir: './dist',
-   *  naming: {
-   *    entry: '[dir]/[name]-[hash].[ext]',
-   *    chunk: 'chunks/[name]-[hash].[ext]',
-   *    asset: 'assets/[name]-[hash].[ext]'
-   *  }
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   naming: {
+   *     entry: '[dir]/[name]-[hash].[ext]',
+   *     chunk: 'chunks/[name]-[hash].[ext]',
+   *     asset: 'assets/[name]-[hash].[ext]'
+   *   }
    * });
-   * ```
+   *```
    *
    * @example
    * Work with build artifacts in different formats
-   * ```ts
+   *```ts
    * const result = await Bun.build({
-   *  entrypoints: ['./src/index.tsx']
+   *   entrypoints: ['./src/index.tsx']
    * });
    * for (const artifact of result.outputs) {
-   *  const text = await artifact.text();
-   *  const buffer = await artifact.arrayBuffer();
-   *  const bytes = await artifact.bytes();
-   *  new Response(artifact);
-   *  await Bun.write(artifact.path, artifact);
+   *   const text = await artifact.text();
+   *   const buffer = await artifact.arrayBuffer();
+   *   const bytes = await artifact.bytes();
+   *   new Response(artifact);
+   *   await Bun.write(artifact.path, artifact);
    * }
-   * ```
+   *```
    *
    * @example
    * Implement comprehensive error handling with position info
-   * ```ts
+   *```ts
    * try {
    *   const result = await Bun.build({
    *     entrypoints: ['./src/index.tsx'],
@@ -2581,121 +2581,122 @@ declare module "bun" {
    *     }
    *   }
    * }
-   * ```
+   *```
    *
-   *  @example
+   * @example
    * Set up Node.js target with specific configurations
-   *  ```ts
-   *  await Bun.build({
-   *    entrypoints: ['./src/server.ts'],
-   *    outdir: './dist',
-   *    target: 'node',
-   *    format: 'cjs',
-   *    sourcemap: 'external',
-   *    minify: false,
-   *    packages: 'external'
-   *  });
-   *  ```
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/server.ts'],
+   *   outdir: './dist',
+   *   target: 'node',
+   *   format: 'cjs',
+   *   sourcemap: 'external',
+   *   minify: false,
+   *   packages: 'external'
+   * });
+   *```
    *
-   *  @example
+   * @example
    * Configure experimental CSS bundling with multiple themes
-   *  ```ts
-   *  await Bun.build({
-   *    entrypoints: [
-   *      './src/styles.css',
-   *      './src/themes/dark.css',
-   *      './src/themes/light.css'
-   *    ],
-   *    outdir: './dist/css',
-   *  });
-   *  ```
+   *```ts
+   * await Bun.build({
+   *   entrypoints: [
+   *     './src/styles.css',
+   *     './src/themes/dark.css',
+   *     './src/themes/light.css'
+   *   ],
+   *   outdir: './dist/css',
+   * });
+   *```
    *
    * @example
    * Define compile-time constants and version information
-   * ```ts
+   *```ts
    * await Bun.build({
-   *  entrypoints: ['./src/index.tsx'],
-   *  outdir: './dist',
-   *  define: {
-   *    'process.env.NODE_ENV': JSON.stringify('production'),
-   *    'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
-   *    'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
-   *  }
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   define: {
+   *     'process.env.NODE_ENV': JSON.stringify('production'),
+   *     'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+   *     'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+   *   }
    * });
-   * ```
+   *```
    *
    * @example
    * Create a custom plugin for handling special file types
-   *  ```ts
-   *  await Bun.build({
-   *    entrypoints: ['./src/index.tsx'],
-   *    outdir: './dist',
-   *    plugins: [
-   *      {
-   *        name: 'my-plugin',
-   *        setup(build) {
-   *          build.onLoad({ filter: /\.custom$/ }, async (args) => {
-   *            const content = await Bun.file(args.path).text();
-   *            return {
-   *              contents: `export default ${JSON.stringify(content)}`,
-   *              loader: 'js'
-   *            };
-   *          });
-   *        }
-   *      }
-   *    ]
-   *  });
-   *  ```
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   plugins: [
+   *     {
+   *       name: 'my-plugin',
+   *       setup(build) {
+   *         build.onLoad({ filter: /\.custom$/ }, async (args) => {
+   *           const content = await Bun.file(args.path).text();
+   *           return {
+   *             contents: `export default ${JSON.stringify(content)}`,
+   *             loader: 'js'
+   *           };
+   *         });
+   *       }
+   *     }
+   *   ]
+   * });
+   *```
    *
    * @example
    * Enable bytecode generation for faster startup
-   *  ```ts
-   *  await Bun.build({
-   *    entrypoints: ['./src/server.ts'],
-   *    outdir: './dist',
-   *    target: 'bun',
-   *    format: 'cjs',
-   *    bytecode: true
-   *  });
-   *  ```
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/server.ts'],
+   *   outdir: './dist',
+   *   target: 'bun',
+   *   format: 'cjs',
+   *   bytecode: true
+   * });
+   *```
    *
    * @example
    * Add custom banner and footer to output files
-   *  ```ts
-   *  await Bun.build({
-   *    entrypoints: ['./src/index.tsx'],
-   *    outdir: './dist',
-   *    banner: '"use client";\n// Built with Bun',
-   *    footer: '// Generated on ' + new Date().toISOString()
-   *  });
-   *  ```
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   banner: '"use client";\n// Built with Bun',
+   *   footer: '// Generated on ' + new Date().toISOString()
+   * });
+   *```
    *
    * @example
    * Configure CDN public path for asset loading
-   * ```ts
-   *  await Bun.build({
-   *    entrypoints: ['./src/index.tsx'],
-   *    outdir: './dist',
-   *    publicPath: 'https://cdn.example.com/assets/',
-   *    loader: {
-   *      '.png': 'file',
-   *      '.svg': 'file'
-   *    }
-   *  });
-   * ```
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   publicPath: 'https://cdn.example.com/assets/',
+   *   loader: {
+   *     '.png': 'file',
+   *     '.svg': 'file'
+   *   }
+   * });
+   *```
    *
    * @example
    * Set up package export conditions for different environments
-   * ```ts
+   *```ts
    * await Bun.build({
    *   entrypoints: ['./src/index.tsx'],
    *   outdir: './dist',
    *   conditions: ['production', 'browser', 'module'],
    *   packages: 'external'
    * });
-   * ```
+   *```
    */
   function build(config: BuildConfig): Promise<BuildOutput>;
+
   /**
    * A status that represents the outcome of a sent message.
    *

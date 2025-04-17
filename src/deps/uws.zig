@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = bun.Environment;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
@@ -1489,11 +1489,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             }
             const socket = this.socket.get() orelse return bun.invalid_fd;
 
+            // on windows uSockets exposes SOCKET
             return if (comptime Environment.isWindows)
-                // on windows uSockets exposes SOCKET
-                bun.toFD(@as(bun.FDImpl.System, @ptrCast(socket.getNativeHandle(is_ssl).?)))
+                .fromNative(@ptrCast(socket.getNativeHandle(is_ssl).?))
             else
-                bun.toFD(@as(i32, @intCast(@intFromPtr(socket.getNativeHandle(is_ssl)))));
+                .fromNative(@intCast(@intFromPtr(socket.getNativeHandle(is_ssl))));
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
@@ -1763,7 +1763,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             this: *This,
             comptime socket_field_name: ?[]const u8,
         ) ?ThisSocket {
-            const socket_ = ThisSocket{ .socket = .{ .connected = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null } };
+            const socket_ = ThisSocket{ .socket = .{ .connected = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle.asSocketFd()) orelse return null } };
 
             if (socket_.ext(*anyopaque)) |holder| {
                 holder.* = this;
@@ -3653,10 +3653,10 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
                 if (comptime Environment.isWindows) {
                     // on windows uSockets exposes SOCKET
-                    return bun.toFD(@as(bun.FDImpl.System, @ptrCast(uws_res_get_native_handle(ssl_flag, res.downcast()))));
+                    return .fromNative(@ptrCast(uws_res_get_native_handle(ssl_flag, res.downcast())));
                 }
 
-                return bun.toFD(@as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast())))));
+                return .fromNative(@intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast()))));
             }
             pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
                 var buf: [*]const u8 = undefined;

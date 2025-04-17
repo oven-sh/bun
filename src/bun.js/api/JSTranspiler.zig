@@ -2,10 +2,9 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
@@ -40,7 +39,10 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 
 const JSTranspiler = @This();
-pub usingnamespace JSC.Codegen.JSTranspiler;
+pub const js = JSC.Codegen.JSTranspiler;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 transpiler: bun.transpiler.Transpiler,
 arena: bun.ArenaAllocator,
@@ -159,7 +161,7 @@ pub const TransformTask = struct {
         const parse_options = Transpiler.Transpiler.ParseOptions{
             .allocator = allocator,
             .macro_remappings = this.macro_map,
-            .dirname_fd = .zero,
+            .dirname_fd = .invalid,
             .file_descriptor = null,
             .loader = this.loader,
             .jsx = jsx,
@@ -304,7 +306,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) bun.JSErr
     return null;
 }
 
-fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
+fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
     const globalThis = globalObject;
     const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
     if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
@@ -807,7 +809,7 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
     const parse_options = Transpiler.Transpiler.ParseOptions{
         .allocator = allocator,
         .macro_remappings = this.transpiler_options.macro_map,
-        .dirname_fd = .zero,
+        .dirname_fd = .invalid,
         .file_descriptor = null,
         .loader = loader orelse this.transpiler_options.default_loader,
         .jsx = jsx,

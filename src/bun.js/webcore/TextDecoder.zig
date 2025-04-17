@@ -16,7 +16,10 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub usingnamespace JSC.Codegen.JSTextDecoder;
+pub const js = JSC.Codegen.JSTextDecoder;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 pub const new = bun.TrivialNew(TextDecoder);
 
@@ -334,7 +337,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 const TextDecoder = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;
 const MutableString = bun.MutableString;

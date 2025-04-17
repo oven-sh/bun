@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Maybe = bun.JSC.Maybe;
 
 const WORD = c_ushort;
@@ -459,7 +459,7 @@ fn HandleMixin(comptime Type: type) type {
             if (fd_ == windows.INVALID_HANDLE_VALUE)
                 return bun.invalid_fd;
 
-            return bun.FDImpl.fromSystem(fd_).encode();
+            return .fromNative(fd_);
         }
     };
 }
@@ -1324,7 +1324,7 @@ pub const Pipe = extern struct {
     }
 
     pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
-        const uv_fd = bun.uvfdcast(file);
+        const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
         return .{ .result = {} };
@@ -2327,8 +2327,6 @@ pub extern fn uv_get_process_title(buffer: [*]u8, size: usize) c_int;
 pub extern fn uv_set_process_title(title: [*]const u8) c_int;
 pub extern fn uv_resident_set_memory(rss: [*c]usize) c_int;
 pub extern fn uv_uptime(uptime: [*c]f64) c_int;
-pub extern fn uv_get_osfhandle(fd: c_int) uv_os_fd_t;
-pub extern fn uv_open_osfhandle(os_fd: uv_os_fd_t) c_int;
 pub const uv_rusage_t = extern struct {
     ru_utime: uv_timeval_t,
     ru_stime: uv_timeval_t,
@@ -2834,7 +2832,7 @@ pub const ReturnCodeI64 = enum(i64) {
     }
 
     pub fn toFD(this: ReturnCodeI64) bun.FileDescriptor {
-        return bun.toFD(@as(i32, @truncate(this.int())));
+        return .fromUV(@truncate(this.int()));
     }
 };
 

@@ -7,7 +7,11 @@ pub const CryptoHasher = union(enum) {
 
     const Digest = EVP.Digest;
 
-    pub usingnamespace JSC.Codegen.JSCryptoHasher;
+    pub const js = JSC.Codegen.JSCryptoHasher;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub const new = bun.TrivialNew(@This());
 
     // For using only CryptoHasherZig in c++
@@ -307,7 +311,7 @@ pub const CryptoHasher = union(enum) {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.JSObject,
     ) JSC.JSValue {
-        return CryptoHasher.getConstructor(globalObject);
+        return CryptoHasher.js.getConstructor(globalObject);
     }
 
     pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -873,7 +877,7 @@ const Crypto = JSC.API.Bun.Crypto;
 const Hashers = @import("../../../sha.zig");
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
 const MutableString = bun.MutableString;

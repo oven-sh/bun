@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
 const Fs = bun.fs;
@@ -11,12 +11,15 @@ const default_allocator = bun.default_allocator;
 const ZigString = JSC.ZigString;
 
 pub const ResolveMessage = struct {
+    pub const js = JSC.Codegen.JSResolveMessage;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     msg: logger.Msg,
     allocator: std.mem.Allocator,
     referrer: ?Fs.Path = null,
     logged: bool = false,
-
-    pub usingnamespace JSC.Codegen.JSResolveMessage;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ResolveMessage {
         return globalThis.throw("ResolveMessage is not constructable", .{});

@@ -21,28 +21,6 @@ const exists = await redis.exists("greeting");
 await redis.del("greeting");
 ```
 
-{% features title="Features" %}
-
-{% icon size=20 name="Bolt" /%} Fast native implementation using Zig and JavaScriptCore
-
-{% icon size=20 name="Link" /%} Automatic pipelining for better performance
-
-{% icon size=20 name="EthernetPort" /%} Auto-reconnect with exponential backoff
-
-{% icon size=20 name="Omega" /%} Support for RESP3 protocol
-
-{% icon size=20 name="Lock" /%} TLS support
-
-{% icon size=20 name="Clock" /%} Connection management with configurable timeouts
-
-{% icon size=20 name="IndentDecrease" /%} Offline command queue
-
-{% icon size=20 name="Settings" /%} Automatic configuration with environment variables
-
-{% icon size=20 name="Hash" /%} Support for hash, set, and other Redis data structures
-
-{% /features %}
-
 ## Getting Started
 
 To use the Redis client, you first need to create a connection:

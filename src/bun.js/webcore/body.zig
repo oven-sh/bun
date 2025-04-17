@@ -1,11 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -144,7 +143,7 @@ pub const Body = struct {
                 return true;
             }
 
-            if (T.bodyGetCached(this_value)) |body_value| {
+            if (T.js.bodyGetCached(this_value)) |body_value| {
                 if (JSC.WebCore.ReadableStream.isDisturbedValue(body_value, globalObject)) {
                     return true;
                 }

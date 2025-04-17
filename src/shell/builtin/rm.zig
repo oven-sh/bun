@@ -862,7 +862,7 @@ pub const ShellRmTask = struct {
             // On posix we can close the file descriptor whenever, but on Windows
             // we need to close it BEFORE we delete
             if (close_fd) {
-                _ = Syscall.close(fd);
+                fd.close();
             }
         }
 
@@ -870,7 +870,7 @@ pub const ShellRmTask = struct {
             return Maybe(void).success;
         }
 
-        var iterator = DirIterator.iterate(fd.asDir(), .u8);
+        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
         var entry = iterator.next();
 
         var remove_child_vtable = RemoveFileVTable{
@@ -927,7 +927,7 @@ pub const ShellRmTask = struct {
 
         if (bun.Environment.isWindows) {
             close_fd = false;
-            _ = Syscall.close(fd);
+            fd.close();
         }
 
         debug("[removeEntryDir] remove after children {s}", .{path});
@@ -1031,7 +1031,7 @@ pub const ShellRmTask = struct {
 
     fn removeEntryDirAfterChildren(this: *ShellRmTask, dir_task: *DirTask) Maybe(bool) {
         debug("remove entry after children: {s}", .{dir_task.path});
-        const dirfd = bun.toFD(this.cwd);
+        const dirfd = this.cwd;
         var state = RemoveFileParent{
             .task = this,
             .treat_as_dir = true,
@@ -1090,7 +1090,7 @@ pub const ShellRmTask = struct {
                 return Maybe(void).success;
             }
         };
-        const dirfd = bun.toFD(this.cwd);
+        const dirfd = this.cwd;
         switch (ShellSyscall.unlinkatWithFlags(dirfd, path, 0)) {
             .result => return this.verboseDeleted(parent_dir_task, path),
             .err => |e| {
@@ -1195,7 +1195,7 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
 
 // --
 const log = bun.Output.scoped(.Rm, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

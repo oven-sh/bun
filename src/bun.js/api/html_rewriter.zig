@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
 const WebCore = @import("../webcore/response.zig");
@@ -48,7 +48,10 @@ pub const HTMLRewriter = struct {
     builder: *LOLHTML.HTMLRewriter.Builder,
     context: *LOLHTMLContext,
 
-    pub usingnamespace JSC.Codegen.JSHTMLRewriter;
+    pub const js = JSC.Codegen.JSHTMLRewriter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*HTMLRewriter {
         const rewriter = bun.default_allocator.create(HTMLRewriter) catch bun.outOfMemory();
@@ -215,7 +218,7 @@ pub const HTMLRewriter = struct {
                 var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
 
                 defer {
-                    _ = Response.dangerouslySetPtr(out_response_value, null);
+                    _ = Response.js.dangerouslySetPtr(out_response_value, null);
                     // Manually invoke the finalizer to ensure it does what we want
                     out_response.finalize();
                 }
@@ -1077,7 +1080,10 @@ pub const TextChunk = struct {
     ref_count: RefCount,
     text_chunk: ?*LOLHTML.TextChunk = null,
 
-    pub usingnamespace JSC.Codegen.JSTextChunk;
+    pub const js = JSC.Codegen.JSTextChunk;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn init(text_chunk: *LOLHTML.TextChunk) *TextChunk {
         return bun.new(TextChunk, .{
@@ -1197,7 +1203,10 @@ pub const DocType = struct {
         });
     }
 
-    pub usingnamespace JSC.Codegen.JSDocType;
+    pub const js = JSC.Codegen.JSDocType;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     /// The doctype name.
     pub fn name(
@@ -1267,7 +1276,10 @@ pub const DocEnd = struct {
     ref_count: RefCount,
     doc_end: ?*LOLHTML.DocEnd,
 
-    pub usingnamespace JSC.Codegen.JSDocEnd;
+    pub const js = JSC.Codegen.JSDocEnd;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn init(doc_end: *LOLHTML.DocEnd) *DocEnd {
         return bun.new(DocEnd, .{
@@ -1322,7 +1334,10 @@ pub const Comment = struct {
     ref_count: RefCount,
     comment: ?*LOLHTML.Comment = null,
 
-    pub usingnamespace JSC.Codegen.JSComment;
+    pub const js = JSC.Codegen.JSComment;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn init(comment: *LOLHTML.Comment) *Comment {
         return bun.new(Comment, .{
@@ -1475,7 +1490,10 @@ pub const EndTag = struct {
         pub const onEndTagHandler = LOLHTML.DirectiveHandler(LOLHTML.EndTag, Handler, onEndTag);
     };
 
-    pub usingnamespace JSC.Codegen.JSEndTag;
+    pub const js = JSC.Codegen.JSEndTag;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.end_tag == null)
@@ -1599,7 +1617,10 @@ pub const AttributeIterator = struct {
         bun.destroy(this);
     }
 
-    pub usingnamespace JSC.Codegen.JSAttributeIterator;
+    pub const js = JSC.Codegen.JSAttributeIterator;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         const done_label = JSC.ZigString.static("done");
@@ -1639,7 +1660,10 @@ pub const Element = struct {
     ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
 
-    pub usingnamespace JSC.Codegen.JSElement;
+    pub const js = JSC.Codegen.JSElement;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn init(element: *LOLHTML.Element) *Element {
         return bun.new(Element, .{

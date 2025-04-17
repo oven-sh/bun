@@ -5262,10 +5262,10 @@ const DirectoryWatchStore = struct {
         errdefer store.watches.swapRemoveAt(gop.index);
 
         // Try to use an existing open directory handle
-        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache| fd: {
-            const fd = cache.getFileDescriptor();
-            break :fd if (fd == .zero) null else fd;
-        } else null;
+        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache|
+            cache.getFileDescriptor().unwrapValid()
+        else
+            null;
 
         const fd, const owned_fd = if (Watcher.requires_file_descriptors) if (cache_fd) |fd|
             .{ fd, false }
@@ -5296,7 +5296,7 @@ const DirectoryWatchStore = struct {
                 },
             },
         } else .{ bun.invalid_fd, false };
-        errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
+        errdefer if (Watcher.requires_file_descriptors) if (owned_fd) fd.close();
         if (Watcher.requires_file_descriptors)
             debug.log("-> fd: {} ({s})", .{
                 fd,
@@ -5351,7 +5351,7 @@ const DirectoryWatchStore = struct {
 
         store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
 
-        defer _ = if (entry.dir_fd_owned) bun.sys.close(entry.dir);
+        defer if (entry.dir_fd_owned) entry.dir.close();
 
         alloc.free(store.watches.keys()[entry_index]);
         store.watches.swapRemoveAt(entry_index);
@@ -7603,7 +7603,7 @@ const Mutex = bun.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;

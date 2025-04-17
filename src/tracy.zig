@@ -8,7 +8,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const enable_allocation = false;
 pub const enable_callstack = false;

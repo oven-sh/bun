@@ -204,7 +204,7 @@ pub const PBKDF2 = @import("./PBKDF2.zig");
 pub const pbkdf2 = PBKDF2.pbkdf2;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
 const MutableString = bun.MutableString;

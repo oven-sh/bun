@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
@@ -430,7 +430,7 @@ const AbortHandler = struct {
 };
 
 fn windowsIsTerminal() bool {
-    const res = bun.windows.GetFileType(bun.STDOUT_FD.cast());
+    const res = bun.windows.GetFileType(bun.FD.stdout().native());
     return res == bun.windows.FILE_TYPE_CHAR;
 }
 
@@ -470,7 +470,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .zero, null, .include_scripts, .main) orelse {
+        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
         };

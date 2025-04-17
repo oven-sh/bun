@@ -255,7 +255,7 @@ pub const ShellTouchTask = struct {
                 const perm = 0o664;
                 switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         break :out;
                     },
                     .err => |e| {
@@ -397,7 +397,7 @@ const debug = bun.Output.scoped(.ShellTouch, true);
 const Touch = @This();
 const log = debug;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;
 const IOReader = shell.IOReader;

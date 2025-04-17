@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Async = bun.Async;
 const JSC = bun.JSC;
@@ -1382,10 +1382,10 @@ pub fn WindowsStreamingWriter(
                     return .{ .err = bun.sys.Error.oom };
                 };
                 const initial_len = remain.len;
-                const fd = bun.toFD(this.source.?.sync_file.file);
+                const fd: bun.FD = .fromUV(this.source.?.sync_file.file);
 
                 while (remain.len > 0) {
-                    switch (bun.sys.write(fd, remain)) {
+                    switch (fd.write(remain)) {
                         .err => |err| {
                             return .{ .err = err };
                         },

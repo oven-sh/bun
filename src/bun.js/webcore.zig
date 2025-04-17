@@ -10,7 +10,7 @@ pub const CookieMap = @import("./webcore/CookieMap.zig").CookieMap;
 pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
 const JSC = bun.JSC;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
@@ -268,11 +268,11 @@ pub const Prompt = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
+            bun.win32.updateStdioModeFlags(.std_in, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
-                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+                _ = bun.windows.SetConsoleMode(bun.FD.stdin().native(), mode);
             }
         };
 
@@ -361,7 +361,13 @@ pub const Prompt = struct {
 };
 
 pub const Crypto = struct {
+    pub const js = JSC.Codegen.JSCrypto;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     garbage: i32 = 0,
+
     const BoringSSL = bun.BoringSSL.c;
 
     fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) bun.JSError {
@@ -541,8 +547,6 @@ pub const Crypto = struct {
 
         return ptr.toJS(globalThis);
     }
-
-    pub usingnamespace JSC.Codegen.JSCrypto;
 
     comptime {
         _ = CryptoObject__create;

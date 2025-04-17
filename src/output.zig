@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = @import("./env.zig");
 const string = bun.string;
@@ -188,11 +188,14 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
-            bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
-            bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+            const fd_internals = @import("fd.zig");
+            const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
+            fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
+            fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;
+            fd_internals.windows_cached_stdin = if (stdin != INVALID_HANDLE_VALUE) .fromSystem(stdin) else .invalid;
+            if (Environment.isDebug) fd_internals.windows_cached_fd_set = true;
 
-            buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
+            buffered_stdin.unbuffered_reader.context.handle = .stdin();
 
             // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
             const CP_UTF8 = 65001;
@@ -1201,13 +1204,13 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.fs.cwd().createFile(path_fmt, .{
+            const fd: bun.FD = .fromStdFile(std.fs.cwd().createFile(path_fmt, .{
                 .mode = if (Environment.isPosix) 0o644 else 0,
             }) catch |open_err| {
                 panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
-            };
-            _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
-            ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();
+            });
+            _ = fd.truncate(0); // windows
+            ScopedDebugWriter.scoped_file_writer = fd.quietWriter();
             return;
         }
     }
@@ -1232,8 +1235,6 @@ pub inline fn errFmt(formatter: anytype) void {
     return errGeneric("{}", .{formatter});
 }
 
-/// This struct is a workaround a Windows terminal bug.
-/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
-    .unbuffered_reader = File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else bun.toFD(0) } },
+    .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };

@@ -150,9 +150,7 @@ pub const BuiltinIO = struct {
 
         pub fn needsIO(this: *Output) ?OutputNeedsIOSafeGuard {
             return switch (this.*) {
-                .fd => OutputNeedsIOSafeGuard{
-                    .__i_know_what_i_am_doing_it_needs_io_yes = 0,
-                },
+                .fd => .output_needs_io,
                 else => null,
             };
         }
@@ -674,7 +672,7 @@ pub const Mv = @import("./builtin/mv.zig");
 // --- End Shell Builtin Commands ---
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const shell = bun.shell;
 const Interpreter = shell.interpret.Interpreter;

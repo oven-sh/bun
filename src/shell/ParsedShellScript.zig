@@ -1,4 +1,7 @@
-pub usingnamespace JSC.Codegen.JSParsedShellScript;
+pub const js = JSC.Codegen.JSParsedShellScript;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 args: ?*ShellArgs = null,
 /// allocated with arena in jsobjs
@@ -161,7 +164,7 @@ pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
 }
 
 const ParsedShellScript = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
 const interpreter = @import("./interpreter.zig");

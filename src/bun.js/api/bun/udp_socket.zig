@@ -1,6 +1,6 @@
 const std = @import("std");
 const uws = @import("../../../deps/uws.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;
@@ -290,7 +290,10 @@ pub const UDPSocket = struct {
         port: u16,
     };
 
-    pub usingnamespace JSC.Codegen.JSUDPSocket;
+    pub const js = JSC.Codegen.JSUDPSocket;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn hasPendingActivity(this: *This) callconv(.C) bool {
         return this.js_refcount.load(.monotonic) > 0;
@@ -944,8 +947,8 @@ pub const UDPSocket = struct {
             .port = port,
         };
 
-        UDPSocket.addressSetCached(callFrame.this(), globalThis, .zero);
-        UDPSocket.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
+        js.addressSetCached(callFrame.this(), globalThis, .zero);
+        js.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
 
         return .undefined;
     }

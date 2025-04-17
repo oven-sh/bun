@@ -12,7 +12,7 @@ const posix = std.posix;
 const Dir = std.fs.Dir;
 const JSC = bun.JSC;
 const PathString = JSC.PathString;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
 const mem = std.mem;
@@ -260,14 +260,14 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.first = false;
                         if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{bun.toFD(self.dir.fd)});
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{bun.FD.fromStdDir(self.dir)});
                             return .{ .result = null };
                         }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.C.SystemErrno.ENOTDIR),
@@ -277,13 +277,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         if (rc == .NO_MORE_FILES) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
 
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
@@ -302,7 +302,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.toFD(self.dir.fd), self.end_index });
+                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.FD.fromStdDir(self.dir), self.end_index });
                     }
 
                     const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));

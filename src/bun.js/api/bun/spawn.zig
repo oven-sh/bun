@@ -1,5 +1,5 @@
 const JSC = bun.JSC;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const std = @import("std");
 const Output = bun.Output;
@@ -77,14 +77,14 @@ pub const BunSpawn = struct {
                 .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
                 .flags = @intCast(flags),
                 .mode = @intCast(mode),
-                .fds = .{ fd, bun.toFD(0) },
+                .fds = .{ fd, .fromUV(0) },
             });
         }
 
         pub fn close(self: *Actions, fd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .close,
-                .fds = .{ fd, bun.toFD(0) },
+                .fds = .{ fd, .fromUV(0) },
             });
         }
 

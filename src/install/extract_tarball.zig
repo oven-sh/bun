@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const default_allocator = bun.default_allocator;
 const Global = bun.Global;
 const json_parser = bun.JSON;
@@ -327,7 +327,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         const path_to_use = path2;
 
         while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{
+            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), bun.span(tmpname), .{
                 .can_rename_or_delete = true,
                 .create = false,
                 .iterable = false,
@@ -344,14 +344,14 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 return error.InstallFailed;
             };
 
-            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(cache_dir.fd), path_to_use, true)) {
+            switch (bun.C.moveOpenedFileAt(dir_to_move, .fromStdDir(cache_dir), path_to_use, true)) {
                 .err => |err| {
                     if (!did_retry) {
                         switch (err.getErrno()) {
                             .NOTEMPTY, .PERM, .BUSY, .EXIST => {
 
                                 // before we attempt to delete the destination, let's close the source dir.
-                                _ = bun.sys.close(dir_to_move);
+                                dir_to_move.close();
 
                                 // We tried to move the folder over
                                 // but it didn't work!
@@ -365,9 +365,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                                 tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
                                 const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
                                 switch (bun.sys.renameat(
-                                    bun.toFD(cache_dir.fd),
+                                    .fromStdDir(cache_dir),
                                     folder_name,
-                                    bun.toFD(tmpdir.fd),
+                                    .fromStdDir(tmpdir),
                                     tempdest,
                                 )) {
                                     .err => {},
@@ -382,7 +382,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                             else => {},
                         }
                     }
-                    _ = bun.sys.close(dir_to_move);
+                    dir_to_move.close();
                     this.package_manager.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
@@ -393,7 +393,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     return error.InstallFailed;
                 },
                 .result => {
-                    _ = bun.sys.close(dir_to_move);
+                    dir_to_move.close();
                 },
             }
 
@@ -417,9 +417,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (bun.sys.renameatConcurrently(
-            bun.toFD(tmpdir.fd),
+            .fromStdDir(tmpdir),
             src,
-            bun.toFD(cache_dir.fd),
+            .fromStdDir(cache_dir),
             folder_name,
             .{ .move_fallback = true },
         ).asErr()) |err| {
@@ -449,7 +449,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     defer final_dir.close();
     // and get the fd path
     const final_path = bun.getFdPathZ(
-        final_dir.fd,
+        .fromStdDir(final_dir),
         &final_path_buf,
     ) catch |err| {
         this.package_manager.log.addErrorFmt(
@@ -473,7 +473,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             this.package_manager.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
     }) {
         const json_file, json_buf = bun.sys.File.readFileFrom(
-            bun.toFD(cache_dir.fd),
+            bun.FD.fromStdDir(cache_dir),
             bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
@@ -536,10 +536,10 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 break :create_index;
             };
         } else {
-            var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
+            var index_dir = bun.FD.fromStdDir(bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index);
             defer index_dir.close();
 
-            bun.sys.symlinkat(final_path, bun.toFD(index_dir), dest_name).unwrap() catch break :create_index;
+            bun.sys.symlinkat(final_path, index_dir, dest_name).unwrap() catch break :create_index;
         }
     }
 

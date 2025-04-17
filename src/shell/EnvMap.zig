@@ -99,7 +99,7 @@ fn derefStrings(this: *EnvMap) void {
 }
 
 const EnvMap = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const std = @import("std");
 const EnvStr = bun.shell.EnvStr;

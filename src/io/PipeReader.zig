@@ -917,7 +917,7 @@ pub const WindowsBufferedReader = struct {
     fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
         const result = fs.result;
         const nread_int = result.int();
-        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
+        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
         if (nread_int == uv.UV_ECANCELED) {
             fs.deinit();
             return;
@@ -1125,7 +1125,7 @@ else if (bun.Environment.isWindows)
 else
     @compileError("Unsupported platform");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;

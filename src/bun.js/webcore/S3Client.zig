@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
@@ -88,7 +88,10 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
 
 pub const S3Client = struct {
     const log = bun.Output.scoped(.S3Client, false);
-    pub usingnamespace JSC.Codegen.JSS3Client;
+    pub const js = JSC.Codegen.JSS3Client;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub const new = bun.TrivialNew(@This());
     credentials: *S3Credentials,

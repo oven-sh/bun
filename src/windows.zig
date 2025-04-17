@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const windows = std.os.windows;
 const win32 = windows;
 pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
@@ -107,7 +107,7 @@ pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
 
     const rc = function(hFile);
     if (comptime Environment.enable_logs)
-        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.toFD(hFile), rc });
+        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.FD.fromNative(hFile), rc });
     return rc;
 }
 

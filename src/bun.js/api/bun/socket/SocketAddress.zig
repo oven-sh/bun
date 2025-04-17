@@ -5,7 +5,11 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();
-pub usingnamespace JSC.Codegen.JSSocketAddress;
+pub const js = JSC.Codegen.JSSocketAddress;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 pub const new = bun.TrivialNew(SocketAddress);
 
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.
@@ -612,7 +616,7 @@ comptime {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;

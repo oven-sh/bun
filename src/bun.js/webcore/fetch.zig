@@ -1,7 +1,7 @@
 const headers_string = "headers";
 const method_string = "method";
 
-const JSType = js.JSType;
+const JSType = JSC.C.JSType;
 
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
 pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
@@ -178,7 +178,7 @@ pub const FetchTasklet = struct {
                 },
                 .Sendfile => {
                     if (@max(this.Sendfile.offset, this.Sendfile.remain) > 0)
-                        _ = bun.sys.close(this.Sendfile.fd);
+                        this.Sendfile.fd.close();
                     this.Sendfile.offset = 0;
                     this.Sendfile.remain = 0;
                 },
@@ -1132,7 +1132,7 @@ pub const FetchTasklet = struct {
     pub fn onResolve(this: *FetchTasklet) JSValue {
         log("onResolve", .{});
         const response = bun.new(Response, this.toResponse());
-        const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
+        const response_js = Response.makeMaybePooled(@as(*JSC.JSGlobalObject, this.global_this), response);
         response_js.ensureStillAlive();
         this.response = JSC.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
         this.native_response = response.ref();
@@ -2475,7 +2475,7 @@ pub fn Bun__fetch_(
             );
 
             if (body.store().?.data.file.pathlike == .path) {
-                _ = bun.sys.close(opened_fd);
+                opened_fd.close();
             }
 
             switch (res) {
@@ -2537,7 +2537,7 @@ pub fn Bun__fetch_(
                                 .init = .{ .method = .PUT, .status_code = 200 },
                                 .url = bun.String.createAtomIfPossible(self.url.href),
                             });
-                            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                            const response_js = Response.makeMaybePooled(@as(*JSC.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
                             self.promise.resolve(global, response_js);
                         },
@@ -2559,7 +2559,7 @@ pub fn Bun__fetch_(
                                 },
                                 .url = bun.String.createAtomIfPossible(self.url.href),
                             });
-                            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                            const response_js = Response.makeMaybePooled(@as(*JSC.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
                             self.promise.resolve(global, response_js);
                         },
@@ -2732,9 +2732,8 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
     }
 }
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const js = JSC.C;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const string = bun.string;
 const strings = bun.strings;

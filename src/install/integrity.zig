@@ -1,7 +1,7 @@
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const Crypto = @import("../sha.zig").Hashers;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const Integrity = extern struct {
     const empty_digest_buf: [Integrity.digest_buf_len]u8 = [_]u8{0} ** Integrity.digest_buf_len;

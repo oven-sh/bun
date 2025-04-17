@@ -2119,7 +2119,7 @@ pub const ${className(typeName)} = struct {
         if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
         if (comptime Environment.allow_assert) {
             const value__ = ${symbolName(typeName, "create")}(globalObject, this);
-            @import("root").bun.assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
             return ${symbolName(typeName, "create")}(globalObject, this);
@@ -2329,10 +2329,15 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
 ///  4. For the Zig code to successfully compile:
 ///        - Add it to generated_classes_list.zig
-///        - pub usingnamespace JSC.Codegen.JSMyClassName;
+///        - \`\`\`
+///          pub const js = JSC.Codegen.JSMyClassName;
+///          pub const toJS = js.toJS;
+///          pub const fromJS = js.fromJS;
+///          pub const fromJSDirect = js.fromJSDirect;
+///          \`\`\`
 ///  5. bun run build
 ///
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Classes = JSC.GeneratedClassesList;
 const Environment = bun.Environment;

@@ -1,11 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -63,7 +62,11 @@ pub const Request = struct {
     internal_event_callback: InternalJSEventCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
-    pub usingnamespace JSC.Codegen.JSRequest;
+    pub const js = JSC.Codegen.JSRequest;
+    // NOTE: toJS is overridden
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub const new = bun.TrivialNew(@This());
 
     pub const getText = RequestMixin.getText;
@@ -212,7 +215,7 @@ pub const Request = struct {
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
         this.calculateEstimatedByteSize();
-        return Request.toJSUnchecked(globalObject, this);
+        return js.toJSUnchecked(globalObject, this);
     }
 
     extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
@@ -827,10 +830,9 @@ pub const Request = struct {
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned request
                     // but especially the original request since it will have a stale .body value now.
-                    Request.bodySetCached(js_wrapper, globalThis, readable.value);
-
+                    js.bodySetCached(js_wrapper, globalThis, readable.value);
                     if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
-                        Request.bodySetCached(this_value, globalThis, other_readable.value);
+                        js.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }
             }

@@ -18,7 +18,7 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
@@ -1415,9 +1415,9 @@ fn report(url: []const u8) void {
                 .hStdInput = null,
                 .hStdOutput = null,
                 .hStdError = null,
-                // .hStdInput = bun.win32.STDIN_FD.cast(),
-                // .hStdOutput = bun.win32.STDOUT_FD.cast(),
-                // .hStdError = bun.win32.STDERR_FD.cast(),
+                // .hStdInput = bun.FD.stdin().native(),
+                // .hStdOutput = bun.FD.stdout().native(),
+                // .hStdError = bun.FD.stderr().native(),
             };
             var cmd_line = std.BoundedArray(u16, 4096){};
             cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));

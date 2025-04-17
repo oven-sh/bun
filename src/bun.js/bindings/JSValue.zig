@@ -2426,7 +2426,7 @@ pub const JSValue = enum(i64) {
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
         bun.assert(this.isNumber());
-        return bun.FDImpl.fromUV(this.toInt32()).encode();
+        return .fromUV(this.toInt32());
     }
 
     pub inline fn toU16(this: JSValue) u16 {
@@ -2652,7 +2652,7 @@ pub const JSValue = enum(i64) {
 pub const JSValueReprInt = JSC.JSValueReprInt;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;

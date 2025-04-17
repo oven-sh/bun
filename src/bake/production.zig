@@ -854,7 +854,7 @@ const TypeAndFlags = packed struct(i32) {
 
 const std = @import("std");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const OutputFile = bun.options.OutputFile;

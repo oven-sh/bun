@@ -16,7 +16,7 @@ const strings = bun.strings;
 const Resolution = @import("../resolution.zig").Resolution;
 const String = bun.Semver.String;
 const Semver = bun.Semver;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,

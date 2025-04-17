@@ -11,7 +11,7 @@ const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
 const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const path = bun.path;
 const string = bun.string;
 const Install = @import("./install.zig");
@@ -456,7 +456,7 @@ pub const Bin = extern struct {
         done: bool = false,
         dir_iterator: ?std.fs.Dir.Iterator = null,
         package_name: String,
-        destination_node_modules: std.fs.Dir = bun.invalid_fd.asDir(),
+        destination_node_modules: std.fs.Dir = bun.invalid_fd.stdDir(),
         buf: bun.PathBuffer = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
@@ -647,7 +647,7 @@ pub const Bin = extern struct {
                     }
                     return;
                 };
-                defer _ = bun.sys.close(target);
+                defer target.close();
                 this.createWindowsShim(target, abs_target, abs_dest, global);
             }
 
@@ -672,7 +672,7 @@ pub const Bin = extern struct {
                 if (strings.indexOfChar(chunk, '\n')) |newline| {
                     if (newline > 0 and chunk[newline - 1] == '\r') {
                         const pos = newline - 1;
-                        bin.handle.asFile().seekTo(pos) catch return;
+                        bin.handle.stdFile().seekTo(pos) catch return;
                         bin.writeAll("\n").unwrap() catch return;
                     }
                 }
@@ -698,7 +698,7 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                bun.makePath(this.node_modules.asDir(), ".bin") catch {};
+                bun.makePath(this.node_modules.stdDir(), ".bin") catch {};
                 break :bunx_file bun.sys.File.openatOSPath(bun.invalid_fd, abs_bunx_file, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap() catch |real_err| {
                     this.err = real_err;
                     return;
@@ -713,7 +713,7 @@ pub const Bin = extern struct {
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
-                    const reader = target.asFile().reader();
+                    const reader = target.stdFile().reader();
                     const read = reader.read(&read_in_buf) catch break :contents null;
                     if (read == 0) break :contents null;
                     break :contents read_in_buf[0..read];
@@ -791,7 +791,7 @@ pub const Bin = extern struct {
                             return;
                         }
 
-                        bun.makePath(this.node_modules.asDir(), ".bin") catch {};
+                        bun.makePath(this.node_modules.stdDir(), ".bin") catch {};
                         switch (bun.sys.symlink(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again

@@ -2,7 +2,11 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
-pub usingnamespace JSC.Codegen.JSHTMLBundle;
+pub const js = JSC.Codegen.JSHTMLBundle;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 /// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
@@ -496,7 +500,7 @@ pub const Route = struct {
     };
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

@@ -22,6 +22,8 @@ import * as sqlite from "bun:sqlite";
 sqlite.Database;
 
 Bun satisfies typeof import("bun");
+expectType(Bun).is<typeof import("bun")>();
+expectType<typeof import("bun")>().is<typeof Bun>();
 
 type ConstructorOf<T> = new (...args: any[]) => T;
 

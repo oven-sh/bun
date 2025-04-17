@@ -1,5 +1,5 @@
 const getAllocator = @import("../../base.zig").getAllocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -654,7 +654,11 @@ const Handlers = struct {
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     const Self = @This();
-    pub usingnamespace JSC.Codegen.JSH2FrameParser;
+    pub const js = JSC.Codegen.JSH2FrameParser;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
@@ -4230,9 +4234,7 @@ pub const H2FrameParser = struct {
         this.detach(true);
     }
 
-    pub fn finalize(
-        this: *H2FrameParser,
-    ) void {
+    pub fn finalize(this: *H2FrameParser) void {
         log("finalize", .{});
         this.deref();
     }
@@ -4240,7 +4242,7 @@ pub const H2FrameParser = struct {
 
 pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
-        H2FrameParser.getConstructor(global),
+        H2FrameParser.js.getConstructor(global),
         JSC.JSFunction.create(global, "assertSettings", jsAssertSettings, 1, .{}),
         JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 1, .{}),
         JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 1, .{}),

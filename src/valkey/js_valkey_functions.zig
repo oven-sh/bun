@@ -776,7 +776,7 @@ const compile = struct {
 };
 
 const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const valkey = bun.valkey;
 const protocol = valkey.protocol;

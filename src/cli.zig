@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,7 +9,6 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
-const root = @import("root");
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -335,7 +334,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{

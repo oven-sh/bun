@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const VirtualMachine = bun.JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
 const Lock = bun.Mutex;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const Bun = JSC.API.Bun;
@@ -2120,7 +2120,7 @@ pub const MiniEventLoop = struct {
     pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stderr_store orelse brk: {
             var mode: bun.Mode = 0;
-            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+            const fd = bun.FD.fromUV(2);
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {
@@ -2151,7 +2151,7 @@ pub const MiniEventLoop = struct {
     pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stdout_store orelse brk: {
             var mode: bun.Mode = 0;
-            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+            const fd = bun.FD.stdout();
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {

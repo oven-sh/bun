@@ -3,7 +3,7 @@ const std = @import("std");
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const OOM = bun.OOM;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {

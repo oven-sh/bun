@@ -264,7 +264,7 @@ pub const ShellLsTask = struct {
         };
 
         defer {
-            _ = Syscall.close(fd);
+            fd.close();
             debug("run done", .{});
         }
 
@@ -274,7 +274,7 @@ pub const ShellLsTask = struct {
                 std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
             }
 
-            var iterator = DirIterator.iterate(fd.asDir(), .u8);
+            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -779,7 +779,7 @@ pub inline fn bltn(this: *Ls) *Builtin {
 
 const Ls = @This();
 const log = bun.Output.scoped(.ls, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

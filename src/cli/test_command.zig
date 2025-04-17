@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -451,7 +451,7 @@ pub const JunitReporter = struct {
         @memcpy(junit_path_buf[0..path.len], path);
         junit_path_buf[path.len] = 0;
 
-        switch (bun.sys.File.openat(std.fs.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        switch (bun.sys.File.openat(.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
             .err => |err| {
                 Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
             },
@@ -840,7 +840,7 @@ pub const CommandLineReporter = struct {
             const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(
-                std.fs.cwd(),
+                .cwd(),
                 path,
                 bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
                 0o644,
@@ -943,10 +943,11 @@ pub const CommandLineReporter = struct {
         if (comptime reporters.lcov) {
             try lcov_buffered_writer.flush();
             lcov_file.close();
+            const cwd = bun.FD.cwd();
             bun.C.moveFileZ(
-                bun.toFD(std.fs.cwd()),
+                cwd,
                 lcov_name,
-                bun.toFD(std.fs.cwd()),
+                cwd,
                 bun.path.joinAbsStringZ(
                     relative_dir,
                     &.{ opts.reports_directory, "lcov.info" },

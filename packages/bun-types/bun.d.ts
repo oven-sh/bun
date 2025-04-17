@@ -27,7 +27,7 @@ declare module "bun" {
     | ReadableStreamDefaultReadValueResult<T>
     | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
-  type Transferable = ArrayBuffer | import("worker_threads").MessagePort;
+  type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
@@ -57,7 +57,7 @@ declare module "bun" {
      *
      * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
      *
-     * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
+     * This is to avoid type conflicts between lib.dom.d.ts and \@types/bun.
      *
      * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
      * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
@@ -160,17 +160,6 @@ declare module "bun" {
     error: Event;
     message: MessageEvent;
     open: Event;
-  }
-
-  interface EventInit {
-    bubbles?: boolean;
-    cancelable?: boolean;
-    composed?: boolean;
-  }
-
-  interface EventListenerOptions {
-    /** Not directly used by Node.js. Added for API completeness. Default: `false`. */
-    capture?: boolean;
   }
 
   interface AddEventListenerOptions extends EventListenerOptions {
@@ -560,7 +549,6 @@ declare module "bun" {
    *
    * @returns The width of the string in columns
    *
-   * ## Examples
    * @example
    * ```ts
    * import { stringWidth } from "bun";
@@ -571,7 +559,6 @@ declare module "bun" {
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: false })); // 5
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: true })); // 13
    * ```
-   *
    */
   function stringWidth(
     /**
@@ -594,7 +581,10 @@ declare module "bun" {
     },
   ): number;
 
-  const TOML: {
+  /**
+   * TOML related APIs
+   */
+  namespace TOML {
     /**
      * Parse a TOML string into a JavaScript object.
      *
@@ -603,8 +593,8 @@ declare module "bun" {
      * @param input The TOML string to parse
      * @returns A JavaScript object
      */
-    parse(input: string): object;
-  };
+    export function parse(input: string): object;
+  }
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -866,8 +856,7 @@ declare module "bun" {
    * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
    *
-   * ## Multipart form data example
-   *
+   * @example Multipart form data example
    * ```ts
    * // without dashes
    * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
@@ -876,8 +865,8 @@ declare module "bun" {
    * const formData = await Bun.readableStreamToFormData(stream, boundary);
    * formData.get("foo"); // "bar"
    * ```
-   * ## URL-encoded form data example
    *
+   * @example URL-encoded form data example
    * ```ts
    * const stream = new Response("hello=123").body;
    * const formData = await Bun.readableStreamToFormData(stream);
@@ -1015,7 +1004,8 @@ declare module "bun" {
     end(): ArrayBuffer | Uint8Array;
   }
 
-  const dns: {
+  /** DNS Related APIs */
+  namespace dns {
     /**
      * Lookup the IP address for a hostname
      *
@@ -1060,7 +1050,7 @@ declare module "bun" {
      * console.log(address); // "19.42.52.62"
      * ```
      */
-    lookup(
+    function lookup(
       hostname: string,
       options?: {
         /**
@@ -1129,12 +1119,12 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    prefetch(hostname: string): void;
+    function prefetch(hostname: string): void;
 
     /**
      * **Experimental API**
      */
-    getCacheStats(): {
+    function getCacheStats(): {
       /**
        * The number of times a cached DNS entry that was already resolved was used.
        */
@@ -1146,10 +1136,10 @@ declare module "bun" {
       totalCount: number;
     };
 
-    ADDRCONFIG: number;
-    ALL: number;
-    V4MAPPED: number;
-  };
+    const ADDRCONFIG: number;
+    const ALL: number;
+    const V4MAPPED: number;
+  }
 
   interface DNSLookup {
     /**
@@ -1198,7 +1188,7 @@ declare module "bun" {
    * ```
    */
   interface BunFile extends Blob {
-    /**.p
+    /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
@@ -1211,7 +1201,6 @@ declare module "bun" {
      */
     slice(begin?: number, end?: number, contentType?: string): BunFile;
 
-    /** */
     /**
      * Offset any operation on the file starting at `begin`
      *
@@ -1225,6 +1214,8 @@ declare module "bun" {
     slice(begin?: number, contentType?: string): BunFile;
 
     /**
+     * Slice the file from the beginning to the end, optionally with a new MIME type.
+     *
      * @param contentType - MIME type for the new BunFile
      */
     slice(contentType?: string): BunFile;
@@ -1285,7 +1276,7 @@ declare module "bun" {
     unlink(): Promise<void>;
 
     /**
-     * Deletes the file. ( same as unlink )
+     * Deletes the file (same as unlink)
      */
     delete(): Promise<void>;
 
@@ -1682,22 +1673,6 @@ declare module "bun" {
      */
     maxAge?: number;
   }
-  interface CSRF {
-    /**
-     * Generate a CSRF token.
-     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
-     * @param options The options for the token.
-     * @returns The generated token.
-     */
-    generate(secret?: string, options?: CSRFGenerateOptions): string;
-    /**
-     * Verify a CSRF token.
-     * @param token The token to verify.
-     * @param options The options for the token.
-     * @returns True if the token is valid, false otherwise.
-     */
-    verify(token: string, options?: CSRFVerifyOptions): boolean;
-  }
 
   /**
    * SQL client
@@ -1725,7 +1700,23 @@ declare module "bun" {
    *
    * @category Security
    */
-  var CSRF: CSRF;
+  var CSRF: {
+    /**
+     * Generate a CSRF token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param options The options for the token.
+     * @returns The generated token.
+     */
+    generate(secret?: string, options?: CSRFGenerateOptions): string;
+
+    /**
+     * Verify a CSRF token.
+     * @param token The token to verify.
+     * @param options The options for the token.
+     * @returns True if the token is valid, false otherwise.
+     */
+    verify(token: string, options?: CSRFVerifyOptions): boolean;
+  };
 
   /**
    *   This lets you use macros as regular imports
@@ -2088,6 +2079,7 @@ declare module "bun" {
      * @see {@link publicPath} to customize the base url of linked source maps
      */
     sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -2116,6 +2108,7 @@ declare module "bun" {
      * ```
      */
     env?: "inline" | "disable" | `${string}*`;
+
     /**
      * Whether to enable minification.
      *
@@ -2131,16 +2124,19 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+
     /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
      */
     ignoreDCEAnnotations?: boolean;
+
     /**
      * Force emitting @__PURE__ annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
+
     // treeshaking?: boolean;
 
     // jsx?:
@@ -2167,10 +2163,12 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
     /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
+
     /**
      * Add a footer to the bundled code such as a comment block like
      *
@@ -2201,10 +2199,9 @@ declare module "bun" {
    * @category Security
    */
   namespace Password {
-    type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
-
     interface Argon2Algorithm {
       algorithm: "argon2id" | "argon2d" | "argon2i";
+
       /**
        * Memory cost, which defines the memory usage, given in kibibytes.
        */
@@ -2218,11 +2215,14 @@ declare module "bun" {
 
     interface BCryptAlgorithm {
       algorithm: "bcrypt";
+
       /**
        * A number between 4 and 31. The default is 10.
        */
       cost?: number;
     }
+
+    type AlgorithmLabel = (BCryptAlgorithm | Argon2Algorithm)["algorithm"];
   }
 
   /**
@@ -2233,7 +2233,7 @@ declare module "bun" {
    * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -2325,9 +2325,9 @@ declare module "bun" {
        */
       password: Bun.StringOrBuffer,
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): Promise<string>;
@@ -2338,7 +2338,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -2363,7 +2363,13 @@ declare module "bun" {
      * ```
      */
     verifySync(
+      /**
+       * The password to verify.
+       */
       password: Bun.StringOrBuffer,
+      /**
+       * The hash to verify against.
+       */
       hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm will be inferred from the hash.
@@ -2377,7 +2383,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
+     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -2409,10 +2415,11 @@ declare module "bun" {
        * mistake to hash an empty password.
        */
       password: Bun.StringOrBuffer,
+
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;
@@ -4257,6 +4264,211 @@ declare module "bun" {
     compact?: boolean;
   }
 
+  type WebSocketOptionsProtocolsOrProtocol =
+    | {
+        /**
+         * Protocols to use for the WebSocket connection
+         */
+        protocols?: string | string[];
+      }
+    | {
+        /**
+         * Protocol to use for the WebSocket connection
+         */
+        protocol?: string;
+      };
+
+  type WebSocketOptionsTLS = {
+    /**
+     * Options for the TLS connection
+     */
+    tls?: {
+      /**
+       * Whether to reject the connection if the certificate is not valid
+       *
+       * @default true
+       */
+      rejectUnauthorized?: boolean;
+    };
+  };
+
+  type WebSocketOptionsHeaders = {
+    /**
+     * Headers to send to the server
+     */
+    headers?: import("node:http").OutgoingHttpHeaders;
+  };
+
+  /**
+   * Constructor options for the `Bun.WebSocket` client
+   */
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+
+  interface WebSocketEventMap {
+    close: CloseEvent;
+    error: Event;
+    message: MessageEvent;
+    open: Event;
+  }
+
+  /**
+   * A WebSocket client implementation
+   *
+   * @example
+   * ```ts
+   * const ws = new WebSocket("ws://localhost:8080", {
+   *  headers: {
+   *    "x-custom-header": "hello",
+   *  },
+   * });
+   *
+   * ws.addEventListener("open", () => {
+   *   console.log("Connected to server");
+   * });
+   *
+   * ws.addEventListener("message", (event) => {
+   *   console.log("Received message:", event.data);
+   * });
+   *
+   * ws.send("Hello, server!");
+   * ws.terminate();
+   * ```
+   */
+  interface WebSocket extends EventTarget {
+    /**
+     * The URL of the WebSocket connection
+     */
+    readonly url: string;
+
+    /**
+     * Legacy URL property (same as url)
+     * @deprecated Use url instead
+     */
+    readonly URL: string;
+
+    /**
+     * The current state of the connection
+     */
+    readonly readyState:
+      | typeof WebSocket.CONNECTING
+      | typeof WebSocket.OPEN
+      | typeof WebSocket.CLOSING
+      | typeof WebSocket.CLOSED;
+
+    /**
+     * The number of bytes of data that have been queued using send() but not yet transmitted to the network
+     */
+    readonly bufferedAmount: number;
+
+    /**
+     * The protocol selected by the server
+     */
+    readonly protocol: string;
+
+    /**
+     * The extensions selected by the server
+     */
+    readonly extensions: string;
+
+    /**
+     * The type of binary data being received.
+     */
+    binaryType: "arraybuffer" | "nodebuffer";
+
+    /**
+     * Event handler for open event
+     */
+    onopen: ((this: WebSocket, ev: Event) => any) | null;
+
+    /**
+     * Event handler for message event
+     */
+    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+
+    /**
+     * Event handler for error event
+     */
+    onerror: ((this: WebSocket, ev: Event) => any) | null;
+
+    /**
+     * Event handler for close event
+     */
+    onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
+
+    /**
+     * Transmits data to the server
+     * @param data The data to send to the server
+     */
+    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Closes the WebSocket connection
+     * @param code A numeric value indicating the status code
+     * @param reason A human-readable string explaining why the connection is closing
+     */
+    close(code?: number, reason?: string): void;
+
+    /**
+     * Sends a ping frame to the server
+     * @param data Optional data to include in the ping frame
+     */
+    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Sends a pong frame to the server
+     * @param data Optional data to include in the pong frame
+     */
+    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Immediately terminates the connection
+     */
+    terminate(): void;
+
+    /**
+     * Registers an event handler of a specific event type on the WebSocket.
+     * @param type A case-sensitive string representing the event type to listen for
+     * @param listener The function to be called when the event occurs
+     * @param options An options object that specifies characteristics about the event listener
+     */
+    addEventListener<K extends keyof WebSocketEventMap>(
+      type: K,
+      listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+
+    /**
+     * Removes an event listener previously registered with addEventListener()
+     * @param type A case-sensitive string representing the event type to remove
+     * @param listener The function to remove from the event target
+     * @param options An options object that specifies characteristics about the event listener
+     */
+    removeEventListener<K extends keyof WebSocketEventMap>(
+      type: K,
+      listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void;
+
+    /** @deprecated Use instance property instead */
+    readonly CONNECTING: 0;
+    /** @deprecated Use instance property instead */
+    readonly OPEN: 1;
+    /** @deprecated Use instance property instead */
+    readonly CLOSING: 2;
+    /** @deprecated Use instance property instead */
+    readonly CLOSED: 3;
+  }
+
   /**
    * Pretty-print an object the same as {@link console.log} to a `string`
    *
@@ -5502,6 +5714,12 @@ declare module "bun" {
      */
     shutdown(halfClose?: boolean): void;
 
+    // -1 = detached
+    // 0 = closed
+    // 1 = open
+    // -2 = closing
+    // 2 = everything else
+    // positive = open
     readonly readyState: "open" | "closing" | "closed";
 
     /**
@@ -5845,68 +6063,159 @@ declare module "bun" {
   }
 
   interface SocketOptions<Data = unknown> {
+    /**
+     * Handlers for socket events
+     */
     socket: SocketHandler<Data>;
+    /**
+     * The per-instance data context
+     */
     data?: Data;
   }
-  // interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
-  //   hostname: string;
-  //   port: number;
-  // }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to listen on
+     */
     hostname: string;
+    /**
+     * The port to listen on
+     */
     port: number;
+    /**
+     * The TLS configuration object with which to create the server
+     */
     tls?: TLSOptions;
+    /**
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
+     */
     exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
+     */
     allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to connect to
+     */
     hostname: string;
+    /**
+     * The port to connect to
+     */
     port: number;
+    /**
+     * TLS Configuration with which to create the socket
+     */
     tls?: boolean;
+    /**
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
+     */
     exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
+     */
     allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
-    tls?: TLSOptions;
+    /**
+     * The unix socket to listen on or connect to
+     */
     unix: string;
+    /**
+     * TLS Configuration with which to create the socket
+     */
+    tls?: TLSOptions;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * TLS Configuration with which to create the socket
+     */
     tls?: TLSOptions;
+    /**
+     * The file descriptor to connect to
+     */
     fd: number;
   }
 
   /**
-   * Create a TCP client that connects to a server
+   * Create a TCP client that connects to a server via a TCP socket
    *
-   * @param options The options to use when creating the client
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
+  /**
+   * Create a TCP client that connects to a server via a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function connect<Data = undefined>(options: UnixSocketOptions<Data>): Promise<Socket<Data>>;
 
   /**
    * Create a TCP server that listens on a port
    *
-   * @param options The options to use when creating the server
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
+  /**
+   * Create a TCP server that listens on a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  /**
+   * @category HTTP & Networking
+   */
   namespace udp {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
@@ -5984,6 +6293,8 @@ declare module "bun" {
    * @param options.port The port to listen on
    * @param options.binaryType The binary type to use for the socket
    * @param options.connect The hostname and port to connect to
+   *
+   * @category HTTP & Networking
    */
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
     options: udp.SocketOptions<DataBinaryType>,
@@ -7060,34 +7371,133 @@ declare module "bun" {
 
   type CookieSameSite = "strict" | "lax" | "none";
 
+  /**
+   * A class for working with a single cookie
+   *
+   * @example
+   * ```js
+   * const cookie = new Bun.Cookie("name", "value");
+   * console.log(cookie.toString()); // "name=value; Path=/; SameSite=Lax"
+   * ```
+   */
   class Cookie {
+    /**
+     * Create a new cookie
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
     constructor(name: string, value: string, options?: CookieInit);
+
+    /**
+     * Create a new cookie from a cookie string
+     * @param cookieString - The cookie string
+     */
     constructor(cookieString: string);
+
+    /**
+     * Create a new cookie from a cookie object
+     * @param cookieObject - The cookie object
+     */
     constructor(cookieObject?: CookieInit);
 
+    /**
+     * The name of the cookie
+     */
     readonly name: string;
+
+    /**
+     * The value of the cookie
+     */
     value: string;
+
+    /**
+     * The domain of the cookie
+     */
     domain?: string;
+
+    /**
+     * The path of the cookie
+     */
     path: string;
+
+    /**
+     * The expiration date of the cookie
+     */
     expires?: Date;
+
+    /**
+     * Whether the cookie is secure
+     */
     secure: boolean;
+
+    /**
+     * The same-site attribute of the cookie
+     */
     sameSite: CookieSameSite;
+
+    /**
+     * Whether the cookie is partitioned
+     */
     partitioned: boolean;
+
+    /**
+     * The maximum age of the cookie in seconds
+     */
     maxAge?: number;
+
+    /**
+     * Whether the cookie is HTTP-only
+     */
     httpOnly: boolean;
 
+    /**
+     * Whether the cookie is expired
+     */
     isExpired(): boolean;
 
+    /**
+     * Serialize the cookie to a string
+     *
+     * @example
+     * ```ts
+     * const cookie = Bun.Cookie.from("session", "abc123", {
+     *   domain: "example.com",
+     *   path: "/",
+     *   secure: true,
+     *   httpOnly: true
+     * }).serialize(); // "session=abc123; Domain=example.com; Path=/; Secure; HttpOnly; SameSite=Lax"
+     * ```
+     */
     serialize(): string;
+
+    /**
+     * Serialize the cookie to a string
+     *
+     * Alias of {@link Cookie.serialize}
+     */
     toString(): string;
+
+    /**
+     * Serialize the cookie to a JSON object
+     */
     toJSON(): CookieInit;
 
+    /**
+     * Parse a cookie string into a Cookie object
+     * @param cookieString - The cookie string
+     */
     static parse(cookieString: string): Cookie;
+
+    /**
+     * Create a new cookie from a name and value and optional options
+     */
     static from(name: string, value: string, options?: CookieInit): Cookie;
   }
 
   /**
    * A Map-like interface for working with collections of cookies.
+   *
    * Implements the `Iterable` interface, allowing use with `for...of` loops.
    */
   class CookieMap implements Iterable<[string, string]> {

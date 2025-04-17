@@ -461,7 +461,7 @@ pub fn deinitOnMainThread(this: *IOWriter) void {
             this.writer.handle.closeImpl(null, {}, false);
         }
     } else this.winbuf.deinit(bun.default_allocator);
-    if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+    if (this.fd.isValid()) this.fd.close();
     this.writer.disableKeepingProcessAlive(this.evtloop);
     bun.destroy(this);
 }
@@ -478,7 +478,7 @@ pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     }
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
 const EnvMap = shell.EnvMap;

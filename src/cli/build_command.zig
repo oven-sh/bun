@@ -1,6 +1,6 @@
 const std = @import("std");
 const Command = @import("../cli.zig").Command;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -205,13 +205,13 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_transpiler.options.entry_points) orelse ".";
             };
 
-            var dir = bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
+            var dir = bun.FD.fromStdDir(bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
-            };
+            });
             defer dir.close();
 
-            break :brk1 bun.getFdPath(bun.toFD(dir.fd), &src_root_dir_buf) catch |err| {
+            break :brk1 dir.getFdPath(&src_root_dir_buf) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };

@@ -2077,7 +2077,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
         result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    if (err.fd != -1) {
+    if (err.fd >= 0) {
         JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
         result->putDirect(vm, names.fdPublicName(), fd,
             JSC::PropertyAttribute::DontDelete | 0);
@@ -6270,6 +6270,11 @@ extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject)
 {
     DECLARE_CATCH_SCOPE(globalObject->vm()).clearException();
+}
+
+extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
 }
 
 extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)

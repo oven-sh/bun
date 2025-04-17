@@ -426,8 +426,13 @@ declare module "bun:test" {
      *
      * @param label the label for the test
      * @param fn the test function
+     * @param options the test timeout or options
      */
-    failing(label: string, fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+    failing(
+      label: string,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ): void;
     /**
      * Runs this test, if `condition` is true.
      *

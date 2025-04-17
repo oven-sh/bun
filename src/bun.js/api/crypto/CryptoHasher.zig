@@ -7,8 +7,12 @@ pub const CryptoHasher = union(enum) {
 
     const Digest = EVP.Digest;
 
-    pub usingnamespace JSC.Codegen.JSCryptoHasher;
-    usingnamespace bun.New(@This());
+    pub const js = JSC.Codegen.JSCryptoHasher;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub const new = bun.TrivialNew(@This());
 
     // For using only CryptoHasherZig in c++
     pub const Extern = struct {
@@ -307,7 +311,7 @@ pub const CryptoHasher = union(enum) {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.JSObject,
     ) JSC.JSValue {
-        return CryptoHasher.getConstructor(globalObject);
+        return CryptoHasher.js.getConstructor(globalObject);
     }
 
     pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -364,16 +368,13 @@ pub const CryptoHasher = union(enum) {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        var new: CryptoHasher = undefined;
-        switch (this.*) {
-            .evp => |*inner| {
-                new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
-            },
-            .hmac => |inner| {
+        const copied: CryptoHasher = switch (this.*) {
+            .evp => |*inner| .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() },
+            .hmac => |inner| brk: {
                 const hmac = inner orelse {
                     return throwHmacConsumed(globalObject);
                 };
-                new = .{
+                break :brk .{
                     .hmac = hmac.copy() catch {
                         const err = createCryptoError(globalObject, BoringSSL.ERR_get_error());
                         BoringSSL.ERR_clear_error();
@@ -381,11 +382,9 @@ pub const CryptoHasher = union(enum) {
                     },
                 };
             },
-            .zig => |*inner| {
-                new = .{ .zig = inner.copy() };
-            },
-        }
-        return CryptoHasher.new(new).toJS(globalObject);
+            .zig => |*inner| .{ .zig = inner.copy() },
+        };
+        return CryptoHasher.new(copied).toJS(globalObject);
     }
 
     pub fn digest_(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.Node.StringOrBuffer) bun.JSError!JSC.JSValue {
@@ -477,7 +476,7 @@ pub const CryptoHasher = union(enum) {
                 }
             },
         }
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

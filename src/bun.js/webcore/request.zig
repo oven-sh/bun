@@ -5,7 +5,6 @@ const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -57,14 +56,18 @@ pub const Request = struct {
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
-    weak_ptr_data: bun.WeakPtrData = .{},
+    weak_ptr_data: WeakRef.Data = .empty,
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
     internal_event_callback: InternalJSEventCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
-    pub usingnamespace JSC.Codegen.JSRequest;
-    pub usingnamespace bun.New(@This());
+    pub const js = JSC.Codegen.JSRequest;
+    // NOTE: toJS is overridden
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub const new = bun.TrivialNew(@This());
 
     pub const getText = RequestMixin.getText;
     pub const getBytes = RequestMixin.getBytes;
@@ -75,7 +78,7 @@ pub const Request = struct {
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
-    pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
+    pub const WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data");
 
     pub fn memoryCost(this: *const Request) usize {
         return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
@@ -212,7 +215,7 @@ pub const Request = struct {
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
         this.calculateEstimatedByteSize();
-        return Request.toJSUnchecked(globalObject, this);
+        return js.toJSUnchecked(globalObject, this);
     }
 
     extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
@@ -352,7 +355,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return bun.String.static(@tagName(this.method)).toJS(globalThis);
+        return this.method.toJS(globalThis);
     }
 
     pub fn getMode(
@@ -382,7 +385,7 @@ pub const Request = struct {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
         if (this.weak_ptr_data.onFinalize()) {
-            this.destroy();
+            bun.destroy(this);
         }
     }
 
@@ -827,10 +830,9 @@ pub const Request = struct {
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned request
                     // but especially the original request since it will have a stale .body value now.
-                    Request.bodySetCached(js_wrapper, globalThis, readable.value);
-
+                    js.bodySetCached(js_wrapper, globalThis, readable.value);
                     if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
-                        Request.bodySetCached(this_value, globalThis, other_readable.value);
+                        js.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }
             }

@@ -459,7 +459,7 @@ fn HandleMixin(comptime Type: type) type {
             if (fd_ == windows.INVALID_HANDLE_VALUE)
                 return bun.invalid_fd;
 
-            return bun.FDImpl.fromSystem(fd_).encode();
+            return .fromNative(fd_);
         }
     };
 }
@@ -524,7 +524,7 @@ const union_unnamed_377 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_idle_cb = ?*const fn ([*c]uv_idle_t) callconv(.C) void;
+pub const uv_idle_cb = ?*const fn (this: *uv_idle_t) callconv(.C) void;
 pub const struct_uv_idle_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -537,6 +537,22 @@ pub const struct_uv_idle_s = extern struct {
     idle_prev: [*c]uv_idle_t,
     idle_next: [*c]uv_idle_t,
     idle_cb: uv_idle_cb,
+
+    pub fn init(this: *@This(), loop: *Loop) void {
+        @memset(std.mem.asBytes(this), 0);
+
+        if (uv_idle_init(loop, this) != 0) {
+            @panic("internal error: uv_idle_init failed");
+        }
+    }
+
+    pub fn start(this: *@This(), cb: uv_idle_cb) void {
+        _ = uv_idle_start(this, cb);
+    }
+
+    pub fn stop(this: *@This()) void {
+        _ = uv_idle_stop(this);
+    }
 };
 pub const uv_idle_t = struct_uv_idle_s;
 pub const uv_mutex_t = CRITICAL_SECTION;
@@ -617,7 +633,7 @@ pub const Loop = extern struct {
 
         // This log may be helpful if you are curious where KeepAlives are being created from
         // if (Env.isDebug) {
-        //     std.debug.dumpCurrentStackTrace(@returnAddress());
+        //     std.debug.dumpCurrentStackTrace(@returnAddress(), .{});
         // }
         this.active_handles += 1;
     }
@@ -1308,7 +1324,7 @@ pub const Pipe = extern struct {
     }
 
     pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
-        const uv_fd = bun.uvfdcast(file);
+        const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
         return .{ .result = {} };
@@ -2202,9 +2218,9 @@ pub extern fn uv_prepare_stop(prepare: *uv_prepare_t) c_int;
 pub extern fn uv_check_init(*uv_loop_t, check: *uv_check_t) c_int;
 pub extern fn uv_check_start(check: *uv_check_t, cb: uv_check_cb) c_int;
 pub extern fn uv_check_stop(check: *uv_check_t) c_int;
-pub extern fn uv_idle_init(*uv_loop_t, idle: [*c]uv_idle_t) c_int;
-pub extern fn uv_idle_start(idle: [*c]uv_idle_t, cb: uv_idle_cb) c_int;
-pub extern fn uv_idle_stop(idle: [*c]uv_idle_t) c_int;
+pub extern fn uv_idle_init(*uv_loop_t, idle: *uv_idle_t) c_int;
+pub extern fn uv_idle_start(idle: *uv_idle_t, cb: uv_idle_cb) c_int;
+pub extern fn uv_idle_stop(idle: *uv_idle_t) c_int;
 pub extern fn uv_async_init(*uv_loop_t, @"async": *uv_async_t, async_cb: uv_async_cb) c_int;
 pub extern fn uv_async_send(@"async": *uv_async_t) c_int;
 pub extern fn uv_timer_init(*uv_loop_t, handle: *Timer) c_int;
@@ -2311,8 +2327,6 @@ pub extern fn uv_get_process_title(buffer: [*]u8, size: usize) c_int;
 pub extern fn uv_set_process_title(title: [*]const u8) c_int;
 pub extern fn uv_resident_set_memory(rss: [*c]usize) c_int;
 pub extern fn uv_uptime(uptime: [*c]f64) c_int;
-pub extern fn uv_get_osfhandle(fd: c_int) uv_os_fd_t;
-pub extern fn uv_open_osfhandle(os_fd: uv_os_fd_t) c_int;
 pub const uv_rusage_t = extern struct {
     ru_utime: uv_timeval_t,
     ru_stime: uv_timeval_t,
@@ -2818,7 +2832,7 @@ pub const ReturnCodeI64 = enum(i64) {
     }
 
     pub fn toFD(this: ReturnCodeI64) bun.FileDescriptor {
-        return bun.toFD(@as(i32, @truncate(this.int())));
+        return .fromUV(@truncate(this.int()));
     }
 };
 

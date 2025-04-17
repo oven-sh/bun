@@ -42,14 +42,12 @@ const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const HTTP = bun.http;
 const FetchEvent = WebCore.FetchEvent;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const Node = bun.JSC.Node;
@@ -1934,7 +1932,7 @@ pub const HTTPStatusText = struct {
 };
 
 fn NewFlags(comptime debug_mode: bool) type {
-    return packed struct {
+    return packed struct(u16) {
         has_marked_complete: bool = false,
         has_marked_pending: bool = false,
         has_abort_handler: bool = false,
@@ -1954,9 +1952,24 @@ fn NewFlags(comptime debug_mode: bool) type {
         has_written_status: bool = false,
         response_protected: bool = false,
         aborted: bool = false,
-        has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+        has_finalized: bun.DebugOnly(bool) = if (Environment.isDebug) false,
 
         is_error_promise_pending: bool = false,
+
+        _padding: PaddingInt = 0,
+
+        const PaddingInt = brk: {
+            var size: usize = 2;
+            if (Environment.isDebug) {
+                size -= 1;
+            }
+
+            if (debug_mode) {
+                size -= 1;
+            }
+
+            break :brk std.meta.Int(.unsigned, size);
+        };
     };
 }
 
@@ -2201,7 +2214,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: ?*uws.Request,
-        request_weakref: Request.WeakRef = .{},
+        request_weakref: Request.WeakRef = .empty,
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
         cookies: ?*JSC.WebCore.CookieMap = null,
@@ -2398,7 +2411,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             ctxLog("deinit<d> ({*})<r>", .{this});
-            if (comptime Environment.allow_assert)
+            if (comptime Environment.isDebug)
                 assert(this.flags.has_finalized);
 
             this.request_body_buf.clearAndFree(this.allocator);
@@ -2758,7 +2771,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
-                this.request_weakref.deinit();
+                this.request_weakref.deref();
             }
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
@@ -2809,7 +2822,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.server != null);
             const globalThis = this.server.?.globalThis;
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }
@@ -2834,7 +2847,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 request.request_context = AnyRequestContext.Null;
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
-                this.request_weakref.deinit();
+                this.request_weakref.deref();
             }
 
             // if signal is not aborted, abort the signal
@@ -2890,7 +2903,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // use node syscall so that we don't segfault on BADF
             if (sendfile.auto_close)
-                _ = bun.sys.close(sendfile.fd);
+                sendfile.fd.close();
         }
         const separator: string = "\r\n";
         const separator_iovec = [1]std.posix.iovec_const{.{
@@ -3041,7 +3054,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toJSC(globalThis));
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
                     return;
                 },
@@ -3050,7 +3063,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isMac) {
                 if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
 
                     var err = bun.sys.Error{
@@ -3069,7 +3082,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isLinux) {
                 if (!(bun.isRegularFile(stat.mode) or std.posix.S.ISFIFO(stat.mode) or std.posix.S.ISSOCK(stat.mode))) {
                     if (auto_close) {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                     }
 
                     var err = bun.sys.Error{
@@ -4915,10 +4928,12 @@ pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
     state: State,
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     /// Reference count is incremented while there are other objects that are waiting on plugin loads.
-    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const State = union(enum) {
         unqueued: []const []const u8,
@@ -4947,17 +4962,17 @@ const ServePlugins = struct {
     };
 
     pub fn init(plugins: []const []const u8) *ServePlugins {
-        return ServePlugins.new(.{ .state = .{ .unqueued = plugins } });
+        return bun.new(ServePlugins, .{ .ref_count = .init(), .state = .{ .unqueued = plugins } });
     }
 
-    pub fn deinit(this: *ServePlugins) void {
+    fn deinit(this: *ServePlugins) void {
         switch (this.state) {
             .unqueued => {},
             .pending => assert(false), // should have one ref while pending!
             .loaded => |loaded| loaded.deinit(),
             .err => {},
         }
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
@@ -5142,7 +5157,7 @@ const PluginsResult = union(enum) {
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
         pub usingnamespace NamespaceType;
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub const ssl_enabled = ssl_enabled_;
         pub const debug_mode = debug_mode_;
@@ -5577,7 +5592,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
-            upgrader.request_weakref.deinit();
+            upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
             const ws = ServerWebSocket.new(.{
@@ -5724,13 +5739,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             JSC.markBinding(@src());
 
             if (this.config.onRequest == .zero) {
-                return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
             }
 
             const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
-                return JSPromise.rejectedPromiseValue(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
             }
 
             var headers: ?*JSC.FetchHeaders = null;
@@ -5751,7 +5766,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = JSC.WebCore.Fetch.fetch_error_blank_url;
-                    return JSPromise.rejectedPromiseValue(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
                 }
 
                 var url = URL.parse(temp_url_str);
@@ -5785,7 +5800,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
-                            return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));
+                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));
                         }
                     }
                 }
@@ -5804,10 +5819,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     false,
                 );
             } else {
-                const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
+                const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(bun.JSC.C.JSValueGetType(ctx, first_arg.asRef()));
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
 
-                return JSPromise.rejectedPromiseValue(ctx, err);
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, err);
             }
 
             var request = Request.new(existing_request);
@@ -5820,11 +5835,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ) catch |err| this.globalThis.takeException(err);
 
             if (response_value.isAnyError()) {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, response_value);
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, response_value);
             }
 
             if (response_value.isEmptyOrUndefinedOrNull()) {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx));
             }
 
             if (response_value.asAnyPromise() != null) {
@@ -6188,7 +6203,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 plugins.deref();
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn init(config: *ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
@@ -6387,7 +6402,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var stack_fallback = std.heap.stackFallback(8192, this.allocator);
             const allocator = stack_fallback.get();
 
-            const buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
+            const buffer_writer = js_printer.BufferWriter.init(allocator);
             var writer = js_printer.BufferPrinter.init(buffer_writer);
             defer writer.ctx.buffer.deinit();
             var source = logger.Source.initEmptyFile("info.json");
@@ -6443,6 +6458,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 globalThis,
                 thisObject,
                 this.config.onNodeHTTPRequest,
+                if (bun.http.Method.find(req.method())) |method|
+                    method.toJS(globalThis)
+                else
+                    .undefined,
                 req,
                 resp,
                 upgrade_ctx,
@@ -6772,7 +6791,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .signal = signal.ref(),
                 .body = body.ref(),
             });
-            ctx.request_weakref = Request.WeakRef.create(request_object);
+            ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
@@ -6895,7 +6914,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .body = body.ref(),
             });
             ctx.upgrade_context = upgrade_ctx;
-            ctx.request_weakref = Request.WeakRef.create(request_object);
+            ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.JSValue{
                 request_object.toJS(this.globalThis),
@@ -7329,7 +7348,7 @@ pub const ServerAllConnectionsClosedTask = struct {
     promise: JSC.JSPromise.Strong,
     tracker: JSC.AsyncTaskTracker,
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
@@ -7341,7 +7360,7 @@ pub const ServerAllConnectionsClosedTask = struct {
 
         var promise = this.promise;
         defer promise.deinit();
-        this.destroy();
+        bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
             promise.resolve(globalObject, .undefined);
@@ -7609,6 +7628,7 @@ extern fn NodeHTTPServer__onRequest_http(
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
+    methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
@@ -7620,6 +7640,7 @@ extern fn NodeHTTPServer__onRequest_https(
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
+    methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,

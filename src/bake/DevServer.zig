@@ -749,9 +749,9 @@ pub fn deinit(dev: *DevServer) void {
             dev.active_websocket_connections.deinit(allocator);
         },
         .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
-            event.aligned.dirs.deinit(dev.allocator);
-            event.aligned.files.deinit(dev.allocator);
-            event.aligned.extra_files.deinit(dev.allocator);
+            event.dirs.deinit(dev.allocator);
+            event.files.deinit(dev.allocator);
+            event.extra_files.deinit(dev.allocator);
         },
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
@@ -1350,7 +1350,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
+            try entry_points.append(alloc, html.html_bundle.bundle.data.path, .{ .client = true });
         },
     }
 
@@ -1487,7 +1487,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     const before_head_end = bundled_html[0..script_injection_offset];
     const after_head_end = bundled_html[script_injection_offset..];
 
-    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
+    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.bundle.data.path), ".html");
     // TODO: function for URL safe chars
     if (!bun.strings.isAllASCII(display_name)) display_name = "page";
 
@@ -2622,7 +2622,7 @@ pub fn finalizeBundle(
             else
                 null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
-            .html => |html| dev.relativePath(html.html_bundle.html_bundle.path),
+            .html => |html| dev.relativePath(html.html_bundle.bundle.data.path),
             .framework => |fw| file_name: {
                 const route = dev.router.routePtr(fw.route_index);
                 const opaque_id = route.file_page.unwrap() orelse
@@ -2872,7 +2872,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 .cached_css_file_array = .empty,
             } },
             .html => |html| brk: {
-                const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.html_bundle.path, false, true);
+                const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.bundle.data.path, false, true);
                 dev.client_graph.source_maps.items[incremental_graph_index.get()].extra.empty.html_bundle_route_index = .init(bundle_index.get());
                 break :brk .{ .html = .{
                     .html_bundle = html,
@@ -5262,10 +5262,10 @@ const DirectoryWatchStore = struct {
         errdefer store.watches.swapRemoveAt(gop.index);
 
         // Try to use an existing open directory handle
-        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache| fd: {
-            const fd = cache.getFileDescriptor();
-            break :fd if (fd == .zero) null else fd;
-        } else null;
+        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache|
+            cache.getFileDescriptor().unwrapValid()
+        else
+            null;
 
         const fd, const owned_fd = if (Watcher.requires_file_descriptors) if (cache_fd) |fd|
             .{ fd, false }
@@ -5296,7 +5296,7 @@ const DirectoryWatchStore = struct {
                 },
             },
         } else .{ bun.invalid_fd, false };
-        errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
+        errdefer if (Watcher.requires_file_descriptors) if (owned_fd) fd.close();
         if (Watcher.requires_file_descriptors)
             debug.log("-> fd: {} ({s})", .{
                 fd,
@@ -5351,7 +5351,7 @@ const DirectoryWatchStore = struct {
 
         store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
 
-        defer _ = if (entry.dir_fd_owned) bun.sys.close(entry.dir);
+        defer if (entry.dir_fd_owned) entry.dir.close();
 
         alloc.free(store.watches.keys()[entry_index]);
         store.watches.swapRemoveAt(entry_index);
@@ -6146,8 +6146,8 @@ fn markAllRouteChildrenFailed(dev: *DevServer, route_index: Route.Index) void {
 
 /// This task informs the DevServer's thread about new files to be bundled.
 pub const HotReloadEvent = struct {
-    /// Align to cache lines to eliminate contention.
-    const Aligned = struct { aligned: HotReloadEvent align(std.atomic.cache_line) };
+    /// Align to cache lines to eliminate false sharing.
+    _: u0 align(std.atomic.cache_line) = 0,
 
     owner: *DevServer,
     /// Initialized in WatcherAtomics.watcherReleaseAndSubmitEvent
@@ -6387,7 +6387,7 @@ const WatcherAtomics = struct {
     /// once. Memory is reused by swapping between these two. These items are
     /// aligned to cache lines to reduce contention, since these structures are
     /// carefully passed between two threads.
-    events: [2]HotReloadEvent.Aligned align(std.atomic.cache_line),
+    events: [2]HotReloadEvent align(std.atomic.cache_line),
     /// 0  - no watch
     /// 1  - has fired additional watch
     /// 2+ - new events available, watcher is waiting on bundler to finish
@@ -6401,10 +6401,7 @@ const WatcherAtomics = struct {
 
     pub fn init(dev: *DevServer) WatcherAtomics {
         return .{
-            .events = .{
-                .{ .aligned = .initEmpty(dev) },
-                .{ .aligned = .initEmpty(dev) },
-            },
+            .events = .{ .initEmpty(dev), .initEmpty(dev) },
             .current = 0,
             .watcher_events_emitted = .init(0),
             .watcher_has_event = .{},
@@ -6417,7 +6414,7 @@ const WatcherAtomics = struct {
     fn watcherAcquireEvent(state: *WatcherAtomics) *HotReloadEvent {
         state.watcher_has_event.lock();
 
-        var ev: *HotReloadEvent = &state.events[state.current].aligned;
+        var ev: *HotReloadEvent = &state.events[state.current];
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
                 // New event, initialize the timer if it is empty.
@@ -6429,7 +6426,7 @@ const WatcherAtomics = struct {
                 // DevServer stole this event. Unlikely but possible when
                 // the user is saving very heavily (10-30 times per second)
                 state.current +%= 1;
-                ev = &state.events[state.current].aligned;
+                ev = &state.events[state.current];
                 if (Environment.allow_assert) {
                     bun.assert(ev.contention_indicator.swap(1, .seq_cst) == 0);
                 }
@@ -6503,10 +6500,10 @@ const WatcherAtomics = struct {
         if (state.watcher_events_emitted.swap(0, .seq_cst) >= 2) {
             // Cannot use `state.current` because it will contend with the watcher.
             // Since there are are two events, one pointer comparison suffices
-            const other_event = if (first_event == &state.events[0].aligned)
-                &state.events[1].aligned
+            const other_event = if (first_event == &state.events[0])
+                &state.events[1]
             else
-                &state.events[0].aligned;
+                &state.events[0];
 
             switch (other_event.contention_indicator.swap(1, .seq_cst)) {
                 0 => {

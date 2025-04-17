@@ -197,7 +197,10 @@ pub const StatWatcher = struct {
     last_stat: bun.Stat,
     last_jsvalue: JSC.Strong,
 
-    pub usingnamespace JSC.Codegen.JSStatWatcher;
+    pub const js = JSC.Codegen.JSStatWatcher;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn eventLoop(this: StatWatcher) *EventLoop {
         return this.ctx.eventLoop();
@@ -230,7 +233,7 @@ pub const StatWatcher = struct {
         bigint: bool,
         interval: i32,
 
-        global_this: JSC.C.JSContextRef,
+        global_this: *JSC.JSGlobalObject,
 
         pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const path = try PathLike.fromJSWithAllocator(global, arguments, bun.default_allocator) orelse {
@@ -334,18 +337,14 @@ pub const StatWatcher = struct {
         watcher: *StatWatcher,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
-        pub usingnamespace bun.New(@This());
-
-        pub fn createAndSchedule(
-            watcher: *StatWatcher,
-        ) void {
-            const task = InitialStatTask.new(.{ .watcher = watcher });
+        pub fn createAndSchedule(watcher: *StatWatcher) void {
+            const task = bun.new(InitialStatTask, .{ .watcher = watcher });
             JSC.WorkPool.schedule(&task.task);
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
-            defer initial_stat_task.destroy();
+            defer bun.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
@@ -394,7 +393,7 @@ pub const StatWatcher = struct {
 
         const vm = this.globalThis.bunVM();
 
-        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
+        _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .undefined,
             &[2]JSC.JSValue{
@@ -431,7 +430,7 @@ pub const StatWatcher = struct {
         const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
-        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
+        _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .undefined,
             &[2]JSC.JSValue{
@@ -493,7 +492,7 @@ pub const StatWatcher = struct {
 
         const js_this = StatWatcher.toJS(this, this.globalThis);
         this.js_this = js_this;
-        StatWatcher.listenerSetCached(js_this, this.globalThis, args.listener);
+        js.listenerSetCached(js_this, this.globalThis, args.listener);
         InitialStatTask.createAndSchedule(this);
 
         return this;

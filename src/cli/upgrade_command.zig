@@ -113,53 +113,9 @@ pub const Version = struct {
         return strings.eqlComptime(this.tag, current_version);
     }
 
-    comptime {
-        _ = Bun__githubURL;
-    }
-};
-
-pub const UpgradeCheckerThread = struct {
-    pub fn spawn(env_loader: *DotEnv.Loader) void {
-        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
-            env_loader.map.get("CI") != null or
-            strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
-            return;
-        var update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
-        update_checker_thread.detach();
-    }
-
-    fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
-        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
-        std.time.sleep(std.time.ns_per_ms * delay);
-
-        Output.Source.configureThread();
-        HTTP.HTTPThread.init(&.{});
-
-        defer {
-            js_ast.Expr.Data.Store.deinit();
-            js_ast.Stmt.Data.Store.deinit();
-        }
-
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
-
-        if (!version.isCurrent()) {
-            if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
-                Output.flush();
-            }
-        }
-
-        version.buf.deinit();
-    }
-
-    fn run(env_loader: *DotEnv.Loader) void {
-        _run(env_loader) catch |err| {
-            if (Environment.isDebug) {
-                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
-                Output.flush();
-            }
-        };
+    pub fn @"export"() void {
+        _ = &Bun__githubURL;
+        _ = &Bun__githubBaselineURL;
     }
 };
 
@@ -574,7 +530,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             };
             const save_dir = save_dir_it;
-            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+            const tmpdir_path = bun.FD.fromStdDir(save_dir).getFdPath(&tmpdir_path_buf) catch |err| {
                 Output.errGeneric("Failed to read temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
@@ -853,7 +809,7 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                C.moveFileZ(.fromStdDir(save_dir), exe, .fromStdDir(target_dir), target_filename) catch |err| {
                     defer save_dir_.deleteTree(version_name) catch {};
 
                     if (comptime Environment.isWindows) {
@@ -1041,7 +997,7 @@ pub const upgrade_js_bindings = struct {
         );
 
         switch (bun.windows.Win32Error.fromNTStatus(rc)) {
-            .SUCCESS => tempdir_fd = bun.toFD(fd),
+            .SUCCESS => tempdir_fd = .fromNative(fd),
             else => {},
         }
 
@@ -1052,9 +1008,14 @@ pub const upgrade_js_bindings = struct {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
 
         return .undefined;
     }
 };
+
+pub fn @"export"() void {
+    _ = &upgrade_js_bindings;
+    Version.@"export"();
+}

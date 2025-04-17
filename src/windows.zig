@@ -107,7 +107,7 @@ pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
 
     const rc = function(hFile);
     if (comptime Environment.enable_logs)
-        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.toFD(hFile), rc });
+        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.FD.fromNative(hFile), rc });
     return rc;
 }
 
@@ -3064,14 +3064,14 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
-            bun.crash_handler.dumpCurrentStackTrace(null);
+            bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             break :brk .INVAL;
         } else .INVAL,
 
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
-                bun.crash_handler.dumpCurrentStackTrace(null);
+                bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             }
             return .UNKNOWN;
         },

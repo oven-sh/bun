@@ -245,7 +245,8 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -334,7 +335,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -704,6 +705,10 @@ pub const Arguments = struct {
 
             if (args.option("--origin")) |origin| {
                 opts.origin = origin;
+            }
+
+            if (args.flag("--redis-preconnect")) {
+                ctx.runtime_options.redis_preconnect = true;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1529,6 +1534,7 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
+        redis_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,

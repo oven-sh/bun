@@ -253,7 +253,7 @@ pub const Snapshots = struct {
             };
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 
@@ -521,7 +521,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 

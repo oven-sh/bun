@@ -411,7 +411,7 @@ pub const WriteFileWindows = struct {
                     }
 
                     // The file stored descriptor is not stdin, stdout, or stderr.
-                    break :brk bun.uvfdcast(file_blob.store.?.data.file.pathlike.fd);
+                    break :brk file_blob.store.?.data.file.pathlike.fd.uv();
                 };
 
                 write_file.doWriteLoop(write_file.loop());
@@ -618,17 +618,17 @@ pub const WriteFileWindows = struct {
         if (rc.int() != 0) bun.Output.panic("unexpected return code from uv_fs_write: {d}", .{rc.int()});
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn deinit(this: *@This()) void {
         const fd = this.fd;
         if (fd > 0 and this.owned_fd) {
-            bun.Async.Closer.close(fd, this.io_request.loop);
+            bun.Async.Closer.close(.fromUV(fd), this.io_request.loop);
         }
         this.file_blob.store.?.deref();
         this.bytes_blob.store.?.deref();
         uv.uv_fs_req_cleanup(&this.io_request);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn create(

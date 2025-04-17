@@ -247,7 +247,7 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
-            const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
+            const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };

@@ -142,13 +142,18 @@ pub const ProcessExitHandler = struct {
 pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
+    const Self = @This();
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     pid: pid_t = 0,
     pidfd: PidFDType = 0,
     status: Status = Status{ .running = {} },
     poller: Poller = Poller{
         .detached = {},
     },
-    ref_count: u32 = 1,
+    ref_count: RefCount,
     exit_handler: ProcessExitHandler = ProcessExitHandler{},
     sync: bool = false,
     event_loop: JSC.EventLoopHandle,
@@ -156,8 +161,6 @@ pub const Process = struct {
     pub fn memoryCost(_: *const Process) usize {
         return @sizeOf(@This());
     }
-
-    pub usingnamespace bun.NewRefCounted(Process, deinit, null);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
         this.exit_handler.init(handler);
@@ -176,7 +179,8 @@ pub const Process = struct {
         event_loop: anytype,
         sync_: bool,
     ) *Process {
-        return Process.new(.{
+        return bun.new(Process, .{
+            .ref_count = .init(),
             .pid = posix.pid,
             .pidfd = posix.pidfd orelse 0,
             .event_loop = JSC.EventLoopHandle.init(event_loop),
@@ -335,7 +339,7 @@ pub const Process = struct {
         const poll = if (this.poller == .fd)
             this.poller.fd
         else
-            bun.Async.FilePoll.init(this.event_loop, bun.toFD(watchfd), .{}, Process, this);
+            bun.Async.FilePoll.init(this.event_loop, .fromNative(watchfd), .{}, Process, this);
 
         this.poller = .{ .fd = poll };
         this.poller.fd.enableKeepingProcessAlive(this.event_loop);
@@ -458,9 +462,9 @@ pub const Process = struct {
         }
 
         if (comptime Environment.isLinux) {
-            if (this.pidfd != bun.invalid_fd.int() and this.pidfd > 0) {
-                _ = bun.sys.close(bun.toFD(this.pidfd));
-                this.pidfd = @intCast(bun.invalid_fd.int());
+            if (this.pidfd != bun.invalid_fd.value.as_system and this.pidfd > 0) {
+                bun.FD.fromNative(this.pidfd).close();
+                this.pidfd = bun.invalid_fd.value.as_system;
             }
         }
     }
@@ -487,7 +491,7 @@ pub const Process = struct {
 
     fn deinit(this: *Process) void {
         this.poller.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn kill(this: *Process, signal: u8) Maybe(void) {
@@ -745,7 +749,8 @@ const WaiterThreadPosix = struct {
                 process: *T,
                 next: ?*TaskQueueEntry = null,
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
+                pub const deinit = bun.TrivialDeinit(@This());
             };
             pub const ConcurrentQueue = bun.UnboundedQueue(TaskQueueEntry, .next);
 
@@ -754,7 +759,7 @@ const WaiterThreadPosix = struct {
                 subprocess: *T,
                 rusage: Rusage,
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub const runFromJSThread = runFromMainThread;
 
@@ -762,7 +767,7 @@ const WaiterThreadPosix = struct {
                     const result = self.result;
                     const subprocess = self.subprocess;
                     const rusage = self.rusage;
-                    self.destroy();
+                    bun.destroy(self);
                     subprocess.onWaitPidFromWaiterThread(&result, &rusage);
                 }
 
@@ -776,14 +781,14 @@ const WaiterThreadPosix = struct {
                 subprocess: *T,
                 task: JSC.AnyTaskWithExtraContext = .{},
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub const runFromJSThread = runFromMainThread;
 
                 pub fn runFromMainThread(self: *@This()) void {
                     const result = self.result;
                     const subprocess = self.subprocess;
-                    self.destroy();
+                    bun.destroy(self);
                     subprocess.onWaitPidFromWaiterThread(&result, &std.mem.zeroes(Rusage));
                 }
 
@@ -807,7 +812,7 @@ const WaiterThreadPosix = struct {
                     this.active.ensureUnusedCapacity(batch.count) catch unreachable;
                     while (iter.next()) |task| {
                         this.active.appendAssumeCapacity(task.process);
-                        task.destroy();
+                        task.deinit();
                     }
                 }
 
@@ -899,7 +904,7 @@ const WaiterThreadPosix = struct {
 
         if (comptime Environment.isLinux) {
             const linux = std.os.linux;
-            instance.eventfd = bun.toFD(try std.posix.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
+            instance.eventfd = .fromNative(try std.posix.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
         }
 
         var thread = try std.Thread.spawn(.{ .stack_size = stack_size }, loop, .{});
@@ -1096,7 +1101,7 @@ pub const PosixSpawnResult = struct {
 
     pub fn close(this: *WindowsSpawnResult) void {
         for (this.extra_pipes.items) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
 
         this.extra_pipes.clearAndFree();
@@ -1252,7 +1257,7 @@ pub fn spawnProcessPosix(
         to_set_cloexec.clearAndFree();
 
         for (to_close_at_end.items) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
         to_close_at_end.clearAndFree();
     }
@@ -1261,7 +1266,7 @@ pub fn spawnProcessPosix(
 
     errdefer {
         for (to_close_on_error.items) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
     }
     defer to_close_on_error.clearAndFree();
@@ -1281,7 +1286,7 @@ pub fn spawnProcessPosix(
 
     for (0..3) |i| {
         const stdio = stdios[i];
-        const fileno = bun.toFD(@as(i32, @intCast(i)));
+        const fileno = bun.FD.fromNative(@intCast(i));
         const flag = if (i == 0) @as(u32, bun.O.RDONLY) else @as(u32, bun.O.WRONLY);
 
         switch (stdio_options[i]) {
@@ -1330,8 +1335,7 @@ pub fn spawnProcessPosix(
 
                 const fds: [2]bun.FileDescriptor = brk: {
                     const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
-
-                    break :brk .{ bun.toFD(pair[if (i == 0) 1 else 0]), bun.toFD(pair[if (i == 0) 0 else 1]) };
+                    break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
                 if (i == 0) {
@@ -1394,7 +1398,7 @@ pub fn spawnProcessPosix(
     }
 
     for (options.extra_fds, 0..) |ipc, i| {
-        const fileno = bun.toFD(@as(i32, @intCast(3 + i)));
+        const fileno = bun.FD.fromNative(@intCast(3 + i));
 
         switch (ipc) {
             .dup2 => @panic("TODO dup2 extra fd"),
@@ -1447,7 +1451,7 @@ pub fn spawnProcessPosix(
     defer {
         if (failed_after_spawn) {
             for (to_close_on_error.items) |fd| {
-                _ = bun.sys.close(fd);
+                fd.close();
             }
             to_close_on_error.clearAndFree();
         }
@@ -1521,7 +1525,7 @@ pub fn spawnProcessWindows(
 
     defer {
         for (uv_files_to_close.items) |fd| {
-            bun.Async.Closer.close(fd, loop);
+            bun.Async.Closer.close(.fromUV(fd), loop);
         }
         uv_files_to_close.clearAndFree();
     }
@@ -1608,7 +1612,7 @@ pub fn spawnProcessWindows(
             },
             .pipe => |fd| {
                 stdio.flags = uv.UV_INHERIT_FD;
-                stdio.data.fd = bun.uvfdcast(fd);
+                stdio.data.fd = fd.uv();
             },
         }
 
@@ -1664,7 +1668,7 @@ pub fn spawnProcessWindows(
             },
             .pipe => |fd| {
                 stdio.flags = uv.StdioFlags.inherit_fd;
-                stdio.data.fd = bun.uvfdcast(fd);
+                stdio.data.fd = fd.uv();
             },
         }
     }
@@ -1673,7 +1677,8 @@ pub fn spawnProcessWindows(
     uv_process_options.stdio_count = @intCast(stdio_containers.items.len);
 
     uv_process_options.exit_cb = &Process.onExitUV;
-    const process = Process.new(.{
+    const process = bun.new(Process, .{
+        .ref_count = .init(),
         .event_loop = options.windows.loop,
         .pid = 0,
     });
@@ -1695,14 +1700,12 @@ pub fn spawnProcessWindows(
 
         if (failed) {
             if (dup_fds[0] != -1) {
-                const r = bun.FDImpl.fromUV(dup_fds[0]).encode();
-                _ = bun.sys.close(r);
+                bun.FD.fromUV(dup_fds[0]).close();
             }
         }
 
         if (dup_fds[1] != -1) {
-            const w = bun.FDImpl.fromUV(dup_fds[1]).encode();
-            _ = bun.sys.close(w);
+            bun.FD.fromUV(dup_fds[1]).close();
         }
     }
     if (process.poller.uv.spawn(loop, &uv_process_options).toError(.uv_spawn)) |err| {
@@ -1726,9 +1729,7 @@ pub fn spawnProcessWindows(
         if (dup_src != null and i == dup_src.?) {
             result_stdio.* = .unavailable;
         } else if (dup_tgt != null and i == dup_tgt.?) {
-            result_stdio.* = .{
-                .buffer_fd = bun.FDImpl.fromUV(dup_fds[0]).encode(),
-            };
+            result_stdio.* = .{ .buffer_fd = .fromUV(dup_fds[0]) };
         } else switch (stdio_options[i]) {
             .buffer => {
                 result_stdio.* = .{ .buffer = @ptrCast(stdio.data.stream) };
@@ -1826,10 +1827,10 @@ pub const sync = struct {
 
         err: bun.C.E = .SUCCESS,
         context: *SyncWindowsProcess,
-        onDoneCallback: *const fn (*SyncWindowsProcess, tag: bun.FDTag, chunks: []const []u8, err: bun.C.E) void = &SyncWindowsProcess.onReaderDone,
-        tag: bun.FDTag = .none,
+        onDoneCallback: *const fn (*SyncWindowsProcess, tag: SyncWindowsProcess.OutFd, chunks: []const []u8, err: bun.C.E) void = &SyncWindowsProcess.onReaderDone,
+        tag: SyncWindowsProcess.OutFd,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         fn onAlloc(_: *SyncWindowsPipeReader, suggested_size: usize) []u8 {
             return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
@@ -1864,14 +1865,17 @@ pub const sync = struct {
     };
 
     const SyncWindowsProcess = struct {
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
+
+        const OutFd = enum { stdout, stderr };
+
         stderr: []const []u8 = &.{},
         stdout: []const []u8 = &.{},
         err: bun.C.E = .SUCCESS,
         waiting_count: u8 = 1,
         process: *Process,
         status: ?Status = null,
-
-        pub usingnamespace bun.New(@This());
 
         pub fn onProcessExit(this: *SyncWindowsProcess, status: Status, _: *const Rusage) void {
             this.status = status;
@@ -1880,7 +1884,7 @@ pub const sync = struct {
             this.process.deref();
         }
 
-        pub fn onReaderDone(this: *SyncWindowsProcess, tag: bun.FDTag, chunks: []const []u8, err: bun.C.E) void {
+        pub fn onReaderDone(this: *SyncWindowsProcess, tag: OutFd, chunks: []const []u8, err: bun.C.E) void {
             switch (tag) {
                 .stderr => {
                     this.stderr = chunks;
@@ -1888,7 +1892,6 @@ pub const sync = struct {
                 .stdout => {
                     this.stdout = chunks;
                 },
-                else => unreachable,
             }
             if (err != .SUCCESS) {
                 this.err = err;
@@ -1951,14 +1954,14 @@ pub const sync = struct {
         var loop: JSC.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
-            .result => |proces| proces,
+            .result => |process| process,
         };
-        var this = SyncWindowsProcess.new(.{
+        const this = SyncWindowsProcess.new(.{
             .process = spawned.toProcess(undefined, true),
         });
         this.process.ref();
         this.process.setExitHandler(this);
-        defer this.destroy();
+        defer this.deinit();
         this.process.enableKeepingEventLoopAlive();
         inline for (.{ .stdout, .stderr }) |tag| {
             if (@field(spawned, @tagName(tag)) == .buffer) {
@@ -2091,13 +2094,13 @@ pub const sync = struct {
 
             for (out_fds) |fd| {
                 if (fd != bun.invalid_fd) {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 }
             }
 
             if (comptime Environment.isLinux) {
                 if (process.pidfd) |pidfd| {
-                    _ = bun.sys.close(bun.toFD(pidfd));
+                    bun.FD.fromNative(pidfd).close();
                 }
             }
         }
@@ -2132,7 +2135,7 @@ pub const sync = struct {
                         .result => |bytes_read| {
                             bytes.items.len += bytes_read;
                             if (bytes_read == 0) {
-                                _ = bun.sys.close(fd.*);
+                                fd.*.close();
                                 fd.* = bun.invalid_fd;
                                 out_fd.* = bun.invalid_fd;
                                 break;

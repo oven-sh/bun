@@ -88,9 +88,12 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
 
 pub const S3Client = struct {
     const log = bun.Output.scoped(.S3Client, false);
-    pub usingnamespace JSC.Codegen.JSS3Client;
+    pub const js = JSC.Codegen.JSS3Client;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
     credentials: *S3Credentials,
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
@@ -266,7 +269,7 @@ pub const S3Client = struct {
 
     pub fn deinit(this: *@This()) void {
         this.credentials.deref();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn finalize(

@@ -18,6 +18,8 @@
 /// <reference path="./wasm.d.ts" />
 /// <reference path="./overrides.d.ts" />
 /// <reference path="./deprecated.d.ts" />
+/// <reference path="./redis.d.ts" />
+/// <reference path="./shell.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

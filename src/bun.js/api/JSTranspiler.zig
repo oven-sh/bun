@@ -5,7 +5,6 @@ const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
@@ -40,7 +39,10 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 
 const JSTranspiler = @This();
-pub usingnamespace JSC.Codegen.JSTranspiler;
+pub const js = JSC.Codegen.JSTranspiler;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 transpiler: bun.transpiler.Transpiler,
 arena: bun.ArenaAllocator,
@@ -93,7 +95,7 @@ pub const TransformTask = struct {
     global: *JSGlobalObject,
     replace_exports: Runtime.Features.ReplaceableExport.Map = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const AsyncTransformTask = JSC.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
@@ -159,7 +161,7 @@ pub const TransformTask = struct {
         const parse_options = Transpiler.Transpiler.ParseOptions{
             .allocator = allocator,
             .macro_remappings = this.macro_map,
-            .dirname_fd = .zero,
+            .dirname_fd = .invalid,
             .file_descriptor = null,
             .loader = this.loader,
             .jsx = jsx,
@@ -179,10 +181,7 @@ pub const TransformTask = struct {
             return;
         }
 
-        var buffer_writer = JSPrinter.BufferWriter.init(allocator) catch |err| {
-            this.err = err;
-            return;
-        };
+        var buffer_writer = JSPrinter.BufferWriter.init(allocator);
         buffer_writer.buffer.list.ensureTotalCapacity(allocator, 512) catch unreachable;
         buffer_writer.reset();
 
@@ -245,10 +244,9 @@ pub const TransformTask = struct {
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
         if (this.tsconfig) |tsconfig| {
-            tsconfig.destroy();
+            tsconfig.deinit();
         }
-
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -308,7 +306,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) bun.JSErr
     return null;
 }
 
-fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
+fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
     const globalThis = globalObject;
     const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
     if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
@@ -811,7 +809,7 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
     const parse_options = Transpiler.Transpiler.ParseOptions{
         .allocator = allocator,
         .macro_remappings = this.transpiler_options.macro_map,
-        .dirname_fd = .zero,
+        .dirname_fd = .invalid,
         .file_descriptor = null,
         .loader = loader orelse this.transpiler_options.default_loader,
         .jsx = jsx,
@@ -1036,9 +1034,7 @@ pub fn transformSync(
     }
 
     var buffer_writer = this.buffer_writer orelse brk: {
-        var writer = JSPrinter.BufferWriter.init(arena.backingAllocator()) catch {
-            return globalThis.throw("Failed to create BufferWriter", .{});
-        };
+        var writer = JSPrinter.BufferWriter.init(arena.backingAllocator());
 
         writer.buffer.growIfNeeded(code.len) catch unreachable;
         writer.buffer.list.expandToCapacity();

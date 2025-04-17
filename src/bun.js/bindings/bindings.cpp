@@ -2077,7 +2077,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
         result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    if (err.fd != -1) {
+    if (err.fd >= 0) {
         JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
         result->putDirect(vm, names.fdPublicName(), fd,
             JSC::PropertyAttribute::DontDelete | 0);
@@ -2559,6 +2559,7 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
 {
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
@@ -2590,19 +2591,13 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
     if (callData.type == JSC::CallData::Type::None)
         return JSC::JSValue::encode(JSC::JSValue());
 
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (returnedException.get()) {
-        scope.throwException(globalObject, returnedException.get());
-        return JSC::JSValue::encode({});
-    }
-
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
 }
 
@@ -5272,6 +5267,8 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue e
     scope.throwException(arg1, exception);
 }
 
+/// **DEPRECATED** This function does not notify the VM about the rejection,
+/// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue1)
 {
@@ -6273,6 +6270,11 @@ extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject)
 {
     DECLARE_CATCH_SCOPE(globalObject->vm()).clearException();
+}
+
+extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
 }
 
 extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)

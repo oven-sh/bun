@@ -156,7 +156,7 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
             this_value.ensureStillAlive();
 
-            const write_callback: JSC.JSValue = T.writeCallbackGetCached(this_value).?;
+            const write_callback: JSC.JSValue = T.js.writeCallbackGetCached(this_value).?;
 
             vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
@@ -248,13 +248,13 @@ pub fn CompressionStream(comptime T: type) type {
 
         pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
             if (value.isFunction()) {
-                T.errorCallbackSetCached(this_value, globalObject, value);
+                T.js.errorCallbackSetCached(this_value, globalObject, value);
             }
             return true;
         }
 
         pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
-            return T.errorCallbackGetCached(this_value) orelse .undefined;
+            return T.js.errorCallbackGetCached(this_value) orelse .undefined;
         }
 
         /// returns true if no error was detected/emitted
@@ -272,7 +272,8 @@ pub fn CompressionStream(comptime T: type) type {
             var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
             const code_value = code_str.transferToJS(globalThis);
 
-            const callback: JSC.JSValue = T.errorCallbackGetCached(this_value) orelse Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
+            const callback: JSC.JSValue = T.js.errorCallbackGetCached(this_value) orelse
+                Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
             _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
@@ -311,11 +312,18 @@ const CountedKeepAlive = struct {
 };
 
 pub const SNativeZlib = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
-    pub usingnamespace JSC.Codegen.JSNativeZlib;
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    pub const js = JSC.Codegen.JSNativeZlib;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub usingnamespace CompressionStream(@This());
 
-    ref_count: u32 = 1,
+    ref_count: RefCount,
     mode: bun.zlib.NodeMode,
     globalThis: *JSC.JSGlobalObject,
     stream: ZlibContext = .{},
@@ -343,7 +351,8 @@ pub const SNativeZlib = struct {
             return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
         }
 
-        const ptr = SNativeZlib.new(.{
+        const ptr = bun.new(SNativeZlib, .{
+            .ref_count = .init(),
             .mode = @enumFromInt(mode_int),
             .globalThis = globalThis,
         });
@@ -375,11 +384,11 @@ pub const SNativeZlib = struct {
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
-        SNativeZlib.writeCallbackSetCached(this_value, globalThis, writeCallback);
+        js.writeCallbackSetCached(this_value, globalThis, writeCallback);
 
         // Keep the dictionary alive by keeping a reference to it in the JS object.
         if (dictionary != null) {
-            SNativeZlib.dictionarySetCached(this_value, globalThis, arguments[6]);
+            js.dictionarySetCached(this_value, globalThis, arguments[6]);
         }
 
         this.stream.init(level, windowBits, memLevel, strategy, dictionary);
@@ -404,11 +413,11 @@ pub const SNativeZlib = struct {
         return .undefined;
     }
 
-    pub fn deinit(this: *@This()) void {
+    fn deinit(this: *@This()) void {
         this.this_value.deinit();
         this.poll_ref.deinit();
         this.stream.close();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -677,11 +686,18 @@ const ZlibContext = struct {
 pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
 
 pub const SNativeBrotli = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
-    pub usingnamespace JSC.Codegen.JSNativeBrotli;
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    pub const js = JSC.Codegen.JSNativeBrotli;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     pub usingnamespace CompressionStream(@This());
 
-    ref_count: u32 = 1,
+    ref_count: RefCount,
     mode: bun.zlib.NodeMode,
     globalThis: *JSC.JSGlobalObject,
     stream: BrotliContext = .{},
@@ -711,7 +727,8 @@ pub const SNativeBrotli = struct {
             return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
         }
 
-        const ptr = @This().new(.{
+        const ptr = bun.new(@This(), .{
+            .ref_count = .init(),
             .mode = @enumFromInt(mode_int),
             .globalThis = globalThis,
         });
@@ -743,7 +760,7 @@ pub const SNativeBrotli = struct {
 
         this.write_result = writeResult;
 
-        SNativeBrotli.writeCallbackSetCached(this_value, globalThis, writeCallback);
+        js.writeCallbackSetCached(this_value, globalThis, writeCallback);
 
         var err = this.stream.init();
         if (err.isError()) {
@@ -775,14 +792,14 @@ pub const SNativeBrotli = struct {
         return .undefined;
     }
 
-    pub fn deinit(this: *@This()) void {
+    fn deinit(this: *@This()) void {
         this.this_value.deinit();
         this.poll_ref.deinit();
         switch (this.stream.mode) {
             .BROTLI_ENCODE, .BROTLI_DECODE => this.stream.close(),
             else => {},
         }
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

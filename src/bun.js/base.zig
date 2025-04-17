@@ -1,4 +1,3 @@
-pub const js = bun.JSC.C;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -18,8 +17,7 @@ const TaggedPointerTypes = @import("../ptr.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 const JSError = bun.JSError;
 
-pub const ExceptionValueRef = [*c]js.JSValueRef;
-pub const JSValueRef = js.JSValueRef;
+pub const JSValueRef = bun.JSC.C.JSValueRef;
 
 pub const Lifetime = enum {
     allocated,
@@ -151,15 +149,6 @@ pub const Properties = struct {
         pub const navigate = "navigate";
         pub const follow = "follow";
     };
-
-    pub const Refs = struct {
-        pub var empty_string_ptr = [_]u8{0};
-        pub var empty_string: js.JSStringRef = undefined;
-    };
-
-    pub fn init() void {
-        Refs.empty_string = js.JSStringCreateWithUTF8CString(&Refs.empty_string_ptr);
-    }
 };
 
 pub const PathString = bun.PathString;
@@ -194,7 +183,7 @@ fn toTypeErrorWithCode(
     code: []const u8,
     comptime fmt: string,
     args: anytype,
-    ctx: js.JSContextRef,
+    ctx: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     @branchHint(.cold);
     var zig_str: JSC.ZigString = undefined;
@@ -215,31 +204,21 @@ pub fn toTypeError(
     code: JSC.Error,
     comptime fmt: [:0]const u8,
     args: anytype,
-    ctx: js.JSContextRef,
+    ctx: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     return code.fmt(ctx, fmt, args);
-}
-
-pub fn throwInvalidArguments(
-    comptime fmt: [:0]const u8,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    @branchHint(.cold);
-    exception.* = JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args).asObjectRef();
 }
 
 pub fn toInvalidArguments(
     comptime fmt: [:0]const u8,
     args: anytype,
-    ctx: js.JSContextRef,
+    ctx: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     @branchHint(.cold);
     return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
-pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
+pub fn getAllocator(_: *JSC.JSGlobalObject) std.mem.Allocator {
     return default_allocator;
 }
 
@@ -251,7 +230,7 @@ pub fn dump(value: JSC.WebCore.JSValue, globalObject: *JSC.JSGlobalObject) !void
     Output.flush();
 }
 
-pub const JSStringList = std.ArrayList(js.JSStringRef);
+pub const JSStringList = std.ArrayList(JSC.C.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
@@ -326,7 +305,7 @@ pub const ArrayBuffer = extern struct {
     pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
-                _ = bun.sys.close(fd);
+                fd.close();
                 return globalObject.throwValue(err.toJSC(globalObject));
             },
             .result => |fstat| fstat,
@@ -335,7 +314,7 @@ pub const ArrayBuffer = extern struct {
         const size = stat.size;
 
         if (size == 0) {
-            _ = bun.sys.close(fd);
+            fd.close();
             return createBuffer(globalObject, "");
         }
 
@@ -345,7 +324,7 @@ pub const ArrayBuffer = extern struct {
         // So we clone it when it's small.
         if (size < mmap_threshold) {
             const result = toJSBufferFromFd(fd, @intCast(size), globalObject);
-            _ = bun.sys.close(fd);
+            fd.close();
             return result;
         }
 
@@ -357,7 +336,7 @@ pub const ArrayBuffer = extern struct {
             fd,
             0,
         );
-        _ = bun.sys.close(fd);
+        fd.close();
 
         switch (result) {
             .result => |buf| {
@@ -445,7 +424,7 @@ pub const ArrayBuffer = extern struct {
     extern "c" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSC.JSValue;
     extern "c" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSC.JSValue;
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
+    pub fn fromTypedArray(ctx: *JSC.JSGlobalObject, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
         const was = value.asArrayBuffer_(ctx, &out);
         bun.assert(was);
@@ -470,7 +449,7 @@ pub const ArrayBuffer = extern struct {
         return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
-    pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJSUnchecked(this: ArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) JSC.JSValue {
 
         // The reason for this is
         // JSC C API returns a detached arraybuffer
@@ -513,7 +492,7 @@ pub const ArrayBuffer = extern struct {
 
     const log = Output.scoped(.ArrayBuffer, false);
 
-    pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJS(this: ArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) JSC.JSValue {
         if (this.value != .zero) {
             return this.value;
         }
@@ -549,7 +528,7 @@ pub const ArrayBuffer = extern struct {
 
     pub fn toJSWithContext(
         this: ArrayBuffer,
-        ctx: JSC.C.JSContextRef,
+        ctx: *JSC.JSGlobalObject,
         deallocator: ?*anyopaque,
         callback: JSC.C.JSTypedArrayBytesDeallocator,
         exception: JSC.C.ExceptionRef,
@@ -621,14 +600,14 @@ pub const MarkedArrayBuffer = struct {
         return this.buffer.stream();
     }
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
+    pub fn fromTypedArray(ctx: *JSC.JSGlobalObject, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
             .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
 
-    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
+    pub fn fromArrayBuffer(ctx: *JSC.JSGlobalObject, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
             .buffer = ArrayBuffer.fromArrayBuffer(ctx, value),
@@ -677,16 +656,16 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+    pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
-    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) bun.JSC.C.JSObjectRef {
         if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
             return this.buffer.value.asObjectRef();
         }
         if (this.buffer.byte_len == 0) {
-            return js.JSObjectMakeTypedArray(
+            return JSC.C.JSObjectMakeTypedArray(
                 ctx,
                 this.buffer.typed_array_type.toC(),
                 0,
@@ -694,7 +673,7 @@ pub const MarkedArrayBuffer = struct {
             );
         }
 
-        return js.JSObjectMakeTypedArrayWithBytesNoCopy(
+        return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.buffer.typed_array_type.toC(),
             this.buffer.ptr,
@@ -776,10 +755,6 @@ pub const RefString = struct {
     }
 };
 
-comptime {
-    std.testing.refAllDecls(RefString);
-}
-
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../allocators/mimalloc.zig");
     // zig's memory allocator interface won't work here
@@ -833,16 +808,16 @@ const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;
 
 pub const JSPropertyNameIterator = struct {
-    array: js.JSPropertyNameArrayRef,
+    array: JSC.C.JSPropertyNameArrayRef,
     count: u32,
     i: u32 = 0,
 
-    pub fn next(this: *JSPropertyNameIterator) ?js.JSStringRef {
+    pub fn next(this: *JSPropertyNameIterator) ?JSC.C.JSStringRef {
         if (this.i >= this.count) return null;
         const i = this.i;
         this.i += 1;
 
-        return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
+        return JSC.C.JSPropertyNameArrayGetNameAtIndex(this.array, i);
     }
 };
 

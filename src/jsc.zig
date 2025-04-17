@@ -54,6 +54,7 @@ pub const API = struct {
     pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
     pub const HTMLBundle = @import("./bun.js/api/server/HTMLBundle.zig");
+    pub const Valkey = @import("./valkey/js_valkey.zig").JSValkeyClient;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
@@ -100,12 +101,18 @@ pub const Subprocess = API.Bun.Subprocess;
 ///  1. `bun src/bun.js/scripts/generate-classes.ts`
 ///  2. Scan for **/*.classes.ts files in src/bun.js/src
 ///  3. Generate a JS wrapper for each class in:
-///        - Zig: generated_classes.zig
-///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
+///     - Zig: generated_classes.zig
+///     - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
 ///  4. For the Zig code to successfully compile:
-///        - Add it to generated_classes_list.zig
-///        - pub usingnamespace JSC.Codegen.JSMyClassName;
-///  5. make clean-bindings && make bindings -j10
+///     - Add it to generated_classes_list.zig
+///     - Expose the generated methods:
+///       ```zig
+///       pub const js = JSC.Codegen.JSMyClassName;
+///       pub const toJS = js.toJS;
+///       pub const fromJS = js.fromJS;
+///       pub const fromJSDirect = js.fromJSDirect;
+///       ```
+///  5. `bun run build`
 ///
 pub const Codegen = @import("ZigGeneratedClasses");
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;

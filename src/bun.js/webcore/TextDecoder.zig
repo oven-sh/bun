@@ -16,11 +16,15 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub usingnamespace bun.New(TextDecoder);
-pub usingnamespace JSC.Codegen.JSTextDecoder;
+pub const js = JSC.Codegen.JSTextDecoder;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
+pub const new = bun.TrivialNew(TextDecoder);
 
 pub fn finalize(this: *TextDecoder) void {
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn getIgnoreBOM(

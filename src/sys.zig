@@ -1716,7 +1716,7 @@ pub fn openatWindowsA(
 pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-        const rc = darwin_nocancel.@"openat$NOCANCEL"(dirfd.nativeAllowInvalid(), file_path.ptr, @bitCast(bun.O.toPacked(flags)), perm);
+        const rc = darwin_nocancel.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @bitCast(bun.O.toPacked(flags)), perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
@@ -1726,7 +1726,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     }
 
     while (true) {
-        const rc = syscall.openat(dirfd.nativeAllowInvalid(), file_path, bun.O.toPacked(flags), perm);
+        const rc = syscall.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 

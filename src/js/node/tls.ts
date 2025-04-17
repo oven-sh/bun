@@ -4,6 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
+const { validateFunction, validateNumber } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -27,6 +28,9 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
+
+const kConnectOptions = Symbol("connect-options");
+
 function parseCertString() {
   // Removed since JAN 2022 Node v18.0.0+ https://github.com/nodejs/node/pull/41479
   throwNotImplemented("Not implemented");
@@ -329,6 +333,14 @@ function TLSSocket(socket?, options?) {
 $toClass(TLSSocket, "TLSSocket", NetSocket);
 
 TLSSocket.prototype._start = function _start() {
+  if (this.connecting) {
+    this.once("connect", this._start);
+    return;
+  }
+  if (!this._handle) {
+    // Socket was destroyed before the connection was established
+    return;
+  }
   // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
   this.connect();
 };
@@ -478,6 +490,28 @@ TLSSocket.prototype[buntls] = function (port, host) {
     requestCert: this._requestCert,
     ...this[ksecureContext],
   };
+};
+
+TLSSocket.prototype._tlsError = function (err) {
+  this.emit("_tlsError", err);
+  if (this._controlReleased) return err;
+  return null;
+};
+
+TLSSocket.prototype._emitTLSError = function (err) {
+  const e = this._tlsError(err);
+  if (e) this.emit("error", e);
+};
+
+TLSSocket.prototype._handleTimeout = function () {
+  this._emitTLSError($ERR_TLS_HANDSHAKE_TIMEOUT());
+};
+
+TLSSocket.prototype._releaseControl = function () {
+  if (this._controlReleased) return false;
+  this._controlReleased = true;
+  this.removeListener("error", this._tlsError);
+  return true;
 };
 
 let CLIENT_RENEG_LIMIT = 3,
@@ -652,13 +686,84 @@ function normalizeConnectArgs(listArgs) {
 // tls.connect(path[, options][, callback])
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
-  let normal = normalizeConnectArgs(args);
-  const options = normal[0];
-  const { ALPNProtocols } = options;
-  if (ALPNProtocols) {
-    convertALPNProtocols(ALPNProtocols, options);
+  let [options, cb] = normalizeConnectArgs(args);
+  const allowUnauthorized = false; // TODO: node lets u configure this with an env var. don't do this yet.
+
+  options = {
+    rejectUnauthorized: !allowUnauthorized,
+    ciphers: DEFAULT_CIPHERS,
+    checkServerIdentity: checkServerIdentity,
+    minDHSize: 1024,
+    ...options,
+  };
+
+  if (!options.keepAlive) options.singleUse = true;
+
+  validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  validateNumber(options.minDHSize, "options.minDHSize", 1);
+
+  const context = options.secureContext || createSecureContext(options);
+
+  const tlssock = new TLSSocket(options.socket, {
+    allowHalfOpen: options.allowHalfOpen,
+    pipe: !!options.path,
+    secureContext: context,
+    isServer: false,
+    requestCert: true,
+    rejectUnauthorized: options.rejectUnauthorized !== false,
+    session: options.session,
+    ALPNProtocols: options.ALPNProtocols,
+    requestOCSP: options.requestOCSP,
+    enableTrace: options.enableTrace,
+    pskCallback: options.pskCallback,
+    highWaterMark: options.highWaterMark,
+    onread: options.onread,
+    signal: options.signal,
+  });
+
+  options.rejectUnauthorized = options.rejectUnauthorized !== false;
+
+  tlssock[kConnectOptions] = options;
+
+  if (cb) tlssock.once("secureConnect", cb);
+
+  if (!options.socket) {
+    // If user provided the socket, it's their responsibility to manage its
+    // connectivity. If we created one internally, we connect it.
+    if (options.timeout) {
+      tlssock.setTimeout(options.timeout);
+    }
+
+    tlssock.connect(options, tlssock._start);
   }
-  return new TLSSocket(options).connect(normal);
+
+  tlssock._releaseControl();
+
+  if (options.session) tlssock.setSession(options.session);
+
+  if (options.socket) tlssock._start();
+
+  // tlssock.on("secure", onConnectSecure);
+  tlssock.prependListener("end", onConnectEnd);
+
+  return tlssock;
+}
+
+function onConnectEnd() {
+  // NOTE: This logic is shared with _http_client.js
+  if (!this._hadError) {
+    const options = this[kConnectOptions];
+    this._hadError = true;
+    const error = new Error(
+      "Client network socket disconnected " + "before secure TLS connection was " + "established",
+    );
+    error.code = "ECONNRESET";
+    error.path = options.path;
+    error.host = options.host;
+    error.port = options.port;
+    error.localAddress = options.localAddress;
+    this.destroy(error);
+  }
 }
 
 function getCiphers() {

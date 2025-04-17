@@ -941,7 +941,6 @@ function Socket(options?) {
 
   if (socket instanceof Socket) {
     this[ksocket] = socket;
-    this._handle = socket;
   }
   if (onread) {
     if (typeof onread !== "object") {
@@ -1577,7 +1576,7 @@ function lookupAndConnect(self, options) {
   const lookup = options.lookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
-    $debug("connect: autodetecting");
+    $debug("connect: autodetecting", host, port);
 
     dnsopts.all = true;
     lookupAndConnectMultiple(
@@ -1742,8 +1741,12 @@ function internalConnect(self, options, address, port, addressType, localAddress
   }
 
   //TLS
+  let connection = self[ksocket];
+  let upgradeDuplex = false;
+  if (options.socket) {
+    connection = options.socket;
+  }
   let tls = undefined;
-  let connection = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
     tls = bunTLS.$call(self, port, address, true);
@@ -1876,8 +1879,12 @@ function internalConnectMultiple(context, canceled?) {
   }
 
   //TLS
+  let connection = self[ksocket];
+  let upgradeDuplex = false;
+  if (context.options.socket) {
+    connection = context.options.socket;
+  }
   let tls = undefined;
-  let connection = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
     tls = bunTLS.$call(self, port, address, true);

@@ -718,6 +718,7 @@ declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
 declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
+declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;
 
 /**
  * Convert a function to a class-like object.

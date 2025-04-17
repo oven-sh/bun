@@ -666,6 +666,27 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
             .root_source_file = opts.windowsShim(b).exe.getEmittedBin(),
         });
     }
+
+    // Finally, make it so all modules share the same import table.
+    propagateImports(mod) catch @panic("OOM");
+}
+
+/// Makes all imports of `source_mod` visible to all of its dependencies.
+/// Does not replace existing imports.
+fn propagateImports(source_mod: *Module) !void {
+    var seen = std.AutoHashMap(*Module, void).init(source_mod.owner.graph.arena);
+    defer seen.deinit();
+    var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
+    defer queue.deinit();
+    try queue.appendSlice(source_mod.import_table.values());
+    while (queue.pop()) |mod| {
+        if ((try seen.getOrPut(mod)).found_existing) continue;
+        try queue.appendSlice(mod.import_table.values());
+
+        for (source_mod.import_table.keys(), source_mod.import_table.values()) |k, v|
+            if (mod.import_table.get(k) == null)
+                mod.addImport(k, v);
+    }
 }
 
 fn validateGeneratedPath(path: []const u8) void {

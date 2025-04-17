@@ -6,7 +6,7 @@
 const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;

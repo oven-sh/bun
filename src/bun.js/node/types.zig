@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;

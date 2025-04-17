@@ -1,7 +1,7 @@
 const Scanner = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const BundleOptions = @import("../../options.zig").BundleOptions;
 
 const Allocator = std.mem.Allocator;

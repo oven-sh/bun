@@ -1085,7 +1085,7 @@ pub const DataCell = extern struct {
     };
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const JSC = bun.JSC;
 const std = @import("std");

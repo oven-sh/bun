@@ -1,5 +1,5 @@
 const env = @import("env.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile

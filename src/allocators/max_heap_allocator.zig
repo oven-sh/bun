@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 
 /// Single allocation only.

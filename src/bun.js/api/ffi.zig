@@ -1,6 +1,5 @@
 const Bun = @This();
-const root = @import("root");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const Global = bun.Global;

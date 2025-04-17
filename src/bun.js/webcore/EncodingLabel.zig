@@ -154,7 +154,7 @@ pub const EncodingLabel = enum {
     }
 };
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const encoding = @import("encoding.zig");
 const string = []const u8;
 const strings = bun.strings;

@@ -20,7 +20,7 @@ const windows = std.os.windows;
 const testing = std.testing;
 const assert = bun.assert;
 const Progress = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// `null` if the current node (and its children) should
 /// not print on update()

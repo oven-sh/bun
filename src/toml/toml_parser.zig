@@ -7,7 +7,7 @@ const js_ast = bun.JSAst;
 const options = @import("../options.zig");
 
 const fs = @import("../fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

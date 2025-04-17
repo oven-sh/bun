@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const windows = bun.windows;
 const uv = windows.libuv;
 const Path = @import("../../resolver/resolve_path.zig");

@@ -65,7 +65,7 @@ pub inline fn bltn(this: *Echo) *Builtin {
 
 // --
 const log = bun.Output.scoped(.echo, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

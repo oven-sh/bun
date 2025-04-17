@@ -129,6 +129,7 @@ describe("@types/bun integration test", () => {
       `error TS2353: Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.`,
       `error TS2554: Expected 2 arguments, but got 0.`,
       `error TS2551: Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?`,
+      `error TS2322: Type '"nodebuffer"' is not assignable to type 'BinaryType'.`,
       `error TS2339: Property 'ping' does not exist on type 'WebSocket'.`,
       `error TS2339: Property 'ping' does not exist on type 'WebSocket'.`,
       `error TS2339: Property 'ping' does not exist on type 'WebSocket'.`,

@@ -1,5 +1,5 @@
 // This file is the old linker, used by Bun.Transpiler.
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

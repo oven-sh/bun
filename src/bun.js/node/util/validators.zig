@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
@@ -21,7 +21,7 @@ pub fn throwErrInvalidArgValue(
     args: anytype,
 ) bun.JSError {
     @branchHint(.cold);
-    return globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
+    return globalThis.ERR(.INVALID_ARG_VALUE, fmt, args).throw();
 }
 
 pub fn throwErrInvalidArgTypeWithMessage(
@@ -30,7 +30,7 @@ pub fn throwErrInvalidArgTypeWithMessage(
     args: anytype,
 ) bun.JSError {
     @branchHint(.cold);
-    return globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
+    return globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).throw();
 }
 
 pub fn throwErrInvalidArgType(
@@ -51,7 +51,7 @@ pub fn throwRangeError(
     args: anytype,
 ) bun.JSError {
     @branchHint(.cold);
-    return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
+    return globalThis.ERR(.OUT_OF_RANGE, fmt, args).throw();
 }
 
 pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name: string, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {

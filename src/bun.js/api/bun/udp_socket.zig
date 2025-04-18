@@ -1,6 +1,6 @@
 const std = @import("std");
 const uws = @import("../../../deps/uws.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;

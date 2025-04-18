@@ -115,9 +115,9 @@ pub const Options = struct {
     }
     inline fn throwBadPort(global: *JSC.JSGlobalObject, port_: JSC.JSValue) bun.JSError {
         const ty = global.determineSpecificType(port_) catch {
-            return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number.", .{}).throw();
+            return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number.", .{}).throw();
         };
-        return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
+        return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
     }
 };
 
@@ -616,7 +616,7 @@ comptime {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;

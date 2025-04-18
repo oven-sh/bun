@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;
@@ -313,8 +313,6 @@ pub fn untrackFunction(
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
-pub usingnamespace @import("./JSPropertyIterator.zig");
-
 // DOMCall Fields
 const Bun = JSC.API.Bun;
 pub const __DOMCall_ptr = Bun.FFIObject.dom_call;
@@ -373,7 +371,7 @@ pub fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
 /// broke when I just used it. Not sure. ... but this works!
 fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
     if (comptime !bun.Environment.isWindows) {
-        unreachable;
+        @compileError(unreachable);
     }
 
     var buf: bun.WPathBuffer = undefined;
@@ -390,7 +388,7 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
     };
     buf[data.len] = 0;
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
-    return bun.windows.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+    return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
 
 comptime {

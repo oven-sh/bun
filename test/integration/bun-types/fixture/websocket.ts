@@ -193,7 +193,7 @@ import { expectType } from "./utilities";
 
   // Set binary type
   ws.binaryType = "arraybuffer";
-  ws.binaryType = "blob";
+  ws.binaryType = "nodebuffer";
 }
 
 // WebSocket send method test

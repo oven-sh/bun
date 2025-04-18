@@ -188,7 +188,7 @@ pub const FetchTasklet = struct {
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!HTTPRequestBody {
             var body_value = try Body.Value.fromJS(globalThis, value);
             if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed2(globalThis)))) {
-                return globalThis.ERR_BODY_ALREADY_USED("body already used", .{}).throw();
+                return globalThis.ERR(.BODY_ALREADY_USED, "body already used", .{}).throw();
             }
             if (body_value == .Locked) {
                 if (body_value.Locked.readable.has()) {
@@ -1478,11 +1478,11 @@ pub fn Bun__fetchPreconnect_(
     }
 
     if (url_str.tag == .Dead) {
-        return globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
+        return globalObject.ERR(.INVALID_ARG_TYPE, "Invalid URL", .{}).throw();
     }
 
     if (url_str.isEmpty()) {
-        return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
+        return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_blank_url, .{}).throw();
     }
 
     const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
@@ -1493,7 +1493,7 @@ pub fn Bun__fetchPreconnect_(
 
     if (url.hostname.len == 0) {
         bun.default_allocator.free(url.href);
-        return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
+        return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_blank_url, .{}).throw();
     }
 
     if (!url.hasValidPort()) {
@@ -1545,7 +1545,7 @@ pub fn Bun__fetch_(
     }
 
     if (arguments.len == 0) {
-        const err = JSC.toTypeError(.ERR_MISSING_ARGS, fetch_error_no_args, .{}, ctx);
+        const err = JSC.toTypeError(.MISSING_ARGS, fetch_error_no_args, .{}, ctx);
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
@@ -1689,7 +1689,7 @@ pub fn Bun__fetch_(
 
     if (url_str.isEmpty()) {
         is_error = true;
-        const err = JSC.toTypeError(.ERR_INVALID_URL, fetch_error_blank_url, .{}, ctx);
+        const err = JSC.toTypeError(.INVALID_URL, fetch_error_blank_url, .{}, ctx);
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
@@ -1708,7 +1708,7 @@ pub fn Bun__fetch_(
     }
 
     url = ZigURL.fromString(allocator, url_str) catch {
-        const err = JSC.toTypeError(.ERR_INVALID_URL, "fetch() URL is invalid", .{}, ctx);
+        const err = JSC.toTypeError(.INVALID_URL, "fetch() URL is invalid", .{}, ctx);
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
             globalThis,
@@ -2007,7 +2007,7 @@ pub fn Bun__fetch_(
                     if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
                         var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                         if (href.tag == .Dead) {
-                            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
+                            const err = JSC.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                             is_error = true;
                             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }
@@ -2106,7 +2106,7 @@ pub fn Bun__fetch_(
 
         if (request) |req| {
             if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
-                return globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
+                return globalThis.ERR(.BODY_ALREADY_USED, "Request body already used", .{}).throw();
             }
 
             if (req.body.value == .Locked) {
@@ -2247,7 +2247,7 @@ pub fn Bun__fetch_(
 
     if (proxy != null and unix_socket_path.length() > 0) {
         is_error = true;
-        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_proxy_unix, .{}, ctx);
+        const err = JSC.toTypeError(.INVALID_ARG_VALUE, fetch_error_proxy_unix, .{}, ctx);
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
@@ -2288,7 +2288,7 @@ pub fn Bun__fetch_(
                     break :blob blob;
                 } else {
                     // Consistent with what Node.js does - it rejects, not a 404.
-                    const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Failed to resolve blob:{s}", .{
+                    const err = JSC.toTypeError(.INVALID_ARG_VALUE, "Failed to resolve blob:{s}", .{
                         url_path_decoded,
                     }, ctx);
                     is_error = true;
@@ -2363,14 +2363,14 @@ pub fn Bun__fetch_(
 
     if (url.protocol.len > 0) {
         if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
+            const err = JSC.toTypeError(.INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
             is_error = true;
             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
     }
 
     if (!method.hasRequestBody() and body.hasBody()) {
-        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
+        const err = JSC.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
@@ -2732,7 +2732,7 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
     }
 }
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const string = bun.string;

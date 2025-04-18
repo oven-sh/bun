@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const C = bun.C;
 const string = bun.string;
 const strings = bun.strings;

@@ -245,7 +245,7 @@ pub export fn TextEncoder__encodeInto8(
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 const JSC = bun.JSC;
 const Environment = bun.Environment;

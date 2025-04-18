@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -215,7 +215,7 @@ pub fn toInvalidArguments(
     ctx: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     @branchHint(.cold);
-    return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
+    return JSC.Error.INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
 pub fn getAllocator(_: *JSC.JSGlobalObject) std.mem.Allocator {

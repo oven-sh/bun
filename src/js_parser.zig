@@ -16635,6 +16635,8 @@ fn NewParser_(
                         return p.visitExprInOut(dot, in);
                     }
 
+                    const original_target = e_.target;
+
                     const target_visited = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = e_.optional_chain == .continuation,
                     });
@@ -16685,7 +16687,7 @@ fn NewParser_(
                                         E.Dot{
                                             .name = unwrapped.data.e_string.slice(p.allocator),
                                             .name_loc = unwrapped.loc,
-                                            .target = e_.target,
+                                            .target = original_target,
                                             .optional_chain = e_.optional_chain,
                                         },
                                         expr.loc,

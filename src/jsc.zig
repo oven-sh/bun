@@ -59,6 +59,7 @@ pub const API = struct {
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
     pub const HTMLBundle = @import("./bun.js/api/server/HTMLBundle.zig");
     pub const Valkey = @import("./valkey/js_valkey.zig").JSValkeyClient;
+    pub const SocketHandlers = @import("./bun.js/api/bun/SocketHandlers.zig");
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");

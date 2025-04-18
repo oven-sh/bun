@@ -11,10 +11,6 @@ pub const JSRef = union(enum) {
         return .{ .strong = JSC.Strong.create(value, globalThis) };
     }
 
-    pub fn empty() @This() {
-        return .{ .weak = .zero };
-    }
-
     pub fn get(this: *@This()) JSC.JSValue {
         return switch (this.*) {
             .weak => this.weak,
@@ -71,6 +67,21 @@ pub const JSRef = union(enum) {
             },
             .strong => {
                 this.strong.deinit();
+            },
+            .finalized => {},
+        }
+    }
+
+    pub fn downgrade(this: *@This()) void {
+        switch (this.*) {
+            .weak => {},
+            .strong => {
+                const value = this.strong.get() orelse {
+                    this.* = .{ .weak = .zero };
+                    return;
+                };
+                this.strong.deinit();
+                this.* = .{ .weak = value };
             },
             .finalized => {},
         }

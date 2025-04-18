@@ -83,4 +83,5 @@ pub const Classes = struct {
     pub const S3Stat = JSC.WebCore.S3Stat;
     pub const HTMLBundle = JSC.API.HTMLBundle;
     pub const RedisClient = JSC.API.Valkey;
+    pub const SocketHandlers = JSC.API.SocketHandlers;
 };

@@ -221,6 +221,7 @@ function generate(ssl) {
     finalize: true,
     construct: true,
     klass: {},
+    values: ["handlers"],
   });
 }
 const sslOnly = {
@@ -290,6 +291,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
+    values: ["handlers"],
   }),
 
   define({
@@ -447,5 +449,27 @@ export default [
         configurable: true,
       },
     },
+  }),
+  define({
+    name: "SocketHandlers",
+    construct: false,
+    call: false,
+    noConstructor: true,
+    finalize: true,
+    proto: {},
+    klass: {},
+
+    values: [
+      "onData",
+      "onWritable",
+      "onOpen",
+      "onClose",
+      "onTimeout",
+      "onConnectError",
+      "onEnd",
+      "onError",
+      "onHandshake",
+      "promise",
+    ],
   }),
 ];

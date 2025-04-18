@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, isPosix } from "harness";
 import { bunEnv } from "harness";
-
+import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
     expect(() =>
@@ -32,4 +32,12 @@ describe("spawnSync", () => {
       expect(result.exitCode).toBe(0);
     });
   }
+
+  it.skipIf(process.platform !== "linux")("should use memfd when possible", () => {
+    expect([join(import.meta.dir, "spawnSync-memfd-fixture.ts")]).toRun();
+  });
+
+  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", () => {
+    expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
+  });
 });

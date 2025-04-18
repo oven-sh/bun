@@ -105,7 +105,7 @@ const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 const SourceProviderMap = SourceMap.SourceProviderMap;
-
+const Counters = @import("./Counters.zig");
 const uv = bun.windows.libuv;
 
 pub const SavedSourceMap = struct {
@@ -781,6 +781,7 @@ pub const VirtualMachine = struct {
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
     smol: bool = false,
     dns_result_order: DNSResolver.Order = .verbatim,
+    counters: Counters = .{},
 
     hot_reload: bun.CLI.Command.HotReload = .none,
     jsc: *VM = undefined,

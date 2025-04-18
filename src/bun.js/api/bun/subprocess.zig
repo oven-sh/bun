@@ -2191,7 +2191,9 @@ pub fn spawnMaybeSync(
 
     inline for (0..stdio.len) |fd_index| {
         if (stdio[fd_index].canUseMemfd(is_sync, fd_index > 0 and maxBuffer != null)) {
-            stdio[fd_index].useMemfd(fd_index);
+            if (stdio[fd_index].useMemfd(fd_index)) {
+                jsc_vm.counters.mark(.spawn_memfd);
+            }
         }
     }
     var should_close_memfd = Environment.isLinux;
@@ -2557,6 +2559,7 @@ pub fn spawnMaybeSync(
     comptime bun.assert(is_sync);
 
     if (can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
+        jsc_vm.counters.mark(.spawnSync_blocking);
         const debug_timer = Output.DebugTimer.start();
         subprocess.process.wait(true);
         log("spawnSync fast path took {}", .{debug_timer});

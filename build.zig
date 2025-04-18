@@ -470,7 +470,7 @@ fn addMultiCheck(
 fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
     const target = b.resolveTargetQuery(q: {
         var query = initial_target.query;
-        if (query.os_tag.? == .windows)
+        if (query.os_tag == .windows)
             query.abi = .gnu;
         break :q query;
     });

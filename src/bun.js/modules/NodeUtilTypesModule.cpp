@@ -447,7 +447,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsKeyObject,
 {
     GET_FIRST_CELL
 
-    if (jsDynamicCast<Bun::JSKeyObject*>(cell)) {
+    if (cell->inherits<Bun::JSKeyObject>()) {
         return JSValue::encode(jsBoolean(true));
     }
 

@@ -3,6 +3,7 @@ const JSC = bun.JSC;
 const String = bun.String;
 const uws = bun.uws;
 const std = @import("std");
+const js_ast = @import("../js_ast.zig");
 pub const debug = bun.Output.scoped(.Postgres, false);
 pub const int4 = u32;
 pub const PostgresInt32 = int4;
@@ -838,6 +839,75 @@ pub const PostgresSQLQuery = struct {
     }
 };
 
+fn writeArrayItem(
+    item: JSValue,
+    globalObject: *JSC.JSGlobalObject,
+    should_quote: bool,
+    comptime Context: type,
+    writer: protocol.NewWriter(Context),
+) !void {
+    if (item.isString()) {
+        var str = String.fromJS2(item, globalObject) catch return error.OutOfMemory;
+        defer str.deref();
+        const slice = str.toUTF8WithoutRef(bun.default_allocator);
+        defer slice.deinit();
+        try writer.write(slice.slice());
+    } else if (item.isNull()) {
+        try writer.write("NULL");
+    } else if (item.isNumber()) {
+        const num_value = item.asNumber();
+
+        if (should_quote) {
+            try writer.write("\"");
+        }
+        // Always valid ?
+        const str = js_ast.E.Number.toStringFromF64(num_value, bun.default_allocator).?;
+        try writer.write(str);
+        if (should_quote) {
+            try writer.write("\"");
+        }
+
+        // Allocation happens only when the value is finite and
+        // the value is outside the range -100 and 100 or when the value has a floating point
+        if (std.math.isFinite(num_value) and
+            (num_value > 100 or num_value < -100 or
+            num_value != @trunc(num_value)))
+        {
+            bun.default_allocator.free(str);
+        }
+    } else if (item.isBoolean()) {
+        try writer.write(if (item.toBoolean()) "true" else "false");
+    } else if (item.isArray()) {
+        var inner_arr_iter = item.arrayIterator(globalObject);
+
+        if (should_quote) {
+            try writer.write("\"");
+        }
+        while (inner_arr_iter.next()) |inner_item| {
+            try writeArrayItem(
+                inner_item,
+                globalObject,
+                false,
+                Context,
+                writer,
+            );
+            if (inner_arr_iter.i < inner_arr_iter.len) {
+                try writer.write(",");
+            }
+        }
+        if (should_quote) {
+            try writer.write("\"");
+        }
+    } else {
+        // Doesn't show exactly where the error happened ?
+        return globalObject.throwValue(postgresErrorToJS(
+            globalObject,
+            "Array items must be string, number, boolean, null, or array",
+            error.UnsupportedArrayFormat,
+        ));
+    }
+}
+
 pub const PostgresRequest = struct {
     pub fn writeBind(
         name: []const u8,
@@ -939,6 +1009,25 @@ pub const PostgresRequest = struct {
             // differently than what Postgres does when given a timestamp with
             // timezone.
             if (tag.isBinaryFormatSupported() and value.isString()) .text else tag) {
+                .text_array => {
+                    const l = try writer.length();
+                    try writer.write("{");
+                    var arr_iter = value.arrayIterator(globalObject);
+                    while (arr_iter.next()) |item| {
+                        try writeArrayItem(
+                            item,
+                            globalObject,
+                            true,
+                            Context,
+                            writer,
+                        );
+                        if (arr_iter.i < arr_iter.len) {
+                            try writer.write(",");
+                        }
+                    }
+                    try writer.write("}");
+                    try l.writeExcludingSelf();
+                },
                 .jsonb, .json => {
                     var str = bun.String.empty;
                     defer str.deref();

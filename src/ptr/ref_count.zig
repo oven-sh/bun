@@ -63,8 +63,9 @@ pub const RefCountOptions = struct {
 ///
 ///     const ref_ptr = RefPtr(T).initRef(existing_raw_pointer);
 ///
-pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, options: RefCountOptions) type {
+pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, options: RefCountOptions) type {
     return struct {
+        const destructor: fn (*T) void = destructor_untyped;
         active_counts: u32,
         thread: if (enable_single_threaded_checks) ?bun.DebugThreadLock else void,
         debug: if (enable_debug) DebugData(false) else void,

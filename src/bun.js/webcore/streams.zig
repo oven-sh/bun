@@ -3402,10 +3402,10 @@ pub fn ReadableStreamSource(
 pub const AutoFlusher = @import("./AutoFlusher.zig");
 
 pub const FileSink = struct {
+    ref_count: RefCount,
     writer: IOWriter = .{},
     event_loop_handle: JSC.EventLoopHandle,
     written: usize = 0,
-    ref_count: bun.ptr.RefCount(FileSink, "ref_count", deinit, .{}),
     pending: StreamResult.Writable.Pending = .{
         .result = .{ .done = {} },
     },
@@ -3428,20 +3428,15 @@ pub const FileSink = struct {
 
     const log = Output.scoped(.FileSink, false);
 
-    // TODO: this usingnamespace is load-bearing, likely due to a compiler bug.
-    const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
-    pub usingnamespace brk: {
-        break :brk struct {
-            pub const ref = RefCount.ref;
-            pub const deref = RefCount.deref;
-        };
-    };
+    pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
-    pub const IOWriter = bun.io.StreamingWriter(@This(), .{
-        .onClose = onClose,
-        .onWritable = onReady,
-        .onError = onError,
-        .onWrite = onWrite,
+    pub const IOWriter = bun.io.StreamingWriter(@This(), opaque {
+        pub const onClose = FileSink.onClose;
+        pub const onWritable = FileSink.onReady;
+        pub const onError = FileSink.onError;
+        pub const onWrite = FileSink.onWrite;
     });
     pub const Poll = IOWriter;
 

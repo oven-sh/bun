@@ -470,7 +470,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
                 this.outgoing.list.clearRetainingCapacity();
             }
 
-            onWrite(@ptrCast(this.parent), written, status);
+            onWrite(this.parent, written, status);
         }
 
         pub fn setParent(this: *PosixWriter, parent: *Parent) void {
@@ -500,7 +500,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 
         fn registerPoll(this: *PosixWriter) void {
             const poll = this.getPoll() orelse return;
-            switch (poll.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, .dispatch, poll.fd)) {
+            switch (poll.registerWithFd(this.parent.loop(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
                     this.close();
@@ -739,11 +739,11 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             if (this.closed_without_reporting) {
                 this.closed_without_reporting = false;
                 bun.assert(this.getFd() == bun.invalid_fd);
-                onClose(@ptrCast(this.parent));
+                onClose(this.parent);
                 return;
             }
 
-            this.handle.close(@ptrCast(this.parent), onClose);
+            this.handle.close(this.parent, onClose);
         }
 
         pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, is_pollable: bool) JSC.Maybe(void) {
@@ -753,7 +753,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
                 return JSC.Maybe(void){ .result = {} };
             }
 
-            const loop = @as(*Parent, @ptrCast(this.parent)).eventLoop();
+            const loop = this.parent.eventLoop();
             var poll = this.getPoll() orelse brk: {
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .{}, PosixWriter, this) };
                 break :brk this.handle.poll;

@@ -1070,6 +1070,167 @@ Socket.prototype[kCloseRawConnection] = function () {
 };
 
 Socket.prototype.connect = function connect(...args) {
+  {
+    const [options, connectListener] =
+      $isArray(args[0]) && args[0][normalizedArgsSymbol]
+        ? ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
+        : normalizeArgs(args);
+    let connection = this[ksocket];
+    let upgradeDuplex = false;
+    let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session } = options;
+    if (socket) {
+      connection = socket;
+    }
+    if (
+      // TLSSocket already created a socket and is forwarding it here. This is a private API.
+      !(socket && $isObject(socket) && socket instanceof Duplex) &&
+      // public api for net.Socket.connect
+      port === undefined &&
+      path == null
+    ) {
+      throw $ERR_MISSING_ARGS(["options", "port", "path"]);
+    }
+    // this.remotePort = port;
+    const bunTLS = this[bunTlsSymbol];
+    var tls: any | undefined = undefined;
+    if (typeof bunTLS === "function") {
+      tls = bunTLS.$call(this, port, host, true);
+      // Client always request Cert
+      this._requestCert = true;
+      if (tls) {
+        if (typeof rejectUnauthorized !== "undefined") {
+          this._rejectUnauthorized = rejectUnauthorized;
+          tls.rejectUnauthorized = rejectUnauthorized;
+        } else {
+          this._rejectUnauthorized = tls.rejectUnauthorized;
+        }
+        tls.requestCert = true;
+        tls.session = session || tls.session;
+        this.servername = tls.servername;
+        tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
+        this[bunTLSConnectOptions] = tls;
+        if (!connection && tls.socket) {
+          connection = tls.socket;
+        }
+      }
+      if (connection) {
+        if (
+          typeof connection !== "object" ||
+          !(connection instanceof Socket) ||
+          typeof connection[bunTlsSymbol] === "function"
+        ) {
+          if (connection instanceof Duplex) {
+            upgradeDuplex = true;
+          } else {
+            throw new TypeError("socket must be an instance of net.Socket or Duplex");
+          }
+        }
+      }
+      this.authorized = false;
+      this.secureConnecting = true;
+      this._secureEstablished = false;
+      this._securePending = true;
+      // if (connectListener) this.on("secureConnect", connectListener);
+      this[kConnectOptions] = options;
+      this.prependListener("end", onConnectEnd);
+    }
+    // start using existing connection
+    if (connection) {
+      try {
+        // reset the underlying writable object when establishing a new connection
+        // this is a function on `Duplex`, originally defined on `Writable`
+        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
+        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+        this._undestroy();
+        const socket = connection._handle;
+        if (!upgradeDuplex && socket) {
+          // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+          upgradeDuplex = isNamedPipeSocket(socket);
+        }
+        if (upgradeDuplex) {
+          this.connecting = true;
+          this[kupgraded] = connection;
+          const [result, events] = upgradeDuplexToTLS(connection, {
+            data: this,
+            tls,
+            socket: this[khandlers],
+          });
+          connection.on("data", events[0]);
+          connection.on("end", events[1]);
+          connection.on("drain", events[2]);
+          connection.on("close", events[3]);
+          this._handle = result;
+        } else {
+          if (socket) {
+            this.connecting = true;
+            this[kupgraded] = connection;
+            const result = socket.upgradeTLS({
+              data: this,
+              tls,
+              socket: this[khandlers],
+            });
+            if (result) {
+              const [raw, tls] = result;
+              // replace socket
+              connection._handle = raw;
+              this.once("end", this[kCloseRawConnection]);
+              raw.connecting = false;
+              this._handle = tls;
+            } else {
+              this._handle = null;
+              throw new Error("Invalid socket");
+            }
+          } else {
+            // wait to be connected
+            connection.once("connect", () => {
+              const socket = connection._handle;
+              if (!upgradeDuplex && socket) {
+                // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+                upgradeDuplex = isNamedPipeSocket(socket);
+              }
+              if (upgradeDuplex) {
+                this.connecting = true;
+                this[kupgraded] = connection;
+                const [result, events] = upgradeDuplexToTLS(connection, {
+                  data: this,
+                  tls,
+                  socket: this[khandlers],
+                });
+                connection.on("data", events[0]);
+                connection.on("end", events[1]);
+                connection.on("drain", events[2]);
+                connection.on("close", events[3]);
+                this._handle = result;
+              } else {
+                this.connecting = true;
+                this[kupgraded] = connection;
+                const result = socket.upgradeTLS({
+                  data: this,
+                  tls,
+                  socket: this[khandlers],
+                });
+                if (result) {
+                  const [raw, tls] = result;
+                  // replace socket
+                  connection._handle = raw;
+                  this.once("end", this[kCloseRawConnection]);
+                  raw.connecting = false;
+                  this._handle = tls;
+                } else {
+                  this._handle = null;
+                  throw new Error("Invalid socket");
+                }
+              }
+            });
+          }
+        }
+      } catch (error) {
+        process.nextTick(emitErrorAndCloseNextTick, this, error);
+      }
+      return this;
+    }
+  }
+
   const [options, cb] = $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
   const connectListener = cb;
 

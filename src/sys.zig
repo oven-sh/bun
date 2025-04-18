@@ -2275,6 +2275,21 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     }
 }
 
+pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
+    while (true) {
+        const rc = linux.pidfd_open(pid, flags);
+
+        if (Maybe(i32).errnoSys(rc, .pidfd_open)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(i32){ .result = @intCast(rc) };
+    }
+
+    unreachable;
+}
+
 pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
     while (true) {
         const rc = syscall.lseek(fd.cast(), offset, whence);

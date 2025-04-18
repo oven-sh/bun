@@ -2156,9 +2156,15 @@ pub fn spawnMaybeSync(
                 }
             }
 
-            if (try args.get(globalThis, "timeout")) |val| {
-                if (val.isNumber() and val.isFinite()) {
-                    timeout = @max(val.coerce(i32, globalThis), 1);
+            if (try args.getOptionalInt(globalThis, "timeout", u64)) |val| {
+                switch (val) {
+                    0 => {
+                        // keep timeout as null if it's 0, so it's clear there is no timeout.
+                        timeout = null;
+                    },
+                    else => {
+                        timeout = @intCast(@as(u31, @truncate(val)));
+                    },
                 }
             }
 
@@ -2257,6 +2263,30 @@ pub fn spawnMaybeSync(
         }
     }
 
+    // If the whole thread is supposed to do absolutely nothing while waiting,
+    // we can block the thread which reduces CPU usage.
+    //
+    // That means:
+    // - No maximum buffer
+    // - No timeout
+    // - No abort signal
+    // - No stdin, stdout, stderr pipes
+    // - No extra fds
+    // - No auto killer (for tests)
+    // - No execution time limit (for tests)
+    // - No IPC
+    const can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (comptime Environment.isPosix and is_sync) and
+        abort_signal == null and
+        timeout == null and
+        maxBuffer == null and
+        !stdio[0].isPiped() and
+        !stdio[1].isPiped() and
+        !stdio[2].isPiped() and
+        extra_fds.items.len == 0 and
+        !jsc_vm.auto_killer.enabled and
+        !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH");
+
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
         .detached = detached,
@@ -2274,6 +2304,7 @@ pub fn spawnMaybeSync(
         },
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
+        .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -2522,30 +2553,6 @@ pub fn spawnMaybeSync(
     }
 
     comptime bun.assert(is_sync);
-
-    // If the whole thread is supposed to do absolutely nothing while waiting,
-    // we can block the thread which reduces CPU usage.
-    //
-    // That means:
-    // - No maximum buffer
-    // - No timeout
-    // - No abort signal
-    // - No stdin, stdout, stderr pipes
-    // - No extra fds
-    // - No auto killer (for tests)
-    // - No execution time limit (for tests)
-    // - No IPC
-    const can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (comptime Environment.isPosix) and
-        abort_signal == null and
-        timeout == null and
-        maxBuffer == null and
-        !stdio[0].isPiped() and
-        !stdio[1].isPiped() and
-        !stdio[2].isPiped() and
-        extra_fds.items.len == 0 and
-        !jsc_vm.auto_killer.enabled and
-        !jsc_vm.jsc.hasExecutionTimeLimit() and
-        !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH");
 
     if (can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
         const debug_timer = Output.DebugTimer.start();

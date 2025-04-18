@@ -105,6 +105,7 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
+const kpromise = Symbol("kpromise");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -509,8 +510,119 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
+const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; req?: object }> = {
+  open(socket) {
+    $debug("Bun.Socket open");
+    const { self, that, req } = socket.data;
+    self._handle = that;
+    socket[owner_symbol] = self;
+    that[ksocket] = socket;
+    that[kpromise] = null;
+    req!.oncomplete(0, self._handle, req, true, true);
+    socket.data.req = undefined;
+  },
+  data(socket, buffer) {
+    $debug("Bun.Socket data");
+    const { self, that } = socket.data;
+    self.bytesRead += buffer.length;
+    if (!self.push(buffer)) socket.pause();
+  },
+  drain(socket) {
+    $debug("Bun.Socket drain");
+    const { self, that } = socket.data;
+    const callback = self[kwriteCallback];
+    self.connecting = false;
+    if (callback) {
+      const writeChunk = self._pendingData;
+      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+        self._pendingData = self[kwriteCallback] = null;
+        callback(null);
+      } else {
+        self._pendingData = null;
+      }
+      self[kBytesWritten] = socket.bytesWritten;
+    }
+  },
+  end(socket) {
+    $debug("Bun.Socket end");
+    const { self, that } = socket.data;
+    if (self[kended]) return;
+    self[kended] = true;
+    if (!self.allowHalfOpen) self.write = writeAfterFIN;
+    self.push(null);
+    self.read(0);
+  },
+  close(socket, err) {
+    $debug("Bun.Socket close");
+    const { self, that } = socket.data;
+    if (self[kclosed]) return;
+    self[kclosed] = true;
+    that[ksocket] = null;
+    if (self[kended]) return;
+    self[kended] = true;
+    if (!self.allowHalfOpen) self.write = writeAfterFIN;
+    self.push(null);
+    self.read(0);
+  },
+  handshake(socket, success, verifyError) {
+    $debug("Bun.Socket handshake");
+    const { self, that } = socket.data;
+    if (!success && verifyError?.code === "ECONNRESET") {
+      // will be handled in onConnectEnd
+      return;
+    }
+
+    self._securePending = false;
+    self.secureConnecting = false;
+    self._secureEstablished = !!success;
+
+    self.emit("secure", self);
+    self.alpnProtocol = socket.alpnProtocol;
+    const { checkServerIdentity } = self[bunTLSConnectOptions];
+    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+      const cert = self.getPeerCertificate(true);
+      verifyError = checkServerIdentity(self.servername, cert);
+    }
+    if (self._requestCert || self._rejectUnauthorized) {
+      if (verifyError) {
+        self.authorized = false;
+        self.authorizationError = verifyError.code || verifyError.message;
+        if (self._rejectUnauthorized) {
+          self.destroy(verifyError);
+          return;
+        }
+      } else {
+        self.authorized = true;
+      }
+    } else {
+      self.authorized = true;
+    }
+    self.emit("secureConnect", verifyError);
+    self.removeListener("end", onConnectEnd);
+  },
+  error(socket, error, ignoreHadError) {
+    $debug("Bun.Socket error");
+    const { self, that } = socket.data;
+    if (self._hadError && !ignoreHadError) return;
+    self._hadError = true;
+
+    const callback = self[kwriteCallback];
+    if (callback) {
+      self[kwriteCallback] = null;
+      callback(error);
+    }
+    self.emit("error", error);
+  },
+  timeout(socket) {
+    $debug("Bun.Socket timeout");
+    const { self, that } = socket.data;
+    self.emit("timeout", self);
+  },
+};
+
 const kConnectTcp = Symbol("kConnectTcp");
 const kConnectPipe = Symbol("kConnectPipe");
+
 class SocketHandle {
   #promise: Promise<Socket<undefined>> | null;
   #socket: Socket<undefined> | null;
@@ -520,7 +632,12 @@ class SocketHandle {
     this.#promise = null;
     this.#socket = null;
   }
-
+  set [kpromise](prom) {
+    this.#promise = prom;
+  }
+  set [ksocket](sock) {
+    this.#socket = sock;
+  }
   [kConnectTcp](self, addressType, req, address, port) {
     $debug("SocketHandle.kConnectTcp", addressType, address, port);
     $assert(this.#promise == null);
@@ -532,106 +649,8 @@ class SocketHandle {
       ipv6Only: addressType === 6,
       allowHalfOpen: self.allowHalfOpen,
       tls: req.tls,
-      socket: {
-        open(socket) {
-          $debug("Bun.Socket open");
-          self._handle = that;
-          socket[owner_symbol] = self;
-          that.#socket = socket;
-          that.#promise = null;
-          req.oncomplete(0, self._handle, req, true, true);
-        },
-        data(socket, buffer) {
-          $debug("Bun.Socket data");
-          self.bytesRead += buffer.length;
-          if (!self.push(buffer)) socket.pause();
-        },
-        drain(socket) {
-          $debug("Bun.Socket drain");
-          const callback = self[kwriteCallback];
-          self.connecting = false;
-          if (callback) {
-            const writeChunk = self._pendingData;
-            if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
-              self._pendingData = self[kwriteCallback] = null;
-              callback(null);
-            } else {
-              self._pendingData = null;
-            }
-            self[kBytesWritten] = socket.bytesWritten;
-          }
-        },
-        end(socket) {
-          $debug("Bun.Socket end");
-          if (self[kended]) return;
-          self[kended] = true;
-          if (!self.allowHalfOpen) self.write = writeAfterFIN;
-          self.push(null);
-          self.read(0);
-        },
-        close(socket, err) {
-          $debug("Bun.Socket close");
-          if (self[kclosed]) return;
-          self[kclosed] = true;
-          that.#socket = null;
-          if (self[kended]) return;
-          self[kended] = true;
-          if (!self.allowHalfOpen) self.write = writeAfterFIN;
-          self.push(null);
-          self.read(0);
-        },
-        handshake(socket, success, verifyError) {
-          $debug("Bun.Socket handshake");
-          if (!success && verifyError?.code === "ECONNRESET") {
-            // will be handled in onConnectEnd
-            return;
-          }
-
-          self._securePending = false;
-          self.secureConnecting = false;
-          self._secureEstablished = !!success;
-
-          self.emit("secure", self);
-          self.alpnProtocol = socket.alpnProtocol;
-          const { checkServerIdentity } = self[bunTLSConnectOptions];
-          if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
-            const cert = self.getPeerCertificate(true);
-            verifyError = checkServerIdentity(self.servername, cert);
-          }
-          if (self._requestCert || self._rejectUnauthorized) {
-            if (verifyError) {
-              self.authorized = false;
-              self.authorizationError = verifyError.code || verifyError.message;
-              if (self._rejectUnauthorized) {
-                self.destroy(verifyError);
-                return;
-              }
-            } else {
-              self.authorized = true;
-            }
-          } else {
-            self.authorized = true;
-          }
-          self.emit("secureConnect", verifyError);
-          self.removeListener("end", onConnectEnd);
-        },
-        error(socket, error, ignoreHadError) {
-          $debug("Bun.Socket error");
-          if (self._hadError && !ignoreHadError) return;
-          self._hadError = true;
-
-          const callback = self[kwriteCallback];
-          if (callback) {
-            self[kwriteCallback] = null;
-            callback(error);
-          }
-          self.emit("error", error);
-        },
-        timeout() {
-          $debug("Bun.Socket timeout");
-          self.emit("timeout", self);
-        },
-      },
+      data: { self, that, req },
+      socket: self[khandlers],
     }).then(sock => {
       $debug("Bun.Socket then");
       that.#socket = sock;
@@ -657,50 +676,8 @@ class SocketHandle {
       unix: address,
       allowHalfOpen: self.allowHalfOpen,
       tls: req.tls,
-      socket: {
-        open(socket) {
-          self._handle = that;
-          socket[owner_symbol] = self;
-          that.#socket = socket;
-          that.#promise = null;
-          req.oncomplete(0, self._handle, req, true, true);
-        },
-        data(socket, buffer) {
-          self.bytesRead += buffer.length;
-          if (!self.push(buffer)) socket.pause();
-        },
-        drain(socket) {
-          const callback = self[kwriteCallback];
-          self.connecting = false;
-          if (callback) {
-            const writeChunk = self._pendingData;
-            if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
-              self._pendingData = self[kwriteCallback] = null;
-              callback(null);
-            } else {
-              self._pendingData = null;
-            }
-            self[kBytesWritten] = socket.bytesWritten;
-          }
-        },
-        end(socket) {
-          if (self[kended]) return;
-          self[kended] = true;
-          if (!self.allowHalfOpen) self.write = writeAfterFIN;
-          self.push(null);
-          self.read(0);
-        },
-        close(socket, err) {
-          if (self[kclosed]) return;
-          self[kclosed] = true;
-          that.#socket = null;
-          if (self[kended]) return;
-          self[kended] = true;
-          if (!self.allowHalfOpen) self.write = writeAfterFIN;
-          self.push(null);
-          self.read(0);
-        },
-      },
+      data: { self, that, req },
+      socket: self[khandlers],
     }).then(sock => {
       that.#socket = sock;
       that.#promise = null;
@@ -926,7 +903,7 @@ function Socket(options?) {
   this[kSetKeepAlive] = Boolean(keepAlive);
   this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
 
-  this[khandlers] = SocketHandlers;
+  this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
   this[kBytesWritten] = undefined;
   this[kclosed] = false;
@@ -967,7 +944,7 @@ function Socket(options?) {
     }
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
-      ...SocketHandlers,
+      ...SocketHandlers2,
       data({ data: self }, buffer) {
         if (!self) return;
         try {
@@ -1058,7 +1035,7 @@ Socket.prototype[kAttach] = function (port, socket) {
     this.emit("connect", this);
     this.emit("ready");
   }
-  SocketHandlers.drain(socket);
+  SocketHandlers2.drain(socket);
 };
 
 Socket.prototype[kCloseRawConnection] = function () {

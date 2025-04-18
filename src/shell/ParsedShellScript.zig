@@ -164,7 +164,7 @@ pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
 }
 
 const ParsedShellScript = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
 const interpreter = @import("./interpreter.zig");

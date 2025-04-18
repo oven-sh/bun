@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Allocator = std.mem.Allocator;
 const Output = bun.Output;
@@ -543,7 +543,7 @@ pub const BunxCommand = struct {
                 if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
-                            const fd = bun.sys.openat(bun.invalid_fd, destination, bun.O.RDONLY, 0).unwrap() catch {
+                            const fd = bun.sys.openat(.cwd(), destination, bun.O.RDONLY, 0).unwrap() catch {
                                 // if we cant open this, we probably will just fail when we run it
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;

@@ -33,14 +33,13 @@ const SHRINK_THRESHOLD = 1024 * 128;
 
 pub const auto_poll = false;
 
-pub const WriterImpl = bun.io.BufferedWriter(
-    IOWriter,
-    onWrite,
-    onError,
-    onClose,
-    getBuffer,
-    null,
-);
+pub const WriterImpl = bun.io.BufferedWriter(IOWriter, struct {
+    pub const onWrite = IOWriter.onWrite;
+    pub const onError = IOWriter.onError;
+    pub const onClose = IOWriter.onClose;
+    pub const getBuffer = IOWriter.getBuffer;
+    pub const onWritable = null;
+});
 pub const Poll = WriterImpl;
 
 // pub fn __onClose(_: *IOWriter) void {}
@@ -478,7 +477,7 @@ pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     }
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
 const EnvMap = shell.EnvMap;

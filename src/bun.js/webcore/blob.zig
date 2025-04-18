@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MimeType = http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const http = bun.http;
@@ -2251,7 +2251,7 @@ pub const Blob = struct {
             return try Blob.Store.init(list.items, allocator);
         }
 
-        pub fn FileOpenerMixin(comptime This: type) type {
+        pub fn FileOpener(comptime This: type) type {
             return struct {
                 context: *This,
 
@@ -2264,7 +2264,7 @@ pub const Blob = struct {
                 else
                     bun.O.RDONLY | __opener_flags;
 
-                pub inline fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
+                fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
                     var buf: bun.PathBuffer = undefined;
                     var path_string = if (@hasField(This, "file_store"))
                         this.file_store.pathlike.path
@@ -2344,7 +2344,7 @@ pub const Blob = struct {
                     Callback(this, this.opened_fd);
                 }
 
-                pub const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
+                const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
 
                 pub fn getFd(this: *This, comptime Callback: OpenCallback) void {
                     if (this.opened_fd != invalid_fd) {
@@ -2368,15 +2368,13 @@ pub const Blob = struct {
                         }
                     }
 
-                    this.getFdByOpening(Callback);
+                    getFdByOpening(this, Callback);
                 }
             };
         }
 
-        pub fn FileCloserMixin(comptime This: type) type {
+        pub fn FileCloser(comptime This: type) type {
             return struct {
-                const Closer = @This();
-
                 fn scheduleClose(request: *io.Request) io.Action {
                     var this: *This = @alignCast(@fieldParentPtr("io_request", request));
                     return io.Action{

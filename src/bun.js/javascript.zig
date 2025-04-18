@@ -1,6 +1,6 @@
 const std = @import("std");
 const StaticExport = @import("./bindings/static_export.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -450,7 +450,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     const vm = globalObject.bunVM();
     const ipc_instance = vm.getIPCInstance() orelse {
-        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
+        const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(globalObject, callback, ex);
         } else {
@@ -1205,7 +1205,7 @@ pub const VirtualMachine = struct {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-                bun.spawn.WaiterThread.setShouldUseWaiterThread();
+                bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
             }
 
             // Only allowed for testing

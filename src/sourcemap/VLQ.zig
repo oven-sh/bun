@@ -164,4 +164,4 @@ pub fn decodeAssumeValid(encoded: []const u8, start: usize) VLQResult {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");

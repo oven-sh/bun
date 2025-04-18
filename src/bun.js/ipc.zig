@@ -1,5 +1,5 @@
 const uws = bun.uws;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
@@ -452,7 +452,12 @@ const NamedPipeIPCData = struct {
     mode: Mode,
 
     // we will use writer pipe as Duplex
-    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(@This(), .{
+        .onWrite = onWrite,
+        .onError = onError,
+        .onWritable = null,
+        .onClose = onPipeClose,
+    }) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     disconnected: bool = false,

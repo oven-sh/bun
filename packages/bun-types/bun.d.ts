@@ -4684,20 +4684,20 @@ declare module "bun" {
   /**
    * Bun.semver provides a fast way to parse and compare version numbers.
    */
-  var semver: {
+  namespace semver {
     /**
      * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
      */
-    satisfies: (version: StringLike, range: StringLike) => boolean;
+    function satisfies(version: StringLike, range: StringLike): boolean;
 
     /**
      * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
      * Throws an error if either version is invalid.
      */
-    order: (v1: StringLike, v2: StringLike) => -1 | 0 | 1;
-  };
+    function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
 
-  interface Unsafe {
+  namespace unsafe {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
      *
@@ -4705,7 +4705,7 @@ declare module "bun" {
      *
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
-    arrayBufferToString(buffer: Uint8Array | ArrayBufferLike): string;
+    function arrayBufferToString(buffer: Uint8Array | ArrayBufferLike): string;
 
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint16Array`
@@ -4715,7 +4715,7 @@ declare module "bun" {
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
 
-    arrayBufferToString(buffer: Uint16Array): string;
+    function arrayBufferToString(buffer: Uint16Array): string;
 
     /**
      * Force the garbage collector to run extremely often,
@@ -4732,14 +4732,13 @@ declare module "bun" {
      * @param level
      * @returns The previous level
      */
-    gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
+    function gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
 
     /**
      * Dump the mimalloc heap to the console
      */
-    mimallocDump(): void;
+    function mimallocDump(): void;
   }
-  const unsafe: Unsafe;
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 

@@ -1306,7 +1306,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
 
     if (!this._closeAfterHandlingError) {
-      this._handle.onread = () => {};
+      if (this._handle) this._handle.onread = () => {};
       this._handle = null;
       this._sockname = null;
     }

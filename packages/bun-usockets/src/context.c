@@ -279,14 +279,15 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     return context;
 }
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
+struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
 #ifndef LIBUS_NO_SSL
-    if (ssl) {
-        /* This function will call us, again, with SSL = false and a bigger ext_size */
-        return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
-    }
+    /* This function will call us, again, with SSL = false and a bigger ext_size */
+    return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
 #endif
+    return us_create_bun_nossl_socket_context(loop, context_ext_size, 0);
+}
 
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop, int context_ext_size, int is_ipc) {
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
@@ -294,6 +295,7 @@ struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop
     context->loop = loop;
     context->is_low_prio = default_is_low_prio_handler;
     context->ref_count = 1;
+    context->is_ipc = is_ipc;
 
     us_internal_loop_link(loop, context);
 
@@ -407,6 +409,40 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     ls->s.flags.is_paused = 0;
     ls->s.next = 0;
+    us_internal_socket_context_link_listen_socket(context, ls);
+
+    ls->socket_ext_size = socket_ext_size;
+
+    return ls;
+}
+
+struct us_listen_socket_t *us_socket_context_listen_fd(int ssl, struct us_socket_context_t *context, int fd, int options, int socket_ext_size, int* error) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) {
+        // return us_internal_ssl_socket_context_listen((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, error);
+    }
+#endif
+
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = fd;
+
+    if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
+        return 0;
+    }
+
+    struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(p, context->loop, LIBUS_SOCKET_READABLE);
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+
+    ls->s.context = context;
+    ls->s.timeout = 255;
+    ls->s.long_timeout = 255;
+    ls->s.flags.low_prio_state = 0;
+        ls->s.flags.is_paused = 0;
+
+    ls->s.next = 0;
+    ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -841,6 +877,14 @@ void us_socket_context_on_data(int ssl, struct us_socket_context_t *context, str
 #endif
 
     context->on_data = on_data;
+}
+
+void us_socket_context_on_fd(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_fd)(struct us_socket_t *s, int fd)) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) return;
+#endif
+
+    context->on_fd = on_fd;
 }
 
 void us_socket_context_on_writable(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_writable)(struct us_socket_t *s)) {

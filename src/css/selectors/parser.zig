@@ -2986,7 +2986,7 @@ pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, in
     };
     const never_matches = switch (operator) {
         .equal, .dash_match => false,
-        .includes => value_str.len == 0 or std.mem.indexOfAny(u8, value_str, SELECTOR_WHITESPACE) != null,
+        .includes => value_str.len == 0 or bun.strings.indexOfAny(value_str, SELECTOR_WHITESPACE) != null,
         .prefix, .substring, .suffix => value_str.len == 0,
     };
 

@@ -1738,6 +1738,10 @@ __attribute__((callback (corker, ctx)))
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
+  int us_socket_get_fd(us_socket_r s) {
+    return us_poll_fd(&s->p);
+  }
+
   // Gets the remote address and port
   // Returns 0 if failure / unix socket
   uint64_t uws_res_get_remote_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)

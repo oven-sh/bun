@@ -73,6 +73,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
   let contents = await Bun.file(filename).text();
 
   contents = applyGlobalReplacements(contents);
+  const originalContents = contents;
 
   // first approach doesnt work perfectly because we actually need to split each function declaration
   // and then compile those separately
@@ -93,7 +94,36 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     if (!contents.length) break;
     const match = contents.match(consumeTopLevelContent);
     if (!match) {
-      throw new SyntaxError("Could not process input:\n" + contents.slice(0, contents.indexOf("\n")));
+      const pos = originalContents.length - contents.length;
+      let lineNumber = 1;
+      let columnNumber = 1;
+      let lineStartPos = 0;
+      for (let i = 0; i < pos; i++) {
+        if (originalContents[i] === "\n") {
+          lineNumber++;
+          columnNumber = 1;
+          lineStartPos = i + 1;
+        } else {
+          columnNumber++;
+        }
+        if (i === pos) {
+          break;
+        }
+      }
+      const lineEndPos = lineStartPos + originalContents.slice(lineStartPos).indexOf("\n");
+      throw new SyntaxError(
+        "Could not process input:\n" +
+          originalContents.slice(lineStartPos, lineEndPos) +
+          "\n" +
+          " ".repeat(pos - lineStartPos) +
+          "^" +
+          "\n    at " +
+          filename +
+          ":" +
+          lineNumber +
+          ":" +
+          columnNumber,
+      );
     }
     contents = contents.slice(match.index!);
     if (match[1] === "import") {

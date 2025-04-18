@@ -694,13 +694,10 @@ pub const Listener = struct {
         vm.eventLoop().ensureWaker();
 
         var create_err: uws.create_bun_socket_error_t = .none;
-        const socket_context = uws.us_create_bun_socket_context(
-            @intFromBool(ssl_enabled),
-            uws.Loop.get(),
-            @sizeOf(usize),
-            ctx_opts,
-            &create_err,
-        ) orelse {
+        const socket_context = switch (ssl_enabled) {
+            true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
+            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize), 0),
+        } orelse {
             var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
             defer {
                 socket_config.handlers.unprotect();
@@ -763,6 +760,12 @@ pub const Listener = struct {
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
+        if (try opts.getTruthy(globalObject, "fd")) |fd_| {
+            if (fd_.isNumber()) {
+                const fd = fd_.asFileDescriptor();
+                connection = .{ .fd = fd };
+            }
+        }
         var errno: c_int = 0;
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
@@ -790,7 +793,11 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
-                .fd => unreachable,
+                .fd => |file_descriptor| {
+                    if (ssl_enabled) return globalObject.throw("TODO listen ssl with fd", .{});
+                    if (Environment.isWindows) return globalObject.throw("TODO listen windows with fd", .{});
+                    break :brk uws.us_socket_context_listen_fd(@intFromBool(ssl_enabled), socket_context, file_descriptor.native(), socket_flags, 8, &errno);
+                },
             }
         } orelse {
             defer {
@@ -1203,7 +1210,10 @@ pub const Listener = struct {
             .{};
 
         var create_err: uws.create_bun_socket_error_t = .none;
-        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err) orelse {
+        const socket_context = switch (ssl_enabled) {
+            true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
+            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize), 0),
+        } orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),

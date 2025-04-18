@@ -1667,6 +1667,7 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__eqlCell(this, other);
     }
 
+    /// This must match the enum in C++ in src/bun.js/bindings/bindings.cpp BuiltinNamesMap
     pub const BuiltinName = enum(u8) {
         method,
         headers,
@@ -1691,6 +1692,7 @@ pub const JSValue = enum(i64) {
         ignoreBOM,
         type,
         signal,
+        cmd,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

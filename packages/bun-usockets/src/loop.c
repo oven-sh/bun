@@ -391,7 +391,40 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                       const int recv_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
                     #endif
 
-                    int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                    int length;
+                    #if !defined(_WIN32)
+                    if(s->context->is_ipc) {
+                        struct msghdr msg = {0};
+                        struct iovec iov = {0};
+                        char cmsg_buf[CMSG_SPACE(sizeof(int))];
+                        
+                        iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                        iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
+
+                        msg.msg_flags = 0;                        
+                        msg.msg_iov = &iov;
+                        msg.msg_iovlen = 1;
+                        msg.msg_name = NULL;
+                        msg.msg_namelen = 0;
+                        msg.msg_controllen = CMSG_LEN(sizeof(int));
+                        msg.msg_control = cmsg_buf;
+                        
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        
+                        // Extract file descriptor if present
+                        if (length > 0 && msg.msg_controllen > 0) {
+                            struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
+                            if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
+                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                                s->context->on_fd(s, fd);
+                            }
+                        }
+                    }else{
+                    #endif
+                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                    #if !defined(_WIN32)
+                    }
+                    #endif
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);

@@ -3872,8 +3872,7 @@ pub fn wtf8Sequence(code_point: u32) [4]u8 {
 
 pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
     return switch (first_byte) {
-        0 => 0,
-        1...0x80 - 1 => 1,
+        0...0x80 - 1 => 1,
         else => if ((first_byte & 0xE0) == 0xC0)
             @as(u3, 2)
         else if ((first_byte & 0xF0) == 0xE0)

@@ -1335,6 +1335,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let allowHalfOpen = false;
   let reusePort = false;
   let ipv6Only = false;
+  let fd;
+  if (typeof port === "object" && Symbol.for("::bun-fd::") in port) {
+    fd = port[Symbol.for("::bun-fd::")];
+    port = undefined;
+  }
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -1449,7 +1454,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       port,
       4,
       backlog,
-      undefined,
+      fd,
       exclusive,
       ipv6Only,
       allowHalfOpen,
@@ -1479,10 +1484,22 @@ Server.prototype[kRealListen] = function (
   tls,
   contexts,
   onListen,
+  fd,
 ) {
   if (path) {
     this._handle = Bun.listen({
       unix: path,
+      tls,
+      allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+      reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
+      ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
+      exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      socket: ServerHandlers,
+    });
+  } else if (fd) {
+    this._handle = Bun.listen({
+      fd,
+      hostname,
       tls,
       allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
@@ -1594,7 +1611,19 @@ function listenInCluster(
   if (cluster === undefined) cluster = require("node:cluster");
 
   if (cluster.isPrimary || exclusive) {
-    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
+    server[kRealListen](
+      path,
+      port,
+      hostname,
+      exclusive,
+      ipv6Only,
+      allowHalfOpen,
+      reusePort,
+      tls,
+      contexts,
+      onListen,
+      fd,
+    );
     return;
   }
 
@@ -1612,7 +1641,19 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
+    server[kRealListen](
+      path,
+      port,
+      hostname,
+      exclusive,
+      ipv6Only,
+      allowHalfOpen,
+      reusePort,
+      tls,
+      contexts,
+      onListen,
+      fd,
+    );
   });
 }
 

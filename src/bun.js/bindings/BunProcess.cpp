@@ -3473,7 +3473,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * gl
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
+extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {
     auto* process = static_cast<Process*>(global->processObject());
     auto& vm = JSC::getVM(global);
@@ -3482,6 +3482,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         args.append(JSValue::decode(value));
+        args.append(JSValue::decode(handle));
         process->wrapped().emit(ident, args);
     }
 }

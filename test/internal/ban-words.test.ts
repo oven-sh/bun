@@ -12,7 +12,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
-  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
+  "std.log": { reason: "Don't let this be committed" },
+  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny" },
   "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
   "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
@@ -31,6 +32,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
   "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 50 },
+  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1860 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },

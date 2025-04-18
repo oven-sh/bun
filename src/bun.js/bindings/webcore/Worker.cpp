@@ -536,22 +536,30 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         auto* pair = jsCast<JSArray*>(deserialized);
         ASSERT(pair->length() == 2);
         workerData = pair->getIndexQuickly(0);
+        RETURN_IF_EXCEPTION(scope, {});
         environmentData = jsCast<JSMap*>(pair->getIndexQuickly(1));
+        RETURN_IF_EXCEPTION(scope, {});
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
     } else {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
+        RETURN_IF_EXCEPTION(scope, {});
     }
     globalObject->m_nodeWorkerEnvironmentData.set(vm, globalObject, environmentData);
 
     JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
-
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 1, threadId);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 3, globalObject->nodeWorkerObjectSymbol());
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 4, environmentData);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }

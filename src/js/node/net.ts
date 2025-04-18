@@ -513,7 +513,8 @@ const ServerHandlers: SocketHandler = {
 const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; req?: object }> = {
   open(socket) {
     $debug("Bun.Socket open");
-    const { self, that, req } = socket.data;
+    let { self, that, req } = socket.data;
+    if (!that) that = SocketHandle[kAttach](socket, self);
     self._handle = that;
     socket[owner_symbol] = self;
     that[ksocket] = socket;
@@ -554,7 +555,8 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   },
   close(socket, err) {
     $debug("Bun.Socket close");
-    const { self, that } = socket.data;
+    let { self, that } = socket.data;
+    if (!that) that = SocketHandle[kAttach](socket, self);
     if (self[kclosed]) return;
     self[kclosed] = true;
     that[ksocket] = null;
@@ -631,6 +633,12 @@ class SocketHandle {
     $debug("new SocketHandle");
     this.#promise = null;
     this.#socket = null;
+  }
+  static [kAttach](sock, self) {
+    const x = new SocketHandle();
+    x.#socket = sock;
+    x[owner_symbol] = self;
+    return x;
   }
   set [kpromise](prom) {
     this.#promise = prom;
@@ -1035,7 +1043,7 @@ Socket.prototype[kAttach] = function (port, socket) {
     this.emit("connect", this);
     this.emit("ready");
   }
-  SocketHandlers2.drain(socket);
+  SocketHandlers.drain(socket);
 };
 
 Socket.prototype[kCloseRawConnection] = function () {
@@ -1128,7 +1136,7 @@ Socket.prototype.connect = function connect(...args) {
           this.connecting = true;
           this[kupgraded] = connection;
           const [result, events] = upgradeDuplexToTLS(connection, {
-            data: this,
+            data: { self: this, that: socket, req: { oncomplete: afterConnect } },
             tls,
             socket: this[khandlers],
           });
@@ -1142,7 +1150,7 @@ Socket.prototype.connect = function connect(...args) {
             this.connecting = true;
             this[kupgraded] = connection;
             const result = socket.upgradeTLS({
-              data: this,
+              data: { self: this, that: socket, req: { oncomplete: afterConnect } },
               tls,
               socket: this[khandlers],
             });
@@ -1169,7 +1177,7 @@ Socket.prototype.connect = function connect(...args) {
                 this.connecting = true;
                 this[kupgraded] = connection;
                 const [result, events] = upgradeDuplexToTLS(connection, {
-                  data: this,
+                  data: { self: this, that: socket, req: { oncomplete: afterConnect } },
                   tls,
                   socket: this[khandlers],
                 });
@@ -1182,7 +1190,7 @@ Socket.prototype.connect = function connect(...args) {
                 this.connecting = true;
                 this[kupgraded] = connection;
                 const result = socket.upgradeTLS({
-                  data: this,
+                  data: { self: this, that: socket, req: { oncomplete: afterConnect } },
                   tls,
                   socket: this[khandlers],
                 });
@@ -2099,7 +2107,7 @@ function internalConnectMultiple(context, canceled?) {
     $debug("connect/multiple: setting the attempt timeout to %d ms", context.timeout);
 
     // If the attempt has not returned an error, start the connection timer
-    context[kTimeout] = setTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle);
+    context[kTimeout] = setTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle).unref();
   }
 }
 

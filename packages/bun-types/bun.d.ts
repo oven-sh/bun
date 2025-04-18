@@ -46,9 +46,6 @@ declare module "bun" {
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
-  /**
-   * @private
-   */
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 
@@ -62,8 +59,6 @@ declare module "bun" {
      * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
      * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
      * to the type that lib.dom.d.ts provides.
-     *
-     * @internal
      */
     type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
       // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
@@ -74,6 +69,7 @@ declare module "bun" {
         : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
   }
 
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type Platform =
     | "aix"
     | "android"
@@ -87,16 +83,21 @@ declare module "bun" {
     | "cygwin"
     | "netbsd";
 
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
 
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
 
   /**
    * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
    * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
+   *
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
    */
   type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
 
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
 
   interface ErrorEventInit extends EventInit {
@@ -7103,13 +7104,13 @@ declare module "bun" {
   /**
    * The current version of Bun
    * @example
-   * "0.2.0"
+   * "1.2.0"
    */
   const version: string;
 
   /**
    * The current version of Bun with the shortened commit sha of the build
-   * @example "v1.1.30 (d09df1af)"
+   * @example "v1.2.0 (a1b2c3d4)"
    */
   const version_with_sha: string;
 

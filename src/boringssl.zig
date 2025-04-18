@@ -222,8 +222,8 @@ pub fn ERR_toJS(globalThis: *JSC.JSGlobalObject, err_code: u32) JSC.JSValue {
 
     const error_message: []const u8 = bun.sliceTo(outbuf[0..], 0);
     if (error_message.len == "BoringSSL ".len) {
-        return globalThis.ERR_BORINGSSL("An unknown BoringSSL error occurred: {d}", .{err_code}).toJS();
+        return globalThis.ERR(.BORINGSSL, "An unknown BoringSSL error occurred: {d}", .{err_code}).toJS();
     }
 
-    return globalThis.ERR_BORINGSSL("{s}", .{error_message}).toJS();
+    return globalThis.ERR(.BORINGSSL, "{s}", .{error_message}).toJS();
 }

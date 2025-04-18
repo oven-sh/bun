@@ -2521,22 +2521,54 @@ pub fn spawnMaybeSync(
         return out;
     }
 
-    if (comptime is_sync) {
-        switch (subprocess.process.watchOrReap()) {
-            .result => {
-                // Once everything is set up, we can add the abort listener
-                // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-                // Therefore, we must do this at the very end.
-                if (abort_signal) |signal| {
-                    signal.pendingActivityRef();
-                    subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
-                    abort_signal = null;
-                }
-            },
-            .err => {
-                subprocess.process.wait(true);
-            },
-        }
+    comptime bun.assert(is_sync);
+
+    // If the whole thread is supposed to do absolutely nothing while waiting,
+    // we can block the thread which reduces CPU usage.
+    //
+    // That means:
+    // - No maximum buffer
+    // - No timeout
+    // - No abort signal
+    // - No stdin, stdout, stderr pipes
+    // - No extra fds
+    // - No auto killer (for tests)
+    // - No execution time limit (for tests)
+    // - No IPC
+    const can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (comptime Environment.isPosix) and
+        abort_signal == null and
+        timeout == null and
+        maxBuffer == null and
+        !stdio[0].isPiped() and
+        !stdio[1].isPiped() and
+        !stdio[2].isPiped() and
+        extra_fds.items.len == 0 and
+        !jsc_vm.auto_killer.enabled and
+        !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH");
+
+    if (can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
+        const debug_timer = Output.DebugTimer.start();
+        subprocess.process.wait(true);
+        log("spawnSync fast path took {}", .{debug_timer});
+
+        // watchOrReap will handle the already exited case for us.
+    }
+
+    switch (subprocess.process.watchOrReap()) {
+        .result => {
+            // Once everything is set up, we can add the abort listener
+            // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+            // Therefore, we must do this at the very end.
+            if (abort_signal) |signal| {
+                signal.pendingActivityRef();
+                subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
+                abort_signal = null;
+            }
+        },
+        .err => {
+            subprocess.process.wait(true);
+        },
     }
 
     if (!subprocess.process.hasExited()) {

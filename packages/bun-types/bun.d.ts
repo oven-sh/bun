@@ -523,18 +523,44 @@ declare module "bun" {
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
    */
   const argv: string[];
-  const origin: string;
+
+  interface WhichOptions {
+    /**
+     * Overrides the PATH environment variable
+     */
+    PATH?: string;
+
+    /**
+     * When given a relative path, use this path to join it.
+     */
+    cwd?: string;
+  }
 
   /**
    * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
    *
    * @category Utilities
    *
-   * @param command The name of the executable or script
-   * @param options.PATH Overrides the PATH environment variable
-   * @param options.cwd When given a relative path, use this path to join it.
+   * @param command The name of the executable or script to find
+   * @param options Options for the search
    */
-  function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
+  function which(command: string, options?: WhichOptions): string | null;
+
+  interface StringWidthOptions {
+    /**
+     * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
+     *
+     * @default false
+     */
+    countAnsiEscapeCodes?: boolean;
+
+    /**
+     * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
 
   /**
    * Get the column count of a string as it would be displayed in a terminal.
@@ -566,20 +592,7 @@ declare module "bun" {
      * The string to measure
      */
     input: string,
-    options?: {
-      /**
-       * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
-       *
-       * @default false
-       */
-      countAnsiEscapeCodes?: boolean;
-      /**
-       * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
-       *
-       * @default true
-       */
-      ambiguousIsNarrow?: boolean;
-    },
+    options?: StringWidthOptions,
   ): number;
 
   /**
@@ -622,13 +635,17 @@ declare module "bun" {
    *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
+   * @param options Options for the write
+   *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destination: BunFile | S3File | PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
     options?: {
-      /** If writing to a PathLike, set the permissions of the file. */
+      /**
+       * If writing to a PathLike, set the permissions of the file.
+       */
       mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
@@ -649,6 +666,8 @@ declare module "bun" {
    * overwritten. If `input`'s size is less than `destination`'s size,
    * `destination` will be truncated.
    * @param input - `Response` object
+   * @param options Options for the write
+   *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
@@ -857,7 +876,8 @@ declare module "bun" {
    * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
    *
-   * @example Multipart form data example
+   * @example
+   * **Multipart form data example**
    * ```ts
    * // without dashes
    * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
@@ -867,7 +887,7 @@ declare module "bun" {
    * formData.get("foo"); // "bar"
    * ```
    *
-   * @example URL-encoded form data example
+   * **URL-encoded form data example**
    * ```ts
    * const stream = new Response("hello=123").body;
    * const formData = await Bun.readableStreamToFormData(stream);
@@ -945,14 +965,13 @@ declare module "bun" {
    */
   function pathToFileURL(path: string): URL;
 
-  interface Peek {
-    <T = undefined>(promise: T | Promise<T>): Promise<T> | T;
-    status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
-  }
   /**
    * Extract the value from the Promise in the same tick of the event loop
    */
-  const peek: Peek;
+  function peek<T = undefined>(promise: T | Promise<T>): Promise<T> | T;
+  namespace peek {
+    function status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
+  }
 
   /**
    * Convert a {@link URL} to a filesystem path.

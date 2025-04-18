@@ -55,7 +55,7 @@ function generate(ssl) {
       },
       setSession: {
         fn: "setSession",
-        length: 0,
+        length: 1,
       },
       getTLSTicket: {
         fn: "getTLSTicket",

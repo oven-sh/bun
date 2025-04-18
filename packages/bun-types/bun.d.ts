@@ -5861,7 +5861,7 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(): import("tls").PeerCertificate;
+    getPeerCertificate(abbreviated?): import("tls").PeerCertificate;
     getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**
@@ -5973,21 +5973,21 @@ declare module "bun" {
 
     renegotiate(): void;
 
-    setVerifyMode(): void;
+    setVerifyMode(requestCert, rejectUnauthorized): void;
 
     getSession(): void;
 
-    setSession(): void;
+    setSession(session: string | Buffer | BufferSource): void;
 
-    exportKeyingMaterial(): void;
+    exportKeyingMaterial(length, label, context): void;
 
-    upgradeTLS(): void;
+    upgradeTLS(options: object): void;
 
     close(): void;
 
-    getServername(): void;
+    getServername(): string;
 
-    setServername(): void;
+    setServername(name: string): void;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {

@@ -717,15 +717,15 @@ class SocketHandle {
     $assert(this.#socket != null);
     this.#socket[Symbol.dispose]();
   }
-  setNoDelay(arg) {
+  setNoDelay(noDelay?: boolean) {
     $debug("SocketHandle.setNoDelay");
     $assert(this.#socket != null);
-    return this.#socket.setNoDelay(arg);
+    return this.#socket.setNoDelay(noDelay);
   }
-  setKeepAlive(arg0, arg1) {
+  setKeepAlive(enable?: boolean, initialDelay?: number) {
     $debug("SocketHandle.setKeepAlive");
     $assert(this.#socket != null);
-    return this.#socket.setKeepAlive(arg0, arg1);
+    return this.#socket.setKeepAlive(enable, initialDelay);
   }
   resume() {
     $debug("SocketHandle.resume");
@@ -768,9 +768,9 @@ class SocketHandle {
     return this.#socket.unref();
   }
   //TLS
-  getPeerCertificate() {
+  getPeerCertificate(abbreviated?) {
     $assert(this.#socket != null);
-    return this.#socket.getPeerCertificate();
+    return this.#socket.getPeerCertificate(abbreviated);
   }
   getTLSFinishedMessage() {
     $assert(this.#socket != null);
@@ -796,25 +796,25 @@ class SocketHandle {
     $assert(this.#socket != null);
     return this.#socket.disableRenegotiation();
   }
-  setVerifyMode() {
+  setVerifyMode(requestCert, rejectUnauthorized) {
     $assert(this.#socket != null);
-    return this.#socket.setVerifyMode();
+    return this.#socket.setVerifyMode(requestCert, rejectUnauthorized);
   }
   getSession() {
     $assert(this.#socket != null);
     return this.#socket.getSession();
   }
-  setSession() {
+  setSession(session) {
     $assert(this.#socket != null);
-    return this.#socket.setSession();
+    return this.#socket.setSession(session);
   }
   getTLSTicket() {
     $assert(this.#socket != null);
     return this.#socket.getTLSTicket();
   }
-  exportKeyingMaterial() {
+  exportKeyingMaterial(length, label, context) {
     $assert(this.#socket != null);
-    return this.#socket.exportKeyingMaterial();
+    return this.#socket.exportKeyingMaterial(length, label, context);
   }
   setMaxSendFragment(size: number) {
     $assert(this.#socket != null);
@@ -835,6 +835,22 @@ class SocketHandle {
   getPeerX509Certificate() {
     $assert(this.#socket != null);
     return this.#socket.getPeerX509Certificate();
+  }
+  upgradeTLS(options) {
+    $assert(this.#socket != null);
+    return this.#socket.upgradeTLS(options);
+  }
+  setServername(name) {
+    $assert(this.#socket != null);
+    return this.#socket.setServername(name);
+  }
+  getServername() {
+    $assert(this.#socket != null);
+    return this.#socket.getServername();
+  }
+  getCertificate() {
+    $assert(this.#socket != null);
+    return this.#socket.getCertificate();
   }
   //TLS
   get bytesWritten() {

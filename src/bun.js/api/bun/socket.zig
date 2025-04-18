@@ -3181,7 +3181,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const args = callframe.arguments_old(1);
             var abbreviated: bool = true;
-            if (args.len > 0) {
+            if (args.len > 0 and !args.ptr[0].isUndefined()) {
                 const arg = args.ptr[0];
                 if (!arg.isBoolean()) {
                     return globalObject.throw("Expected abbreviated to be a boolean", .{});

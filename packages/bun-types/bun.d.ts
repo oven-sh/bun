@@ -4553,14 +4553,20 @@ declare module "bun" {
    */
   function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
-  /** Write to stdout */
+  /**
+   * Write to stdout
+   */
   const stdout: BunFile;
-  /** Write to stderr */
+
+  /**
+   * Write to stderr
+   */
   const stderr: BunFile;
+
   /**
    * Read from stdin
    *
-   * This is read-only
+   * This is a read-only BunFile
    */
   const stdin: BunFile;
 

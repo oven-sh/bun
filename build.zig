@@ -466,7 +466,11 @@ fn addMultiCheck(
     }
 }
 
-fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
+fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
+    var target = initial_target;
+    if (target.result.os.tag == .windows) {
+        target.result.abi = .gnu; // Some windows hosts do not have `windows.h`
+    }
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c-headers-for-zig.h"),
         .target = target,

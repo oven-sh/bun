@@ -2,7 +2,7 @@
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 const std = @import("std");
 const posix = std.posix;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const fd_t = bun.FileDescriptor;

@@ -42,3 +42,8 @@
 #include <sys/socket.h>
 #include <linux/fs.h>
 #endif
+
+#if WINDOWS
+#include <windows.h>
+#include <winternl.h>
+#endif

@@ -1,5 +1,5 @@
 const JSC = bun.JSC;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const std = @import("std");
 const Output = bun.Output;
@@ -429,6 +429,17 @@ pub const PosixSpawn = struct {
         }
     }
 
-    pub usingnamespace @import("./process.zig");
-    pub usingnamespace @import("./spawn/stdio.zig");
+    pub const process = @import("process.zig");
+    pub const Process = process.Process;
+    pub const SpawnOptions = process.SpawnOptions;
+    pub const Status = process.Status;
+    pub const sync = process.sync;
+    pub const spawnProcess = process.spawnProcess;
+    pub const WindowsSpawnResult = process.WindowsSpawnResult;
+    pub const PosixSpawnResult = process.PosixSpawnResult;
+    pub const SpawnProcessResult = process.SpawnProcessResult;
+    pub const WindowsSpawnOptions = process.WindowsSpawnOptions;
+    pub const Rusage = process.Rusage;
+
+    pub const Stdio = @import("spawn/stdio.zig").Stdio;
 };

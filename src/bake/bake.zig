@@ -876,7 +876,7 @@ pub fn printWarning() void {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const JSC = bun.JSC;

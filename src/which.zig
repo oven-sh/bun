@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {

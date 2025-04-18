@@ -8,7 +8,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "undefined != ": { reason: "This is by definition Undefined Behavior." },
   "undefined == ": { reason: "This is by definition Undefined Behavior." },
 
-  '@import("root").bun.': { reason: "Only import 'bun' once" },
+  '@import("bun").': { reason: "Only import 'bun' once" },
   "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
@@ -30,7 +30,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
-  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 310 },
+  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 19 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
@@ -46,6 +46,7 @@ for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;
   if (file.parentPath.startsWith("src" + path.sep + "deps")) continue;
+  if (file.parentPath.startsWith("src" + path.sep + "codegen")) continue;
   const content = await Bun.file(file.parentPath + path.sep + file.name).text();
   for (const word of words_keys) {
     let regex = words[word].regex ? new RegExp(word, "g") : undefined;

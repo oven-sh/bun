@@ -1125,7 +1125,7 @@ const cpp = new CodeWriter();
 const cppInternal = new CodeWriter();
 const headers = new Set<string>();
 
-zig.line('const bun = @import("root").bun;');
+zig.line('const bun = @import("bun");');
 zig.line("const JSC = bun.JSC;");
 zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
 

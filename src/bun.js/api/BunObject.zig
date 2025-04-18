@@ -892,7 +892,7 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
@@ -916,7 +916,7 @@ export fn Bun__resolveSyncWithPaths(
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
@@ -939,7 +939,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }
@@ -1082,7 +1082,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     }
                     const obj = server.toJS(globalObject);
                     if (route_list_object != .zero) {
-                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                        ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
                     server.js_value.set(globalObject, obj);
 
@@ -1755,7 +1755,7 @@ const conv = std.builtin.CallingConvention.Unspecified;
 const S3File = @import("../webcore/S3File.zig");
 const Bun = @This();
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uv = bun.windows.libuv;
 const Environment = bun.Environment;
 const Global = bun.Global;

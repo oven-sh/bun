@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
 const Blob = JSC.WebCore.Blob;
@@ -7,8 +7,8 @@ const invalid_fd = bun.invalid_fd;
 const SystemError = JSC.SystemError;
 const SizeType = Blob.SizeType;
 const io = bun.io;
-const FileOpenerMixin = Blob.Store.FileOpenerMixin;
-const FileCloserMixin = Blob.Store.FileCloserMixin;
+const FileOpener = Blob.Store.FileOpener;
+const FileCloser = Blob.Store.FileCloser;
 const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
 const JSPromise = JSC.JSPromise;
@@ -44,8 +44,8 @@ pub const WriteFile = struct {
 
     pub const io_tag = io.Poll.Tag.WriteFile;
 
-    pub usingnamespace FileOpenerMixin(WriteFile);
-    pub usingnamespace FileCloserMixin(WriteFile);
+    pub const getFd = FileOpener(@This()).getFd;
+    pub const doClose = FileCloser(WriteFile).doClose;
 
     pub const open_flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK;
 

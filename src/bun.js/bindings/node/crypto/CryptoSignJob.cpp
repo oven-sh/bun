@@ -331,6 +331,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             prepareResult.encodingType,
             prepareResult.cipher,
             WTFMove(prepareResult.passphrase));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     Digest digest = {};

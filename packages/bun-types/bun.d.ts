@@ -5768,13 +5768,18 @@ declare module "bun" {
      */
     shutdown(halfClose?: boolean): void;
 
-    // -1 = detached
-    // 0 = closed
-    // 1 = open
-    // -2 = closing
-    // 2 = everything else
-    // positive = open
-    readonly readyState: "open" | "closing" | "closed";
+    /**
+     * The ready state of the socket.
+     *
+     * You can assume that a positive value means the socket is open and usable
+     *
+     * - `-2` = Shutdown
+     * - `-1` = Detached
+     * - `0` = Closed
+     * - `1` = Established
+     * - `2` = Else
+     */
+    readonly readyState: -2 | -1 | 0 | 1 | 2;
 
     /**
      * Allow Bun's process to exit even if this socket is still open

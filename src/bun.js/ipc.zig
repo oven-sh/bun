@@ -573,7 +573,11 @@ const SocketType = struct {
     fn write(this: @This(), data: []const u8) i32 {
         return switch (Environment.isWindows) {
             true => {
+                const prev_len = this.backing.outgoing.list.items.len;
                 this.backing.outgoing.write(data) catch bun.outOfMemory();
+                if (prev_len == 0) {
+                    _ = this.backing.flush();
+                }
                 return @intCast(data.len);
             },
             false => this.backing.write(data, false),

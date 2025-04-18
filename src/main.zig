@@ -63,9 +63,9 @@ pub fn main() void {
     bun.Global.exit(0);
 }
 
-// pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
-//     Output.panic("{s}", .{msg[0..len]});
-// }
+pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
+    Output.panic("{s}", .{msg[0..len]});
+}
 
 // -- Zig Standard Library Additions --
 pub fn copyForwards(comptime T: type, dest: []T, source: []const T) void {

@@ -149,7 +149,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this_value.ensureStillAlive();
 
-            if (!(this.checkError(global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
+            if (!(checkError(this, global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
                 return;
             }
 
@@ -160,7 +160,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
-            if (this.pending_close) _ = this._close();
+            if (this.pending_close) _ = closeInternal(this);
         }
 
         pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -211,7 +211,7 @@ pub fn CompressionStream(comptime T: type) type {
             const this_value = callframe.this();
 
             this.stream.doWork();
-            if (try this.checkError(globalThis, this_value)) {
+            if (try checkError(this, globalThis, this_value)) {
                 this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
                 this.write_in_progress = false;
             }
@@ -223,7 +223,7 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const err = this.stream.reset();
             if (err.isError()) {
-                try this.emitError(globalThis, callframe.this(), err);
+                try emitError(this, globalThis, callframe.this(), err);
             }
             return .undefined;
         }
@@ -231,11 +231,11 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             _ = globalThis;
             _ = callframe;
-            this._close();
+            closeInternal(this);
             return .undefined;
         }
 
-        fn _close(this: *T) void {
+        fn closeInternal(this: *T) void {
             if (this.write_in_progress) {
                 this.pending_close = true;
                 return;
@@ -261,7 +261,7 @@ pub fn CompressionStream(comptime T: type) type {
         fn checkError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue) !bool {
             const err = this.stream.getErrorInfo();
             if (!err.isError()) return true;
-            try this.emitError(globalThis, this_value, err);
+            try emitError(this, globalThis, this_value, err);
             return false;
         }
 
@@ -277,7 +277,7 @@ pub fn CompressionStream(comptime T: type) type {
             _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
-            if (this.pending_close) _ = this._close();
+            if (this.pending_close) _ = closeInternal(this);
         }
 
         pub fn finalize(this: *T) void {
@@ -321,7 +321,15 @@ pub const SNativeZlib = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace CompressionStream(@This());
+    const impl = CompressionStream(@This());
+    pub const write = impl.write;
+    pub const runFromJSThread = impl.runFromJSThread;
+    pub const writeSync = impl.writeSync;
+    pub const reset = impl.reset;
+    pub const close = impl.close;
+    pub const setOnError = impl.setOnError;
+    pub const getOnError = impl.getOnError;
+    pub const finalize = impl.finalize;
 
     ref_count: RefCount,
     mode: bun.zlib.NodeMode,
@@ -408,7 +416,7 @@ pub const SNativeZlib = struct {
 
         const err = this.stream.setParams(level, strategy);
         if (err.isError()) {
-            try this.emitError(globalThis, callframe.this(), err);
+            try impl.emitError(this, globalThis, callframe.this(), err);
         }
         return .undefined;
     }
@@ -695,7 +703,15 @@ pub const SNativeBrotli = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace CompressionStream(@This());
+    const impl = CompressionStream(@This());
+    pub const write = impl.write;
+    pub const runFromJSThread = impl.runFromJSThread;
+    pub const writeSync = impl.writeSync;
+    pub const reset = impl.reset;
+    pub const close = impl.close;
+    pub const setOnError = impl.setOnError;
+    pub const getOnError = impl.getOnError;
+    pub const finalize = impl.finalize;
 
     ref_count: RefCount,
     mode: bun.zlib.NodeMode,
@@ -764,7 +780,7 @@ pub const SNativeBrotli = struct {
 
         var err = this.stream.init();
         if (err.isError()) {
-            try this.emitError(globalThis, this_value, err);
+            try impl.emitError(this, globalThis, this_value, err);
             return JSC.jsBoolean(false);
         }
 
@@ -777,7 +793,7 @@ pub const SNativeBrotli = struct {
             }
             err = this.stream.setParams(@intCast(i), d);
             if (err.isError()) {
-                // try this.emitError(globalThis, err); //XXX: onerror isn't set yet
+                // try impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
                 return JSC.jsBoolean(false);
             }
         }

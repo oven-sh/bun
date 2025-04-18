@@ -946,7 +946,21 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
 
         const WindowsWriter = @This();
 
-        pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+        const internals = BaseWindowsPipeWriter(WindowsWriter, Parent);
+        pub const getFd = internals.getFd;
+        pub const hasRef = internals.hasRef;
+        pub const enableKeepingProcessAlive = internals.enableKeepingProcessAlive;
+        pub const disableKeepingProcessAlive = internals.disableKeepingProcessAlive;
+        pub const close = internals.close;
+        pub const updateRef = internals.updateRef;
+        pub const setParent = internals.setParent;
+        pub const watch = internals.watch;
+        pub const startWithPipe = internals.startWithPipe;
+        pub const startSync = internals.startSync;
+        pub const startWithFile = internals.startWithFile;
+        pub const start = internals.start;
+        pub const setPipe = internals.setPipe;
+        pub const getStream = internals.getStream;
 
         fn onCloseSource(this: *WindowsWriter) void {
             if (onClose) |onCloseFn| {
@@ -1217,7 +1231,21 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         // some error happed? we will not report onClose only onError
         closed_without_reporting: bool = false,
 
-        pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+        const internals = BaseWindowsPipeWriter(WindowsWriter, Parent);
+        pub const getFd = internals.getFd;
+        pub const hasRef = internals.hasRef;
+        pub const enableKeepingProcessAlive = internals.enableKeepingProcessAlive;
+        pub const disableKeepingProcessAlive = internals.disableKeepingProcessAlive;
+        pub const close = internals.close;
+        pub const updateRef = internals.updateRef;
+        pub const setParent = internals.setParent;
+        pub const watch = internals.watch;
+        pub const startWithPipe = internals.startWithPipe;
+        pub const startSync = internals.startSync;
+        pub const startWithFile = internals.startWithFile;
+        pub const start = internals.start;
+        pub const setPipe = internals.setPipe;
+        pub const getStream = internals.getStream;
 
         pub fn memoryCost(this: *const WindowsWriter) usize {
             return @sizeOf(@This()) + this.current_payload.memoryCost() + this.outgoing.memoryCost();

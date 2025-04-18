@@ -2275,6 +2275,7 @@ pub fn spawnMaybeSync(
     // - No auto killer (for tests)
     // - No execution time limit (for tests)
     // - No IPC
+    // - No inspector (since they might want to press pause or step)
     const can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (comptime Environment.isPosix and is_sync) and
         abort_signal == null and
         timeout == null and
@@ -2285,6 +2286,7 @@ pub fn spawnMaybeSync(
         extra_fds.items.len == 0 and
         !jsc_vm.auto_killer.enabled and
         !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !jsc_vm.isInspectorEnabled() and
         !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH");
 
     const spawn_options = bun.spawn.SpawnOptions{

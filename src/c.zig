@@ -12,7 +12,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = @import("./env.zig");
 
-pub const translated = @import("translated-c-headers");
+const translated = @import("translated-c-headers");
 
 const PlatformSpecific = switch (Environment.os) {
     .mac => @import("darwin_c.zig"),

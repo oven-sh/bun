@@ -239,7 +239,7 @@ const random = struct {
         const max: i64 = @intFromFloat(@trunc(max_value.asNumber()));
 
         if (max <= min) {
-            return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be greater than the value of \"min\" ({d}). Received {d}", .{
+            return global.ERR(.OUT_OF_RANGE, "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({d}). Received {d}", .{
                 min,
                 max,
             }).throw();
@@ -247,9 +247,9 @@ const random = struct {
 
         if (max - min > max_range) {
             if (min_specified) {
-                return global.ERR_OUT_OF_RANGE("The value of \"max - min\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
+                return global.ERR(.OUT_OF_RANGE, "The value of \"max - min\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
             }
-            return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
+            return global.ERR(.OUT_OF_RANGE, "The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
         }
 
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
@@ -453,17 +453,17 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
     const l_value, const r_value = callFrame.argumentsAsArray(2);
 
     const l_buf = l_value.asArrayBuffer(global) orelse {
-        return global.ERR_INVALID_ARG_TYPE("The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
+        return global.ERR(.INVALID_ARG_TYPE, "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
     };
     const l = l_buf.byteSlice();
 
     const r_buf = r_value.asArrayBuffer(global) orelse {
-        return global.ERR_INVALID_ARG_TYPE("The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
+        return global.ERR(.INVALID_ARG_TYPE, "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
     };
     const r = r_buf.byteSlice();
 
     if (l.len != r.len) {
-        return global.ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH("Input buffers must have the same byte length", .{}).throw();
+        return global.ERR(.CRYPTO_TIMING_SAFE_EQUAL_LENGTH, "Input buffers must have the same byte length", .{}).throw();
     }
 
     return JSC.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
@@ -482,7 +482,7 @@ pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
 }
 
 pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    return global.ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by BoringSSL", .{}).throw();
+    return global.ERR(.CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED, "Custom engines not supported by BoringSSL", .{}).throw();
 }
 
 fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
@@ -706,12 +706,12 @@ const Scrypt = struct {
             if (err != 0) {
                 var buf: [256]u8 = undefined;
                 const msg = BoringSSL.ERR_error_string_n(err, &buf, buf.len);
-                const exception = global.ERR_CRYPTO_OPERATION_FAILED("Scrypt failed: {s}", .{msg}).toJS();
+                const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed: {s}", .{msg}).toJS();
                 vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
                 return;
             }
 
-            const exception = global.ERR_CRYPTO_OPERATION_FAILED("Scrypt failed", .{}).toJS();
+            const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed", .{}).toJS();
             vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
             return;
         }

@@ -8962,7 +8962,7 @@ pub const PackageManager = struct {
         }
 
         if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            bun.spawn.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {
@@ -11189,7 +11189,7 @@ pub const PackageManager = struct {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             const workspace_package_json_file = (try bun.sys.File.openat(
-                bun.invalid_fd,
+                .cwd(),
                 path,
                 bun.O.RDWR,
                 0,

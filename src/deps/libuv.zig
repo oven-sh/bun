@@ -384,7 +384,18 @@ pub const Handle = extern struct {
     endgame_next: ?*uv_handle_t = null,
     flags: c_uint,
 
-    pub usingnamespace HandleMixin(Handle);
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 
     pub const Type = enum(c_uint) {
         unknown = 0,
@@ -574,7 +585,18 @@ pub const struct_uv_async_s = extern struct {
     async_cb: uv_async_cb,
     async_sent: u8,
 
-    pub usingnamespace HandleMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 
     pub fn init(this: *@This(), loop: *Loop, callback: uv_async_cb) void {
         @memset(std.mem.asBytes(this), 0);
@@ -1019,7 +1041,29 @@ pub const struct_uv_stream_s = extern struct {
     read_req: uv_read_t,
     stream: union_unnamed_384,
 
-    pub usingnamespace StreamMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
+    const stream_impl = StreamMixin(@This());
+    pub const getWriteQueueSize = stream_impl.getWriteQueueSize;
+    pub const listen = stream_impl.listen;
+    pub const accept = stream_impl.accept;
+    pub const readStart = stream_impl.readStart;
+    pub const readStop = stream_impl.readStop;
+    pub const write = stream_impl.write;
+    pub const tryWrite = stream_impl.tryWrite;
+    pub const tryWrite2 = stream_impl.tryWrite2;
+    pub const isReadable = stream_impl.isReadable;
+    pub const isWritable = stream_impl.isWritable;
 };
 const union_unnamed_390 = extern union {
     fd: c_int,
@@ -1315,7 +1359,29 @@ pub const Pipe = extern struct {
     name: [*]WCHAR,
     pipe: union_unnamed_405,
 
-    pub usingnamespace StreamMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
+    const stream_impl = StreamMixin(@This());
+    pub const getWriteQueueSize = stream_impl.getWriteQueueSize;
+    pub const listen = stream_impl.listen;
+    pub const accept = stream_impl.accept;
+    pub const readStart = stream_impl.readStart;
+    pub const readStop = stream_impl.readStop;
+    pub const write = stream_impl.write;
+    pub const tryWrite = stream_impl.tryWrite;
+    pub const tryWrite2 = stream_impl.tryWrite2;
+    pub const isReadable = stream_impl.isReadable;
+    pub const isWritable = stream_impl.isWritable;
 
     pub fn init(this: *Pipe, loop: *Loop, ipc: bool) Maybe(void) {
         if (uv_pipe_init(loop, this, if (ipc) 1 else 0).toError(.pipe)) |err| return .{ .err = err };
@@ -1419,9 +1485,9 @@ pub const struct_uv_tty_s = extern struct {
     handle: HANDLE,
     tty: union_unnamed_420,
 
-    pub fn init(this: *uv_tty_t, loop: *uv_loop_t, fd: uv_file) Maybe(void) {
+    pub fn init(this: *uv_tty_t, loop: *uv_loop_t, file: uv_file) Maybe(void) {
         // last param is ignored
-        return if (uv_tty_init(loop, this, fd, 0).toError(.open)) |err|
+        return if (uv_tty_init(loop, this, file, 0).toError(.open)) |err|
             .{ .err = err }
         else
             .{ .result = {} };
@@ -1437,7 +1503,29 @@ pub const struct_uv_tty_s = extern struct {
         return uv_tty_set_mode(this, @intFromEnum(mode));
     }
 
-    pub usingnamespace StreamMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
+    const stream_impl = StreamMixin(@This());
+    pub const getWriteQueueSize = stream_impl.getWriteQueueSize;
+    pub const listen = stream_impl.listen;
+    pub const accept = stream_impl.accept;
+    pub const readStart = stream_impl.readStart;
+    pub const readStop = stream_impl.readStop;
+    pub const write = stream_impl.write;
+    pub const tryWrite = stream_impl.tryWrite;
+    pub const tryWrite2 = stream_impl.tryWrite2;
+    pub const isReadable = stream_impl.isReadable;
+    pub const isWritable = stream_impl.isWritable;
 };
 pub const uv_tty_t = struct_uv_tty_s;
 const union_unnamed_423 = extern union {
@@ -1468,7 +1556,18 @@ pub const struct_uv_poll_s = extern struct {
     mask_events_2: u8,
     events: u8,
 
-    pub usingnamespace HandleMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 };
 pub const Poll = struct_uv_poll_s;
 const union_unnamed_424 = extern union {
@@ -1520,7 +1619,18 @@ pub const Process = extern struct {
         return uv_spawn(loop, handle, options);
     }
 
-    pub usingnamespace HandleMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 
     pub fn kill(this: *@This(), signum: c_int) ReturnCode {
         return uv_process_kill(@alignCast(@ptrCast(this)), signum);
@@ -1805,7 +1915,13 @@ pub const fs_t = extern struct {
     sys_errno_: DWORD,
     file: union_unnamed_450,
     fs: union_unnamed_451,
-    pub usingnamespace ReqMixin(@This());
+
+    const req_impl = ReqMixin(@This());
+    pub const setData = req_impl.setData;
+    pub const getLoop = req_impl.loop;
+    pub const getData = req_impl.getData;
+    pub const cancel = req_impl.cancel;
+
     const UV_FS_CLEANEDUP = 0x0010;
 
     pub inline fn deinit(this: *fs_t) void {
@@ -1881,7 +1997,11 @@ pub const struct_uv_work_s = extern struct {
     after_work_cb: uv_after_work_cb,
     work_req: struct_uv__work,
 
-    pub usingnamespace ReqMixin(@This());
+    const req_impl = ReqMixin(@This());
+    pub const setData = req_impl.setData;
+    pub const getLoop = req_impl.loop;
+    pub const getData = req_impl.getData;
+    pub const cancel = req_impl.cancel;
 };
 const struct_unnamed_458 = extern struct {
     overlapped: OVERLAPPED,
@@ -1912,7 +2032,11 @@ pub const struct_uv_random_s = extern struct {
     cb: uv_random_cb,
     work_req: struct_uv__work,
 
-    pub usingnamespace ReqMixin(@This());
+    const req_impl = ReqMixin(@This());
+    pub const setData = req_impl.setData;
+    pub const getLoop = req_impl.loop;
+    pub const getData = req_impl.getData;
+    pub const cancel = req_impl.cancel;
 };
 pub const struct_uv_env_item_s = extern struct {
     name: [*]u8,
@@ -2841,8 +2965,6 @@ pub const addrinfo = std.os.windows.ws2_32.addrinfo;
 // https://docs.libuv.org/en/v1.x/stream.html
 fn StreamMixin(comptime Type: type) type {
     return struct {
-        pub usingnamespace HandleMixin(Type);
-
         pub fn getWriteQueueSize(this: *Type) usize {
             return uv_stream_get_write_queue_size(@ptrCast(this));
         }

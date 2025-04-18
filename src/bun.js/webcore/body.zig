@@ -1226,7 +1226,7 @@ pub fn BodyMixin(comptime Type: type) type {
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
-            return globalObject.ERR_BODY_ALREADY_USED("Body already used", .{}).reject();
+            return globalObject.ERR(.BODY_ALREADY_USED, "Body already used", .{}).reject();
         }
 
         pub fn getArrayBuffer(
@@ -1303,7 +1303,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             var encoder = this.getFormDataEncoding() orelse {
                 // TODO: catch specific errors from getFormDataEncoding
-                return globalObject.ERR_FORMDATA_PARSE_ERROR("Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
+                return globalObject.ERR(.FORMDATA_PARSE_ERROR, "Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
 
             if (value.* == .Locked) {
@@ -1319,7 +1319,8 @@ pub fn BodyMixin(comptime Type: type) type {
                 blob.slice(),
                 encoder.encoding,
             ) catch |err| {
-                return globalObject.ERR_FORMDATA_PARSE_ERROR(
+                return globalObject.ERR(
+                    .FORMDATA_PARSE_ERROR,
                     "FormData parse error {s}",
                     .{
                         @errorName(err),

@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-pub const bun = @import("bun");
+const bun = @import("bun");
 const Output = bun.Output;
 const Environment = bun.Environment;
 

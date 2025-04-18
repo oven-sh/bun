@@ -294,7 +294,7 @@ pub fn crashHandler(
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},

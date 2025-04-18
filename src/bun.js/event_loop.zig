@@ -1910,12 +1910,6 @@ pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 }
 
-// pub const EventLoopRefImpl = struct {
-//     fn enqueueTask(ref: anytype) {
-//         const event_loop_ctx =
-//     }
-// };
-
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: ConcurrentTaskQueue = .{},

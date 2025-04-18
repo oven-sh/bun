@@ -2641,6 +2641,128 @@ pub const JSValue = enum(i64) {
         return out;
     }
 
+    pub const FromAnyLifetime = enum { allocated, temporary };
+
+    /// Marshall a zig value into a JSValue using comptime reflection.
+    ///
+    /// - Primitives are converted to their JS equivalent.
+    /// - Types with `toJS` or `toJSNewlyCreated` methods have them called
+    /// - Slices are converted to JS arrays
+    /// - Enums are converted to 32-bit numbers.
+    ///
+    /// `lifetime` describes the lifetime of `value`. If it must be copied, specify `temporary`.
+    pub fn fromAny(
+        globalObject: *JSC.JSGlobalObject,
+        comptime T: type,
+        value: T,
+        comptime lifetime: FromAnyLifetime,
+    ) JSC.JSValue {
+        const Type = comptime brk: {
+            var CurrentType = T;
+            if (@typeInfo(T) == .optional) {
+                CurrentType = @typeInfo(T).optional.child;
+            }
+            break :brk if (@typeInfo(CurrentType) == .pointer and @typeInfo(CurrentType).pointer.size == .one)
+                @typeInfo(CurrentType).pointer.child
+            else
+                CurrentType;
+        };
+
+        if (comptime bun.trait.isNumber(Type)) {
+            return JSC.JSValue.jsNumberWithType(Type, if (comptime Type != T) value.* else value);
+        }
+
+        switch (comptime Type) {
+            void => return .undefined,
+            bool => return JSC.JSValue.jsBoolean(if (comptime Type != T) value.* else value),
+            *JSC.JSGlobalObject => return value.toJSValue(),
+            []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
+                return bun.String.createUTF8ForJS(globalObject, value);
+            },
+            []const bun.String => {
+                defer {
+                    for (value) |out| {
+                        out.deref();
+                    }
+                    bun.default_allocator.free(value);
+                }
+                return bun.String.toJSArray(globalObject, value);
+            },
+            JSC.JSValue => return if (Type != T) value.* else value,
+
+            inline []const u16, []const u32, []const i16, []const i8, []const i32, []const f32 => {
+                var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                for (value, 0..) |item, i| {
+                    array.putIndex(
+                        globalObject,
+                        @truncate(i),
+                        JSC.jsNumber(item),
+                    );
+                }
+                return array;
+            },
+
+            else => {
+
+                // Recursion can stack overflow here
+                if (bun.trait.isSlice(Type)) {
+                    const Child = comptime std.meta.Child(Type);
+
+                    var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                    for (value, 0..) |*item, i| {
+                        const res = toJS(globalObject, *Child, item, lifetime);
+                        if (res == .zero) return .zero;
+                        array.putIndex(
+                            globalObject,
+                            @truncate(i),
+                            res,
+                        );
+                    }
+                    return array;
+                }
+
+                if (comptime @hasDecl(Type, "toJSNewlyCreated") and @typeInfo(@TypeOf(@field(Type, "toJSNewlyCreated"))).@"fn".params.len == 2) {
+                    return value.toJSNewlyCreated(globalObject);
+                }
+
+                if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).@"fn".params.len == 2) {
+                    return value.toJS(globalObject);
+                }
+
+                // must come after toJS check in case this enum implements its own serializer.
+                if (@typeInfo(Type) == .@"enum") {
+                    // FIXME: creates non-normalized integers (e.g. u2), which
+                    // aren't handled by `jsNumberWithType` rn
+                    return JSC.JSValue.jsNumberWithType(u32, @as(u32, @intFromEnum(value)));
+                }
+
+                @compileError("dont know how to convert " ++ @typeName(T) ++ " to JS");
+            },
+        }
+    }
+
+    /// Print a JSValue to stdout; this is only meant for debugging purposes
+    pub fn dump(value: JSC.WebCore.JSValue, globalObject: *JSC.JSGlobalObject) !void {
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject };
+        defer formatter.deinit();
+        try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
+        Output.flush();
+    }
+
+    pub const JSPropertyNameIterator = struct {
+        array: JSC.C.JSPropertyNameArrayRef,
+        count: u32,
+        i: u32 = 0,
+
+        pub fn next(this: *JSPropertyNameIterator) ?JSC.C.JSStringRef {
+            if (this.i >= this.count) return null;
+            const i = this.i;
+            this.i += 1;
+
+            return JSC.C.JSPropertyNameArrayGetNameAtIndex(this.array, i);
+        }
+    };
+
     pub const exposed_to_ffi = struct {
         pub const JSVALUE_TO_INT64 = JSValue.JSC__JSValue__toInt64;
         pub const JSVALUE_TO_UINT64 = JSValue.JSC__JSValue__toUInt64NoTruncate;

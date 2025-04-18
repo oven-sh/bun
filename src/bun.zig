@@ -623,7 +623,15 @@ pub const invalid_fd: FileDescriptor = .invalid;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("jsc.zig");
+/// Deprecated: Prefer the lowercase `jsc` since it is a namespace and not a struct.
+pub const JSC = jsc;
+
+/// Bindings to JavaScriptCore and other JavaScript primatives.
+/// Web and runtime-specific APIs should go in `webcore` and `api`.
+pub const jsc = @import("bun.js/jsc.zig");
+/// JavaScript Web APIs
+pub const webcore = @import("bun.js/webcore.zig");
+pub const api = @import("bun.js/api.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -3595,3 +3603,5 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
 pub const valkey = @import("./valkey/index.zig");
+
+const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");

@@ -1477,7 +1477,7 @@ const Writable = union(enum) {
                     }
                     return pipe.toJSWithDestructor(
                         globalThis,
-                        JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                        JSC.WebCore.sink_destructor.Ptr.init(subprocess),
                     );
                 }
             },

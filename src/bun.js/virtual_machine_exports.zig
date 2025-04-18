@@ -1,0 +1,181 @@
+pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
+    return this.isShuttingDown();
+}
+
+pub export fn Bun__getVM() *JSC.VirtualMachine {
+    return JSC.VirtualMachine.get();
+}
+
+pub export fn Bun__drainMicrotasks() void {
+    JSC.VirtualMachine.get().eventLoop().tick();
+}
+
+export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
+    return vm.origin_timer.read();
+}
+
+export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
+    // timespce to milliseconds
+    return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
+}
+
+pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
+    return global.bunVM().ipc != null;
+}
+
+export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
+    this.exit_on_uncaught_exception = true;
+}
+
+pub extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
+
+comptime {
+    const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
+    @export(&Bun__Process__send, .{ .name = "Bun__Process__send" });
+}
+pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+    JSC.markBinding(@src());
+    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
+
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        try globalObject.validateObject("options", options_, .{});
+    }
+
+    const S = struct {
+        fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+            const arguments_ = callframe.arguments_old(1).slice();
+            const ex = arguments_[0];
+            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+            return .undefined;
+        }
+    };
+
+    const vm = globalObject.bunVM();
+    const ipc_instance = vm.getIPCInstance() orelse {
+        const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "Channel closed.", .{}).toJS();
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(globalObject, callback, ex);
+        } else {
+            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
+        }
+        return .false;
+    };
+
+    if (message.isUndefined()) {
+        return globalObject.throwMissingArgumentsValue(&.{"message"});
+    }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
+        return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
+    }
+
+    const good = ipc_instance.data.serializeAndSend(globalObject, message);
+
+    if (good) {
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(globalObject, callback, .null);
+        }
+    } else {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(globalObject, callback, ex);
+        } else {
+            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
+        }
+    }
+
+    return .true;
+}
+
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
+    return str.eqlUTF8(globalObject.bunVM().main);
+}
+
+/// When IPC environment variables are passed, the socket is not immediately opened,
+/// but rather we wait for process.on('message') or process.send() to be called, THEN
+/// we open the socket. This is to avoid missing messages at the start of the program.
+pub export fn Bun__ensureProcessIPCInitialized(globalObject: *JSGlobalObject) void {
+    // getIPC() will initialize a "waiting" ipc instance so this is enough.
+    // it will do nothing if IPC is not enabled.
+    _ = globalObject.bunVM().getIPCInstance();
+}
+
+/// This function is called on the main thread
+/// The bunVM() call will assert this
+pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
+    global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    JSC.markBinding(@src());
+
+    global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
+}
+
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+    JSC.markBinding(@src());
+    // This JSGlobalObject might not be the main script execution context
+    // See the crash in https://github.com/oven-sh/bun/issues/9778
+    const jsc_vm = JSC.VirtualMachine.get();
+    _ = jsc_vm.uncaughtException(globalObject, value, false);
+    return .undefined;
+}
+
+/// This function is called on another thread
+/// The main difference: we need to allocate the task & wakeup the thread
+/// We can avoid that if we run it from the main thread.
+pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
+    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(
+        JSC.ConcurrentTask.create(Task.init(task)),
+    );
+}
+
+pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    JSC.markBinding(@src());
+
+    const result = promise.result(global.vm());
+    var jsc_vm = global.bunVM();
+
+    // this seems to happen in some cases when GC is running
+    if (result == .zero)
+        return;
+
+    _ = jsc_vm.unhandledRejection(global, result, promise.asValue(global));
+    jsc_vm.autoGarbageCollect();
+}
+
+pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
+    if (jsc_vm.plugin_runner != null) {
+        return;
+    }
+
+    jsc_vm.plugin_runner = PluginRunner{
+        .global_object = globalObject,
+        .allocator = jsc_vm.allocator,
+    };
+    jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
+}
+
+pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+    return jsc_vm.uvLoop();
+}
+
+comptime {
+    if (Environment.isWindows) {
+        @export(&Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+    }
+}

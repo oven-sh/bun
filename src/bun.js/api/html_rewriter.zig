@@ -404,7 +404,7 @@ pub const HTMLRewriter = struct {
         context: *LOLHTMLContext,
         response: *Response,
         response_value: JSC.Strong = .empty,
-        bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
+        bodyValueBufferer: ?JSC.WebCore.ValueBufferer = null,
         tmp_sync_error: ?*JSC.JSValue = null,
 
         // const log = bun.Output.scoped(.BufferOutputSink, false);
@@ -487,7 +487,7 @@ pub const HTMLRewriter = struct {
 
             const value = original.getBodyValue();
             sink.ref();
-            sink.bodyValueBufferer = JSC.WebCore.BodyValueBufferer.init(sink, @ptrCast(&onFinishedBuffering), sink.global, bun.default_allocator);
+            sink.bodyValueBufferer = JSC.WebCore.ValueBufferer.init(sink, @ptrCast(&onFinishedBuffering), sink.global, bun.default_allocator);
             response_js_value.ensureStillAlive();
 
             sink.bodyValueBufferer.?.run(value) catch |buffering_error| {

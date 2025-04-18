@@ -6,19 +6,19 @@ const assert = bun.assert;
 const ObjectURLRegistry = @This();
 
 lock: bun.Mutex = .{},
-map: std.AutoHashMap(UUID, *RegistryEntry) = std.AutoHashMap(UUID, *RegistryEntry).init(bun.default_allocator),
+map: std.AutoHashMap(UUID, *Entry) = std.AutoHashMap(UUID, *Entry).init(bun.default_allocator),
 
-pub const RegistryEntry = struct {
+pub const Entry = struct {
     blob: JSC.WebCore.Blob,
 
     pub const new = bun.TrivialNew(@This());
-    pub fn init(blob: *const JSC.WebCore.Blob) *RegistryEntry {
-        return RegistryEntry.new(.{
+    pub fn init(blob: *const JSC.WebCore.Blob) *Entry {
+        return Entry.new(.{
             .blob = blob.dupeWithContentType(true),
         });
     }
 
-    pub fn deinit(this: *RegistryEntry) void {
+    pub fn deinit(this: *Entry) void {
         this.blob.deinit();
         bun.destroy(this);
     }
@@ -26,7 +26,7 @@ pub const RegistryEntry = struct {
 
 pub fn register(this: *ObjectURLRegistry, vm: *JSC.VirtualMachine, blob: *const JSC.WebCore.Blob) UUID {
     const uuid = vm.rareData().nextUUID();
-    const entry = RegistryEntry.init(blob);
+    const entry = Entry.init(blob);
 
     this.lock.lock();
     defer this.lock.unlock();

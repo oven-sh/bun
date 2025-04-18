@@ -791,6 +791,50 @@ pub const JSGlobalObject = opaque {
         @panic("A C++ exception occurred");
     }
 
+    pub fn createError(
+        globalThis: *JSC.JSGlobalObject,
+        comptime fmt: string,
+        args: anytype,
+    ) JSC.JSValue {
+        if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
+            var zig_str = JSC.ZigString.init(fmt);
+            if (comptime !strings.isAllASCII(fmt)) {
+                zig_str.markUTF16();
+            }
+
+            return zig_str.toErrorInstance(globalThis);
+        } else {
+            var fallback = std.heap.stackFallback(256, bun.default_allocator);
+            var alloc = fallback.get();
+
+            const buf = std.fmt.allocPrint(alloc, fmt, args) catch unreachable;
+            var zig_str = JSC.ZigString.init(buf);
+            zig_str.detectEncoding();
+            // it alwayas clones
+            const res = zig_str.toErrorInstance(globalThis);
+            alloc.free(buf);
+            return res;
+        }
+    }
+
+    pub fn toTypeError(
+        global: *JSC.JSGlobalObject,
+        code: JSC.Error,
+        comptime fmt: [:0]const u8,
+        args: anytype,
+    ) JSC.JSValue {
+        return code.fmt(global, fmt, args);
+    }
+
+    pub fn toInvalidArguments(
+        global: *JSC.JSGlobalObject,
+        comptime fmt: [:0]const u8,
+        args: anytype,
+    ) JSC.JSValue {
+        @branchHint(.cold);
+        return JSC.Error.INVALID_ARG_TYPE.fmt(global, fmt, args);
+    }
+
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {

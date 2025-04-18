@@ -14,13 +14,13 @@ const Environment = @import("./env.zig");
 
 const translated = @import("translated-c-headers");
 
-const PlatformSpecific = switch (Environment.os) {
-    .mac => @import("darwin_c.zig"),
-    .linux => @import("linux_c.zig"),
-    .windows => @import("windows_c.zig"),
-    else => struct {},
-};
-pub usingnamespace PlatformSpecific;
+// const PlatformSpecific = switch (Environment.os) {
+//     .mac => @import("darwin_c.zig"),
+//     .linux => @import("linux_c.zig"),
+//     .windows => @import("windows_c.zig"),
+//     else => struct {},
+// };
+// pub usingnamespace PlatformSpecific;
 
 const C = std.c;
 const builtin = @import("builtin");

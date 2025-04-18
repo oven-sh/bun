@@ -244,6 +244,14 @@ pub export fn TextEncoder__encodeInto8(
     return @bitCast(sized);
 }
 
+comptime {
+    _ = &TextEncoder.TextEncoder__encode8;
+    _ = &TextEncoder.TextEncoder__encode16;
+    _ = &TextEncoder.TextEncoder__encodeInto8;
+    _ = &TextEncoder.TextEncoder__encodeInto16;
+    _ = &TextEncoder.TextEncoder__encodeRopeString;
+}
+
 const std = @import("std");
 const bun = @import("bun");
 const strings = bun.strings;

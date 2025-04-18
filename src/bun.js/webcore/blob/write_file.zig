@@ -1,22 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const Blob = JSC.WebCore.Blob;
-const invalid_fd = bun.invalid_fd;
-
-const SystemError = JSC.SystemError;
-const SizeType = Blob.SizeType;
-const io = bun.io;
-const FileOpener = Blob.Store.FileOpener;
-const FileCloser = Blob.Store.FileCloser;
-const Environment = bun.Environment;
-const bloblog = bun.Output.scoped(.WriteFile, true);
-const JSPromise = JSC.JSPromise;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-
-const ClosingState = Blob.ClosingState;
-
 pub const WriteFileResultType = SystemError.Maybe(SizeType);
 pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) void;
 pub const WriteFileTask = JSC.WorkTask(WriteFile);
@@ -671,7 +652,6 @@ pub const WriteFilePromise = struct {
     }
 };
 
-const Body = JSC.WebCore.Body;
 pub const WriteFileWaitFromLockedValueTask = struct {
     file_blob: Blob,
     globalThis: *JSGlobalObject,
@@ -731,3 +711,24 @@ pub const WriteFileWaitFromLockedValueTask = struct {
         }
     }
 };
+
+const Body = JSC.WebCore.Body;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const std = @import("std");
+const Blob = JSC.WebCore.Blob;
+const invalid_fd = bun.invalid_fd;
+
+const SystemError = JSC.SystemError;
+const SizeType = Blob.SizeType;
+const io = bun.io;
+const FileOpener = Blob.FileOpener;
+const FileCloser = Blob.FileCloser;
+const Environment = bun.Environment;
+const bloblog = bun.Output.scoped(.WriteFile, true);
+const JSPromise = JSC.JSPromise;
+const JSGlobalObject = JSC.JSGlobalObject;
+const ZigString = JSC.ZigString;
+
+const ClosingState = Blob.ClosingState;

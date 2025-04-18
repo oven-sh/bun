@@ -1,6 +1,32 @@
 const { checkIsHttpToken } = require("internal/validators");
 const { isTypedArray, isArrayBuffer } = require("node:util/types");
 
+const {
+  getHeader,
+  setHeader,
+  Headers,
+  assignHeaders: assignHeadersFast,
+  setRequestTimeout,
+  headersTuple,
+  webRequestOrResponseHasBodyValue,
+  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  drainMicrotasks,
+  setServerIdleTimeout,
+} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
+  getHeader: (headers: Headers, name: string) => string | undefined;
+  setHeader: (headers: Headers, name: string, value: string) => void;
+  Headers: (typeof globalThis)["Headers"];
+  assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
+  setRequestTimeout: (req: Request, timeout: number) => boolean;
+  headersTuple: any;
+  webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
+  drainMicrotasks: () => void;
+  setServerIdleTimeout: (server: any, timeout: number) => void;
+};
+
+const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
+
 const kDeprecatedReplySymbol = Symbol("deprecatedReply");
 const kBodyChunks = Symbol("bodyChunks");
 const kPath = Symbol("path");
@@ -437,4 +463,15 @@ export {
   METHODS,
   STATUS_CODES,
   hasServerResponseFinished,
+  getHeader,
+  setHeader,
+  Headers,
+  assignHeadersFast,
+  setRequestTimeout,
+  headersTuple,
+  webRequestOrResponseHasBodyValue,
+  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  drainMicrotasks,
+  setServerIdleTimeout,
+  getRawKeys,
 };

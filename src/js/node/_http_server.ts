@@ -38,14 +38,11 @@ const {
   deferredSymbol,
   eofInProgress,
   runSymbol,
+  drainMicrotasks,
+  setServerIdleTimeout,
 } = require("internal/http");
 
 const { format } = require("internal/util/inspect");
-
-const { drainMicrotasks, setServerIdleTimeout } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
-  drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
-};
 
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");

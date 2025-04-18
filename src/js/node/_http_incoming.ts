@@ -22,26 +22,17 @@ const {
   webRequestOrResponse,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
-} = require("internal/http");
-
-const { FakeSocket } = require("node:_http_outgoing");
-
-var defaultIncomingOpts = { type: "request" };
-const nop = () => {};
-
-const {
-  assignHeaders: assignHeadersFast,
+  assignHeadersFast,
   setRequestTimeout,
   headersTuple,
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
-  assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  setRequestTimeout: (req: Request, timeout: number) => boolean;
-  headersTuple: any;
-  webRequestOrResponseHasBodyValue: (arg: any) => boolean;
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
-};
+} = require("internal/http");
+
+const { FakeSocket } = require("internal/http/FakeSocket");
+
+var defaultIncomingOpts = { type: "request" };
+const nop = () => {};
 
 function assignHeadersSlow(object, req) {
   const headers = req.headers;

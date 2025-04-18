@@ -2,7 +2,7 @@ const EventEmitter: typeof import("node:events").EventEmitter = require("node:ev
 
 const { kEmptyObject } = require("internal/http");
 
-const { FakeSocket } = require("node:_http_outgoing");
+const { FakeSocket } = require("internal/http/FakeSocket");
 
 const ObjectDefineProperty = Object.defineProperty;
 

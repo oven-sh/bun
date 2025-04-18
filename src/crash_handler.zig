@@ -133,7 +133,7 @@ pub const Action = union(enum) {
         kind: bun.ImportKind,
     } else void,
 
-    dlopen: []const u8,
+    napi: [*:0]const u8,
 
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .napi => |path| try writer.print("inside NAPI module: {s}", .{path}),
         }
     }
 };
@@ -2127,29 +2127,59 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
     inside_native_plugin = name;
 }
 
+/// /Users/zackradisic/Code/dd-trace-bun/node_modules/@datadog/native-metrics/prebuilds/darwin-arm64/node-napi.node
+/// ->
+/// @datadog/native-metrics/prebuilds/darwin-arm64/node-napi.node
+fn extractPath(path_: []const u8) ?[]const u8 {
+    var path = path_;
+    const node_modules = "node_modules";
+    const index = std.mem.lastIndexOf(u8, path, node_modules) orelse return null;
+    if (index + node_modules.len >= path.len) return null;
+    path = path[index + node_modules.len ..];
+    // posix path
+    if (path[0] == '/' and path.len > 1) {
+        return path[1..];
+    }
+    return null;
+}
+
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
-    std.debug.panic("unsupported uv function: {s}", .{name.?});
+    if (current_action != null and current_action.? == .napi) {
+        std.debug.panic("unsupported uv function: {s} (inside NAPI module: {s})", .{
+            name.?,
+            bun.sliceTo(current_action.?.napi, 0),
+        });
+    } else {
+        std.debug.panic("unsupported uv function: {s}", .{name.?});
+    }
 }
 
 export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
     crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
 }
 
-export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
+export fn CrashHandler__setNapiAction(action: ?[*:0]const u8) void {
     if (action) |str| {
         bun.debugAssert(current_action == null);
-        current_action = .{ .dlopen = bun.sliceTo(str, 0) };
+        current_action = .{ .napi = str };
     } else {
-        bun.debugAssert(current_action != null and current_action.? == .dlopen);
+        bun.debugAssert(current_action != null and current_action.? == .napi);
         current_action = null;
     }
+    return;
+}
+
+export fn CrashHandler__getCurrentNapiFunction() callconv(.C) ?*anyopaque {
+    return bun.JSC.VirtualMachine.VMHolder.getThreadLocalGlobalObjectCurrentNapiFunction();
 }
 
 pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
+    std.mem.doNotOptimizeAway(&CrashHandler__getCurrentNapiFunction);
 }
+
 comptime {
     _ = &Bun__crashHandler;
     if (!bun.Environment.isWindows) {

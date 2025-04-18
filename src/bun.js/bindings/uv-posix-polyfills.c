@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <dlfcn.h>
 
 // libuv does the annoying thing of #undef'ing these
 #include <errno.h>
@@ -16,6 +17,12 @@
 
 void __bun_throw_not_implemented(const char* symbol_name)
 {
+    if (CrashHandler__getCurrentNapiFunction()) {
+        Dl_info info;
+        if (dladdr(CrashHandler__getCurrentNapiFunction(), &info) != 0) {
+            CrashHandler__setNapiAction(info.dli_fname);
+        }
+    }
     CrashHandler__unsupportedUVFunction(symbol_name);
 }
 

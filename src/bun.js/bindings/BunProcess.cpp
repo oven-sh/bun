@@ -363,7 +363,27 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" void CrashHandler__setNapiAction(const char* action);
+
+/**
+ * RAII wrapper for CrashHandler__setDlOpenAction
+ * Sets the dlopen action on construction and clears it on destruction
+ */
+class DlOpenActionGuard {
+public:
+    explicit DlOpenActionGuard(const char* action)
+    {
+        CrashHandler__setNapiAction(action);
+    }
+
+    ~DlOpenActionGuard()
+    {
+        CrashHandler__setNapiAction(nullptr);
+    }
+
+    WTF_MAKE_NONCOPYABLE(DlOpenActionGuard);
+    WTF_MAKE_NONMOVABLE(DlOpenActionGuard);
+};
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -440,9 +460,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
     CString utf8 = filename.utf8();
-    CrashHandler__setDlOpenAction(utf8.data());
+    DlOpenActionGuard guard(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
-    CrashHandler__setDlOpenAction(nullptr);
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;

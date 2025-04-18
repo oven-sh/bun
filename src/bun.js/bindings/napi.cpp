@@ -1701,6 +1701,30 @@ void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(NapiClass);
 
+/**
+ * RAII wrapper to set the current NAPI function using thread local storage
+ */
+class CurrentNapiFunctionGuard {
+public:
+    void* prev;
+    Zig::GlobalObject* global;
+
+    explicit CurrentNapiFunctionGuard(void* new_napi_function, Zig::GlobalObject* globalObject)
+    {
+        global = globalObject;
+        prev = global->m_currentNapiFunction;
+        global->m_currentNapiFunction = new_napi_function;
+    }
+
+    ~CurrentNapiFunctionGuard()
+    {
+        global->m_currentNapiFunction = prev;
+    }
+
+    WTF_MAKE_NONCOPYABLE(CurrentNapiFunctionGuard);
+    WTF_MAKE_NONMOVABLE(CurrentNapiFunctionGuard);
+};
+
 template<bool ConstructCall>
 JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
@@ -1736,9 +1760,13 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
-    Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
+    auto zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    Bun::NapiHandleScope handleScope(zigGlobalObject);
 
-    JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
+    auto constructor = napi->constructor();
+    CurrentNapiFunctionGuard guard((void*)constructor, zigGlobalObject);
+
+    JSValue ret = toJS(constructor(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);
     RETURN_IF_EXCEPTION(scope, {});
     if (ret.isEmpty()) {

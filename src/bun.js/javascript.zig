@@ -1025,6 +1025,15 @@ pub const VirtualMachine = struct {
             };
         }
 
+        extern fn Bun__getCurrentNapiFunctionFromGlobalObject(*JSGlobalObject) ?*anyopaque;
+
+        pub fn getThreadLocalGlobalObjectCurrentNapiFunction() ?*anyopaque {
+            if (vm) |v| {
+                return Bun__getCurrentNapiFunctionFromGlobalObject(v.global);
+            }
+            return null;
+        }
+
         pub export fn Bun__thisThreadHasVM() bool {
             return vm != null;
         }

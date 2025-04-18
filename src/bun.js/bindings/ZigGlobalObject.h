@@ -431,6 +431,16 @@ public:
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
+    /// Used for libuv stubs to give a helpful error message of the napi module that called an unsupported libuv function.
+    ///
+    /// We set this everytime a NAPI native function is called (ones that are created using `napi_create_function`)
+    ///
+    /// The value is the function pointer of the native function
+    ///
+    /// If an unsupported UV function is called somewhere down the callstack during the execution of the native function,
+    /// we use `dladdr(current_napi_function, &info)` to get the path of the NAPI module the native function belongs to.
+    void* m_currentNapiFunction = nullptr;
+
     // The handle scope where all new NAPI values will be created. You must not pass any napi_values
     // back to a NAPI function without putting them in the handle scope, as the NAPI function may
     // move them off the stack which will cause them to get collected if not in the handle scope.
@@ -708,6 +718,7 @@ using JSDOMGlobalObject = Zig::GlobalObject;
 
 // Do not use this directly.
 namespace ___private___ {
+extern "C" void* Bun__getCurrentNapiFunctionFromGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject);
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 inline Zig::GlobalObject* getDefaultGlobalObject()
 {

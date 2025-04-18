@@ -1,14 +1,21 @@
 import { beforeAll, describe, expect, afterEach, test } from "bun:test";
 import path from "node:path";
-import { bunEnv, bunExe, makeTree, tempDirWithFiles, isWindows } from "harness";
+import { bunEnv, bunExe, makeTree, tempDirWithFiles, isWindows, isDebug } from "harness";
 import source from "./uv-stub-stuff/plugin.c";
+import source_fail_on_init from "./uv-stub-stuff/plugin_fail_on_init.c";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
 import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_uv_posix_stubs_constants";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
+// skip on debug because it's hella slow
+const skip_on_debug = true;
+
 // We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+// These tests are super slow on debug builds
+const run_test = !isWindows && (!isDebug || !skip_on_debug);
+
+describe.if(run_test)("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -16,6 +23,7 @@ describe.if(!isWindows)("uv stubs", () => {
   beforeAll(async () => {
     const files = {
       "plugin.c": await Bun.file(source).text(),
+      "plugin_fail_on_init.c": await Bun.file(source_fail_on_init).text(),
       "good_plugin.c": await Bun.file(goodSource).text(),
       "package.json": JSON.stringify({
         "name": "fake-plugin",
@@ -36,6 +44,7 @@ describe.if(!isWindows)("uv stubs", () => {
       }),
       "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
       "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
+      "fail_on_init.ts": `const foo = require("./build/Release/fail_on_init.node");console.log('HI!')`,
       "binding.gyp": `{
   "targets": [
     {
@@ -48,6 +57,13 @@ describe.if(!isWindows)("uv stubs", () => {
     {
       "target_name": "good_plugin",
       "sources": [ "good_plugin.c" ],
+      "include_dirs": [ ".", "./libuv" ],
+      "cflags": ["-fPIC"],
+      "ldflags": ["-Wl,--export-dynamic"]
+    },
+    {
+      "target_name": "fail_on_init",
+      "sources": [ "plugin_fail_on_init.c" ],
       "include_dirs": [ ".", "./libuv" ],
       "cflags": ["-fPIC"],
       "ldflags": ["-Wl,--export-dynamic"]
@@ -74,6 +90,12 @@ describe.if(!isWindows)("uv stubs", () => {
     process.chdir(cwd);
   });
 
+  test("should crash with path if possible", async () => {
+    const { stderr } = await Bun.$`${bunExe()} run fail_on_init.ts`.cwd(tempdir).throws(false).quiet();
+    const stderrStr = stderr.toString();
+    expect(stderrStr).toMatch(/inside NAPI module: .+fail_on_init\.node/);
+  });
+
   for (const symbol of symbols_to_test) {
     test(`should crash when calling unsupported uv functions: ${symbol}`, async () => {
       console.log("GO:", symbol);
@@ -81,7 +103,8 @@ describe.if(!isWindows)("uv stubs", () => {
       const stderrStr = stderr.toString();
       expect(stderrStr).toContain("Bun encountered a crash when running a NAPI module that tried to call");
       expect(stderrStr).toContain(symbol);
-    });
+      expect(stderrStr).toMatch(/inside NAPI module: .+xXx123_foo_counter_321xXx\.node/);
+    }, 10000);
   }
 
   test("should not crash when calling supported uv functions", async () => {

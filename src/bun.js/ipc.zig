@@ -632,7 +632,6 @@ const NamedPipeIPCData = struct {
     is_server: bool = false,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
     onClose: ?CloseHandler = null,
-    has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
 
     const CloseHandler = struct {
         callback: *const fn (*anyopaque) void,
@@ -703,9 +702,6 @@ const NamedPipeIPCData = struct {
     }
 
     pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 1);
-        }
         if (this.disconnected) {
             return .failure;
         }

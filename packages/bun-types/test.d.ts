@@ -824,7 +824,7 @@ declare module "bun:test" {
      * @example
      * expect(Promise.resolve(1)).resolves.toBe(1);
      */
-    resolves: Matchers<Awaited<T>>;
+    resolves: Matchers<Bun.Wider<Awaited<T>>>;
 
     /**
      * Expects the value to be a promise that rejects.
@@ -873,7 +873,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBe(expected: T): void;
+    toBe(expected: Bun.Wider<T>): void;
     /**
      * Asserts that a number is odd.
      *
@@ -921,7 +921,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual(expected: T): void;
+    toEqual(expected: Bun.Wider<T>): void;
     /**
      * Asserts that a value is deeply and strictly equal to
      * what is expected.
@@ -945,7 +945,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toStrictEqual(expected: T): void;
+    toStrictEqual(expected: Bun.Wider<T>): void;
     /**
      * Asserts that the value is deep equal to an element in the expected array.
      *
@@ -958,7 +958,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Array<unknown> | Iterable<unknown>): void;
+    toBeOneOf(expected: Array<Bun.Wider<T>> | Iterable<Bun.Wider<T>>): void;
     /**
      * Asserts that a value contains what is expected.
      *
@@ -972,7 +972,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain(expected: unknown): void;
+    toContain(expected: Bun.Wider<T>): void;
     /**
      * Asserts that an `object` contains a key.
      *
@@ -986,7 +986,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey(expected: unknown): void;
+    toContainKey(expected: Bun.Wider<keyof T>): void;
     /**
      * Asserts that an `object` contains all the provided keys.
      *
@@ -1001,7 +1001,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys(expected: unknown): void;
+    toContainAllKeys(expected: Array<Bun.Wider<keyof T>>): void;
     /**
      * Asserts that an `object` contains at least one of the provided keys.
      * Asserts that an `object` contains all the provided keys.
@@ -1100,7 +1100,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys(expected: unknown): void;
+    toContainKeys(expected: Array<Bun.Wider<keyof T>>): void;
     /**
      * Asserts that a value contains and equals what is expected.
      *
@@ -1113,7 +1113,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainEqual(expected: unknown): void;
+    toContainEqual(expected: T extends Iterable<infer U> ? Bun.Wider<U> : unknown): void;
     /**
      * Asserts that a value has a `.length` property
      * that is equal to the expected length.

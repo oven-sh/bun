@@ -47,6 +47,25 @@ declare module "bun" {
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
   /**
+   * Maps specific union types to their primitive counterparts
+   * Recursively handles arrays, tuples, and object properties
+   */
+  // prettier-ignore
+  type Wider<T> =
+    T extends [] ? [] :
+    T extends [infer A, ...infer B] ? [Wider<A>, ...Wider<B>] :
+    T extends Array<infer U> ? Array<Wider<U>> :
+    T extends string ? string :
+    T extends number ? number :
+    T extends boolean ? boolean :
+    T extends bigint ? bigint :
+    T extends symbol ? symbol :
+    T extends null ? null :
+    T extends {} ? { [K in keyof T]: Wider<T[K]> } :
+    T extends undefined ? undefined :
+    T;
+
+  /**
    * @private
    */
   namespace __internal {

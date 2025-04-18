@@ -2163,8 +2163,8 @@ pub fn spawnMaybeSync(
                     }
 
                     const timeout_int = try globalThis.validateIntegerRange(timeout_value, u64, 0, .{ .min = 0, .field_name = "timeout" });
-
-                    timeout = @intCast(@as(u31, @truncate(timeout_int)));
+                    if (timeout_int > 0)
+                        timeout = @intCast(@as(u31, @truncate(timeout_int)));
                 }
             }
 

@@ -2156,15 +2156,15 @@ pub fn spawnMaybeSync(
                 }
             }
 
-            if (try args.getOptionalInt(globalThis, "timeout", u64)) |val| {
-                switch (val) {
-                    0 => {
-                        // keep timeout as null if it's 0, so it's clear there is no timeout.
-                        timeout = null;
-                    },
-                    else => {
-                        timeout = @intCast(@as(u31, @truncate(val)));
-                    },
+            if (try args.get(globalThis, "timeout")) |timeout_value| brk: {
+                if (timeout_value != .null) {
+                    if (timeout_value.isNumber() and std.math.isPositiveInf(timeout_value.asNumber())) {
+                        break :brk;
+                    }
+
+                    const timeout_int = try globalThis.validateIntegerRange(timeout_value, u64, 0, .{ .min = 0, .field_name = "timeout" });
+
+                    timeout = @intCast(@as(u31, @truncate(timeout_int)));
                 }
             }
 

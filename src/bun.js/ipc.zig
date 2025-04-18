@@ -550,7 +550,11 @@ const SocketType = struct {
     }
     fn writeFd(this: @This(), data: []const u8, fd: bun.FileDescriptor) i32 {
         return switch (Environment.isWindows) {
-            true => @panic("TODO writeFd on Windows"),
+            true => {
+                // TODO: implement writeFd on Windows
+                this.backing.outgoing.write(data) catch bun.outOfMemory();
+                return @intCast(data.len);
+            },
             false => this.backing.writeFd(data, fd),
         };
     }
@@ -1006,7 +1010,7 @@ fn onData2(comptime Context: type, this: *Context, socket: SocketType, all_data:
             socket.close(.failure);
             return;
         },
-        else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
+        else => @compileError("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
     };
 
     // Decode the message with just the temporary buffer, and if that
@@ -1222,7 +1226,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     ipc.close(true);
                     return;
                 },
-                else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
+                else => @compileError("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
             };
             while (true) {
                 const result = decodeIPCMessage(ipc.send_queue.mode, slice, globalThis) catch |e| switch (e) {

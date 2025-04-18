@@ -795,7 +795,7 @@ pub const Listener = struct {
                 },
                 .fd => |file_descriptor| {
                     if (ssl_enabled) return globalObject.throw("TODO listen ssl with fd", .{});
-                    if (Environment.isWindows) @panic("TODO listen fd on Windows");
+                    if (Environment.isWindows) return globalObject.throw("TODO listen windows with fd", .{});
                     break :brk uws.us_socket_context_listen_fd(@intFromBool(ssl_enabled), socket_context, file_descriptor.native(), socket_flags, 8, &errno);
                 },
             }

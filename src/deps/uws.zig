@@ -1552,7 +1552,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
             return switch (this.socket) {
-                .upgradedDuplex, .pipe => @panic("todo"),
+                .upgradedDuplex, .pipe => this.write(data, false),
                 .connected => |socket| socket.writeFd(data, file_descriptor),
                 .connecting, .detached => 0,
             };

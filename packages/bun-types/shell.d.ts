@@ -205,6 +205,20 @@ declare module "bun" {
       throws(shouldThrow: boolean): this;
     }
 
+    /**
+     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.sh/docs/runtime/shell).
+     *
+     * @example
+     * ```ts
+     * try {
+     *   const result = await $`exit 1`;
+     * } catch (error) {
+     *   if (error instanceof ShellError) {
+     *     console.log(error.exitCode); // 1
+     *   }
+     * }
+     * ```
+     */
     class ShellError extends Error implements ShellOutput {
       readonly stdout: Buffer;
       readonly stderr: Buffer;

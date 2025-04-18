@@ -4831,6 +4831,8 @@ declare module "bun" {
 
   /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
+   *
+   * @deprecated
    */
   function shrink(): void;
 

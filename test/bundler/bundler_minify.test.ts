@@ -73,6 +73,21 @@ describe("bundler", () => {
     ],
     minifySyntax: true,
   });
+  // https://github.com/oven-sh/bun/issues/18629
+  itBundled("minify/IndexStringAdditionFolding", {
+    files: {
+      "/entry.ts": /* ts */ `
+        (0)["_" + "a"];
+        ("a")["_" + "a"];
+        (() => 0)["_" + "a"];
+        (a = () => 0)["_" + "a"];
+        (function () {})["_" + "a"];
+        enum A { B = "b" }; (() => 0)[A.B];
+        delete (() => 0)["_" + "a"];
+      `,
+    },
+    minifySyntax: true,
+  });
   itBundled("minify/FunctionExpressionRemoveName", {
     todo: true,
     files: {

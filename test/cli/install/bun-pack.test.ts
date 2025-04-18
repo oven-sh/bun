@@ -909,50 +909,77 @@ describe("bundledDependnecies", () => {
 });
 
 describe("files", () => {
-  test("CHANGELOG is not included by default", async () => {
-    await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "pack-files-changelog",
-          version: "1.1.1",
-          files: ["lib"],
-        }),
-      ),
-      write(join(packageDir, "CHANGELOG.md"), "hello"),
-      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
-    ]);
+  describe("CHANGELOG", () => {
+    test("is not included by default", async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-files-changelog",
+            version: "1.1.1",
+            files: ["lib"],
+          }),
+        ),
+        write(join(packageDir, "CHANGELOG.md"), "hello"),
+        write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+      ]);
 
-    await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.1.tgz"));
-    expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/lib/index.js" },
-    ]);
-  });
+      await pack(packageDir, bunEnv);
+      const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.1.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/lib/index.js" },
+      ]);
+    });
 
-  test(".npmignore cannot exclude CHANGELOG", async () => {
-    await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "pack-files-changelog",
-          version: "1.1.2",
-        }),
-      ),
-      write(join(packageDir, ".npmignore"), "CHANGELOG\nCHANGELOG.*"),
-      write(join(packageDir, "CHANGELOG"), "hello"),
-      write(join(packageDir, "CHANGELOG.md"), "hello"),
-      write(join(packageDir, "CHANGELOG.txt"), "hello"),
-    ]);
-    await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
-    expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/CHANGELOG" },
-      { "pathname": "package/CHANGELOG.md" },
-      { "pathname": "package/CHANGELOG.txt" },
-    ]);
+    test("cannot be excluded via .npmignore", async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-files-changelog",
+            version: "1.1.2",
+          }),
+        ),
+        write(join(packageDir, ".npmignore"), "CHANGELOG\nCHANGELOG.*"),
+        write(join(packageDir, "CHANGELOG"), "hello"),
+        write(join(packageDir, "CHANGELOG.md"), "hello"),
+        write(join(packageDir, "CHANGELOG.txt"), "hello"),
+      ]);
+      await pack(packageDir, bunEnv);
+      const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/CHANGELOG" },
+        { "pathname": "package/CHANGELOG.md" },
+        { "pathname": "package/CHANGELOG.txt" },
+      ]);
+    });
+
+    // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#files
+    test("can be excluded via package.json files", async () => {
+      const dir = tempDirWithFiles("bun-pack-files-changelog", {
+        "package.json": /* json */ `
+        {
+          "name": "pack-files-changelog-exclude",
+          "version": "1.1.1",
+          "files": ["lib", "!CHANGELOG"]
+        }
+      `,
+        CHANGELOG: "hello",
+        lib: {
+          "index.js": "console.log('hello ./lib/index.js')",
+        },
+      });
+
+      const { out } = await pack(dir, bunEnv);
+      const tarball = readTarball(join(dir, "pack-files-changelog-exclude-1.1.1.tgz"));
+      expect(out).toContain("Total files: 2");
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/lib/index.js" },
+      ]);
+    });
   });
 
   test("'files' field cannot exclude LICENSE", async () => {
@@ -1123,47 +1150,80 @@ describe("files", () => {
   });
 });
 
-describe(".gitignore/.npmignore", () => {
-  for (const ignoreFile of [".gitignore", ".npmignore"]) {
-    test(`can ignore and un-ignore a file (${ignoreFile})`, async () => {
-      await Promise.all([
-        write(
-          join(packageDir, "package.json"),
-          JSON.stringify({
-            name: "pack-ignore-1",
-            version: "0.0.0",
-          }),
-        ),
-        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
-        write(join(packageDir, ignoreFile), "index.js"),
-      ]);
-
-      await pack(packageDir, bunEnv);
-      const tarball = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
-      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
-
-      await Promise.all([
-        rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
-        write(join(packageDir, ignoreFile), "index.js\n!index.js"),
-      ]);
-
-      await pack(packageDir, bunEnv);
-      const tarball2 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
-      expect(tarball2.entries).toMatchObject([
-        { "pathname": "package/package.json" },
-        { "pathname": "package/index.js" },
-      ]);
-
-      await Promise.all([
-        rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
-        write(join(packageDir, ignoreFile), "!index.js\nindex.js"),
-      ]);
-
-      await pack(packageDir, bunEnv);
-      const tarball3 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
-      expect(tarball3.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+describe("always-ignored files", () => {
+  let dir: string;
+  let tarball: any;
+  beforeAll(async () => {
+    dir = tempDirWithFiles("bun-pack-exclude-always-ignored", {
+      "package.json": JSON.stringify({
+        "name": "always-ignored",
+        "version": "1.0.0",
+      }),
+      "CHANGELOG": `some stuff changed`,
+      "README.md": `# README`,
+      src: {
+        "index.js": /* js */ `console.log('hello ./src/index.js')`,
+        ".DS_Store": "",
+        ".foo.swp": "",
+        ".git": "",
+        ".svn": "",
+        "CVS": "",
+      },
     });
-  }
+
+    await pack(dir, bunEnv);
+    tarball = readTarball(join(dir, "always-ignored-1.0.0.tgz"));
+    console.log(tarball);
+  });
+
+  it.each([".DS_Store", ".foo.swp", ".git", ".svn"])("%s is always ignored", file => {
+    expect(tarball.entries).not.toContainEqual(expect.objectContaining({ pathname: `package/src/${file}` }));
+  });
+
+  it.each(["CHANGELOG", "README.md"])("%s is not ignored by default", file => {
+    expect(tarball.entries).toContainEqual(expect.objectContaining({ pathname: `package/${file}` }));
+  });
+});
+
+describe(".gitignore/.npmignore", () => {
+  test.each([".gitignore .npmignore"])("can ignore and un-ignore a file (%s)", async ignoreFile => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-ignore-1",
+          version: "0.0.0",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      write(join(packageDir, ignoreFile), "index.js"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+
+    await Promise.all([
+      rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
+      write(join(packageDir, ignoreFile), "index.js\n!index.js"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball2 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
+    expect(tarball2.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/index.js" },
+    ]);
+
+    await Promise.all([
+      rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
+      write(join(packageDir, ignoreFile), "!index.js\nindex.js"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball3 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
+    expect(tarball3.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+  });
 
   test("excludes files recursively", async () => {
     await Promise.all([

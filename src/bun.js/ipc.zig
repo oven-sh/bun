@@ -132,10 +132,10 @@ const advanced = struct {
         return comptime std.mem.asBytes(&VersionPacket{});
     }
     pub fn getAckPacket() []const u8 {
-        @panic("TODO: advanced getAckPacket");
+        return "\x02\x24\x00\x00\x00\r\x00\x00\x00\x02\x03\x00\x00\x80cmd\x10\x0f\x00\x00\x80NODE_HANDLE_ACK\xff\xff\xff\xff";
     }
     pub fn getNackPacket() []const u8 {
-        @panic("TODO: advanced getNackPacket");
+        return "\x02\x25\x00\x00\x00\r\x00\x00\x00\x02\x03\x00\x00\x80cmd\x10\x10\x00\x00\x80NODE_HANDLE_NACK\xff\xff\xff\xff";
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {

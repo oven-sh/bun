@@ -1,8 +1,8 @@
 // Hardcoded module "node:crypto"
-const StreamModule = require("node:stream");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
+const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
 
 const {
@@ -195,9 +195,9 @@ function Sign(algorithm, options): void {
   this[kHandle] = new _Sign();
   this[kHandle].init(algorithm);
 
-  StreamModule.Writable.$apply(this, [options]);
+  Writable.$apply(this, [options]);
 }
-$toClass(Sign, "Sign", StreamModule.Writable);
+$toClass(Sign, "Sign", Writable);
 
 Sign.prototype._write = function _write(chunk, encoding, callback) {
   this.update(chunk, encoding);
@@ -230,9 +230,9 @@ function Verify(algorithm, options): void {
   this[kHandle] = new _Verify();
   this[kHandle].init(algorithm);
 
-  StreamModule.Writable.$apply(this, [options]);
+  Writable.$apply(this, [options]);
 }
-$toClass(Verify, "Verify", StreamModule.Writable);
+$toClass(Verify, "Verify", Writable);
 
 Verify.prototype._write = Sign.prototype._write;
 Verify.prototype.update = Sign.prototype.update;

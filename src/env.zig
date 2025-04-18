@@ -34,9 +34,13 @@ pub const export_cpp_apis = @import("builtin").output_mode == .Obj or isTest;
 
 pub const build_options = @import("build_options");
 
+/// Set if compiling with `-Dno_llvm`
+/// All places this is used is working around a Zig bug.
+pub const zig_self_hosted_backend = build_options.zig_self_hosted_backend;
+
 pub const reported_nodejs_version = build_options.reported_nodejs_version;
 pub const baseline = build_options.baseline;
-pub const enableSIMD: bool = !baseline;
+pub const enableSIMD: bool = !baseline and !zig_self_hosted_backend;
 pub const git_sha = build_options.sha;
 pub const git_sha_short = if (build_options.sha.len > 0) build_options.sha[0..9] else "";
 pub const git_sha_shorter = if (build_options.sha.len > 0) build_options.sha[0..6] else "";

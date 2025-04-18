@@ -21,18 +21,18 @@ const pathRel = fs.path.relative;
 /// When updating this, make sure to adjust SetupZig.cmake
 const recommended_zig_version = "0.14.0";
 
-comptime {
-    if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-        @compileError(
-            "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-                builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-                "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-                "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-                "comment this error out.",
-        );
-    }
-}
+// comptime {
+//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
+//         @compileError(
+//             "" ++
+//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
+//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
+//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
+//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
+//                 "comment this error out.",
+//         );
+//     }
+// }
 
 const zero_sha = "0000000000000000000000000000000000000000";
 
@@ -93,6 +93,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
 
         const mod = opts.createModule();
         this.cached_options_module = mod;
@@ -467,10 +468,12 @@ fn addMultiCheck(
 }
 
 fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
-    var target = initial_target;
-    if (target.result.os.tag == .windows) {
-        target.result.abi = .gnu; // Some windows hosts do not have `windows.h`
-    }
+    const target = b.resolveTargetQuery(q: {
+        var query = initial_target.query;
+        if (query.os_tag.? == .windows)
+            query.abi = .gnu;
+        break :q query;
+    });
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c-headers-for-zig.h"),
         .target = target,

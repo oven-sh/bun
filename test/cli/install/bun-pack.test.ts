@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, beforeAll, describe, expect, test, it } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack, tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -1173,7 +1173,6 @@ describe("always-ignored files", () => {
 
     await pack(dir, bunEnv);
     tarball = readTarball(join(dir, "always-ignored-1.0.0.tgz"));
-    console.log(tarball);
   });
 
   it.each([".DS_Store", ".foo.swp", ".git", ".svn"])("%s is always ignored", file => {

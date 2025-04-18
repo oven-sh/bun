@@ -20,7 +20,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 

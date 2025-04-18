@@ -196,7 +196,8 @@ const kEmptyBuffer = Buffer.alloc(0);
 function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
+    const length = obj.length;
+    for (var i = 0; i < length; i++) {
       const item = obj[i];
       if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false; // prettier-ignore
     }
@@ -3386,11 +3387,12 @@ function ClientRequest(input, options, cb) {
   const { headers } = options;
   const headersArray = $isJSArray(headers);
   if (headersArray) {
-    if (headers.length % 2 !== 0) {
+    const length = headers.length;
+    if (length % 2 !== 0) {
       throw $ERR_INVALID_ARG_VALUE("options.headers", headers);
     }
-    for (let i = 0; i < headers.length; i += 2) {
-      this.appendHeader(headers[i], headers[i + 1]);
+    for (let i = 0; i < length; ) {
+      this.appendHeader(headers[i++], headers[i++]);
     }
   } else {
     if (headers) {
@@ -3739,27 +3741,29 @@ function _writeHead(statusCode, reason, obj, response) {
     let k;
 
     if ($isArray(obj)) {
+      const length = obj.length;
       // Append all the headers provided in the array:
-      if (obj.length && $isArray(obj[0])) {
-        for (let i = 0; i < obj.length; i++) {
+      if (length && $isArray(obj[0])) {
+        for (let i = 0; i < length; i++) {
           const k = obj[i];
           if (k) response.appendHeader(k[0], k[1]);
         }
       } else {
-        if (obj.length % 2 !== 0) {
+        if (length % 2 !== 0) {
           throw new Error("raw headers must have an even number of elements");
         }
 
-        for (let n = 0; n < obj.length; n += 2) {
-          k = obj[n + 0];
+        for (let n = 0; n < length; n += 2) {
+          k = obj[n];
           if (k) response.appendHeader(k, obj[n + 1]);
         }
       }
     } else if (obj) {
       const keys = Object.keys(obj);
+      const length = keys.length;
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
-      for (let i = 0; i < keys.length; i++) {
+      for (let i = 0; i < length; i++) {
         k = keys[i];
         if (k) response.setHeader(k, obj[k]);
       }

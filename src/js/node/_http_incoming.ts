@@ -404,12 +404,8 @@ const IncomingMessagePrototype = {
     const req = this[kHandle] || this[webRequestOrResponse];
 
     if (req) {
-      if (setRequestTimeout(req, Math.ceil(msecs / 1000))) {
-        typeof callback === "function" && this.once("timeout", callback);
-      } else {
-        // Actually a Response object
-        req.setTimeout?.(msecs, callback);
-      }
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
     }
     return this;
   },

@@ -449,6 +449,9 @@ pub const SendQueue = struct {
         on_writable,
     };
     fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, socket: SocketType, reason: ContinueSendReason) void {
+        this.debugLogMessageQueue();
+        log("IPC continueSend: {s}", .{@tagName(reason)});
+
         if (this.queue.items.len == 0) {
             return; // nothing to send
         }
@@ -470,6 +473,7 @@ pub const SendQueue = struct {
             itm.complete(global);
             return _continueSend(this, global, socket, reason);
         }
+        log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
         const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send);
         if (n == to_send.len) {
             if (first.handle) |_| {
@@ -522,11 +526,19 @@ pub const SendQueue = struct {
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
+        log("enqueueing ipc message: '{'}'", .{std.zig.fmtEscapes(msg.data.list.items[start_offset..])});
 
         self.continueSend(global, socket, .new_message_appended);
 
         if (indicate_backoff) return .backoff;
         return .success;
+    }
+    fn debugLogMessageQueue(this: *SendQueue) void {
+        if (!Environment.isDebug) return;
+        log("IPC message queue ({d} items)", .{this.queue.items.len});
+        for (this.queue.items) |item| {
+            log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
+        }
     }
 };
 const WindowsSocketType = bun.io.StreamingWriter(NamedPipeIPCData, NamedPipeIPCData.onWrite, NamedPipeIPCData.onError, null, NamedPipeIPCData.onPipeClose);
@@ -882,10 +894,6 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         }
     }
 
-    if (zig_handle) |zig_handle_resolved| {
-        log("sending ipc message with fd: {d}", .{zig_handle_resolved.fd.native()});
-    }
-
     const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
 
     if (status == .failure) {
@@ -915,6 +923,15 @@ pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *JSC.CallFra
 
 fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCMessage, socket: SocketType, globalThis: *JSC.JSGlobalObject) void {
     const ipc: *IPCData = this.ipc() orelse return;
+    if (Environment.isDebug) {
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
+        switch (message) {
+            .version => |version| log("received ipc message: version: {}", .{version}),
+            .data => |jsvalue| log("received ipc message: {}", .{jsvalue.toFmt(&formatter)}),
+            .internal => |jsvalue| log("received ipc message: internal: {}", .{jsvalue.toFmt(&formatter)}),
+        }
+    }
     if (message == .data) handle_message: {
         // TODO: get property 'cmd' from the message, read as a string
         // to skip this property lookup (and simplify the code significantly)

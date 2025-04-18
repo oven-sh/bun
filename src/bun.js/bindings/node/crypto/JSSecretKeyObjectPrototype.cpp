@@ -73,5 +73,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectToCryptoKey, (JSGlobalObject * globalO
         return JSValue::encode({});
     }
 
-    return JSValue::encode(jsUndefined());
+    KeyObject& handle = secretKeyObject->handle();
+    JSValue algorithmValue = callFrame->argument(0);
+    JSValue extractableValue = callFrame->argument(1);
+    JSValue keyUsagesValue = callFrame->argument(2);
+
+    return JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue));
 }

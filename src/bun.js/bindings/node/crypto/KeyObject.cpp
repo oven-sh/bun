@@ -626,6 +626,11 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 }
 
+JSValue KeyObject::toCryptoKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue algorithmValue, JSValue extractableValue, JSValue keyUsagesValue)
+{
+    return jsUndefined();
+}
+
 static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::CryptoKey& key)
 {
     switch (key.keyClass()) {

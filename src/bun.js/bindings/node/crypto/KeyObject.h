@@ -109,6 +109,8 @@ public:
     JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
     std::optional<bool> equals(const KeyObject& other) const;
+    JSC::JSValue toCryptoKey(JSC::JSGlobalObject*, JSC::ThrowScope&,
+        JSC::JSValue algorithmValue, JSC::JSValue extractableValue, JSC::JSValue keyUsagesValue);
 
     inline WebCore::CryptoKeyType type() const { return m_type; }
     inline WebCore::CryptoKeyType& type() { return m_type; }

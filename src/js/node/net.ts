@@ -1948,7 +1948,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
       return;
     }
     // const req = new TCPConnectWrap();
-    const req = {};
+    const req: any = {};
     req.oncomplete = afterConnect;
     req.address = address;
     req.port = port;
@@ -1960,10 +1960,10 @@ function internalConnect(self, options, address, port, addressType, localAddress
     err = self._handle[kConnectTcp](self, addressType, req, address, port);
   } else {
     // const req = new PipeConnectWrap();
-    const req = {};
+    const req: any = {};
     req.address = address;
     req.oncomplete = afterConnect;
-    req.tls;
+    req.tls = tls;
 
     err = self._handle[kConnectPipe](self, req, address);
   }

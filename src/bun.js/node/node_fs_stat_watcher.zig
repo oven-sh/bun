@@ -173,7 +173,10 @@ pub const StatWatcherScheduler = struct {
     }
 };
 
+// TODO: make this a top-level struct
 pub const StatWatcher = struct {
+    pub const Scheduler = StatWatcherScheduler;
+
     next: ?*StatWatcher = null,
 
     ctx: *VirtualMachine,

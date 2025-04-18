@@ -3,6 +3,12 @@
 //! Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes
 //! sense. If that changes, this should be renamed `ScriptExecutionContext`.
 const VirtualMachine = @This();
+export var has_bun_garbage_collector_flag_enabled = false;
+pub export var isBunTest: bool = false;
+
+// TODO: evaluate if this has any measurable performance impact.
+pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
+pub var string_allocation_limit: usize = std.math.maxInt(u32);
 
 comptime {
     _ = Bun__remapStackFramePositions;
@@ -10,6 +16,7 @@ comptime {
     @export(&setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
     @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
+    @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
 global: *JSGlobalObject,
@@ -19,7 +26,7 @@ transpiler: Transpiler,
 bun_watcher: ImportWatcher = .{ .none = {} },
 console: *ConsoleObject,
 log: *logger.Log,
-main: string = "",
+main: []const u8 = "",
 main_is_html_entrypoint: bool = false,
 main_resolved_path: bun.String = bun.String.empty,
 main_hash: u32 = 0,
@@ -27,9 +34,9 @@ entry_point: ServerEntryPoint = undefined,
 origin: URL = URL{},
 node_fs: ?*Node.NodeFS = null,
 timer: Bun.Timer.All,
-event_loop_handle: ?*PlatformEventLoop = null,
+event_loop_handle: ?*JSC.PlatformEventLoop = null,
 pending_unref_counter: i32 = 0,
-preload: []const string = &[_][]const u8{},
+preload: []const []const u8 = &.{},
 unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
@@ -72,9 +79,7 @@ macros: MacroMap,
 macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
 macro_mode: bool = false,
 no_macros: bool = false,
-auto_killer: AutoKiller = .{
-    .enabled = false,
-},
+auto_killer: JSC.AutoKiller = .{ .enabled = false },
 
 has_any_macro_remappings: bool = false,
 is_from_devserver: bool = false,
@@ -87,7 +92,7 @@ has_patched_run_main: bool = false,
 transpiler_store: JSC.RuntimeTranspilerStore,
 
 after_event_loop_callback_ctx: ?*anyopaque = null,
-after_event_loop_callback: ?OpaqueCallback = null,
+after_event_loop_callback: ?JSC.OpaqueCallback = null,
 
 remap_stack_frames_mutex: bun.Mutex = .{},
 
@@ -113,7 +118,7 @@ regular_event_loop: EventLoop = EventLoop{},
 event_loop: *EventLoop = undefined,
 
 ref_strings: JSC.RefString.Map = undefined,
-ref_strings_mutex: Lock = undefined,
+ref_strings_mutex: bun.Mutex = undefined,
 
 active_tasks: usize = 0,
 
@@ -143,7 +148,7 @@ gc_controller: JSC.GarbageCollectionController = .{},
 worker: ?*JSC.WebWorker = null,
 ipc: ?IPCInstanceUnion = null,
 
-debugger: ?Debugger = null,
+debugger: ?JSC.Debugger = null,
 has_started_debugger: bool = false,
 has_terminated: bool = false,
 
@@ -574,7 +579,7 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
     }
 }
 
-pub fn reload(this: *VirtualMachine, _: *HotReloader.HotReloadTask) void {
+pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     Output.debug("Reloading...", .{});
     const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
     if (this.hot_reload == .watch) {
@@ -713,7 +718,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 }
 
 pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
-    var debugger: *Debugger = &(this.debugger orelse return 0);
+    var debugger: *JSC.Debugger = &(this.debugger orelse return 0);
     debugger.next_debugger_id +%= 1;
     return debugger.next_debugger_id;
 }
@@ -726,137 +731,7 @@ pub fn hotMap(this: *VirtualMachine) ?*JSC.RareData.HotMap {
     return this.rareData().hotMap(this.allocator);
 }
 
-pub var has_created_debugger: bool = false;
-
-pub const TestReporterAgent = struct {
-    handle: ?*Handle = null,
-    const debug = Output.scoped(.TestReporterAgent, false);
-    pub const TestStatus = enum(u8) {
-        pass,
-        fail,
-        timeout,
-        skip,
-        todo,
-    };
-    pub const Handle = opaque {
-        extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *JSC.CallFrame, testId: c_int, name: *String) void;
-        extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
-        extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
-
-        pub fn reportTestFound(this: *Handle, callFrame: *JSC.CallFrame, testId: i32, name: *String) void {
-            Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name);
-        }
-
-        pub fn reportTestStart(this: *Handle, testId: c_int) void {
-            Bun__TestReporterAgentReportTestStart(this, testId);
-        }
-
-        pub fn reportTestEnd(this: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void {
-            Bun__TestReporterAgentReportTestEnd(this, testId, bunTestStatus, elapsed);
-        }
-    };
-    pub export fn Bun__TestReporterAgentEnable(agent: *Handle) void {
-        if (JSC.VirtualMachine.get().debugger) |*debugger| {
-            debug("enable", .{});
-            debugger.test_reporter_agent.handle = agent;
-        }
-    }
-    pub export fn Bun__TestReporterAgentDisable(agent: *Handle) void {
-        _ = agent; // autofix
-        if (JSC.VirtualMachine.get().debugger) |*debugger| {
-            debug("disable", .{});
-            debugger.test_reporter_agent.handle = null;
-        }
-    }
-
-    /// Caller must ensure that it is enabled first.
-    ///
-    /// Since we may have to call .deinit on the name string.
-    pub fn reportTestFound(this: TestReporterAgent, callFrame: *JSC.CallFrame, test_id: i32, name: *bun.String) void {
-        debug("reportTestFound", .{});
-
-        this.handle.?.reportTestFound(callFrame, test_id, name);
-    }
-
-    /// Caller must ensure that it is enabled first.
-    pub fn reportTestStart(this: TestReporterAgent, test_id: i32) void {
-        debug("reportTestStart", .{});
-        this.handle.?.reportTestStart(test_id);
-    }
-
-    /// Caller must ensure that it is enabled first.
-    pub fn reportTestEnd(this: TestReporterAgent, test_id: i32, bunTestStatus: TestStatus, elapsed: f64) void {
-        debug("reportTestEnd", .{});
-        this.handle.?.reportTestEnd(test_id, bunTestStatus, elapsed);
-    }
-
-    pub fn isEnabled(this: TestReporterAgent) bool {
-        return this.handle != null;
-    }
-};
-
-pub const LifecycleAgent = struct {
-    handle: ?*Handle = null,
-    const debug = Output.scoped(.LifecycleAgent, false);
-
-    pub const Handle = opaque {
-        extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
-        extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *ZigException) void;
-        extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
-        extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
-
-        pub fn preventExit(this: *Handle) void {
-            Bun__LifecycleAgentPreventExit(this);
-        }
-
-        pub fn stopPreventingExit(this: *Handle) void {
-            Bun__LifecycleAgentStopPreventingExit(this);
-        }
-
-        pub fn reportReload(this: *Handle) void {
-            debug("reportReload", .{});
-            Bun__LifecycleAgentReportReload(this);
-        }
-
-        pub fn reportError(this: *Handle, exception: *ZigException) void {
-            debug("reportError", .{});
-            Bun__LifecycleAgentReportError(this, exception);
-        }
-    };
-
-    pub export fn Bun__LifecycleAgentEnable(agent: *Handle) void {
-        if (JSC.VirtualMachine.get().debugger) |*debugger| {
-            debug("enable", .{});
-            debugger.lifecycle_reporter_agent.handle = agent;
-        }
-    }
-
-    pub export fn Bun__LifecycleAgentDisable(agent: *Handle) void {
-        _ = agent; // autofix
-        if (JSC.VirtualMachine.get().debugger) |*debugger| {
-            debug("disable", .{});
-            debugger.lifecycle_reporter_agent.handle = null;
-        }
-    }
-
-    pub fn reportReload(this: *LifecycleAgent) void {
-        if (this.handle) |handle| {
-            handle.reportReload();
-        }
-    }
-
-    pub fn reportError(this: *LifecycleAgent, exception: *ZigException) void {
-        if (this.handle) |handle| {
-            handle.reportError(exception);
-        }
-    }
-
-    pub fn isEnabled(this: *const LifecycleAgent) bool {
-        return this.handle != null;
-    }
-};
-
-pub inline fn enqueueTask(this: *VirtualMachine, task: Task) void {
+pub inline fn enqueueTask(this: *VirtualMachine, task: JSC.Task) void {
     this.eventLoop().enqueueTask(task);
 }
 
@@ -890,7 +765,7 @@ pub fn waitForTasks(this: *VirtualMachine) void {
     this.eventLoop().waitForTasks();
 }
 
-pub const MacroMap = std.AutoArrayHashMap(i32, bun.JSC.C.JSObjectRef);
+pub const MacroMap = std.AutoArrayHashMap(i32, JSC.C.JSObjectRef);
 
 pub fn enableMacroMode(this: *VirtualMachine) void {
     JSC.markBinding(@src());
@@ -909,7 +784,7 @@ pub fn enableMacroMode(this: *VirtualMachine) void {
     this.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
     this.macro_mode = true;
     this.event_loop = &this.macro_event_loop;
-    Analytics.Features.macros += 1;
+    bun.Analytics.Features.macros += 1;
     this.transpiler_store.enabled = false;
 }
 
@@ -1173,12 +1048,12 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) 
     const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
     const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
 
-    const wait_for_connection: Debugger.Wait = if (set_breakpoint_on_first_line or wait_for_debugger) .forever else .off;
+    const wait_for_connection: JSC.Debugger.Wait = if (set_breakpoint_on_first_line or wait_for_debugger) .forever else .off;
 
     switch (cli_flag) {
         .unspecified => {
             if (unix.len > 0) {
-                this.debugger = Debugger{
+                this.debugger = .{
                     .path_or_port = null,
                     .from_environment_variable = unix,
                     .wait_for_connection = wait_for_connection,
@@ -1187,7 +1062,7 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) 
             } else if (connect_to.len > 0) {
                 // This works in the vscode debug terminal because that relies on unix or notify being set, which they
                 // are in the debug terminal. This branch doesn't reach
-                this.debugger = Debugger{
+                this.debugger = .{
                     .path_or_port = null,
                     .from_environment_variable = connect_to,
                     .wait_for_connection = .off,
@@ -1197,7 +1072,7 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) 
             }
         },
         .enable => {
-            this.debugger = Debugger{
+            this.debugger = .{
                 .path_or_port = cli_flag.enable.path_or_port,
                 .from_environment_variable = unix,
                 .wait_for_connection = if (cli_flag.enable.wait_for_connection) .forever else wait_for_connection,
@@ -1215,7 +1090,7 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) 
 }
 
 pub fn initWorker(
-    worker: *WebWorker,
+    worker: *webcore.WebWorker,
     opts: Options,
 ) anyerror!*VirtualMachine {
     JSC.markBinding(@src());
@@ -1549,7 +1424,7 @@ fn _resolve(
         ret.result = null;
         ret.path = specifier;
         return;
-    } else if (strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path)) {
+    } else if (strings.hasPrefixComptime(specifier, node_fallbacks.import_path)) {
         ret.result = null;
         ret.path = specifier;
         return;
@@ -2065,10 +1940,10 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
 
 pub fn ensureDebugger(this: *VirtualMachine, block_until_connected: bool) !void {
     if (this.debugger != null) {
-        try Debugger.create(this, this.global);
+        try JSC.Debugger.create(this, this.global);
 
         if (block_until_connected) {
-            Debugger.waitForDebuggerIfNecessary(this);
+            JSC.Debugger.waitForDebuggerIfNecessary(this);
         }
     }
 }
@@ -2285,7 +2160,7 @@ pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_n
 /// and it is not safe to copy the lock itself
 /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
 pub inline fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
-    this.global.vm().holdAPILock(ctx, OpaqueWrap(Context, function));
+    this.global.vm().holdAPILock(ctx, JSC.OpaqueWrap(Context, function));
 }
 
 const MacroEntryPointLoader = struct {
@@ -3229,7 +3104,7 @@ fn printErrorNameAndMessage(
     error_display_level: ConsoleObject.FormatOptions.ErrorDisplayLevel,
 ) !void {
     if (is_browser_error) {
-        try writer.writeAll(bun.Output.prettyFmt("<red>frontend<r> ", true));
+        try writer.writeAll(Output.prettyFmt("<red>frontend<r> ", true));
     }
     if (!name.isEmpty() and !message.isEmpty()) {
         const display_name, const display_message = if (name.eqlComptime("Error")) brk: {
@@ -3625,7 +3500,72 @@ pub const ExitHandler = struct {
 
 const std = @import("std");
 const bun = @import("bun");
-const JSGlobalObject = bun.jsc.JSGlobalObject;
+const Environment = bun.Environment;
+const JSC = bun.jsc;
+const JSGlobalObject = JSC.JSGlobalObject;
 const Async = bun.Async;
 const Transpiler = bun.Transpiler;
-const ImportWatcher = bun.JSC.hot;
+const ImportWatcher = JSC.hot_reloader.ImportWatcher;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const ErrorableString = JSC.ErrorableString;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const Exception = JSC.Exception;
+const Allocator = std.mem.Allocator;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const Fs = @import("../fs.zig");
+const Resolver = @import("../resolver/resolver.zig");
+const ast = @import("../import_record.zig");
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
+const ParseResult = bun.transpiler.ParseResult;
+const logger = bun.logger;
+const Api = @import("../api/schema.zig").Api;
+const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
+const ConsoleObject = JSC.ConsoleObject;
+const Node = JSC.Node;
+const ZigException = JSC.ZigException;
+const ZigStackTrace = JSC.ZigStackTrace;
+const ErrorableResolvedSource = JSC.ErrorableResolvedSource;
+const ResolvedSource = JSC.ResolvedSource;
+const JSInternalPromise = JSC.JSInternalPromise;
+const JSModuleLoader = JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
+const ErrorableZigString = JSC.ErrorableZigString;
+const VM = JSC.VM;
+const JSFunction = JSC.JSFunction;
+const Config = @import("./config.zig");
+const URL = @import("../url.zig").URL;
+const Bun = JSC.API.Bun;
+const EventLoop = JSC.EventLoop;
+const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
+const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
+const PackageManager = @import("../install/install.zig").PackageManager;
+const IPC = @import("ipc.zig");
+const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
+const Watcher = bun.Watcher;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
+const JSValue = JSC.JSValue;
+const PluginRunner = bun.transpiler.PluginRunner;
+const SavedSourceMap = JSC.SavedSourceMap;
+const ModuleLoader = JSC.ModuleLoader;
+const uws = bun.uws;
+const Output = bun.Output;
+const strings = bun.strings;
+const SourceMap = bun.sourcemap;
+const ZigString = JSC.ZigString;
+const String = bun.String;
+const Ordinal = bun.Ordinal;
+const string = []const u8;
+const FetchFlags = ModuleLoader.FetchFlags;
+const Runtime = @import("../runtime.zig");
+const js_ast = bun.JSAst;
+const js_printer = bun.js_printer;
+const node_fallbacks = ModuleLoader.node_fallbacks;
+const options = bun.options;
+const webcore = bun.webcore;
+const Global = bun.Global;
+const DotEnv = bun.DotEnv;
+const HotReloader = JSC.hot_reloader;

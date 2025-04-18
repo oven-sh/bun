@@ -11,15 +11,11 @@ const options = @import("../../options.zig");
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
-const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
 const JSObject = JSC.JSObject;
-const JSError = Base.JSError;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
 
-const To = Base.To;
 const Request = WebCore.Request;
 
 const FetchEvent = WebCore.FetchEvent;
@@ -700,7 +696,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSTranspiler {
-    var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
+    var temp = bun.ArenaAllocator.init(bun.default_allocator);
     const arguments = callframe.arguments_old(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),
@@ -711,13 +707,13 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
         try transformOptionsFromJSC(globalThis, temp.allocator(), &args)
     else
-        TranspilerOptions{ .log = logger.Log.init(getAllocator(globalThis)) };
+        TranspilerOptions{ .log = logger.Log.init(bun.default_allocator) };
 
     if (globalThis.hasException()) {
         return error.JSError;
     }
 
-    const allocator = getAllocator(globalThis);
+    const allocator = bun.default_allocator;
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
         return globalThis.throwValue(transpiler_options.log.toJS(globalThis, allocator, "Failed to create transpiler"));
@@ -1064,7 +1060,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
         return JSValue.createEmptyArray(global, 0);
 
     var named_exports_iter = named_exports.iterator();
-    var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, getAllocator(global));
+    var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, bun.default_allocator);
     var allocator = stack_fallback.get();
     var names = allocator.alloc(
         bun.String,

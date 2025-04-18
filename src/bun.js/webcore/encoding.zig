@@ -511,35 +511,24 @@ const Api = @import("../../api/schema.zig").Api;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
-
 const JSC = bun.JSC;
-
 const Encoding = JSC.Node.Encoding;
-
-const Method = @import("../../http/method.zig").Method;
-
-const ObjectPool = @import("../../pool.zig").ObjectPool;
+const Method = bun.http.Method;
+const ObjectPool = bun.ObjectPool;
 const bun = @import("bun");
 const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
+const ArrayBuffer = JSC.ArrayBuffer;
 const JSUint8Array = JSC.JSUint8Array;
-const Properties = @import("../base.zig").Properties;
-
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
-
-const Environment = @import("../../env.zig");
+const Environment = bun.Environment;
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
-
 const picohttp = bun.picohttp;

@@ -768,7 +768,7 @@ pub fn doClone(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     const this_value = callframe.this();
-    var cloned = this.clone(getAllocator(globalThis), globalThis);
+    var cloned = this.clone(bun.default_allocator, globalThis);
 
     if (globalThis.hasException()) {
         cloned.finalize();
@@ -954,10 +954,6 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;

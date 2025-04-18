@@ -1,7 +1,9 @@
+const FileReader = @This();
 const log = Output.scoped(.FileReader, false);
+
 reader: IOReader = IOReader.init(FileReader),
 done: bool = false,
-pending: StreamResult.Pending = .{},
+pending: streams.Result.Pending = .{},
 pending_value: JSC.Strong = .empty,
 pending_view: []u8 = &.{},
 fd: bun.FileDescriptor = bun.invalid_fd,
@@ -56,7 +58,7 @@ pub const Lazy = union(enum) {
                 }
                 break :brk file.pathlike.fd;
             } else brk: {
-                const duped = Syscall.dupWithFlags(file.pathlike.fd, 0);
+                const duped = bun.sys.dupWithFlags(file.pathlike.fd, 0);
 
                 if (duped != .result) {
                     return .{ .err = duped.err.withFd(file.pathlike.fd) };
@@ -79,7 +81,7 @@ pub const Lazy = union(enum) {
                     },
                 };
             }
-        else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
+        else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
             .result => |fd| fd,
             .err => |err| {
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
@@ -100,7 +102,7 @@ pub const Lazy = union(enum) {
                 file.is_atty = true;
             }
 
-            const stat: bun.Stat = switch (Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     fd.close();
@@ -110,7 +112,7 @@ pub const Lazy = union(enum) {
 
             if (bun.S.ISDIR(stat.mode)) {
                 bun.Async.Closer.close(fd, {});
-                return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
+                return .{ .err = .fromCode(.ISDIR, .fstat) };
             }
 
             this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking or (file.is_atty orelse false);
@@ -143,7 +145,7 @@ pub fn eventLoop(this: *const FileReader) JSC.EventLoopHandle {
     return this.event_loop;
 }
 
-pub fn loop(this: *const FileReader) *Async.Loop {
+pub fn loop(this: *const FileReader) *bun.Async.Loop {
     return this.eventLoop().loop();
 }
 
@@ -160,7 +162,7 @@ pub fn setup(
     this.event_loop = this.parent().globalThis.bunVM().eventLoop();
 }
 
-pub fn onStart(this: *FileReader) StreamStart {
+pub fn onStart(this: *FileReader) streams.Result {
     this.reader.setParent(this);
     const was_lazy = this.lazy != .none;
     var pollable = false;
@@ -452,7 +454,7 @@ fn isPulling(this: *const FileReader) bool {
     return this.read_inside_on_pull != .none;
 }
 
-pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) StreamResult {
+pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) streams.Result {
     array.ensureStillAlive();
     defer array.ensureStillAlive();
     const drained = this.drain();
@@ -640,7 +642,7 @@ pub fn memoryCost(this: *const FileReader) usize {
     return this.reader.memoryCost() + this.buffered.capacity;
 }
 
-pub const Source = ReadableStream.Source(
+pub const Source = ReadableStream.NewSource(
     @This(),
     "File",
     onStart,
@@ -652,3 +654,13 @@ pub const Source = ReadableStream.Source(
     memoryCost,
     null,
 );
+
+const std = @import("std");
+const bun = @import("bun");
+const Output = bun.Output;
+const Environment = bun.Environment;
+const JSC = bun.jsc;
+const webcore = bun.webcore;
+const streams = webcore.streams;
+const Blob = webcore.Blob;
+const ReadableStream = webcore.ReadableStream;

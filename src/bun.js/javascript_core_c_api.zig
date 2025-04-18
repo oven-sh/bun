@@ -6,18 +6,17 @@
 /// ************************************
 const bun = @import("bun");
 const std = @import("std");
-const cpp = @import("./bindings/bindings.zig");
 const JSC = bun.JSC;
 const generic = opaque {
-    pub fn value(this: *const generic) cpp.JSValue {
-        return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));
+    pub fn value(this: *const generic) JSC.JSValue {
+        return @bitCast(@intFromPtr(this));
     }
 };
 pub const Private = anyopaque;
 pub const struct_OpaqueJSContextGroup = generic;
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
-pub const JSGlobalContextRef = ?*cpp.JSGlobalObject;
+pub const JSGlobalContextRef = ?*JSC.JSGlobalObject;
 
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
@@ -162,7 +161,7 @@ pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulat
 // This is a workaround for not receiving a JSException* object
 // This function lets us use the C API but returns a plain old JSValue
 // allowing us to have exceptions that include stack traces
-pub extern "c" fn JSObjectCallAsFunctionReturnValueHoldingAPILock(ctx: *JSC.JSGlobalObject, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
+pub extern "c" fn JSObjectCallAsFunctionReturnValueHoldingAPILock(ctx: *JSC.JSGlobalObject, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) JSC.JSValue;
 
 pub extern fn JSRemoteInspectorDisableAutoStart() void;
 pub extern fn JSRemoteInspectorStart() void;

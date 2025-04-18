@@ -445,8 +445,8 @@ const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
-const TimeoutObject = JSC.BunTimer.TimeoutObject;
-const ImmediateObject = JSC.BunTimer.ImmediateObject;
+const TimeoutObject = Timer.TimeoutObject;
+const ImmediateObject = Timer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
@@ -824,8 +824,8 @@ pub const EventLoop = struct {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    immediate_tasks: std.ArrayListUnmanaged(*JSC.BunTimer.ImmediateObject) = .{},
-    next_immediate_tasks: std.ArrayListUnmanaged(*JSC.BunTimer.ImmediateObject) = .{},
+    immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+    next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSC.JSGlobalObject = undefined,
@@ -838,7 +838,7 @@ pub const EventLoop = struct {
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
-    imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
+    imminent_gc_timer: std.atomic.Value(?*Timer.WTFTimer) = .{ .raw = null },
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
@@ -1716,7 +1716,7 @@ pub const EventLoop = struct {
         this.tasks.writeItem(task) catch unreachable;
     }
 
-    pub fn enqueueImmediateTask(this: *EventLoop, task: *JSC.BunTimer.ImmediateObject) void {
+    pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
         this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
     }
 
@@ -2557,3 +2557,5 @@ pub const PosixSignalTask = struct {
         Bun__onSignalForJS(number, globalObject);
     }
 };
+
+const Timer = bun.api.Timer;

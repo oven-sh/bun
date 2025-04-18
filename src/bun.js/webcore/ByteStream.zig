@@ -1,30 +1,43 @@
+const ByteStream = @This();
+
 buffer: std.ArrayList(u8) = .{
     .allocator = bun.default_allocator,
     .items = &.{},
     .capacity = 0,
 },
 has_received_last_chunk: bool = false,
-pending: StreamResult.Pending = StreamResult.Pending{
-    .result = .{ .done = {} },
-},
+pending: streams.Result.Pending = .{ .result = .{ .done = {} } },
 done: bool = false,
 pending_buffer: []u8 = &.{},
-pending_value: JSC.Strong = .empty,
+pending_value: jsc.Strong = .empty,
 offset: usize = 0,
 highWaterMark: Blob.SizeType = 0,
 pipe: Pipe = .{},
 size_hint: Blob.SizeType = 0,
 buffer_action: ?BufferAction = null,
 
+pub const Source = webcore.ReadableStream.NewSource(
+    @This(),
+    "Bytes",
+    onStart,
+    onPull,
+    onCancel,
+    deinit,
+    null,
+    drain,
+    memoryCost,
+    toBufferedValue,
+);
+
 const log = Output.scoped(.ByteStream, false);
 
-pub const tag = ReadableStream.Tag.Bytes;
+pub const tag = webcore.ReadableStream.Tag.Bytes;
 
 pub fn setup(this: *ByteStream) void {
     this.* = .{};
 }
 
-pub fn onStart(this: *@This()) StreamStart {
+pub fn onStart(this: *@This()) streams.Start {
     if (this.has_received_last_chunk and this.buffer.items.len == 0) {
         return .{ .empty = {} };
     }
@@ -64,10 +77,10 @@ pub fn unpipeWithoutDeref(this: *@This()) void {
 
 pub fn onData(
     this: *@This(),
-    stream: StreamResult,
+    stream: streams.Result,
     allocator: std.mem.Allocator,
 ) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     if (this.done) {
         if (stream.isDone() and (stream == .owned or stream == .owned_and_done)) {
             if (stream == .owned) allocator.free(stream.owned.slice());
@@ -206,7 +219,7 @@ pub fn onData(
 
 pub fn append(
     this: *@This(),
-    stream: StreamResult,
+    stream: streams.Result,
     offset: usize,
     base_address: []const u8,
     allocator: std.mem.Allocator,
@@ -259,8 +272,8 @@ pub fn append(
     return;
 }
 
-pub fn setValue(this: *@This(), view: JSC.JSValue) void {
-    JSC.markBinding(@src());
+pub fn setValue(this: *@This(), view: jsc.JSValue) void {
+    jsc.markBinding(@src());
     this.pending_value.set(this.parent().globalThis, view);
 }
 
@@ -268,8 +281,8 @@ pub fn parent(this: *@This()) *Source {
     return @fieldParentPtr("context", this);
 }
 
-pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {
-    JSC.markBinding(@src());
+pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
+    jsc.markBinding(@src());
     bun.assert(buffer.len > 0);
     bun.debugAssert(this.buffer_action == null);
 
@@ -325,7 +338,7 @@ pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {
 }
 
 pub fn onCancel(this: *@This()) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     const view = this.value();
     if (this.buffer.capacity > 0) this.buffer.clearAndFree();
     this.done = true;
@@ -351,7 +364,7 @@ pub fn memoryCost(this: *const @This()) usize {
 }
 
 pub fn deinit(this: *@This()) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     if (this.buffer.capacity > 0) this.buffer.clearAndFree();
 
     this.pending_value.deinit();
@@ -384,7 +397,7 @@ pub fn drain(this: *@This()) bun.ByteList {
     return .{};
 }
 
-pub fn toAnyBlob(this: *@This()) ?AnyBlob {
+pub fn toAnyBlob(this: *@This()) ?Blob.Any {
     if (this.has_received_last_chunk) {
         const buffer = this.buffer;
         this.buffer = .{
@@ -396,18 +409,16 @@ pub fn toAnyBlob(this: *@This()) ?AnyBlob {
         this.pending.result.deinit();
         this.pending.result = .{ .done = {} };
         this.parent().is_closed = true;
-        return AnyBlob{
-            .InternalBlob = JSC.WebCore.InternalBlob{
-                .bytes = buffer,
-                .was_string = false,
-            },
-        };
+        return .{ .InternalBlob = .{
+            .bytes = buffer,
+            .was_string = false,
+        } };
     }
 
     return null;
 }
 
-pub fn toBufferedValue(this: *@This(), globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) bun.JSError!JSC.JSValue {
+pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: streams.BufferAction.Tag) bun.JSError!jsc.JSValue {
     if (this.buffer_action != null) {
         return globalThis.throw("Cannot buffer value twice", .{});
     }
@@ -417,7 +428,7 @@ pub fn toBufferedValue(this: *@This(), globalThis: *JSC.JSGlobalObject, action: 
         this.pending.result.deinit();
         this.done = true;
         this.buffer.clearAndFree();
-        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
     if (this.toAnyBlob()) |blob_| {
@@ -426,25 +437,23 @@ pub fn toBufferedValue(this: *@This(), globalThis: *JSC.JSGlobalObject, action: 
     }
 
     this.buffer_action = switch (action) {
-        .blob => .{ .blob = JSC.JSPromise.Strong.init(globalThis) },
-        .bytes => .{ .bytes = JSC.JSPromise.Strong.init(globalThis) },
-        .arrayBuffer => .{ .arrayBuffer = JSC.JSPromise.Strong.init(globalThis) },
-        .json => .{ .json = JSC.JSPromise.Strong.init(globalThis) },
-        .text => .{ .text = JSC.JSPromise.Strong.init(globalThis) },
+        .blob => .{ .blob = .init(globalThis) },
+        .bytes => .{ .bytes = .init(globalThis) },
+        .arrayBuffer => .{ .arrayBuffer = .init(globalThis) },
+        .json => .{ .json = .init(globalThis) },
+        .text => .{ .text = .init(globalThis) },
     };
 
     return this.buffer_action.?.value();
 }
 
-pub const Source = ReadableStream.Source(
-    @This(),
-    "Bytes",
-    onStart,
-    onPull,
-    onCancel,
-    deinit,
-    null,
-    drain,
-    memoryCost,
-    toBufferedValue,
-);
+const std = @import("std");
+const bun = @import("bun");
+const Output = bun.Output;
+const webcore = bun.webcore;
+const streams = webcore.streams;
+const jsc = bun.jsc;
+const Blob = webcore.Blob;
+const Pipe = webcore.Pipe;
+const BufferAction = streams.BufferAction;
+const JSValue = jsc.JSValue;

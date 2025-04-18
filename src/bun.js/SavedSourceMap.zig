@@ -40,7 +40,7 @@ pub const SavedMappings = struct {
     }
 
     pub fn deinit(this: SavedMappings) void {
-        default_allocator.free(this.data[0..this.len()]);
+        bun.default_allocator.free(this.data[0..this.len()]);
     }
 
     pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
@@ -82,7 +82,7 @@ pub const SavedMappings = struct {
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
 /// In `fn get`, this value gets converted to ParsedSourceMap always
-pub const Value = TaggedPointerUnion(.{
+pub const Value = bun.TaggedPointerUnion(.{
     ParsedSourceMap,
     SavedMappings,
     SourceProviderMap,
@@ -128,7 +128,7 @@ pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *a
     }
 }
 
-pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
+pub const HashTable = std.HashMap(u64, *anyopaque, bun.IdentityContext(u64), 80);
 
 pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
     try this.putMappings(source, chunk.buffer);
@@ -211,7 +211,7 @@ fn getWithContent(
             defer this.unlock();
             var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
             defer saved.deinit();
-            const result = bun.new(ParsedSourceMap, saved.toMapping(default_allocator, path) catch {
+            const result = bun.new(ParsedSourceMap, saved.toMapping(bun.default_allocator, path) catch {
                 _ = this.map.remove(mapping.key_ptr.*);
                 return .{};
             });
@@ -284,3 +284,17 @@ pub fn resolveMapping(
         .prefetched_source_code = parse.source_contents,
     };
 }
+
+const bun = @import("bun");
+const SourceMap = bun.sourcemap;
+const SourceProviderMap = SourceMap.SourceProviderMap;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
+const string = []const u8;
+const logger = bun.logger;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const js_printer = bun.js_printer;
+const Output = bun.Output;
+
+const std = @import("std");
+const Allocator = std.heap.Allocator;

@@ -1,115 +1,3 @@
-const std = @import("std");
-// const StaticExport = @import("./bindings/static_export.zig");
-const bun = @import("bun");
-const string = []const u8;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-// const MutableString = bun.MutableString;
-// const stringZ = bun.stringZ;
-// const default_allocator = bun.default_allocator;
-// const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-// const ErrorableString = bun.JSC.ErrorableString;
-// const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-
-// const Exception = bun.JSC.Exception;
-// const Allocator = std.mem.Allocator;
-// const IdentityContext = @import("../identity_context.zig").IdentityContext;
-// const Fs = @import("../fs.zig");
-// const Resolver = @import("../resolver/resolver.zig");
-// const ast = @import("../import_record.zig");
-// const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
-// const ParseResult = bun.transpiler.ParseResult;
-// const logger = bun.logger;
-// const Api = @import("../api/schema.zig").Api;
-const options = bun.options;
-// const Transpiler = bun.Transpiler;
-// const PluginRunner = bun.transpiler.PluginRunner;
-// const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
-// const js_printer = bun.js_printer;
-// const js_parser = bun.js_parser;
-// const js_ast = bun.JSAst;
-// const NodeFallbackModules = @import("../node_fallbacks.zig");
-// const ImportKind = ast.ImportKind;
-// const Analytics = @import("../analytics/analytics_thread.zig");
-// const ZigString = bun.JSC.ZigString;
-// const Runtime = @import("../runtime.zig");
-// const Router = @import("./api/filesystem_router.zig");
-// const ImportRecord = ast.ImportRecord;
-// const DotEnv = @import("../env_loader.zig");
-// const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-// const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-// const String = bun.String;
-const JSC = bun.JSC;
-// const JSError = @import("./base.zig").JSError;
-const MarkedArrayBuffer = bun.jsc.ArrayBuffer.Marked;
-// const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = JSC.JSValue;
-// const NewClass = @import("./base.zig").NewClass;
-
-const JSGlobalObject = JSC.JSGlobalObject;
-const VirtualMachine = JSC.VirtualMachine;
-// const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
-// const ConsoleObject = JSC.ConsoleObject;
-// const Node = bun.JSC.Node;
-// const ZigException = bun.JSC.ZigException;
-// const ZigStackTrace = bun.JSC.ZigStackTrace;
-// const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
-// const ResolvedSource = bun.JSC.ResolvedSource;
-// const JSInternalPromise = bun.JSC.JSInternalPromise;
-// const JSModuleLoader = bun.JSC.JSModuleLoader;
-// const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-// const ErrorableZigString = bun.JSC.ErrorableZigString;
-// const VM = JSC.VM;
-// const JSFunction = bun.JSC.JSFunction;
-// const Config = @import("./config.zig");
-// const URL = @import("../url.zig").URL;
-// const Bun = JSC.API.Bun;
-// const EventLoop = bun.JSC.EventLoop;
-// const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
-// const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
-// const PackageManager = @import("../install/install.zig").PackageManager;
-// const IPC = @import("ipc.zig");
-// const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
-const Watcher = bun.Watcher;
-// const node_module_module = @import("./bindings/NodeModuleModule.zig");
-
-const ModuleLoader = JSC.ModuleLoader;
-const FetchFlags = JSC.FetchFlags;
-
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
-const Task = JSC.Task;
-
-pub const Buffer = MarkedArrayBuffer;
-const Lock = bun.Mutex;
-const Async = bun.Async;
-
-const Ordinal = bun.Ordinal;
-
-pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
-pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
-    return struct {
-        pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
-            const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
-            Function(context);
-        }
-    }.callback;
-}
-
-pub const bun_file_import_path = "/node_modules.server.bun";
-
-export var has_bun_garbage_collector_flag_enabled = false;
-
-const SourceMap = @import("../sourcemap/sourcemap.zig");
-const ParsedSourceMap = SourceMap.ParsedSourceMap;
-const MappingList = SourceMap.Mapping.List;
-const SourceProviderMap = SourceMap.SourceProviderMap;
-
-const uv = bun.windows.libuv;
-
-const uws = bun.uws;
-
 pub const ImportWatcher = union(enum) {
     none: void,
     hot: *Watcher,
@@ -144,7 +32,7 @@ pub const ImportWatcher = union(enum) {
         hash: Watcher.HashType,
         loader: options.Loader,
         dir_fd: bun.FD,
-        package_json: ?*PackageJSON,
+        package_json: ?*bun.PackageJSON,
         comptime copy_file_path: bool,
     ) bun.JSC.Maybe(void) {
         return switch (this) {
@@ -162,30 +50,9 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
-pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
 
-export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
-    VirtualMachine.get().default_tls_reject_unauthorized = value != 0;
-}
-
-export fn Bun__getTLSRejectUnauthorizedValue() i32 {
-    return if (JSC.VirtualMachine.get().getTLSRejectUnauthorized()) 1 else 0;
-}
-
-export fn Bun__setVerboseFetchValue(value: i32) void {
-    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
-}
-
-export fn Bun__getVerboseFetchValue() i32 {
-    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
-        .none => 0,
-        .headers => 1,
-        .curl => 2,
-    };
-}
-
-pub const HotReloader = NewHotReloader(VirtualMachine, EventLoop, false);
-pub const WatchReloader = NewHotReloader(VirtualMachine, EventLoop, true);
 extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
@@ -238,7 +105,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub var clear_screen = false;
 
-        pub const HotReloadTask = struct {
+        pub const Task = struct {
             count: u8 = 0,
             hashes: [8]u32,
             paths: if (Ctx == bun.bake.DevServer) [8][]const u8 else void,
@@ -246,7 +113,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             concurrent_task: JSC.ConcurrentTask,
             reloader: *Reloader,
 
-            pub fn initEmpty(reloader: *Reloader) HotReloadTask {
+            pub fn initEmpty(reloader: *Reloader) Task {
                 return .{
                     .reloader = reloader,
 
@@ -257,7 +124,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 };
             }
 
-            pub fn append(this: *HotReloadTask, id: u32) void {
+            pub fn append(this: *Task, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;
@@ -267,7 +134,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.count += 1;
             }
 
-            pub fn run(this: *HotReloadTask) void {
+            pub fn run(this: *Task) void {
                 // Since we rely on the event loop for hot reloads, there can be
                 // a delay before the next reload begins. In the time between the
                 // last reload and the next one, we shouldn't schedule any more
@@ -282,7 +149,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 }
             }
 
-            pub fn enqueue(this: *HotReloadTask) void {
+            pub fn enqueue(this: *Task) void {
                 JSC.markBinding(@src());
                 if (this.count == 0)
                     return;
@@ -300,19 +167,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 _ = this.reloader.pending_count.fetchAdd(1, .monotonic);
 
                 BunDebugger__willHotReload();
-                const that = bun.new(HotReloadTask, .{
+                const that = bun.new(Task, .{
                     .reloader = this.reloader,
                     .count = this.count,
                     .paths = this.paths,
                     .hashes = this.hashes,
                     .concurrent_task = undefined,
                 });
-                that.concurrent_task = .{ .task = Task.init(that), .auto_delete = false };
+                that.concurrent_task = .{ .task = JSC.Task.init(that), .auto_delete = false };
                 that.reloader.enqueueTaskConcurrent(&that.concurrent_task);
                 this.count = 0;
             }
 
-            pub fn deinit(this: *HotReloadTask) void {
+            pub fn deinit(this: *Task) void {
                 bun.destroy(this);
             }
         };
@@ -355,9 +222,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     } };
 
                 if (reload_immediately) {
-                    this.transpiler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                    this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.watch);
                 } else {
-                    this.transpiler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                    this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.hot);
                 }
             } else {
                 this.bun_watcher = Watcher.init(
@@ -369,7 +236,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
                 };
-                this.transpiler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
+                this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
             clear_screen = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
@@ -429,7 +296,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
             const rfs: *Fs.FileSystem.RealFS = &fs.fs;
             var _on_file_update_path_buf: bun.PathBuffer = undefined;
-            var current_task = HotReloadTask.initEmpty(this);
+            var current_task = Task.initEmpty(this);
             defer current_task.enqueue();
 
             for (events) |event| {
@@ -594,43 +461,31 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
     };
 }
 
-export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    const slice = specifier.toUTF8(sfb.get());
-    defer slice.deinit();
-    vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
-}
-
-export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    const slice = specifier.toUTF8(sfb.get());
-    defer slice.deinit();
-    vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
-}
-
-pub export var isBunTest: bool = false;
-
-// TODO: evaluate if this has any measurable performance impact.
-pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
-pub var string_allocation_limit: usize = std.math.maxInt(u32);
-
-comptime {
-    @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
-}
-
-pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1).slice();
-    if (args.len < 1) {
-        return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
-    }
-
-    if (!args[0].isNumber()) {
-        return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
-    }
-
-    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
-    const prev = synthetic_allocation_limit;
-    synthetic_allocation_limit = limit;
-    string_allocation_limit = limit;
-    return JSValue.jsNumber(prev);
-}
+const std = @import("std");
+const bun = @import("bun");
+const string = []const u8;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const options = bun.options;
+const JSC = bun.JSC;
+const MarkedArrayBuffer = bun.jsc.ArrayBuffer.Marked;
+const JSValue = JSC.JSValue;
+const JSGlobalObject = JSC.JSGlobalObject;
+const VirtualMachine = JSC.VirtualMachine;
+const Watcher = bun.Watcher;
+const ModuleLoader = JSC.ModuleLoader;
+const FetchFlags = ModuleLoader.FetchFlags;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+pub const Buffer = MarkedArrayBuffer;
+const Lock = bun.Mutex;
+const Async = bun.Async;
+const Ordinal = bun.Ordinal;
+const SourceMap = @import("../sourcemap/sourcemap.zig");
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
+const MappingList = SourceMap.Mapping.List;
+const SourceProviderMap = SourceMap.SourceProviderMap;
+const uv = bun.windows.libuv;
+const uws = bun.uws;
+const Fs = bun.fs.FileSystem;

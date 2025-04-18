@@ -2,7 +2,7 @@ path_or_port: ?[]const u8 = null,
 from_environment_variable: []const u8 = "",
 script_execution_context_id: u32 = 0,
 next_debugger_id: u64 = 1,
-poll_ref: Async.KeepAlive = .{},
+poll_ref: bun.Async.KeepAlive = .{},
 wait_for_connection: Wait = .off,
 // wait_for_connection: bool = false,
 set_breakpoint_on_first_line: bool = false,
@@ -59,7 +59,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {
                 fn call(handle: *uv.Timer) callconv(.C) void {
-                    const vm = JSC.VirtualMachine.get();
+                    const vm = VirtualMachine.get();
                     vm.debugger.?.poll_ref.unref(vm);
                     uv.uv_close(@ptrCast(handle), deinitTimer);
                 }
@@ -111,9 +111,10 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     }
 }
 
+pub var has_created_debugger: bool = false;
 pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
     log("create", .{});
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     if (!has_created_debugger) {
         has_created_debugger = true;
         std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentDisable);
@@ -141,11 +142,11 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
     var arena = bun.MimallocArena.init() catch unreachable;
     Output.Source.configureNamedThread("Debugger");
     log("startJSDebuggerThread", .{});
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
-    var vm = JSC.VirtualMachine.init(.{
+    var vm = VirtualMachine.init(.{
         .allocator = arena.allocator(),
-        .args = std.mem.zeroes(Api.TransformOptions),
+        .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
         .store_fd = false,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();
@@ -155,7 +156,7 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
     vm.is_main_thread = false;
     vm.eventLoop().ensureWaker();
 
-    const callback = OpaqueWrap(VirtualMachine, start);
+    const callback = jsc.OpaqueWrap(VirtualMachine, start);
     vm.global.vm().holdAPILock(other_vm, callback);
 }
 
@@ -168,7 +169,7 @@ pub export fn Debugger__didConnect() void {
 }
 
 fn start(other_vm: *VirtualMachine) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     var this = VirtualMachine.get();
     const debugger = other_vm.debugger.?;
@@ -221,23 +222,23 @@ fn start(other_vm: *VirtualMachine) void {
 pub const AsyncTaskTracker = struct {
     id: u64,
 
-    pub fn init(vm: *JSC.VirtualMachine) AsyncTaskTracker {
+    pub fn init(vm: *VirtualMachine) AsyncTaskTracker {
         return .{ .id = vm.nextAsyncTaskID() };
     }
 
-    pub fn didSchedule(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+    pub fn didSchedule(this: AsyncTaskTracker, globalObject: *JSGlobalObject) void {
         if (this.id == 0) return;
 
         didScheduleAsyncCall(globalObject, AsyncCallType.EventListener, this.id, true);
     }
 
-    pub fn didCancel(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+    pub fn didCancel(this: AsyncTaskTracker, globalObject: *JSGlobalObject) void {
         if (this.id == 0) return;
 
         didCancelAsyncCall(globalObject, AsyncCallType.EventListener, this.id);
     }
 
-    pub fn willDispatch(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+    pub fn willDispatch(this: AsyncTaskTracker, globalObject: *JSGlobalObject) void {
         if (this.id == 0) {
             return;
         }
@@ -245,7 +246,7 @@ pub const AsyncTaskTracker = struct {
         willDispatchAsyncCall(globalObject, AsyncCallType.EventListener, this.id);
     }
 
-    pub fn didDispatch(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+    pub fn didDispatch(this: AsyncTaskTracker, globalObject: *JSGlobalObject) void {
         if (this.id == 0) {
             return;
         }
@@ -261,28 +262,163 @@ pub const AsyncCallType = enum(u8) {
     RequestAnimationFrame = 4,
     Microtask = 5,
 };
-extern fn Debugger__didScheduleAsyncCall(*JSC.JSGlobalObject, AsyncCallType, u64, bool) void;
-extern fn Debugger__didCancelAsyncCall(*JSC.JSGlobalObject, AsyncCallType, u64) void;
-extern fn Debugger__didDispatchAsyncCall(*JSC.JSGlobalObject, AsyncCallType, u64) void;
-extern fn Debugger__willDispatchAsyncCall(*JSC.JSGlobalObject, AsyncCallType, u64) void;
+extern fn Debugger__didScheduleAsyncCall(*JSGlobalObject, AsyncCallType, u64, bool) void;
+extern fn Debugger__didCancelAsyncCall(*JSGlobalObject, AsyncCallType, u64) void;
+extern fn Debugger__didDispatchAsyncCall(*JSGlobalObject, AsyncCallType, u64) void;
+extern fn Debugger__willDispatchAsyncCall(*JSGlobalObject, AsyncCallType, u64) void;
 
-pub fn didScheduleAsyncCall(globalObject: *JSC.JSGlobalObject, call: AsyncCallType, id: u64, single_shot: bool) void {
-    JSC.markBinding(@src());
+pub fn didScheduleAsyncCall(globalObject: *JSGlobalObject, call: AsyncCallType, id: u64, single_shot: bool) void {
+    jsc.markBinding(@src());
     Debugger__didScheduleAsyncCall(globalObject, call, id, single_shot);
 }
-pub fn didCancelAsyncCall(globalObject: *JSC.JSGlobalObject, call: AsyncCallType, id: u64) void {
-    JSC.markBinding(@src());
+pub fn didCancelAsyncCall(globalObject: *JSGlobalObject, call: AsyncCallType, id: u64) void {
+    jsc.markBinding(@src());
     Debugger__didCancelAsyncCall(globalObject, call, id);
 }
-pub fn didDispatchAsyncCall(globalObject: *JSC.JSGlobalObject, call: AsyncCallType, id: u64) void {
-    JSC.markBinding(@src());
+pub fn didDispatchAsyncCall(globalObject: *JSGlobalObject, call: AsyncCallType, id: u64) void {
+    jsc.markBinding(@src());
     Debugger__didDispatchAsyncCall(globalObject, call, id);
 }
-pub fn willDispatchAsyncCall(globalObject: *JSC.JSGlobalObject, call: AsyncCallType, id: u64) void {
-    JSC.markBinding(@src());
+pub fn willDispatchAsyncCall(globalObject: *JSGlobalObject, call: AsyncCallType, id: u64) void {
+    jsc.markBinding(@src());
     Debugger__willDispatchAsyncCall(globalObject, call, id);
 }
 
+pub const TestReporterAgent = struct {
+    handle: ?*Handle = null,
+    const debug = Output.scoped(.TestReporterAgent, false);
+
+    pub const TestStatus = enum(u8) {
+        pass,
+        fail,
+        timeout,
+        skip,
+        todo,
+    };
+    pub const Handle = opaque {
+        extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String) void;
+        extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
+        extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
+
+        pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String) void {
+            Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name);
+        }
+
+        pub fn reportTestStart(this: *Handle, testId: c_int) void {
+            Bun__TestReporterAgentReportTestStart(this, testId);
+        }
+
+        pub fn reportTestEnd(this: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void {
+            Bun__TestReporterAgentReportTestEnd(this, testId, bunTestStatus, elapsed);
+        }
+    };
+    pub export fn Bun__TestReporterAgentEnable(agent: *Handle) void {
+        if (VirtualMachine.get().debugger) |*debugger| {
+            debug("enable", .{});
+            debugger.test_reporter_agent.handle = agent;
+        }
+    }
+    pub export fn Bun__TestReporterAgentDisable(_: *Handle) void {
+        if (VirtualMachine.get().debugger) |*debugger| {
+            debug("disable", .{});
+            debugger.test_reporter_agent.handle = null;
+        }
+    }
+
+    /// Caller must ensure that it is enabled first.
+    ///
+    /// Since we may have to call .deinit on the name string.
+    pub fn reportTestFound(this: TestReporterAgent, callFrame: *jsc.CallFrame, test_id: i32, name: *bun.String) void {
+        debug("reportTestFound", .{});
+
+        this.handle.?.reportTestFound(callFrame, test_id, name);
+    }
+
+    /// Caller must ensure that it is enabled first.
+    pub fn reportTestStart(this: TestReporterAgent, test_id: i32) void {
+        debug("reportTestStart", .{});
+        this.handle.?.reportTestStart(test_id);
+    }
+
+    /// Caller must ensure that it is enabled first.
+    pub fn reportTestEnd(this: TestReporterAgent, test_id: i32, bunTestStatus: TestStatus, elapsed: f64) void {
+        debug("reportTestEnd", .{});
+        this.handle.?.reportTestEnd(test_id, bunTestStatus, elapsed);
+    }
+
+    pub fn isEnabled(this: TestReporterAgent) bool {
+        return this.handle != null;
+    }
+};
+
+pub const LifecycleAgent = struct {
+    handle: ?*Handle = null,
+    const debug = Output.scoped(.LifecycleAgent, false);
+
+    pub const Handle = opaque {
+        extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
+        extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *ZigException) void;
+        extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
+        extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
+
+        pub fn preventExit(this: *Handle) void {
+            Bun__LifecycleAgentPreventExit(this);
+        }
+
+        pub fn stopPreventingExit(this: *Handle) void {
+            Bun__LifecycleAgentStopPreventingExit(this);
+        }
+
+        pub fn reportReload(this: *Handle) void {
+            debug("reportReload", .{});
+            Bun__LifecycleAgentReportReload(this);
+        }
+
+        pub fn reportError(this: *Handle, exception: *ZigException) void {
+            debug("reportError", .{});
+            Bun__LifecycleAgentReportError(this, exception);
+        }
+    };
+
+    pub export fn Bun__LifecycleAgentEnable(agent: *Handle) void {
+        if (VirtualMachine.get().debugger) |*debugger| {
+            debug("enable", .{});
+            debugger.lifecycle_reporter_agent.handle = agent;
+        }
+    }
+
+    pub export fn Bun__LifecycleAgentDisable(agent: *Handle) void {
+        _ = agent; // autofix
+        if (VirtualMachine.get().debugger) |*debugger| {
+            debug("disable", .{});
+            debugger.lifecycle_reporter_agent.handle = null;
+        }
+    }
+
+    pub fn reportReload(this: *LifecycleAgent) void {
+        if (this.handle) |handle| {
+            handle.reportReload();
+        }
+    }
+
+    pub fn reportError(this: *LifecycleAgent, exception: *ZigException) void {
+        if (this.handle) |handle| {
+            handle.reportError(exception);
+        }
+    }
+
+    pub fn isEnabled(this: *const LifecycleAgent) bool {
+        return this.handle != null;
+    }
+};
+
+const std = @import("std");
 const bun = @import("bun");
+const uv = bun.windows.libuv;
+const Output = bun.Output;
+const Environment = bun.Environment;
 const jsc = bun.jsc;
-const Debugger = bun.jsc.Debugger;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigException = jsc.ZigException;
+const Debugger = jsc.Debugger;
+const JSGlobalObject = jsc.JSGlobalObject;

@@ -7,8 +7,8 @@ pub const CopyFile = struct {
     offset: SizeType = 0,
     size: SizeType = 0,
     max_length: SizeType = Blob.max_size,
-    destination_fd: bun.FileDescriptor = invalid_fd,
-    source_fd: bun.FileDescriptor = invalid_fd,
+    destination_fd: bun.FileDescriptor = bun.invalid_fd,
+    source_fd: bun.FileDescriptor = bun.invalid_fd,
 
     system_error: ?SystemError = null,
 
@@ -29,7 +29,7 @@ pub const CopyFile = struct {
         source_store: *Store,
         off: SizeType,
         max_len: SizeType,
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
     ) !*CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
@@ -95,8 +95,8 @@ pub const CopyFile = struct {
     }
 
     pub fn doClose(this: *CopyFile) void {
-        const close_input = this.destination_file_store.pathlike != .fd and this.destination_fd != invalid_fd;
-        const close_output = this.source_file_store.pathlike != .fd and this.source_fd != invalid_fd;
+        const close_input = this.destination_file_store.pathlike != .fd and this.destination_fd != bun.invalid_fd;
+        const close_output = this.source_file_store.pathlike != .fd and this.source_fd != bun.invalid_fd;
 
         if (close_input and close_output) {
             this.doCloseFile(.both);
@@ -168,7 +168,7 @@ pub const CopyFile = struct {
                         },
                     },
                     .err => |errno| {
-                        switch (mkdirIfNotExists(this, errno, dest, dest)) {
+                        switch (Blob.mkdirIfNotExists(this, errno, dest, dest)) {
                             .@"continue" => continue,
                             .fail => {
                                 if (which == .both) {
@@ -214,7 +214,7 @@ pub const CopyFile = struct {
         this.read_off += this.offset;
 
         var remain = @as(usize, this.max_length);
-        const unknown_size = remain == max_size or remain == 0;
+        const unknown_size = remain == Blob.max_size or remain == 0;
         if (unknown_size) {
             // sometimes stat lies
             // let's give it 4096 and see how it goes
@@ -371,7 +371,7 @@ pub const CopyFile = struct {
                 dest,
             )) {
                 .err => |errno| {
-                    switch (mkdirIfNotExists(this, errno, dest, this.destination_file_store.pathlike.path.slice())) {
+                    switch (Blob.mkdirIfNotExists(this, errno, dest, this.destination_file_store.pathlike.path.slice())) {
                         .@"continue" => continue,
                         .fail => {},
                         .no => {},
@@ -400,7 +400,7 @@ pub const CopyFile = struct {
         }
 
         // Do we need to open both files?
-        if (this.destination_fd == invalid_fd and this.source_fd == invalid_fd) {
+        if (this.destination_fd == bun.invalid_fd and this.source_fd == bun.invalid_fd) {
 
             // First, we attempt to clonefile() on macOS
             // This is the fastest way to copy a file.
@@ -456,12 +456,12 @@ pub const CopyFile = struct {
 
             this.doOpenFile(.both) catch return;
             // Do we need to open only one file?
-        } else if (this.destination_fd == invalid_fd) {
+        } else if (this.destination_fd == bun.invalid_fd) {
             this.source_fd = this.source_file_store.pathlike.fd;
 
             this.doOpenFile(.destination) catch return;
             // Do we need to open only one file?
-        } else if (this.source_fd == invalid_fd) {
+        } else if (this.source_fd == bun.invalid_fd) {
             this.destination_fd = this.destination_file_store.pathlike.fd;
 
             this.doOpenFile(.source) catch return;
@@ -471,8 +471,8 @@ pub const CopyFile = struct {
             return;
         }
 
-        assert(this.destination_fd != invalid_fd);
-        assert(this.source_fd != invalid_fd);
+        assert(this.destination_fd.isValid());
+        assert(this.source_fd.isValid());
 
         if (this.destination_file_store.pathlike == .fd) {}
 
@@ -1147,6 +1147,7 @@ pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
 const std = @import("std");
 const bun = @import("bun");
+const Environment = bun.Environment;
 const assert = bun.assert;
 const libuv = bun.windows.libuv;
 
@@ -1157,3 +1158,5 @@ const SizeType = Blob.SizeType;
 
 const JSC = bun.jsc;
 const SystemError = JSC.SystemError;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

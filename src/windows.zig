@@ -3260,6 +3260,7 @@ comptime {
     if (Environment.isWindows) {
         @export(&Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
         @export(&Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+        @export(&@"windows process.dlopen", .{ .name = "Bun__LoadLibraryBunString" });
     }
 }
 
@@ -3881,7 +3882,3 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
     return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
-
-  if (bun.Environment.isWindows) {
-        @export(&@"windows process.dlopen", .{ .name = "Bun__LoadLibraryBunString" });
-    }

@@ -1,3 +1,5 @@
+const ByteBlobLoader = @This();
+
 offset: Blob.SizeType = 0,
 store: ?*Blob.Store = null,
 chunk_size: Blob.SizeType = 1024 * 1024 * 2,
@@ -5,7 +7,19 @@ remain: Blob.SizeType = 1024 * 1024 * 2,
 done: bool = false,
 pulled: bool = false,
 
-pub const tag = ReadableStream.Tag.Blob;
+pub const tag = webcore.ReadableStream.Tag.Blob;
+pub const Source = webcore.ReadableStream.NewSource(
+    @This(),
+    "Blob",
+    onStart,
+    onPull,
+    onCancel,
+    deinit,
+    null,
+    drain,
+    memoryCost,
+    toBufferedValue,
+);
 
 pub fn parent(this: *@This()) *Source {
     return @fieldParentPtr("context", this);
@@ -31,11 +45,11 @@ pub fn setup(
     };
 }
 
-pub fn onStart(this: *ByteBlobLoader) StreamStart {
+pub fn onStart(this: *ByteBlobLoader) streams.Start {
     return .{ .chunk_size = this.chunk_size };
 }
 
-pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSC.JSValue) StreamResult {
+pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Result {
     array.ensureStillAlive();
     defer array.ensureStillAlive();
     this.pulled = true;
@@ -67,7 +81,7 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSC.JSValue) StreamRes
     return .{ .into_array = .{ .value = array, .len = copied } };
 }
 
-pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSC.JSGlobalObject) ?AnyBlob {
+pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSGlobalObject) ?Blob.Any {
     if (this.store) |store| {
         _ = this.detachStore();
         if (this.offset == 0 and this.remain == store.size()) {
@@ -124,7 +138,7 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     return bun.ByteList.fromList(cloned);
 }
 
-pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) bun.JSError!JSC.JSValue {
+pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) bun.JSError!JSValue {
     if (this.toAnyBlob(globalThis)) |blob_| {
         var blob = blob_;
         return blob.toPromise(globalThis, action);
@@ -141,15 +155,10 @@ pub fn memoryCost(this: *const ByteBlobLoader) usize {
     return 0;
 }
 
-pub const Source = ReadableStream.Source(
-    @This(),
-    "Blob",
-    onStart,
-    onPull,
-    onCancel,
-    deinit,
-    null,
-    drain,
-    memoryCost,
-    toBufferedValue,
-);
+const bun = @import("bun");
+const jsc = bun.jsc;
+const webcore = bun.webcore;
+const streams = webcore.streams;
+const Blob = webcore.Blob;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -1,5 +1,7 @@
 const ModuleLoader = @This();
 
+pub const node_fallbacks = @import("../node_fallbacks.zig");
+
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,
 
@@ -904,7 +906,7 @@ pub fn transpileSourceCode(
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
+            const is_node_override = strings.hasPrefixComptime(specifier, node_fallbacks.import_path);
 
             const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -960,7 +962,7 @@ pub fn transpileSourceCode(
             }
 
             if (is_node_override) {
-                if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
+                if (node_fallbacks.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
                     fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
@@ -2326,7 +2328,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
+            const is_node_override = strings.hasPrefixComptime(specifier, node_fallbacks.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -2387,7 +2389,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (is_node_override) {
-                if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
+                if (node_fallbacks.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
                     fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
@@ -3034,7 +3036,6 @@ const PluginRunner = bun.transpiler.PluginRunner;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
@@ -3045,8 +3046,6 @@ const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const JSC = bun.JSC;
-const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
-const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 

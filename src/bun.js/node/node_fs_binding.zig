@@ -12,7 +12,7 @@ const d = JSC.d;
 
 const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
-const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
+const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);
 
 /// Returns bindings to call JSC.Node.NodeFS.<function>.
 /// Async calls use a thread pool.
@@ -93,8 +93,8 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     return Bindings(FunctionEnum).runSync;
 }
 
-pub const NodeJSFS = struct {
-    node_fs: JSC.Node.NodeFS = .{},
+pub const Binding = struct {
+    node_fs: node.fs.NodeFS = .{},
 
     pub const js = JSC.Codegen.JSNodeJSFS;
     pub const toJS = js.toJS;
@@ -113,11 +113,11 @@ pub const NodeJSFS = struct {
         bun.destroy(this);
     }
 
-    pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getDirent(_: *Binding, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.Node.Dirent.getConstructor(globalThis);
     }
 
-    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getStats(_: *Binding, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.Node.StatsSmall.getConstructor(globalThis);
     }
 
@@ -213,7 +213,7 @@ pub const NodeJSFS = struct {
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const module = NodeJSFS.new(.{});
+    const module = Binding.new(.{});
 
     const vm = globalObject.bunVM();
     module.node_fs.vm = vm;
@@ -243,3 +243,5 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
         },
     }
 }
+
+const node = bun.api.node;

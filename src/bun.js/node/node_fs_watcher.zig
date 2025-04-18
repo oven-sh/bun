@@ -18,6 +18,7 @@ const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
 
+// TODO: make this a top-level struct
 pub const FSWatcher = struct {
     pub const js = JSC.Codegen.JSFSWatcher;
     pub const toJS = js.toJS;

@@ -1,49 +1,10 @@
 // This file contains the underlying implementation for sync & async functions
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const windows = bun.windows;
-const c = bun.c;
-const string = bun.string;
-const JSC = bun.JSC;
-const PathString = JSC.PathString;
-const Environment = bun.Environment;
-const C = bun.C;
-const system = std.posix.system;
-const Maybe = JSC.Maybe;
-const Encoding = JSC.Node.Encoding;
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-
-const FileDescriptor = bun.FileDescriptor;
-const FD = bun.FD;
-
-const AbortSignal = JSC.AbortSignal;
-
-const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
-
-const Constants = @import("./node_fs_constant.zig").Constants;
-const builtin = @import("builtin");
-const posix = std.posix;
-const darwin = std.os.darwin;
-const linux = std.os.linux;
-const PathLike = JSC.Node.PathLike;
-const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
-const DirIterator = @import("./dir_iterator.zig");
-const Path = @import("../../resolver/resolve_path.zig");
-const FileSystem = @import("../../fs.zig").FileSystem;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
-const TimeLike = JSC.Node.TimeLike;
-const Mode = bun.Mode;
-const uv = bun.windows.libuv;
-const E = C.E;
-const uid_t = JSC.Node.uid_t;
-const gid_t = JSC.Node.gid_t;
-const ReadPosition = i64;
-const StringOrBuffer = JSC.Node.StringOrBuffer;
-const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
-const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
+pub const constants = @import("node_fs_constant.zig");
+pub const Binding = @import("node_fs_binding.zig").Binding;
+pub const Watcher = @import("node_fs_watcher.zig").FSWatcher;
+pub const StatWatcher = @import("node_fs_stat_watcher.zig").StatWatcher;
 
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |
@@ -3161,9 +3122,9 @@ pub const Arguments = struct {
 
     pub const UnwatchFile = void;
 
-    pub const Watch = JSC.Node.FSWatcher.Arguments;
+    pub const Watch = Watcher.Arguments;
 
-    pub const WatchFile = JSC.Node.StatWatcher.Arguments;
+    pub const WatchFile = StatWatcher.Arguments;
 
     pub const Fsync = struct {
         fd: FileDescriptor,
@@ -6948,3 +6909,47 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
         }
     }
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const strings = bun.strings;
+const windows = bun.windows;
+const c = bun.c;
+const string = bun.string;
+const JSC = bun.JSC;
+const PathString = JSC.PathString;
+const Environment = bun.Environment;
+const C = bun.C;
+const system = std.posix.system;
+const Maybe = JSC.Maybe;
+const Encoding = JSC.Node.Encoding;
+const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
+
+const FileDescriptor = bun.FileDescriptor;
+const FD = bun.FD;
+
+const AbortSignal = JSC.AbortSignal;
+
+const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
+
+const Constants = @import("./node_fs_constant.zig").Constants;
+const builtin = @import("builtin");
+const posix = std.posix;
+const darwin = std.os.darwin;
+const linux = std.os.linux;
+const PathLike = JSC.Node.PathLike;
+const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
+const DirIterator = @import("./dir_iterator.zig");
+const Path = @import("../../resolver/resolve_path.zig");
+const FileSystem = @import("../../fs.zig").FileSystem;
+const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const TimeLike = JSC.Node.TimeLike;
+const Mode = bun.Mode;
+const uv = bun.windows.libuv;
+const E = C.E;
+const uid_t = JSC.Node.uid_t;
+const gid_t = JSC.Node.gid_t;
+const ReadPosition = i64;
+const StringOrBuffer = JSC.Node.StringOrBuffer;
+const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
+const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;

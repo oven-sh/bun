@@ -86,7 +86,7 @@ pub const ZigErrorType = @import("bindings/ZigErrorType.zig").ZigErrorType;
 pub const Debugger = @import("Debugger.zig");
 pub const SavedSourceMap = @import("SavedSourceMap.zig");
 pub const VirtualMachine = @import("VirtualMachine.zig");
-pub const ModuleLoader = @import("module_loader.zig");
+pub const ModuleLoader = @import("ModuleLoader.zig");
 pub const RareData = @import("rare_data.zig");
 pub const EventType = @import("bindings/EventType.zig").EventType;
 pub const JSRuntimeType = @import("bindings/JSRuntimeType.zig").JSRuntimeType;
@@ -105,6 +105,8 @@ pub const ZigException = @import("bindings/ZigException.zig").ZigException;
 pub const ConsoleObject = @import("ConsoleObject.zig");
 pub const Formatter = ConsoleObject.Formatter;
 
+pub const hot_reloader = @import("hot_reloader.zig");
+
 // TODO: move into bun.api
 pub const Jest = @import("test/jest.zig");
 pub const TestScope = @import("test/jest.zig").TestScope;
@@ -116,6 +118,7 @@ pub const JSPropertyIterator = js_property_iterator.JSPropertyIterator;
 pub const JSPropertyIteratorOptions = js_property_iterator.JSPropertyIteratorOptions;
 
 const event_loop = @import("event_loop.zig");
+pub const PlatformEventLoop = if (bun.Environment.isPosix) bun.uws.Loop else bun.Async.Loop;
 pub const ConcurrentPromiseTask = event_loop.ConcurrentPromiseTask;
 pub const WorkTask = event_loop.WorkTask;
 pub const AnyTask = event_loop.AnyTask;
@@ -147,7 +150,7 @@ pub const jsEmptyString = JSValue.jsEmptyString;
 /// Deprecated: Use the .jsNumber() decl literal
 pub const jsNumber = JSValue.jsNumber;
 /// Deprecated: Avoid using this in new code.
-pub const C = @import("bun.js/javascript_core_c_api.zig");
+pub const C = @import("javascript_core_c_api.zig");
 /// Deprecated: Remove all of these please.
 pub const Sizes = @import("bindings/sizes.zig");
 /// Deprecated: Use `bun.String`
@@ -220,6 +223,16 @@ pub const Ref = struct {
         vm.active_tasks += 1;
     }
 };
+
+pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
+pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
+    return struct {
+        pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
+            const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
+            Function(context);
+        }
+    }.callback;
+}
 
 pub const Error = @import("ErrorCode").Error;
 

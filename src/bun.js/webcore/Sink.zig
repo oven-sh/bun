@@ -16,9 +16,9 @@ pub const Status = enum {
 };
 
 pub const Data = union(enum) {
-    utf16: StreamResult,
-    latin1: StreamResult,
-    bytes: StreamResult,
+    utf16: streams.Result,
+    latin1: streams.Result,
+    bytes: streams.Result,
 };
 
 pub fn initWithType(comptime Type: type, handler: *Type) Sink {
@@ -36,9 +36,9 @@ pub fn init(handler: anytype) Sink {
 
 pub const UTF8Fallback = struct {
     const stack_size = 1024;
-    pub fn writeLatin1(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
+    pub fn writeLatin1(comptime Ctx: type, ctx: *Ctx, input: streams.Result, comptime writeFn: anytype) streams.Result.Writable {
         const str = input.slice();
-        if (strings.isAllASCII(str)) {
+        if (bun.strings.isAllASCII(str)) {
             return writeFn(
                 ctx,
                 input,
@@ -49,7 +49,7 @@ pub const UTF8Fallback = struct {
             var buf: [stack_size]u8 = undefined;
             @memcpy(buf[0..str.len], str);
 
-            strings.replaceLatin1WithUTF8(buf[0..str.len]);
+            bun.strings.replaceLatin1WithUTF8(buf[0..str.len]);
             if (input.isDone()) {
                 const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..str.len]) });
                 return result;
@@ -63,7 +63,7 @@ pub const UTF8Fallback = struct {
             var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom };
             @memcpy(slice[0..str.len], str);
 
-            strings.replaceLatin1WithUTF8(slice[0..str.len]);
+            bun.strings.replaceLatin1WithUTF8(slice[0..str.len]);
             if (input.isDone()) {
                 return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(slice) });
             } else {
@@ -72,12 +72,12 @@ pub const UTF8Fallback = struct {
         }
     }
 
-    pub fn writeUTF16(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
+    pub fn writeUTF16(comptime Ctx: type, ctx: *Ctx, input: streams.Result, comptime writeFn: anytype) streams.Result.Writable {
         const str: []const u16 = std.mem.bytesAsSlice(u16, input.slice());
 
         if (stack_size >= str.len * 2) {
             var buf: [stack_size]u8 = undefined;
-            const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str, true);
+            const copied = bun.strings.copyUTF16IntoUTF8(&buf, []const u16, str, true);
             bun.assert(copied.written <= stack_size);
             bun.assert(copied.read <= stack_size);
             if (input.isDone()) {
@@ -90,7 +90,7 @@ pub const UTF8Fallback = struct {
         }
 
         {
-            const allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
+            const allocated = bun.strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
             if (input.isDone()) {
                 return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
             } else {
@@ -101,11 +101,11 @@ pub const UTF8Fallback = struct {
 };
 
 pub const VTable = struct {
-    pub const WriteUTF16Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
-    pub const WriteUTF8Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
-    pub const WriteLatin1Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+    pub const WriteUTF16Fn = *const (fn (this: *anyopaque, data: streams.Result) streams.Result.Writable);
+    pub const WriteUTF8Fn = *const (fn (this: *anyopaque, data: streams.Result) streams.Result.Writable);
+    pub const WriteLatin1Fn = *const (fn (this: *anyopaque, data: streams.Result) streams.Result.Writable);
     pub const EndFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) JSC.Maybe(void));
-    pub const ConnectFn = *const (fn (this: *anyopaque, signal: Signal) JSC.Maybe(void));
+    pub const ConnectFn = *const (fn (this: *anyopaque, signal: streams.Signal) JSC.Maybe(void));
 
     connect: ConnectFn,
     write: WriteUTF8Fn,
@@ -117,16 +117,16 @@ pub const VTable = struct {
         comptime Wrapped: type,
     ) VTable {
         const Functions = struct {
-            pub fn onWrite(this: *anyopaque, data: StreamResult) StreamResult.Writable {
+            pub fn onWrite(this: *anyopaque, data: streams.Result) streams.Result.Writable {
                 return Wrapped.write(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
             }
-            pub fn onConnect(this: *anyopaque, signal: Signal) JSC.Maybe(void) {
+            pub fn onConnect(this: *anyopaque, signal: streams.Signal) JSC.Maybe(void) {
                 return Wrapped.connect(@as(*Wrapped, @ptrCast(@alignCast(this))), signal);
             }
-            pub fn onWriteLatin1(this: *anyopaque, data: StreamResult) StreamResult.Writable {
+            pub fn onWriteLatin1(this: *anyopaque, data: streams.Result) streams.Result.Writable {
                 return Wrapped.writeLatin1(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
             }
-            pub fn onWriteUTF16(this: *anyopaque, data: StreamResult) StreamResult.Writable {
+            pub fn onWriteUTF16(this: *anyopaque, data: streams.Result) streams.Result.Writable {
                 return Wrapped.writeUTF16(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
             }
             pub fn onEnd(this: *anyopaque, err: ?Syscall.Error) JSC.Maybe(void) {
@@ -153,7 +153,7 @@ pub fn end(this: *Sink, err: ?Syscall.Error) JSC.Maybe(void) {
     return this.vtable.end(this.ptr, err);
 }
 
-pub fn writeLatin1(this: *Sink, data: StreamResult) StreamResult.Writable {
+pub fn writeLatin1(this: *Sink, data: streams.Result) streams.Result.Writable {
     if (this.status == .closed) {
         return .{ .done = {} };
     }
@@ -167,7 +167,7 @@ pub fn writeLatin1(this: *Sink, data: StreamResult) StreamResult.Writable {
     return res;
 }
 
-pub fn writeBytes(this: *Sink, data: StreamResult) StreamResult.Writable {
+pub fn writeBytes(this: *Sink, data: streams.Result) streams.Result.Writable {
     if (this.status == .closed) {
         return .{ .done = {} };
     }
@@ -181,7 +181,7 @@ pub fn writeBytes(this: *Sink, data: StreamResult) StreamResult.Writable {
     return res;
 }
 
-pub fn writeUTF16(this: *Sink, data: StreamResult) StreamResult.Writable {
+pub fn writeUTF16(this: *Sink, data: streams.Result) streams.Result.Writable {
     if (this.status == .closed) {
         return .{ .done = {} };
     }
@@ -195,7 +195,7 @@ pub fn writeUTF16(this: *Sink, data: StreamResult) StreamResult.Writable {
     return res;
 }
 
-pub fn write(this: *Sink, data: Data) StreamResult.Writable {
+pub fn write(this: *Sink, data: Data) streams.Result.Writable {
     switch (data) {
         .utf16 => |str| {
             return this.writeUTF16(str);
@@ -219,10 +219,10 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         pub const SinkSignal = extern struct {
             cpp: JSValue,
 
-            pub fn init(cpp: JSValue) Signal {
+            pub fn init(cpp: JSValue) streams.Signal {
                 // this one can be null
                 @setRuntimeSafety(false);
-                return Signal.initWithType(SinkSignal, @as(*SinkSignal, @ptrFromInt(@as(usize, @bitCast(@intFromEnum(cpp))))));
+                return streams.Signal.initWithType(SinkSignal, @as(*SinkSignal, @ptrFromInt(@as(usize, @bitCast(@intFromEnum(cpp))))));
             }
 
             pub fn close(this: *@This(), _: ?Syscall.Error) void {
@@ -516,20 +516,24 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            if (comptime @hasField(StreamStart, abi_name)) {
+            if (comptime @hasField(streams.Start, abi_name)) {
                 return this.sink.start(
                     if (callframe.argumentsCount() > 0)
-                        try StreamStart.fromJSWithTag(globalThis, callframe.argument(0), comptime @field(StreamStart, abi_name))
+                        try streams.Start.fromJSWithTag(
+                            globalThis,
+                            callframe.argument(0),
+                            comptime @field(streams.Start, abi_name),
+                        )
                     else
-                        StreamStart{ .empty = {} },
+                        .{ .empty = {} },
                 ).toJS(globalThis);
             }
 
             return this.sink.start(
                 if (callframe.argumentsCount() > 0)
-                    try StreamStart.fromJS(globalThis, callframe.argument(0))
+                    try streams.Start.fromJS(globalThis, callframe.argument(0))
                 else
-                    StreamStart{ .empty = {} },
+                    .{ .empty = {} },
             ).toJS(globalThis);
         }
 
@@ -576,10 +580,10 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 this.sink.updateRef(value);
         }
 
-        const jsWrite = JSC.toJSHostFunction(write);
+        const jsWrite = JSC.toJSHostFunction(@This().write);
         const jsFlush = JSC.toJSHostFunction(flush);
         const jsStart = JSC.toJSHostFunction(start);
-        const jsEnd = JSC.toJSHostFunction(end);
+        const jsEnd = JSC.toJSHostFunction(@This().end);
         const jsConstruct = JSC.toJSHostFunction(construct);
 
         fn jsGetInternalFd(ptr: *anyopaque) callconv(.C) JSValue {
@@ -608,7 +612,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
 const Detached = opaque {};
 const Subprocess = JSC.API.Bun.Subprocess;
-pub const Ptr = bun.TaggedPointerUnion(.{
+pub const DestructorPtr = bun.TaggedPointerUnion(.{
     Detached,
     Subprocess,
 });
@@ -618,17 +622,17 @@ pub export fn Bun__onSinkDestroyed(
     sink_ptr: ?*anyopaque,
 ) callconv(.C) void {
     _ = sink_ptr; // autofix
-    const ptr = Ptr.from(ptr_value);
+    const ptr = DestructorPtr.from(ptr_value);
 
     if (ptr.isNull()) {
         return;
     }
 
     switch (ptr.tag()) {
-        @field(Ptr.Tag, @typeName(Detached)) => {
+        @field(DestructorPtr.Tag, @typeName(Detached)) => {
             return;
         },
-        @field(Ptr.Tag, @typeName(Subprocess)) => {
+        @field(DestructorPtr.Tag, @typeName(Subprocess)) => {
             const subprocess = ptr.as(Subprocess);
             subprocess.onStdinDestroyed();
         },
@@ -637,3 +641,14 @@ pub export fn Bun__onSinkDestroyed(
         },
     }
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const Syscall = bun.sys;
+const Output = bun.Output;
+const JSC = bun.jsc;
+const webcore = bun.webcore;
+const streams = webcore.streams;
+const JSValue = JSC.JSValue;
+const JSGlobalObject = JSC.JSGlobalObject;
+const Blob = webcore.Blob;

@@ -453,7 +453,7 @@ pub fn constructRedirect(
         if (@intFromEnum(url_string_value) != 0) {
             url_string = try url_string_value.getZigString(globalThis);
         }
-        url_string_slice = url_string.toSlice(getAllocator(globalThis));
+        url_string_slice = url_string.toSlice(bun.default_allocator);
         var did_succeed = false;
         defer {
             if (!did_succeed) {
@@ -740,11 +740,6 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
-
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;

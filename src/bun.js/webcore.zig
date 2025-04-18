@@ -29,8 +29,11 @@ pub const ObjectURLRegistry = @import("webcore/ObjectURLRegistry.zig");
 pub const Sink = @import("webcore/Sink.zig");
 pub const FileSink = @import("webcore/FileSink.zig");
 pub const FetchHeaders = @import("bindings/FetchHeaders.zig").FetchHeaders;
+pub const ByteBlobLoader = @import("webcore/ByteBlobLoader.zig");
+pub const ByteStream = @import("webcore/ByteStream.zig");
+pub const FileReader = @import("webcore/FileReader.zig");
 
-const streams = @import("webcore/streams.zig");
+pub const streams = @import("webcore/streams.zig");
 pub const NetworkSink = streams.NetworkSink;
 pub const HTTPResponseSink = streams.HTTPResponseSink;
 pub const HTTPSResponseSink = streams.HTTPSResponseSink;

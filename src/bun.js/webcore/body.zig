@@ -1323,7 +1323,7 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             var blob = Blob.new(value.use());
-            blob.allocator = getAllocator(globalObject);
+            blob.allocator = bun.default_allocator;
             if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
@@ -1706,11 +1706,7 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
-
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
+const ArrayBuffer = JSC.ArrayBuffer;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;

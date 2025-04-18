@@ -366,7 +366,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
+    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -424,7 +424,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -456,7 +456,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
@@ -469,7 +469,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
@@ -1325,15 +1325,6 @@ pub fn getUnsafe(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue 
     return UnsafeObject.create(globalThis);
 }
 
-pub const HashObject = @import("./HashObject.zig");
-pub const UnsafeObject = @import("./UnsafeObject.zig");
-pub const TOMLObject = @import("./TOMLObject.zig");
-
-const Debugger = JSC.Debugger;
-
-pub const Timer = @import("./Timer.zig");
-pub const FFIObject = @import("./FFIObject.zig");
-
 pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
     if (str.length() == 0)
         return 0;
@@ -1713,35 +1704,33 @@ pub const JSZlib = struct {
     }
 };
 
-pub const Subprocess = @import("./bun/subprocess.zig");
+// const InternalTestingAPIs = struct {
+//     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+//         const args = callframe.arguments_old(1);
+//         if (args.len < 1) {
+//             globalThis.throwNotEnoughArguments("code", 1, 0);
+//         }
 
-const InternalTestingAPIs = struct {
-    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        if (args.len < 1) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
+//         const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+//         defer code.deinit();
+//         var buffer = MutableString.initEmpty(bun.default_allocator);
+//         defer buffer.deinit();
+//         var writer = buffer.bufferedWriter();
+//         const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+//             .enable_colors = true,
+//             .check_for_unhighlighted_write = false,
+//         });
+//         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+//             return globalThis.throwError(err, "Error formatting code");
+//         };
 
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
-        defer code.deinit();
-        var buffer = MutableString.initEmpty(bun.default_allocator);
-        defer buffer.deinit();
-        var writer = buffer.bufferedWriter();
-        const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
-            .enable_colors = true,
-            .check_for_unhighlighted_write = false,
-        });
-        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            return globalThis.throwError(err, "Error formatting code");
-        };
+//         writer.flush() catch |err| {
+//             return globalThis.throwError(err, "Error formatting code");
+//         };
 
-        writer.flush() catch |err| {
-            return globalThis.throwError(err, "Error formatting code");
-        };
-
-        return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
-    }
-};
+//         return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
+//     }
+// };
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
@@ -1773,7 +1762,6 @@ const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -1794,10 +1782,6 @@ const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
-
-const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
-const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
@@ -1829,3 +1813,10 @@ const Async = bun.Async;
 const SemverObject = bun.Semver.SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
+
+const Debugger = JSC.Debugger;
+const HashObject = bun.api.HashObject;
+const UnsafeObject = bun.api.UnsafeObject;
+const TOMLObject = bun.api.TOMLObject;
+const Timer = bun.api.Timer;
+const FFIObject = bun.api.FFIObject;

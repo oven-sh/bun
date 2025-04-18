@@ -7,27 +7,13 @@ pub const Start = union(Tag) {
         as_uint8array: bool,
         stream: bool,
     },
-    FileSink: FileSinkOptions,
+    FileSink: FileSink.Options,
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
     NetworkSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
     done: bun.ByteList,
-
-    pub const FileSinkOptions = struct {
-        chunk_size: Blob.SizeType = 1024,
-        input_path: WebCore.PathOrFileDescriptor,
-        truncate: bool = true,
-        close: bool = false,
-        mode: bun.Mode = 0o664,
-
-        pub fn flags(this: *const FileSinkOptions) i32 {
-            _ = this;
-
-            return bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;
-        }
-    };
 
     pub const Tag = enum {
         empty,
@@ -205,6 +191,403 @@ pub const Start = union(Tag) {
         }
 
         return .{ .empty = {} };
+    }
+};
+
+pub const Result = union(Tag) {
+    pending: *Pending,
+    err: StreamError,
+    done: void,
+    owned: bun.ByteList,
+    owned_and_done: bun.ByteList,
+    temporary_and_done: bun.ByteList,
+    temporary: bun.ByteList,
+    into_array: IntoArray,
+    into_array_and_done: IntoArray,
+
+    pub fn deinit(this: *Result) void {
+        switch (this.*) {
+            .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .err => |err| {
+                if (err == .JSValue) {
+                    err.JSValue.unprotect();
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub const StreamError = union(enum) {
+        Error: Syscall.Error,
+        AbortReason: JSC.CommonAbortReason,
+
+        // TODO: use an explicit JSC.Strong here.
+        JSValue: JSC.JSValue,
+        WeakJSValue: JSC.JSValue,
+
+        const WasStrong = enum {
+            Strong,
+            Weak,
+        };
+
+        pub fn toJSWeak(this: *const @This(), globalObject: *JSC.JSGlobalObject) struct { JSC.JSValue, WasStrong } {
+            return switch (this.*) {
+                .Error => |err| {
+                    return .{ err.toJSC(globalObject), WasStrong.Weak };
+                },
+                .JSValue => .{ this.JSValue, WasStrong.Strong },
+                .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
+                .AbortReason => |reason| {
+                    const value = reason.toJS(globalObject);
+                    return .{ value, WasStrong.Weak };
+                },
+            };
+        }
+    };
+
+    pub const Tag = enum {
+        pending,
+        err,
+        done,
+        owned,
+        owned_and_done,
+        temporary_and_done,
+        temporary,
+        into_array,
+        into_array_and_done,
+    };
+
+    pub fn slice16(this: *const Result) []const u16 {
+        const bytes = this.slice();
+        return @as([*]const u16, @ptrCast(@alignCast(bytes.ptr)))[0..std.mem.bytesAsSlice(u16, bytes).len];
+    }
+
+    pub fn slice(this: *const Result) []const u8 {
+        return switch (this.*) {
+            .owned => |owned| owned.slice(),
+            .owned_and_done => |owned_and_done| owned_and_done.slice(),
+            .temporary_and_done => |temporary_and_done| temporary_and_done.slice(),
+            .temporary => |temporary| temporary.slice(),
+            else => "",
+        };
+    }
+
+    pub const Writable = union(Result.Tag) {
+        pending: *Writable.Pending,
+
+        err: Syscall.Error,
+        done: void,
+
+        owned: Blob.SizeType,
+        owned_and_done: Blob.SizeType,
+        temporary_and_done: Blob.SizeType,
+        temporary: Blob.SizeType,
+        into_array: Blob.SizeType,
+        into_array_and_done: Blob.SizeType,
+
+        pub const Pending = struct {
+            future: Future = .{ .none = {} },
+            result: Writable,
+            consumed: Blob.SizeType = 0,
+            state: Result.Pending.State = .none,
+
+            pub fn deinit(this: *@This()) void {
+                this.future.deinit();
+            }
+
+            pub const Future = union(enum) {
+                none: void,
+                promise: struct {
+                    strong: JSC.JSPromise.Strong,
+                    global: *JSC.JSGlobalObject,
+                },
+                handler: Handler,
+
+                pub fn deinit(this: *@This()) void {
+                    if (this.* == .promise) {
+                        this.promise.strong.deinit();
+                        this.* = .{ .none = {} };
+                    }
+                }
+            };
+
+            pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
+                this.state = .pending;
+
+                switch (this.future) {
+                    .promise => |p| {
+                        return p.strong.get();
+                    },
+                    else => {
+                        this.future = .{
+                            .promise = .{
+                                .strong = JSC.JSPromise.Strong.init(globalThis),
+                                .global = globalThis,
+                            },
+                        };
+
+                        return this.future.promise.strong.get();
+                    },
+                }
+            }
+
+            pub const Handler = struct {
+                ctx: *anyopaque,
+                handler: Fn,
+
+                pub const Fn = *const fn (ctx: *anyopaque, result: Result.Writable) void;
+
+                pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, Result.Writable) void) void {
+                    this.ctx = ctx;
+                    this.handler = struct {
+                        const handler = handler_fn;
+                        pub fn onHandle(ctx_: *anyopaque, result: Result.Writable) void {
+                            @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                        }
+                    }.onHandle;
+                }
+            };
+
+            pub fn run(this: *Writable.Pending) void {
+                if (this.state != .pending) return;
+                this.state = .used;
+                switch (this.future) {
+                    .promise => {
+                        var p = this.future.promise;
+                        this.future = .none;
+                        Writable.fulfillPromise(this.result, p.strong.swap(), p.global);
+                    },
+                    .handler => |h| {
+                        h.handler(h.ctx, this.result);
+                    },
+                    .none => {},
+                }
+            }
+        };
+
+        pub fn isDone(this: *const Writable) bool {
+            return switch (this.*) {
+                .owned_and_done, .temporary_and_done, .into_array_and_done, .done, .err => true,
+                else => false,
+            };
+        }
+
+        pub fn fulfillPromise(
+            result: Writable,
+            promise: *JSPromise,
+            globalThis: *JSGlobalObject,
+        ) void {
+            defer promise.asValue(globalThis).unprotect();
+            switch (result) {
+                .err => |err| {
+                    promise.reject(globalThis, err.toJSC(globalThis));
+                },
+                .done => {
+                    promise.resolve(globalThis, JSValue.jsBoolean(false));
+                },
+                else => {
+                    promise.resolve(globalThis, result.toJS(globalThis));
+                },
+            }
+        }
+
+        pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
+            return switch (this) {
+                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).asValue(globalThis),
+
+                .owned => |len| JSC.JSValue.jsNumber(len),
+                .owned_and_done => |len| JSC.JSValue.jsNumber(len),
+                .temporary_and_done => |len| JSC.JSValue.jsNumber(len),
+                .temporary => |len| JSC.JSValue.jsNumber(len),
+                .into_array => |len| JSC.JSValue.jsNumber(len),
+                .into_array_and_done => |len| JSC.JSValue.jsNumber(len),
+
+                // false == controller.close()
+                // undefined == noop, but we probably won't send it
+                .done => JSC.JSValue.jsBoolean(true),
+
+                .pending => |pending| pending.promise(globalThis).asValue(globalThis),
+            };
+        }
+    };
+
+    pub const IntoArray = struct {
+        value: JSValue = JSValue.zero,
+        len: Blob.SizeType = std.math.maxInt(Blob.SizeType),
+    };
+
+    pub const Pending = struct {
+        future: Future = undefined,
+        result: Result = .{ .done = {} },
+        state: State = .none,
+
+        pub fn set(this: *Pending, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, Result) void) void {
+            this.future.init(Context, ctx, handler_fn);
+            this.state = .pending;
+        }
+
+        pub fn promise(this: *Pending, globalObject: *JSC.JSGlobalObject) *JSC.JSPromise {
+            const prom = JSC.JSPromise.create(globalObject);
+            this.future = .{
+                .promise = .{
+                    .promise = prom,
+                    .globalThis = globalObject,
+                },
+            };
+            this.state = .pending;
+            return prom;
+        }
+
+        pub const Future = union(enum) {
+            promise: struct {
+                promise: *JSPromise,
+                globalThis: *JSC.JSGlobalObject,
+            },
+            handler: Handler,
+
+            pub fn init(this: *Future, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, Result) void) void {
+                this.* = .{
+                    .handler = undefined,
+                };
+                this.handler.init(Context, ctx, handler_fn);
+            }
+        };
+
+        pub const Handler = struct {
+            ctx: *anyopaque,
+            handler: Fn,
+
+            pub const Fn = *const fn (ctx: *anyopaque, result: Result) void;
+
+            pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, Result) void) void {
+                this.ctx = ctx;
+                this.handler = struct {
+                    const handler = handler_fn;
+                    pub fn onHandle(ctx_: *anyopaque, result: Result) void {
+                        @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                    }
+                }.onHandle;
+            }
+        };
+
+        pub const State = enum {
+            none,
+            pending,
+            used,
+        };
+
+        pub fn run(this: *Pending) void {
+            if (this.state != .pending) return;
+            this.state = .used;
+            switch (this.future) {
+                .promise => |p| {
+                    Result.fulfillPromise(&this.result, p.promise, p.globalThis);
+                },
+                .handler => |h| {
+                    h.handler(h.ctx, this.result);
+                },
+            }
+        }
+    };
+
+    pub fn isDone(this: *const Result) bool {
+        return switch (this.*) {
+            .owned_and_done, .temporary_and_done, .into_array_and_done, .done, .err => true,
+            else => false,
+        };
+    }
+
+    pub fn fulfillPromise(result: *Result, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
+        const vm = globalThis.bunVM();
+        const loop = vm.eventLoop();
+        const promise_value = promise.asValue(globalThis);
+        defer promise_value.unprotect();
+
+        loop.enter();
+        defer loop.exit();
+
+        switch (result.*) {
+            .err => |*err| {
+                const value = brk: {
+                    const js_err, const was_strong = err.toJSWeak(globalThis);
+                    js_err.ensureStillAlive();
+                    if (was_strong == .Strong)
+                        js_err.unprotect();
+
+                    break :brk js_err;
+                };
+                result.* = .{ .temporary = .{} };
+                promise.reject(globalThis, value);
+            },
+            .done => {
+                promise.resolve(globalThis, JSValue.jsBoolean(false));
+            },
+            else => {
+                const value = result.toJS(globalThis);
+                value.ensureStillAlive();
+
+                result.* = .{ .temporary = .{} };
+                promise.resolve(globalThis, value);
+            },
+        }
+    }
+
+    pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) JSValue {
+        if (JSC.VirtualMachine.get().isShuttingDown()) {
+            var that = this.*;
+            that.deinit();
+            return .zero;
+        }
+
+        switch (this.*) {
+            .owned => |list| {
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+            },
+            .owned_and_done => |list| {
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+            },
+            .temporary => |temp| {
+                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var slice_ = array.asArrayBuffer(globalThis).?.slice();
+                const temp_slice = temp.slice();
+                @memcpy(slice_[0..temp_slice.len], temp_slice);
+                return array;
+            },
+            .temporary_and_done => |temp| {
+                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var slice_ = array.asArrayBuffer(globalThis).?.slice();
+                const temp_slice = temp.slice();
+                @memcpy(slice_[0..temp_slice.len], temp_slice);
+                return array;
+            },
+            .into_array => |array| {
+                return JSC.JSValue.jsNumberFromInt64(array.len);
+            },
+            .into_array_and_done => |array| {
+                return JSC.JSValue.jsNumberFromInt64(array.len);
+            },
+            .pending => |pending| {
+                const promise = pending.promise(globalThis).asValue(globalThis);
+                promise.protect();
+                return promise;
+            },
+
+            .err => |err| {
+                const js_err, const was_strong = err.toJSWeak(globalThis);
+                if (was_strong == .Strong) {
+                    js_err.unprotect();
+                }
+                js_err.ensureStillAlive();
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+            },
+
+            // false == controller.close()
+            // undefined == noop, but we probably won't send it
+            .done => {
+                return JSC.JSValue.jsBoolean(false);
+            },
+        }
     }
 };
 
@@ -587,7 +970,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = {} };
         }
 
-        pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        pub fn write(this: *@This(), data: Result) Result.Writable {
             if (this.done or this.requested_end) {
                 return .{ .owned = 0 };
             }
@@ -629,7 +1012,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .owned = len };
         }
         pub const writeBytes = write;
-        pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        pub fn writeLatin1(this: *@This(), data: Result) Result.Writable {
             if (this.done or this.requested_end) {
                 return .{ .owned = 0 };
             }
@@ -687,7 +1070,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             return .{ .owned = len };
         }
-        pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        pub fn writeUTF16(this: *@This(), data: Result) Result.Writable {
             if (this.done or this.requested_end) {
                 return .{ .owned = 0 };
             }
@@ -1103,7 +1486,7 @@ pub const NetworkSink = struct {
         this.finalize();
     }
 
-    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+    pub fn write(this: *@This(), data: Result) Result.Writable {
         if (this.ended) {
             return .{ .owned = 0 };
         }
@@ -1136,7 +1519,7 @@ pub const NetworkSink = struct {
     }
 
     pub const writeBytes = write;
-    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+    pub fn writeLatin1(this: *@This(), data: Result) Result.Writable {
         if (this.ended) {
             return .{ .owned = 0 };
         }
@@ -1187,7 +1570,7 @@ pub const NetworkSink = struct {
 
         return .{ .owned = len };
     }
-    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+    pub fn writeUTF16(this: *@This(), data: Result) Result.Writable {
         if (this.ended) {
             return .{ .owned = 0 };
         }
@@ -1249,7 +1632,7 @@ pub const NetworkSink = struct {
     }
 
     const name = "NetworkSink";
-    pub const JSSink = NewJSSink(@This(), name);
+    pub const JSSink = Sink.JSSink(@This(), name);
 };
 
 pub const BufferAction = union(enum) {
@@ -1265,7 +1648,7 @@ pub const BufferAction = union(enum) {
         blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *JSC.JSGlobalObject, err: StreamResult.StreamError) void {
+    pub fn reject(this: *BufferAction, global: *JSC.JSGlobalObject, err: Result.StreamError) void {
         this.swap().reject(global, err.toJSWeak(global)[0]);
     }
 
@@ -1304,7 +1687,7 @@ pub const ReadResult = union(enum) {
     done: void,
     read: []u8,
 
-    pub fn toStream(this: ReadResult, pending: *StreamResult.Pending, buf: []u8, view: JSValue, close_on_empty: bool) StreamResult {
+    pub fn toStream(this: ReadResult, pending: *Result.Pending, buf: []u8, view: JSValue, close_on_empty: bool) Result {
         return toStreamWithIsDone(
             this,
             pending,
@@ -1314,7 +1697,7 @@ pub const ReadResult = union(enum) {
             false,
         );
     }
-    pub fn toStreamWithIsDone(this: ReadResult, pending: *StreamResult.Pending, buf: []u8, view: JSValue, close_on_empty: bool, is_done: bool) StreamResult {
+    pub fn toStreamWithIsDone(this: ReadResult, pending: *Result.Pending, buf: []u8, view: JSValue, close_on_empty: bool, is_done: bool) Result {
         return switch (this) {
             .pending => .{ .pending = pending },
             .err => .{ .err = .{ .Error = this.err } },
@@ -1324,13 +1707,13 @@ pub const ReadResult = union(enum) {
                 const done = is_done or (close_on_empty and slice.len == 0);
 
                 break :brk if (owned and done)
-                    StreamResult{ .owned_and_done = bun.ByteList.init(slice) }
+                    Result{ .owned_and_done = bun.ByteList.init(slice) }
                 else if (owned)
-                    StreamResult{ .owned = bun.ByteList.init(slice) }
+                    Result{ .owned = bun.ByteList.init(slice) }
                 else if (done)
-                    StreamResult{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
+                    Result{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
                 else
-                    StreamResult{ .into_array = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } };
+                    Result{ .into_array = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } };
             },
         };
     }
@@ -1374,15 +1757,12 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
+const ArrayBuffer = JSC.ArrayBuffer;
 const Async = bun.Async;
-const castObj = @import("../base.zig").castObj;
-const getAllocator = @import("../base.zig").getAllocator;
 
-const Environment = @import("../../env.zig");
+const Environment = bun.Environment;
 const ZigString = JSC.ZigString;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+const IdentityContext = bun.IdentityContext;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
@@ -1401,5 +1781,8 @@ const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
 const WebCore = JSC.WebCore;
+const Sink = WebCore.Sink;
+const AutoFlusher = WebCore.AutoFlusher;
+const FileSink = WebCore.FileSink;
 
 const AnyBlob = bun.JSC.WebCore.AnyBlob;

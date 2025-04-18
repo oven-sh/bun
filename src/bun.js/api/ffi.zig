@@ -14,9 +14,7 @@ const Fs = @import("../../fs.zig");
 const options = @import("../../options.zig");
 const ZigString = bun.JSC.ZigString;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
 
-const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;

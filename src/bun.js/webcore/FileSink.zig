@@ -1,11 +1,13 @@
+const FileSink = @This();
+
 ref_count: RefCount,
 writer: IOWriter = .{},
 event_loop_handle: JSC.EventLoopHandle,
 written: usize = 0,
-pending: StreamResult.Writable.Pending = .{
+pending: streams.Result.Writable.Pending = .{
     .result = .{ .done = {} },
 },
-signal: Signal = Signal{},
+signal: streams.Signal = .{},
 done: bool = false,
 started: bool = false,
 must_be_kept_alive_until_eof: bool = false,
@@ -19,8 +21,8 @@ force_sync: bool = false,
 is_socket: bool = false,
 fd: bun.FileDescriptor = bun.invalid_fd,
 
-auto_flusher: AutoFlusher = .{},
-run_pending_later: FlushPendingFileSinkTask = .{},
+auto_flusher: webcore.AutoFlusher = .{},
+run_pending_later: FlushPendingTask = .{},
 
 const log = Output.scoped(.FileSink, false);
 
@@ -35,6 +37,20 @@ pub const IOWriter = bun.io.StreamingWriter(@This(), opaque {
     pub const onWrite = FileSink.onWrite;
 });
 pub const Poll = IOWriter;
+
+pub const Options = struct {
+    chunk_size: Blob.SizeType = 1024,
+    input_path: webcore.PathOrFileDescriptor,
+    truncate: bool = true,
+    close: bool = false,
+    mode: bun.Mode = 0o664,
+
+    pub fn flags(this: *const Options) i32 {
+        _ = this;
+
+        return bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;
+    }
+};
 
 pub fn memoryCost(this: *const FileSink) usize {
     // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
@@ -61,7 +77,7 @@ pub fn onAttachedProcessExit(this: *FileSink) void {
     this.done = true;
     this.writer.close();
 
-    this.pending.result = .{ .err = Syscall.Error.fromCode(.PIPE, .write) };
+    this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
 
     this.runPending();
 
@@ -97,7 +113,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
     if (has_pending_data) {
         if (this.event_loop_handle.bunVM()) |vm| {
             if (!vm.is_inside_deferred_task_queue) {
-                AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, vm);
+                webcore.AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, vm);
             }
         }
     }
@@ -208,7 +224,7 @@ pub fn create(
     return this;
 }
 
-pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.Maybe(void) {
+pub fn setup(this: *FileSink, options: *const streams.Start.FileSinkOptions) JSC.Maybe(void) {
     // TODO: this should be concurrent.
     var isatty = false;
     var is_nonblocking = false;
@@ -330,7 +346,7 @@ pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.M
     return .{ .result = {} };
 }
 
-pub fn loop(this: *FileSink) *Async.Loop {
+pub fn loop(this: *FileSink) *bun.Async.Loop {
     return this.event_loop_handle.loop();
 }
 
@@ -338,11 +354,11 @@ pub fn eventLoop(this: *FileSink) JSC.EventLoopHandle {
     return this.event_loop_handle;
 }
 
-pub fn connect(this: *FileSink, signal: Signal) void {
+pub fn connect(this: *FileSink, signal: streams.Signal) void {
     this.signal = signal;
 }
 
-pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Maybe(void) {
+pub fn start(this: *FileSink, stream_start: streams.Start) JSC.Maybe(void) {
     switch (stream_start) {
         .FileSink => |*file| {
             switch (this.setup(file)) {
@@ -466,7 +482,7 @@ pub fn construct(this: *FileSink, _: std.mem.Allocator) void {
     };
 }
 
-pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
         return .{ .done = {} };
     }
@@ -474,14 +490,14 @@ pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
     return this.toResult(this.writer.write(data.slice()));
 }
 pub const writeBytes = write;
-pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
         return .{ .done = {} };
     }
 
     return this.toResult(this.writer.writeLatin1(data.slice()));
 }
-pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
         return .{ .done = {} };
     }
@@ -489,12 +505,10 @@ pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
     return this.toResult(this.writer.writeUTF16(data.slice16()));
 }
 
-pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Maybe(void) {
+pub fn end(this: *FileSink, _: ?bun.sys.Error) JSC.Maybe(void) {
     if (this.done) {
         return .{ .result = {} };
     }
-
-    _ = err; // autofix
 
     switch (this.writer.flush()) {
         .done => |written| {
@@ -527,7 +541,7 @@ fn deinit(this: *FileSink) void {
     this.pending.deinit();
     this.writer.deinit();
     if (this.event_loop_handle.globalObject()) |global| {
-        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
+        webcore.AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
     }
     bun.destroy(this);
 }
@@ -536,7 +550,7 @@ pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
     return JSSink.createObject(globalThis, this, 0);
 }
 
-pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destructor: ?sink_destructor.Ptr) JSValue {
+pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destructor: ?Sink.DestructorPtr) JSValue {
     return JSSink.createObject(globalThis, this, if (destructor) |dest| @intFromPtr(dest.ptr()) else 0);
 }
 
@@ -588,7 +602,7 @@ pub fn updateRef(this: *FileSink, value: bool) void {
     }
 }
 
-pub const JSSink = NewJSSink(@This(), "FileSink");
+pub const JSSink = Sink.JSSink(@This(), "FileSink");
 
 fn getFd(this: *const @This()) i32 {
     if (Environment.isWindows) {
@@ -600,7 +614,7 @@ fn getFd(this: *const @This()) i32 {
     return this.fd.cast();
 }
 
-fn toResult(this: *FileSink, write_result: bun.io.WriteResult) StreamResult.Writable {
+fn toResult(this: *FileSink, write_result: bun.io.WriteResult) streams.Result.Writable {
     switch (write_result) {
         .done => |amt| {
             if (amt > 0)
@@ -641,3 +655,16 @@ pub const FlushPendingTask = struct {
             this.runPending();
     }
 };
+
+const std = @import("std");
+const bun = @import("bun");
+const uv = bun.windows.libuv;
+const Output = bun.Output;
+const Environment = bun.Environment;
+const JSC = bun;
+const webcore = bun.webcore;
+const Blob = webcore.Blob;
+const Sink = webcore.Sink;
+const streams = webcore.streams;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

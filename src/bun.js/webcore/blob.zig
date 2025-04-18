@@ -126,12 +126,12 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         promise_value.ensureStillAlive();
         handler.promise.strong.set(global, promise_value);
 
-        ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, Handler, handler);
+        read_file.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, Handler, handler);
 
         return promise_value;
     }
 
-    const file_read = ReadFile.create(
+    const file_read = read_file.ReadFile.create(
         bun.default_allocator,
         this.store.?,
         this.offset,
@@ -140,7 +140,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         handler,
         Handler.run,
     ) catch bun.outOfMemory();
-    var read_file_task = ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
 
     // Create the Promise only after the store has been ref()'d.
     // The garbage collector runs on memory allocations
@@ -159,8 +159,8 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
 
 pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
     return struct {
-        pub fn run(handler: *anyopaque, bytes_: ReadFileResultType) void {
-            Function(bun.cast(Context, handler), bytes_);
+        pub fn run(handler: *anyopaque, bytes: read_file.ReadFileResultType) void {
+            Function(bun.cast(Context, handler), bytes);
         }
     };
 }
@@ -168,9 +168,9 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
-        return ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
+        return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
     }
-    const file_read = ReadFile.createWithCtx(
+    const file_read = read_file.ReadFile.createWithCtx(
         bun.default_allocator,
         this.store.?,
         ctx,
@@ -178,7 +178,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         this.offset,
         this.size,
     ) catch bun.outOfMemory();
-    var read_file_task = ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
     read_file_task.schedule();
 }
 
@@ -775,8 +775,9 @@ pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter,
 
 const Retry = enum { @"continue", fail, no };
 
+// TODO: move this to bun.sys?
 // we choose not to inline this so that the path buffer is not on the stack unless necessary.
-noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string: [:0]const u8, err_path: []const u8) Retry {
+pub noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string: [:0]const u8, err_path: []const u8) Retry {
     if (err.getErrno() == .NOENT and this.mkdirp_if_not_exists) {
         if (std.fs.path.dirname(path_string)) |dirname| {
             var node_fs: JSC.Node.NodeFS = .{};
@@ -988,7 +989,7 @@ pub fn writeFileWithSourceDestination(
             const promise_value = promise.asValue(ctx);
             promise_value.ensureStillAlive();
             write_file_promise.promise.strong.set(ctx, promise_value);
-            _ = WriteFileWindows.create(
+            _ = write_file.WriteFileWindows.create(
                 ctx.bunVM().eventLoop(),
                 destination_blob.*,
                 source_blob.*,
@@ -1000,7 +1001,7 @@ pub fn writeFileWithSourceDestination(
             return promise_value;
         }
 
-        const file_copier = WriteFile.create(
+        const file_copier = write_file.WriteFile.create(
             destination_blob.*,
             source_blob.*,
             *WriteFilePromise,
@@ -1008,7 +1009,7 @@ pub fn writeFileWithSourceDestination(
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
         ) catch unreachable;
-        var task = WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+        var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
         // Defer promise creation until we're just about to schedule the task
         var promise = JSC.JSPromise.create(ctx);
         const promise_value = promise.asValue(ctx);
@@ -2715,7 +2716,7 @@ pub fn getWriter(
     };
     defer input_path.deinit();
 
-    var stream_start: JSC.WebCore.StreamStart = .{
+    var stream_start: bun.webcore.streams.Start = .{
         .FileSink = .{
             .input_path = input_path,
         },
@@ -4538,6 +4539,7 @@ pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, val
     return blob.is_jsdom_file;
 }
 
+// TODO: move to bun.sys?
 pub fn FileOpener(comptime This: type) type {
     return struct {
         context: *This,
@@ -4660,6 +4662,7 @@ pub fn FileOpener(comptime This: type) type {
     };
 }
 
+// TODO: move to bun.sys?
 pub fn FileCloser(comptime This: type) type {
     return struct {
         fn scheduleClose(request: *io.Request) io.Action {
@@ -4735,9 +4738,6 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
-const getAllocator = @import("../base.zig").getAllocator;
 const JSError = bun.JSError;
 const assert = bun.assert;
 

@@ -345,4 +345,6 @@ pub const prompt = struct {
 
 const std = @import("std");
 const bun = @import("bun");
+const c = bun.c;
+const Environment = bun.Environment;
 const JSC = bun.jsc;

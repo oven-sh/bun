@@ -28,9 +28,7 @@ const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const Properties = @import("../base.zig").Properties;
-const getAllocator = @import("../base.zig").getAllocator;
+const ArrayBuffer = JSC.ArrayBuffer;
 const RegularExpression = bun.RegularExpression;
 
 const ZigString = JSC.ZigString;
@@ -557,11 +555,11 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
-    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
+    pub fn deinit(this: *TestScope, _: *JSGlobalObject) void {
         if (this.label.len > 0) {
             const label = this.label;
             this.label = "";
-            getAllocator(globalThis).free(label);
+            bun.default_allocator.free(label);
         }
     }
 
@@ -896,7 +894,7 @@ pub const DescribeScope = struct {
                 }
 
                 cb.protect();
-                @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(getAllocator(globalThis), cb) catch unreachable;
+                @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(bun.default_allocator, cb) catch unreachable;
                 return JSValue.jsBoolean(true);
             }
         }.run;
@@ -934,7 +932,7 @@ pub const DescribeScope = struct {
         var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
-                hooks.clearAndFree(getAllocator(globalObject));
+                hooks.clearAndFree(bun.default_allocator);
             }
         }
 
@@ -991,7 +989,7 @@ pub const DescribeScope = struct {
         var hooks = &@field(Jest.runner.?.global_callbacks, @tagName(hook));
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
-                hooks.clearAndFree(getAllocator(globalThis));
+                hooks.clearAndFree(bun.default_allocator);
             }
         }
 
@@ -1131,7 +1129,7 @@ pub const DescribeScope = struct {
         globalObject.clearTerminationException();
 
         const file = this.file_id;
-        const allocator = getAllocator(globalObject);
+        const allocator = bun.default_allocator;
         const tests: []TestScope = this.tests.items;
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
@@ -1213,7 +1211,7 @@ pub const DescribeScope = struct {
     }
 
     pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
-        const allocator = getAllocator(globalThis);
+        const allocator = bun.default_allocator;
 
         if (this.label.len > 0) {
             const label = this.label;
@@ -1765,7 +1763,7 @@ inline fn createScope(
         }
     }
 
-    const allocator = getAllocator(globalThis);
+    const allocator = bun.default_allocator;
     const parent = DescribeScope.active.?;
     const label = brk: {
         if (description == .zero) {
@@ -1938,7 +1936,7 @@ fn consumeArg(
     arg: *const JSValue,
     fallback: []const u8,
 ) !void {
-    const allocator = getAllocator(globalThis);
+    const allocator = bun.default_allocator;
     if (should_write) {
         const owned_slice = try arg.toSliceOrNull(globalThis);
         defer owned_slice.deinit();
@@ -1952,7 +1950,7 @@ fn consumeArg(
 
 // Generate test label by positionally injecting parameters with printf formatting
 fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSValue, test_idx: usize) !string {
-    const allocator = getAllocator(globalThis);
+    const allocator = bun.default_allocator;
     var idx: usize = 0;
     var args_idx: usize = 0;
     var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
@@ -2065,7 +2063,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     const parent = DescribeScope.active.?;
 
     if (JSC.getFunctionData(callee)) |data| {
-        const allocator = getAllocator(globalThis);
+        const allocator = bun.default_allocator;
         const each_data = bun.cast(*EachData, data);
         JSC.setFunctionData(callee, null);
         const array = each_data.*.strong.get() orelse return .undefined;
@@ -2206,7 +2204,7 @@ inline fn createEach(
         return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
-    const allocator = getAllocator(globalThis);
+    const allocator = bun.default_allocator;
     const name = ZigString.static(property);
     const strong = JSC.Strong.create(array, globalThis);
     const each_data = allocator.create(EachData) catch unreachable;

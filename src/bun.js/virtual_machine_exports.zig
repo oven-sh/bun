@@ -179,3 +179,54 @@ comptime {
         @export(&Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
     }
 }
+
+export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
+    VirtualMachine.get().default_tls_reject_unauthorized = value != 0;
+}
+
+export fn Bun__getTLSRejectUnauthorizedValue() i32 {
+    return if (JSC.VirtualMachine.get().getTLSRejectUnauthorized()) 1 else 0;
+}
+
+export fn Bun__setVerboseFetchValue(value: i32) void {
+    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
+}
+
+export fn Bun__getVerboseFetchValue() i32 {
+    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
+        .none => 0,
+        .headers => 1,
+        .curl => 2,
+    };
+}
+
+export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
+}
+
+export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
+}
+
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const args = callframe.arguments_old(1).slice();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
+    }
+
+    if (!args[0].isNumber()) {
+        return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
+    }
+
+    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const prev = synthetic_allocation_limit;
+    synthetic_allocation_limit = limit;
+    string_allocation_limit = limit;
+    return JSValue.jsNumber(prev);
+}

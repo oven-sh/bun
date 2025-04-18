@@ -2,8 +2,8 @@ const Store = @This();
 
 data: Data,
 
-mime_type: MimeType = MimeType.none,
-ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+mime_type: MimeType = .none,
+ref_count: std.atomic.Value(u32) = .init(1),
 is_all_ascii: ?bool = null,
 allocator: std.mem.Allocator,
 
@@ -32,7 +32,7 @@ pub fn size(this: *const Store) SizeType {
     };
 }
 
-pub const Map = std.HashMap(u64, *JSC.WebCore.Blob.Store, IdentityContext(u64), 80);
+pub const Map = std.HashMap(u64, *JSC.WebCore.Blob.Store, bun.IdentityContext(u64), 80);
 
 pub const Data = union(enum) {
     bytes: ByteStore,
@@ -50,7 +50,7 @@ pub fn hasOneRef(this: *const Store) bool {
 }
 
 /// Caller is responsible for derefing the Store.
-pub fn toAnyBlob(this: *Store) ?AnyBlob {
+pub fn toAnyBlob(this: *Store) ?Blob.Any {
     if (this.hasOneRef()) {
         if (this.data == .bytes) {
             return .{ .InternalBlob = this.data.bytes.toInternalBlob() };
@@ -65,7 +65,7 @@ pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
     var this = bun.cast(*Store, ptr);
     this.deref();
 }
-pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials, allocator: std.mem.Allocator) !*Store {
+pub fn initS3WithReferencedCredentials(pathlike: node.PathLike, mime_type: ?MimeType, credentials: *bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
     var path = pathlike;
     // this actually protects/refs the pathlike
     path.toThreadSafe();
@@ -79,7 +79,7 @@ pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?
                     if (sliced.len > 0) {
                         var extname = std.fs.path.extension(sliced);
                         extname = std.mem.trim(u8, extname, ".");
-                        if (http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                        if (MimeType.byExtensionNoDefault(extname)) |mime| {
                             break :brk mime;
                         }
                     }
@@ -93,7 +93,8 @@ pub fn initS3WithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?
     });
     return store;
 }
-pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: S3Credentials, allocator: std.mem.Allocator) !*Store {
+
+pub fn initS3(pathlike: node.PathLike, mime_type: ?MimeType, credentials: bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
     var path = pathlike;
     // this actually protects/refs the pathlike
     path.toThreadSafe();
@@ -107,7 +108,7 @@ pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credential
                     if (sliced.len > 0) {
                         var extname = std.fs.path.extension(sliced);
                         extname = std.mem.trim(u8, extname, ".");
-                        if (http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                        if (MimeType.byExtensionNoDefault(extname)) |mime| {
                             break :brk mime;
                         }
                     }
@@ -121,7 +122,7 @@ pub fn initS3(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credential
     });
     return store;
 }
-pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeType, allocator: std.mem.Allocator) !*Store {
+pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?MimeType, allocator: std.mem.Allocator) !*Store {
     const store = Blob.Store.new(.{
         .data = .{
             .file = File.init(
@@ -132,7 +133,7 @@ pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeTy
                         if (sliced.len > 0) {
                             var extname = std.fs.path.extension(sliced);
                             extname = std.mem.trim(u8, extname, ".");
-                            if (http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                            if (MimeType.byExtensionNoDefault(extname)) |mime| {
                                 break :brk mime;
                             }
                         }
@@ -248,7 +249,7 @@ pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Alloca
 /// A blob store that references a file on disk.
 pub const File = struct {
     pathlike: JSC.Node.PathOrFileDescriptor,
-    mime_type: http.MimeType = http.MimeType.other,
+    mime_type: MimeType = MimeType.other,
     is_atty: ?bool = null,
     mode: bun.Mode = 0,
     seekable: ?bool = null,
@@ -256,13 +257,13 @@ pub const File = struct {
     // milliseconds since ECMAScript epoch
     last_modified: JSC.JSTimeType = JSC.init_timestamp,
 
-    pub fn unlink(this: *const File, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
+    pub fn unlink(this: *const File, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         return switch (this.pathlike) {
             .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                        else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        else => try JSC.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
                     },
                 },
             }, globalThis.bunVM()),
@@ -281,15 +282,15 @@ pub const File = struct {
         return null;
     }
 
-    pub fn init(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeType) File {
-        return .{ .pathlike = pathlike, .mime_type = mime_type orelse http.MimeType.other };
+    pub fn init(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?MimeType) File {
+        return .{ .pathlike = pathlike, .mime_type = mime_type orelse MimeType.other };
     }
 };
 
 /// An S3 Blob Store
 pub const S3 = struct {
-    pathlike: JSC.Node.PathLike,
-    mime_type: http.MimeType = http.MimeType.other,
+    pathlike: node.PathLike,
+    mime_type: MimeType = .other,
     credentials: ?*S3Credentials,
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?S3.ACL = null,
@@ -304,7 +305,7 @@ pub const S3 = struct {
         return this.credentials.?;
     }
 
-    pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!S3.S3CredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSGlobalObject) bun.JSError!S3.S3CredentialsWithOptions {
         return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, globalObject);
     }
 
@@ -324,11 +325,11 @@ pub const S3 = struct {
         return path_name;
     }
 
-    pub fn unlink(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
+    pub fn unlink(this: *@This(), store: *Store, globalThis: *JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
         const Wrapper = struct {
             promise: JSC.JSPromise.Strong,
             store: *Store,
-            global: *JSC.JSGlobalObject,
+            global: *JSGlobalObject,
 
             pub const new = bun.TrivialNew(@This());
 
@@ -368,7 +369,7 @@ pub const S3 = struct {
         return value;
     }
 
-    pub fn listObjects(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, listOptions: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
+    pub fn listObjects(this: *@This(), store: *Store, globalThis: *JSGlobalObject, listOptions: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
         if (!listOptions.isEmptyOrUndefinedOrNull() and !listOptions.isObject()) {
             return globalThis.throwInvalidArguments("S3Client.listObjects() needs a S3ListObjectsOption as it's first argument", .{});
         }
@@ -377,7 +378,7 @@ pub const S3 = struct {
             promise: JSC.JSPromise.Strong,
             store: *Store,
             resolvedlistOptions: S3.S3ListObjectsOptions,
-            global: *JSC.JSGlobalObject,
+            global: *JSGlobalObject,
 
             pub fn resolve(result: S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
@@ -428,19 +429,19 @@ pub const S3 = struct {
         return value;
     }
 
-    pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3 {
+    pub fn initWithReferencedCredentials(pathlike: node.PathLike, mime_type: ?MimeType, credentials: *S3Credentials) S3 {
         credentials.ref();
         return .{
             .credentials = credentials,
             .pathlike = pathlike,
-            .mime_type = mime_type orelse http.MimeType.other,
+            .mime_type = mime_type orelse MimeType.other,
         };
     }
-    pub fn init(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: S3Credentials) S3 {
+    pub fn init(pathlike: node.PathLike, mime_type: ?MimeType, credentials: S3Credentials) S3 {
         return .{
             .credentials = credentials.dupe(),
             .pathlike = pathlike,
-            .mime_type = mime_type orelse http.MimeType.other,
+            .mime_type = mime_type orelse MimeType.other,
         };
     }
     pub fn estimatedSize(this: *const @This()) usize {
@@ -461,6 +462,8 @@ pub const S3 = struct {
             this.credentials = null;
         }
     }
+
+    const S3Credentials = bun.S3.S3Credentials;
 };
 
 pub const ByteStore = struct {
@@ -496,8 +499,8 @@ pub const ByteStore = struct {
         return ByteStore.init(list.items, allocator);
     }
 
-    pub fn toInternalBlob(this: *ByteStore) Internal {
-        const ptr = this.ptr orelse return Internal{
+    pub fn toInternalBlob(this: *ByteStore) Blob.Internal {
+        const ptr = this.ptr orelse return .{
             .bytes = std.ArrayList(u8){
                 .items = &.{},
                 .capacity = 0,
@@ -505,8 +508,8 @@ pub const ByteStore = struct {
             },
         };
 
-        const result = Internal{
-            .bytes = std.ArrayList(u8){
+        const result: Blob.Internal = .{
+            .bytes = .{
                 .items = ptr[0..this.len],
                 .capacity = this.cap,
                 .allocator = this.allocator,
@@ -553,3 +556,19 @@ pub const ByteStore = struct {
         };
     }
 };
+
+const std = @import("std");
+const bun = @import("bun");
+const strings = bun.strings;
+const assert = bun.assert;
+const MimeType = bun.http.MimeType;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const node = bun.api.node;
+
+const webcore = bun.webcore;
+const Blob = webcore.Blob;
+const SizeType = Blob.SizeType;

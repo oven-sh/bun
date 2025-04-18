@@ -48,7 +48,7 @@ const PathLike = @import("../bun.js/node/types.zig").PathLike;
 const PathString = @import("../string_types.zig").PathString;
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const Syscall = bun.sys;
-const ZigString = @import("../bun.js/bindings/bindings.zig").ZigString;
+const ZigString = bun.JSC.ZigString;
 
 // const Codepoint = u32;
 const Cursor = CodepointIterator.Cursor;

@@ -227,7 +227,7 @@ pub const BuiltinIO = struct {
         pub const deref = RefCount.deref;
 
         ref_count: RefCount,
-        blob: bun.JSC.WebCore.Blob,
+        blob: bun.webcore.Blob,
 
         fn deinit(this: *Blob) void {
             this.blob.deinit();

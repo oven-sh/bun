@@ -2175,7 +2175,7 @@ pub const sync = struct {
             }
 
             const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
-            switch (bun.C.getErrno(rc)) {
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {},
                 .AGAIN, .INTR => continue,
                 else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },

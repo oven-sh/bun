@@ -283,7 +283,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const pat_arg: JSValue = arguments.nextEat() orelse {
         return globalThis.throw("Glob.constructor: expected 1 arguments, got 0", .{});
@@ -328,7 +328,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -351,7 +351,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -379,7 +379,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     defer arena.deinit();
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         return globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});

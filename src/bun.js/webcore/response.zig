@@ -364,7 +364,7 @@ pub fn constructJSON(
 ) bun.JSError!JSValue {
     const args_list = callframe.arguments_old(2);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
     var response = Response{
         .body = Body{
@@ -432,7 +432,7 @@ pub fn constructRedirect(
 ) bun.JSError!JSValue {
     var args_list = callframe.arguments_old(4);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
     var url_string_slice = ZigString.Slice.empty;
     defer url_string_slice.deinit();
@@ -731,7 +731,7 @@ const FetchRedirect = http.FetchRedirect;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = bun.Output;
@@ -761,7 +761,7 @@ const uws = bun.uws;
 const Mutex = bun.Mutex;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const InternalBlob = JSC.WebCore.InternalBlob;
 const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;

@@ -157,9 +157,9 @@ pub const FilePoll = struct {
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
     const FileSink = JSC.WebCore.FileSink.Poll;
-    const DNSResolver = JSC.DNS.DNSResolver;
-    const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
-    const Request = JSC.DNS.InternalDNS.Request;
+    const DNSResolver = bun.api.DNS.DNSResolver;
+    const GetAddrInfoRequest = bun.api.DNS.GetAddrInfoRequest;
+    const Request = bun.api.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
 

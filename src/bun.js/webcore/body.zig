@@ -219,6 +219,11 @@ pub const PendingValue = struct {
 /// This is a duplex stream!
 pub const Value = union(Tag) {
     const log = Output.scoped(.BodyValue, false);
+
+    const pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
+    pub const HiveRef = bun.HiveRef(JSC.WebCore.Body.Value, pool_size);
+    pub const HiveAllocator = bun.HiveArray(HiveRef, pool_size).Fallback;
+
     Blob: Blob,
 
     /// This is the String type from WebKit
@@ -1679,9 +1684,9 @@ pub const ValueBufferer = struct {
     }
 
     comptime {
-        const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+        const jsonResolveStream = JSC.toJSHostFn(onResolveStream);
         @export(&jsonResolveStream, .{ .name = "Bun__BodyValueBufferer__onResolveStream" });
-        const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+        const jsonRejectStream = JSC.toJSHostFn(onRejectStream);
         @export(&jsonRejectStream, .{ .name = "Bun__BodyValueBufferer__onRejectStream" });
     }
 };
@@ -1724,7 +1729,7 @@ const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
 const Blob = JSC.WebCore.Blob;
-const AnyBlob = JSC.WebCore.AnyBlob;
-const InternalBlob = JSC.WebCore.InternalBlob;
+const AnyBlob = Blob.Any;
+const InternalBlob = Blob.Internal;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;

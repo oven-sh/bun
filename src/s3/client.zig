@@ -406,9 +406,9 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
     return .undefined;
 }
 comptime {
-    const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
+    const jsonResolveRequestStream = JSC.toJSHostFn(onUploadStreamResolveRequestStream);
     @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
-    const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
+    const jsonRejectRequestStream = JSC.toJSHostFn(onUploadStreamRejectRequestStream);
     @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
 }
 

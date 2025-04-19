@@ -1,7 +1,7 @@
 const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
-const Blob = bun.JSC.WebCore.Blob;
+const Blob = bun.webcore.Blob;
 const invalid_fd = bun.invalid_fd;
 
 const SystemError = JSC.SystemError;
@@ -51,8 +51,8 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
     };
 }
 
-const FileStore = Blob.FileStore;
-const ByteStore = Blob.ByteStore;
+const FileStore = Blob.Store.File;
+const ByteStore = Blob.Store.Bytes;
 const Store = Blob.Store;
 const ClosingState = Blob.ClosingState;
 

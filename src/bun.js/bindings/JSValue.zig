@@ -23,7 +23,7 @@ pub const JSValue = enum(i64) {
 
     /// When JavaScriptCore throws something, it returns a null cell (0). The
     /// exception is set on the global object. ABI-compatible with EncodedJSValue.
-    pub const MaybeException = enum(JSValueReprInt) {
+    pub const MaybeException = enum(backing_int) {
         zero = 0,
         _,
 
@@ -640,14 +640,17 @@ pub const JSValue = enum(i64) {
         ).unwrap();
     }
 
+    pub extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;
+    pub extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
+
     pub fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
         if (Environment.isDebug) {
             bun.assert(function.isCallable());
         }
         const num_args = @typeInfo(@TypeOf(args)).array.len;
         switch (num_args) {
-            1 => JSC.Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
-            2 => JSC.Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
+            1 => Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
+            2 => Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
             else => @compileError("needs more copy paste"),
         }
     }
@@ -940,7 +943,7 @@ pub const JSValue = enum(i64) {
         JSC.markBinding(@src());
         @setRuntimeSafety(false);
         if (allocator) |alloc| {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.MarkedArrayBuffer_deallocator);
+            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.ArrayBuffer.MarkedArrayBuffer_deallocator);
         } else {
             return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
         }
@@ -2303,15 +2306,15 @@ pub const JSValue = enum(i64) {
 
     pub fn toFmt(
         this: JSValue,
-        formatter: *Exports.ConsoleObject.Formatter,
-    ) Exports.ConsoleObject.Formatter.ZigFormatter {
+        formatter: *JSC.ConsoleObject.Formatter,
+    ) JSC.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
         if (formatter.map_node != null) {
             formatter.deinit();
         }
         formatter.stack_check.update();
 
-        return Exports.ConsoleObject.Formatter.ZigFormatter{
+        return JSC.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
             .value = this,
         };
@@ -2530,12 +2533,12 @@ pub const JSValue = enum(i64) {
 
     // TODO: remove this (no replacement)
     pub inline fn c(this: C_API.JSValueRef) JSValue {
-        return @as(JSValue, @enumFromInt(@as(JSValueReprInt, @bitCast(@intFromPtr(this)))));
+        return @as(JSValue, @enumFromInt(@as(backing_int, @bitCast(@intFromPtr(this)))));
     }
 
     // TODO: remove this (no replacement)
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
-        return @as(JSValue, @enumFromInt(@as(JSValueReprInt, @bitCast(@intFromPtr(this)))));
+        return @as(JSValue, @enumFromInt(@as(backing_int, @bitCast(@intFromPtr(this)))));
     }
 
     // TODO: remove this (no replacement)
@@ -2769,9 +2772,9 @@ pub const JSValue = enum(i64) {
         pub const INT64_TO_JSVALUE = JSValue.JSC__JSValue__fromInt64NoTruncate;
         pub const UINT64_TO_JSVALUE = JSValue.JSC__JSValue__fromUInt64NoTruncate;
     };
-};
 
-pub const JSValueReprInt = JSC.JSValueReprInt;
+    pub const backing_int = @typeInfo(JSValue).@"enum".tag_type;
+};
 
 const std = @import("std");
 const bun = @import("bun");
@@ -2807,9 +2810,9 @@ const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 const JSInternalPromise = JSC.JSInternalPromise;
 const ZigException = JSC.ZigException;
 const ArrayBuffer = JSC.ArrayBuffer;
-const toJSHostFunction = JSC.toJSHostFunction;
-const JSHostFunctionType = JSC.JSHostFunctionType;
+const toJSHostFunction = JSC.toJSHostFn;
+const JSHostFunctionType = JSC.JSHostFn;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const Environment = bun.Environment;

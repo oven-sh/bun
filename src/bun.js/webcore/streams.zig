@@ -1294,7 +1294,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
         }
 
-        const name = if (ssl) "HTTPSResponseSink" else "HTTPResponseSink";
+        pub const name = if (ssl) "HTTPSResponseSink" else "HTTPResponseSink";
         pub const JSSink = Sink.JSSink(@This(), name);
     };
 }
@@ -1631,7 +1631,7 @@ pub const NetworkSink = struct {
         return this.buffer.memoryCost();
     }
 
-    const name = "NetworkSink";
+    pub const name = "NetworkSink";
     pub const JSSink = Sink.JSSink(@This(), name);
 };
 
@@ -1774,7 +1774,7 @@ const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
-const Blob = bun.JSC.WebCore.Blob;
+const Blob = bun.webcore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 const assert = bun.assert;
@@ -1785,4 +1785,4 @@ const Sink = WebCore.Sink;
 const AutoFlusher = WebCore.AutoFlusher;
 const FileSink = WebCore.FileSink;
 
-const AnyBlob = bun.JSC.WebCore.AnyBlob;
+const AnyBlob = bun.webcore.Blob.Any;

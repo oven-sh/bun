@@ -35,7 +35,7 @@ pub fn size(this: *const Store) SizeType {
 pub const Map = std.HashMap(u64, *JSC.WebCore.Blob.Store, bun.IdentityContext(u64), 80);
 
 pub const Data = union(enum) {
-    bytes: ByteStore,
+    bytes: Bytes,
     file: File,
     s3: S3,
 };
@@ -153,7 +153,7 @@ pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?MimeType, a
 pub fn init(bytes: []u8, allocator: std.mem.Allocator) *Store {
     const store = Blob.Store.new(.{
         .data = .{
-            .bytes = ByteStore.init(bytes, allocator),
+            .bytes = Bytes.init(bytes, allocator),
         },
         .allocator = allocator,
         .ref_count = .init(1),
@@ -200,7 +200,7 @@ pub fn deinit(this: *Blob.Store) void {
     bun.destroy(this);
 }
 
-const SerializeTag = enum(u8) {
+pub const SerializeTag = enum(u8) {
     file = 0,
     bytes = 1,
     empty = 2,
@@ -293,8 +293,8 @@ pub const S3 = struct {
     mime_type: MimeType = .other,
     credentials: ?*S3Credentials,
     options: bun.S3.MultiPartUploadOptions = .{},
-    acl: ?S3.ACL = null,
-    storage_class: ?S3.StorageClass = null,
+    acl: ?bun.S3.ACL = null,
+    storage_class: ?bun.S3.StorageClass = null,
 
     pub fn isSeekable(_: *const @This()) ?bool {
         return true;
@@ -305,7 +305,7 @@ pub const S3 = struct {
         return this.credentials.?;
     }
 
-    pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSGlobalObject) bun.JSError!S3.S3CredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSGlobalObject) bun.JSError!bun.S3.S3CredentialsWithOptions {
         return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, globalObject);
     }
 
@@ -377,10 +377,10 @@ pub const S3 = struct {
         const Wrapper = struct {
             promise: JSC.JSPromise.Strong,
             store: *Store,
-            resolvedlistOptions: S3.S3ListObjectsOptions,
+            resolvedlistOptions: bun.S3.S3ListObjectsOptions,
             global: *JSGlobalObject,
 
-            pub fn resolve(result: S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
@@ -466,7 +466,7 @@ pub const S3 = struct {
     const S3Credentials = bun.S3.S3Credentials;
 };
 
-pub const ByteStore = struct {
+pub const Bytes = struct {
     ptr: ?[*]u8 = undefined,
     len: SizeType = 0,
     cap: SizeType = 0,
@@ -477,7 +477,7 @@ pub const ByteStore = struct {
 
     /// Takes ownership of `bytes`, which must have been allocated with
     /// `allocator`.
-    pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
+    pub fn init(bytes: []u8, allocator: std.mem.Allocator) Bytes {
         return .{
             .ptr = bytes.ptr,
             .len = @as(SizeType, @truncate(bytes.len)),
@@ -485,7 +485,7 @@ pub const ByteStore = struct {
             .allocator = allocator,
         };
     }
-    pub fn initEmptyWithName(name: bun.PathString, allocator: std.mem.Allocator) ByteStore {
+    pub fn initEmptyWithName(name: bun.PathString, allocator: std.mem.Allocator) Bytes {
         return .{
             .ptr = null,
             .len = 0,
@@ -495,11 +495,11 @@ pub const ByteStore = struct {
         };
     }
 
-    pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*ByteStore {
-        return ByteStore.init(list.items, allocator);
+    pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*Bytes {
+        return Bytes.init(list.items, allocator);
     }
 
-    pub fn toInternalBlob(this: *ByteStore) Blob.Internal {
+    pub fn toInternalBlob(this: *Bytes) Blob.Internal {
         const ptr = this.ptr orelse return .{
             .bytes = std.ArrayList(u8){
                 .items = &.{},
@@ -521,21 +521,21 @@ pub const ByteStore = struct {
         this.cap = 0;
         return result;
     }
-    pub fn slice(this: ByteStore) []u8 {
+    pub fn slice(this: Bytes) []u8 {
         if (this.ptr) |ptr| {
             return ptr[0..this.len];
         }
         return "";
     }
 
-    pub fn allocatedSlice(this: ByteStore) []u8 {
+    pub fn allocatedSlice(this: Bytes) []u8 {
         if (this.ptr) |ptr| {
             return ptr[0..this.cap];
         }
         return "";
     }
 
-    pub fn deinit(this: *ByteStore) void {
+    pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
         if (this.ptr) |ptr| {
             this.allocator.free(ptr[0..this.cap]);
@@ -545,11 +545,11 @@ pub const ByteStore = struct {
         this.cap = 0;
     }
 
-    pub fn asArrayList(this: ByteStore) std.ArrayListUnmanaged(u8) {
+    pub fn asArrayList(this: Bytes) std.ArrayListUnmanaged(u8) {
         return this.asArrayListLeak();
     }
 
-    pub fn asArrayListLeak(this: ByteStore) std.ArrayListUnmanaged(u8) {
+    pub fn asArrayListLeak(this: Bytes) std.ArrayListUnmanaged(u8) {
         return .{
             .items = this.ptr[0..this.len],
             .capacity = this.cap,

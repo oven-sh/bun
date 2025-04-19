@@ -2,7 +2,7 @@ const Bun = @This();
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const AnyBlob = bun.JSC.WebCore.AnyBlob;
+const AnyBlob = bun.webcore.Blob.Any;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
@@ -115,7 +115,7 @@ const BlobFileContentResult = struct {
     }
 };
 
-fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob, allocator: std.mem.Allocator) struct { MimeType, bool, bool } {
+fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.Blob.Any, allocator: std.mem.Allocator) struct { MimeType, bool, bool } {
     var needs_content_type = true;
     var content_type_needs_free = false;
 
@@ -1231,7 +1231,7 @@ pub const ServerConfig = struct {
     pub fn fromJS(
         global: *JSC.JSGlobalObject,
         args: *ServerConfig,
-        arguments: *JSC.Node.ArgumentsSlice,
+        arguments: *JSC.CallFrame.ArgumentsSlice,
         opts: FromJSOptions,
     ) bun.JSError!void {
         const vm = arguments.vm;
@@ -2228,12 +2228,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         ref_count: u8 = 1,
 
         response_ptr: ?*JSC.WebCore.Response = null,
-        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .Blob = .{} },
+        blob: JSC.WebCore.Blob.Any = JSC.WebCore.Blob.Any{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
 
         request_body_readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
-        request_body: ?*JSC.BodyValueRef = null,
+        request_body: ?*WebCore.Body.Value.HiveRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
 
@@ -4595,13 +4595,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-            const jsonResolve = JSC.toJSHostFunction(onResolve);
+            const jsonResolve = JSC.toJSHostFn(onResolve);
             @export(&jsonResolve, .{ .name = export_prefix ++ "__onResolve" });
-            const jsonReject = JSC.toJSHostFunction(onReject);
+            const jsonReject = JSC.toJSHostFn(onReject);
             @export(&jsonReject, .{ .name = export_prefix ++ "__onReject" });
-            const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+            const jsonResolveStream = JSC.toJSHostFn(onResolveStream);
             @export(&jsonResolveStream, .{ .name = export_prefix ++ "__onResolveStream" });
-            const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+            const jsonRejectStream = JSC.toJSHostFn(onRejectStream);
             @export(&jsonRejectStream, .{ .name = export_prefix ++ "__onRejectStream" });
         }
     };
@@ -5071,8 +5071,8 @@ const ServePlugins = struct {
         }
     }
 
-    pub const onResolve = JSC.toJSHostFunction(onResolveImpl);
-    pub const onReject = JSC.toJSHostFunction(onRejectImpl);
+    pub const onResolve = JSC.toJSHostFn(onResolveImpl);
+    pub const onReject = JSC.toJSHostFn(onRejectImpl);
 
     pub fn onResolveImpl(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         ctxLog("onResolve", .{});
@@ -5724,7 +5724,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throwNotEnoughArguments("reload", 1, 0);
             }
 
-            var args_slice = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+            var args_slice = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
             defer args_slice.deinit();
 
             var new_config: ServerConfig = .{};
@@ -5762,7 +5762,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             var headers: ?*JSC.FetchHeaders = null;
             var method = HTTP.Method.GET;
-            var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), arguments);
+            var args = JSC.CallFrame.ArgumentsSlice.init(ctx.bunVM(), arguments);
             defer args.deinit();
 
             var first_arg = args.nextEat().?;

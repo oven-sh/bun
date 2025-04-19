@@ -23,7 +23,7 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
-postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 
 entropy_cache: ?*EntropyCache = null,
 
@@ -35,7 +35,7 @@ cleanup_hooks: std.ArrayListUnmanaged(CleanupHook) = .{},
 
 file_polls_: ?*Async.FilePoll.Store = null,
 
-global_dns_data: ?*JSC.DNS.GlobalData = null,
+global_dns_data: ?*bun.api.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 

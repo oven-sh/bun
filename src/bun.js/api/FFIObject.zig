@@ -609,18 +609,18 @@ pub fn getter(
 }
 
 const fields = .{
-    .viewSource = JSC.wrapStaticMethod(
+    .viewSource = JSC.host_fn.wrapStaticMethod(
         JSC.FFI,
         "print",
         false,
     ),
-    .dlopen = JSC.wrapStaticMethod(JSC.FFI, "open", false),
-    .callback = JSC.wrapStaticMethod(JSC.FFI, "callback", false),
-    .linkSymbols = JSC.wrapStaticMethod(JSC.FFI, "linkSymbols", false),
-    .toBuffer = JSC.wrapStaticMethod(@This(), "toBuffer", false),
-    .toArrayBuffer = JSC.wrapStaticMethod(@This(), "toArrayBuffer", false),
-    .closeCallback = JSC.wrapStaticMethod(JSC.FFI, "closeCallback", false),
-    .CString = JSC.wrapStaticMethod(Bun.FFIObject, "newCString", false),
+    .dlopen = JSC.host_fn.wrapStaticMethod(JSC.FFI, "open", false),
+    .callback = JSC.host_fn.wrapStaticMethod(JSC.FFI, "callback", false),
+    .linkSymbols = JSC.host_fn.wrapStaticMethod(JSC.FFI, "linkSymbols", false),
+    .toBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toBuffer", false),
+    .toArrayBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toArrayBuffer", false),
+    .closeCallback = JSC.host_fn.wrapStaticMethod(JSC.FFI, "closeCallback", false),
+    .CString = JSC.host_fn.wrapStaticMethod(Bun.FFIObject, "newCString", false),
 };
 const max_addressable_memory = std.math.maxInt(u56);
 
@@ -628,8 +628,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
-const DOMCall = JSC.dom_call.DOMCall;
-const DOMEffect = JSC.dom_call.DOMEffect;
+const DOMCall = JSC.host_fn.DOMCall;
+const DOMEffect = JSC.host_fn.DOMEffect;
 const bun = @import("bun");
 const FFIObject = @This();
 const Bun = JSC.API.Bun;

@@ -9,7 +9,7 @@ const Mutex = bun.Mutex;
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -17,6 +17,7 @@ const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
+const webcore = bun.webcore;
 
 // TODO: make this a top-level struct
 pub const FSWatcher = struct {
@@ -29,7 +30,7 @@ pub const FSWatcher = struct {
     verbose: bool = false,
 
     mutex: Mutex,
-    signal: ?*JSC.AbortSignal,
+    signal: ?*webcore.AbortSignal,
     persistent: bool,
     path_watcher: ?*PathWatcher.PathWatcher,
     poll_ref: Async.KeepAlive = .{},

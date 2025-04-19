@@ -154,7 +154,7 @@ has_terminated: bool = false,
 
 debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 
-body_value_hive_allocator: BodyValueHiveAllocator = undefined,
+body_value_hive_allocator: webcore.Body.Value.HiveAllocator = undefined,
 
 is_inside_deferred_task_queue: bool = false,
 
@@ -185,16 +185,12 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
-const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
-pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
-const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
-
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
 
-pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*BodyValueRef {
-    return BodyValueRef.init(body, &this.body_value_hive_allocator);
+pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
+    return .init(body, &this.body_value_hive_allocator);
 }
 
 pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;
@@ -901,7 +897,7 @@ pub fn initWithModuleGraph(
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1024,7 +1020,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1181,7 +1177,7 @@ pub fn initWorker(
     vm.jsc = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
     vm.transpiler.setAllocator(allocator);
-    vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1260,7 +1256,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1559,7 +1555,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         defer specifier_utf8.deinit();
         const source_utf8 = source.toUTF8(bun.default_allocator);
         defer source_utf8.deinit();
-        const printed = JSC.ResolveMessage.fmt(
+        const printed = bun.api.ResolveMessage.fmt(
             bun.default_allocator,
             specifier_utf8.slice(),
             source_utf8.slice(),
@@ -1573,7 +1569,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 printed,
             ),
         };
-        res.* = ErrorableString.err(error.NameTooLong, JSC.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
+        res.* = ErrorableString.err(error.NameTooLong, bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
         return;
     }
 
@@ -1640,7 +1636,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             else
                 .require;
 
-            const printed = try JSC.ResolveMessage.fmt(
+            const printed = try bun.api.ResolveMessage.fmt(
                 jsc_vm.allocator,
                 specifier_utf8.slice(),
                 source_utf8.slice(),
@@ -1663,7 +1659,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, JSC.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
+            res.* = ErrorableString.err(err, bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
         }
 
         return;
@@ -1707,7 +1703,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, JSC.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid());
+                ret.* = ErrorableResolvedSource.err(err, bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid());
             }
             return;
         },
@@ -1715,8 +1711,8 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
         1 => {
             const msg = log.msgs.items[0];
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => JSC.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
-                .resolve => JSC.ResolveMessage.create(
+                .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
+                .resolve => bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
@@ -1734,8 +1730,8 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
             for (logs, errors) |msg, *current| {
                 current.* = switch (msg.metadata) {
-                    .build => JSC.BuildMessage.create(globalThis, globalThis.allocator(), msg),
-                    .resolve => JSC.ResolveMessage.create(
+                    .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg),
+                    .resolve => bun.api.ResolveMessage.create(
                         globalThis,
                         globalThis.allocator(),
                         msg,
@@ -2276,7 +2272,7 @@ fn printErrorFromMaybePrivateData(
     comptime allow_side_effects: bool,
 ) bool {
     if (value.jsType() == .DOMWrapper) {
-        if (value.as(JSC.BuildMessage)) |build_error| {
+        if (value.as(bun.api.BuildMessage)) |build_error| {
             defer Output.flush();
             if (!build_error.logged) {
                 if (this.had_errors) {
@@ -2293,7 +2289,7 @@ fn printErrorFromMaybePrivateData(
                 ) catch {};
             }
             return true;
-        } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
+        } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
             defer Output.flush();
             if (!resolve_error.logged) {
                 if (this.had_errors) {
@@ -3546,7 +3542,7 @@ const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
 const JSValue = JSC.JSValue;
 const PluginRunner = bun.transpiler.PluginRunner;
 const SavedSourceMap = JSC.SavedSourceMap;
@@ -3569,3 +3565,4 @@ const webcore = bun.webcore;
 const Global = bun.Global;
 const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader;
+const Body = webcore.Body;

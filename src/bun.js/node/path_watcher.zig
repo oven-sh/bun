@@ -21,7 +21,7 @@ const Semaphore = sync.Semaphore;
 var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
 
-const FSWatcher = bun.JSC.Node.FSWatcher;
+const FSWatcher = bun.api.node.fs.Watcher;
 const Event = FSWatcher.Event;
 const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 

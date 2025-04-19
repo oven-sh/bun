@@ -41,6 +41,7 @@ pub const Lazy = union(enum) {
         file_type: bun.io.FileType = .file,
     };
 
+    pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
     pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
         var this = OpenedFileBlob{ .fd = bun.invalid_fd };
         var file_buf: bun.PathBuffer = undefined;
@@ -49,7 +50,7 @@ pub const Lazy = union(enum) {
         const fd: bun.FD = if (file.pathlike == .fd)
             if (file.pathlike.fd.stdioTag() != null) brk: {
                 if (comptime Environment.isPosix) {
-                    const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.native(), bun.O.RDONLY);
+                    const rc = open_as_nonblocking_tty(file.pathlike.fd.native(), bun.O.RDONLY);
                     if (rc > -1) {
                         is_nonblocking = true;
                         file.is_atty = true;

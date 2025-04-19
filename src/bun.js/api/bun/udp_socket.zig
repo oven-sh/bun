@@ -133,7 +133,7 @@ pub const UDPSocketConfig = struct {
     connect: ?ConnectConfig = null,
     port: u16,
     flags: i32,
-    binary_type: JSC.BinaryType = .Buffer,
+    binary_type: JSC.ArrayBuffer.BinaryType = .Buffer,
     on_data: JSValue = .zero,
     on_drain: JSValue = .zero,
     on_error: JSValue = .zero,

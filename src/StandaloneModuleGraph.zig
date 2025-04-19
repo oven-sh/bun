@@ -136,7 +136,7 @@ pub const StandaloneModuleGraph = struct {
         loader: bun.options.Loader,
         contents: [:0]const u8 = "",
         sourcemap: LazySourceMap,
-        cached_blob: ?*bun.JSC.WebCore.Blob = null,
+        cached_blob: ?*bun.webcore.Blob = null,
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
@@ -171,13 +171,13 @@ pub const StandaloneModuleGraph = struct {
             return this.wtf_string.dupeRef();
         }
 
-        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
+        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.webcore.Blob {
             if (this.cached_blob == null) {
-                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
+                const store = bun.webcore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
-                const b = bun.JSC.WebCore.Blob.initWithStore(store, globalObject).new();
+                const b = bun.webcore.Blob.initWithStore(store, globalObject).new();
                 b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {

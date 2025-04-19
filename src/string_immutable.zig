@@ -517,7 +517,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     if (str_len == 1)
         return indexOfCharUsize(self, str_ptr[0]);
 
-    const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
+    const start = bun.c.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
 
     const i = @intFromPtr(start) - @intFromPtr(self_ptr);
     bun.unsafeAssert(i < self_len);
@@ -1123,7 +1123,7 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
     bun.unsafeAssert(b.len > 0);
     bun.unsafeAssert(a.len > 0);
 
-    return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
+    return bun.c.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }
 
 pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
@@ -4470,7 +4470,7 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
         return std.mem.indexOfScalar(u8, slice, char);
     }
 
-    const ptr = bun.C.memchr(slice.ptr, char, slice.len) orelse return null;
+    const ptr = bun.c.memchr(slice.ptr, char, slice.len) orelse return null;
     const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
     bun.assert(i < slice.len);
     bun.assert(slice[i] == char);
@@ -4485,7 +4485,7 @@ pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
 
     if (start_index >= slice.len) return null;
 
-    const ptr = bun.C.memchr(slice.ptr + start_index, char, slice.len - start_index) orelse
+    const ptr = bun.c.memchr(slice.ptr + start_index, char, slice.len - start_index) orelse
         return null;
     const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
     bun.assert(i < slice.len);
@@ -5129,7 +5129,7 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
 pub fn order(a: []const u8, b: []const u8) std.math.Order {
     const len = @min(a.len, b.len);
 
-    const cmp = if (comptime Environment.isNative) bun.C.memcmp(a.ptr, b.ptr, len) else return std.mem.order(u8, a, b);
+    const cmp = if (comptime Environment.isNative) bun.c.memcmp(a.ptr, b.ptr, len) else return std.mem.order(u8, a, b);
     return switch (std.math.sign(cmp)) {
         0 => std.math.order(a.len, b.len),
         1 => .gt,

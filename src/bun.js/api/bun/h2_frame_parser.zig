@@ -29,7 +29,7 @@ pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32)
 }
 const JSValue = JSC.JSValue;
 
-const BinaryType = JSC.BinaryType;
+const BinaryType = JSC.ArrayBuffer.BinaryType;
 const MAX_WINDOW_SIZE = 2147483647;
 const MAX_HEADER_TABLE_SIZE = 4294967295;
 const MAX_STREAM_ID = 2147483647;

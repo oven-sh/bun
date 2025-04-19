@@ -123,7 +123,7 @@ pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     // Allocate up to 32 strings in stack
     var stack_fallback_allocator = std.heap.stackFallback(
         32 * @sizeOf(JSC.ZigString) + (bun.MAX_PATH_BYTES + 1) + 32,
-        heap_allocator,
+        bun.default_allocator,
     );
     const allocator = stack_fallback_allocator.get();
 
@@ -186,7 +186,7 @@ pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 }
 fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     var buf: bun.PathBuffer = undefined;
-    switch (Path.getCwd(&buf)) {
+    switch (bun.api.node.path.getCwd(&buf)) {
         .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
         .err => |e| {
             return globalObject.throwValue(e.toJSC(globalObject));
@@ -321,3 +321,5 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
+const Syscall = bun.sys;
+const strings = bun.strings;

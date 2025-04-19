@@ -370,7 +370,7 @@ pub const Archiver = struct {
                         }
                     }
 
-                    const kind = C.kindFromMode(entry.filetype());
+                    const kind = bun.sys.kindFromMode(entry.filetype());
 
                     if (options.npm) {
                         // - ignore entries other than files (`true` can only be returned if type is file)

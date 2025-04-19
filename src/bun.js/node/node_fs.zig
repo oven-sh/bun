@@ -6928,7 +6928,7 @@ const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 const FileDescriptor = bun.FileDescriptor;
 const FD = bun.FD;
 
-const AbortSignal = JSC.AbortSignal;
+const AbortSignal = bun.webcore.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
@@ -6942,7 +6942,7 @@ const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
 const uv = bun.windows.libuv;

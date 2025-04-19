@@ -1296,10 +1296,10 @@ pub const JestPrettyFormat = struct {
                         });
 
                         return;
-                    } else if (value.as(JSC.BuildMessage)) |build_log| {
+                    } else if (value.as(bun.api.BuildMessage)) |build_log| {
                         build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
+                    } else if (value.as(bun.api.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {

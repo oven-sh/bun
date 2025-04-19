@@ -5612,10 +5612,10 @@ pub const SerializedFailure = struct {
     //         //
     //     }
     //     if (value.jsType() == .DOMWrapper) {
-    //         if (value.as(JSC.BuildMessage)) |build_error| {
+    //         if (value.as(bun.api.BuildMessage)) |build_error| {
     //             _ = build_error; // autofix
     //             //
-    //         } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
+    //         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
     //             _ = resolve_error; // autofix
     //             @panic("TODO");
     //         }
@@ -7644,7 +7644,7 @@ const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Watcher = bun.Watcher;
 const StaticRoute = bun.server.StaticRoute;
 
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 
 const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;

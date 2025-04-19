@@ -1,7 +1,15 @@
+//! Platform specific APIs for Windows
+//!
+//! If an API can be implemented on multiple platforms,
+//! it does not belong in this namespace.
 const bun = @import("bun");
+const builtin = @import("builtin");
 const Output = bun.Output;
 const windows = std.os.windows;
+const w = std.os.windows;
 const win32 = windows;
+const log = bun.sys.syslog;
+const Maybe = bun.sys.Maybe;
 
 const c = bun.c;
 pub const ntdll = windows.ntdll;
@@ -3881,4 +3889,173 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
     buf[data.len] = 0;
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
     return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+pub extern fn windows_enable_stdio_inheritance() void;
+
+pub extern "c" fn quick_exit(code: c_int) noreturn;
+
+/// Extracted from standard library except this takes an open file descriptor
+///
+/// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
+pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    var info = w.FILE_DISPOSITION_INFORMATION_EX{
+        .Flags = FILE_DISPOSITION_DELETE |
+            FILE_DISPOSITION_POSIX_SEMANTICS |
+            FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtSetInformationFile(
+        fd.cast(),
+        &io,
+        &info,
+        @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
+        .FileDispositionInformationEx,
+    );
+
+    log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+/// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
+/// Does not close the file descriptor.
+///
+/// For this to succeed
+/// - source_fd must have been opened with access_mask=w.DELETE
+/// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
+pub fn moveOpenedFileAt(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_file_name: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
+    // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
+    // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
+    // supported in order to avoid either (1) using a redundant call that we can know in advance will return
+    // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
+    // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    if (bun.Environment.allow_assert) {
+        bun.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+    }
+
+    const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
+    var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+
+    const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_file_name.len * 2;
+    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.C.E.NAMETOOLONG, .NtSetInformationFile);
+
+    const rename_info = @as(*w.FILE_RENAME_INFORMATION_EX, @ptrCast(&rename_info_buf));
+    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+    var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
+    rename_info.* = .{
+        .Flags = flags,
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(new_file_name)) null else new_dir_fd.cast(),
+        .FileNameLength = @intCast(new_file_name.len * 2), // already checked error.NameTooLong
+        .FileName = undefined,
+    };
+    @memcpy(@as([*]u16, &rename_info.FileName)[0..new_file_name.len], new_file_name);
+    const rc = w.ntdll.NtSetInformationFile(
+        src_fd.cast(),
+        &io_status_block,
+        rename_info,
+        @intCast(struct_len), // already checked for error.NameTooLong
+        .FileRenameInformationEx,
+    );
+    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
+
+    if (bun.Environment.isDebug) {
+        if (rc == .ACCESS_DENIED) {
+            bun.Output.debugWarn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE", .{});
+        }
+    }
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+/// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
+///
+/// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
+pub fn moveOpenedFileAtLoose(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_path: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    bun.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
+
+    const without_leading_dot_slash = if (new_path.len >= 2 and new_path[0] == '.' and new_path[1] == '\\')
+        new_path[2..]
+    else
+        new_path;
+
+    if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
+        const dirname = new_path[0..last_slash];
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true, .iterable = false })) {
+            .err => |e| return .{ .err = e },
+            .result => |fd| fd,
+        };
+        defer fd.close();
+
+        const basename = new_path[last_slash + 1 ..];
+        return moveOpenedFileAt(src_fd, fd, basename, replace_if_exists);
+    }
+
+    // easy mode
+    return moveOpenedFileAt(src_fd, new_dir_fd, without_leading_dot_slash, replace_if_exists);
+}
+
+/// Derived from std.os.windows.renameAtW
+/// Allows more errors
+pub fn renameAtW(
+    old_dir_fd: bun.FileDescriptor,
+    old_path_w: []const u16,
+    new_dir_fd: bun.FileDescriptor,
+    new_path_w: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    const src_fd = brk: {
+        switch (bun.sys.openFileAtWindows(
+            old_dir_fd,
+            old_path_w,
+            .{
+                .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+                .disposition = w.FILE_OPEN,
+                .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            },
+        )) {
+            .err => {
+                // retry, wtihout FILE_TRAVERSE flag
+                switch (bun.sys.openFileAtWindows(
+                    old_dir_fd,
+                    old_path_w,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
+                )) {
+                    .err => |err2| return .{ .err = err2 },
+                    .result => |fd| break :brk fd,
+                }
+            },
+            .result => |fd| break :brk fd,
+        }
+    };
+    defer src_fd.close();
+
+    return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }

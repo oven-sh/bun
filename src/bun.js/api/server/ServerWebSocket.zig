@@ -1,14 +1,14 @@
 handler: *WebSocketServer.Handler,
 this_value: JSValue = .zero,
 flags: Flags = .{},
-signal: ?*JSC.AbortSignal = null,
+signal: ?*bun.webcore.AbortSignal = null,
 
 // We pack the per-socket data into this struct below
 const Flags = packed struct(u64) {
     ssl: bool = false,
     closed: bool = false,
     opened: bool = false,
-    binary_type: JSC.BinaryType = .Buffer,
+    binary_type: JSC.ArrayBuffer.BinaryType = .Buffer,
     packed_websocket_ptr: u57 = 0,
 
     inline fn websocket(this: Flags) uws.AnyWebSocket {

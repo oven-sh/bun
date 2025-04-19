@@ -105,7 +105,8 @@ fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callcon
 fn normalizeHost(input: anytype) @TypeOf(input) {
     return input;
 }
-const BinaryType = JSC.BinaryType;
+
+const BinaryType = JSC.ArrayBuffer.BinaryType;
 
 const WrappedType = enum {
     none,
@@ -4500,7 +4501,7 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     var fds_: [2]std.c.fd_t = .{ 0, 0 };
     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
     if (rc != 0) {
-        const err = bun.sys.Error.fromCode(bun.C.getErrno(rc), .socketpair);
+        const err = bun.sys.Error.fromCode(bun.sys.getErrno(rc), .socketpair);
         return global.throwValue(err.toJSC(global));
     }
 

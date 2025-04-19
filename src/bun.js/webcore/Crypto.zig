@@ -1,9 +1,15 @@
+const Crypto = @This();
+
 pub const js = JSC.Codegen.JSCrypto;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 garbage: i32 = 0,
+
+comptime {
+    _ = CryptoObject__create;
+}
 
 const BoringSSL = bun.BoringSSL.c;
 
@@ -18,7 +24,7 @@ fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Typ
 }
 
 pub fn timingSafeEqual(_: *@This(), global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return JSC.Node.Crypto.timingSafeEqual(global, callframe);
+    return JSC.Node.crypto.timingSafeEqual(global, callframe);
 }
 
 pub fn timingSafeEqualWithoutTypeChecks(
@@ -101,7 +107,7 @@ pub fn randomUUID(
 }
 
 comptime {
-    const Bun__randomUUIDv7 = JSC.toJSHostFunction(Bun__randomUUIDv7_);
+    const Bun__randomUUIDv7 = JSC.toJSHostFn(Bun__randomUUIDv7_);
     @export(&Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
 }
 pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -185,8 +191,8 @@ pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue 
     return ptr.toJS(globalThis);
 }
 
-comptime {
-    _ = CryptoObject__create;
-}
+const UUID7 = @import("../uuid.zig").UUID7;
 
-const UUID7 = @import("./uuid.zig").UUID7;
+const std = @import("std");
+const bun = @import("bun");
+const JSC = bun.jsc;

@@ -377,7 +377,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
-                return globalThis.throwValue(JSC.toTypeError(.MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(globalThis.toTypeError(.MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}));
             }
 
             const arg = args[0];
@@ -385,7 +385,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             defer arg.ensureStillAlive();
 
             if (arg.isEmptyOrUndefinedOrNull()) {
-                return globalThis.throwValue(JSC.toTypeError(.STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(globalThis.toTypeError(.STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}));
             }
 
             if (arg.asArrayBuffer(globalThis)) |buffer| {
@@ -398,7 +398,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
 
             if (!arg.isString()) {
-                return globalThis.throwValue(JSC.toTypeError(.INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(globalThis.toTypeError(.INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}));
             }
 
             const str = arg.toString(globalThis);
@@ -580,11 +580,11 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 this.sink.updateRef(value);
         }
 
-        const jsWrite = JSC.toJSHostFunction(@This().write);
-        const jsFlush = JSC.toJSHostFunction(flush);
-        const jsStart = JSC.toJSHostFunction(start);
-        const jsEnd = JSC.toJSHostFunction(@This().end);
-        const jsConstruct = JSC.toJSHostFunction(construct);
+        const jsWrite = JSC.toJSHostFn(@This().write);
+        const jsFlush = JSC.toJSHostFn(flush);
+        const jsStart = JSC.toJSHostFn(start);
+        const jsEnd = JSC.toJSHostFn(@This().end);
+        const jsConstruct = JSC.toJSHostFn(construct);
 
         fn jsGetInternalFd(ptr: *anyopaque) callconv(.C) JSValue {
             var this = bun.cast(*ThisSink, ptr);
@@ -595,23 +595,25 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         }
 
         comptime {
-            @export(&finalize, .{ .name = abi_name ++ "__finalize" });
-            @export(&jsWrite, .{ .name = abi_name ++ "__write" });
-            @export(&jsGetInternalFd, .{ .name = abi_name ++ "__getInternalFd" });
-            @export(&close, .{ .name = abi_name ++ "__close" });
-            @export(&jsFlush, .{ .name = abi_name ++ "__flush" });
-            @export(&jsStart, .{ .name = abi_name ++ "__start" });
-            @export(&jsEnd, .{ .name = abi_name ++ "__end" });
-            @export(&jsConstruct, .{ .name = abi_name ++ "__construct" });
-            @export(&endWithSink, .{ .name = abi_name ++ "__endWithSink" });
-            @export(&updateRef, .{ .name = abi_name ++ "__updateRef" });
-            @export(&memoryCost, .{ .name = abi_name ++ "__memoryCost" });
+            if (bun.Environment.export_cpp_apis) {
+                @export(&finalize, .{ .name = abi_name ++ "__finalize" });
+                @export(&jsWrite, .{ .name = abi_name ++ "__write" });
+                @export(&jsGetInternalFd, .{ .name = abi_name ++ "__getInternalFd" });
+                @export(&close, .{ .name = abi_name ++ "__close" });
+                @export(&jsFlush, .{ .name = abi_name ++ "__flush" });
+                @export(&jsStart, .{ .name = abi_name ++ "__start" });
+                @export(&jsEnd, .{ .name = abi_name ++ "__end" });
+                @export(&jsConstruct, .{ .name = abi_name ++ "__construct" });
+                @export(&endWithSink, .{ .name = abi_name ++ "__endWithSink" });
+                @export(&updateRef, .{ .name = abi_name ++ "__updateRef" });
+                @export(&memoryCost, .{ .name = abi_name ++ "__memoryCost" });
+            }
         }
     };
 }
 
 const Detached = opaque {};
-const Subprocess = JSC.API.Bun.Subprocess;
+const Subprocess = bun.api.Subprocess;
 pub const DestructorPtr = bun.TaggedPointerUnion(.{
     Detached,
     Subprocess,

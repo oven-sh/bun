@@ -337,7 +337,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onDataCallback.get() orelse brk: {
-                const dataCallback = JSC.NewFunctionWithData(
+                const dataCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -357,7 +357,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onEndCallback.get() orelse brk: {
-                const endCallback = JSC.NewFunctionWithData(
+                const endCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -377,7 +377,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onWritableCallback.get() orelse brk: {
-                const writableCallback = JSC.NewFunctionWithData(
+                const writableCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -396,7 +396,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onCloseCallback.get() orelse brk: {
-                const closeCallback = JSC.NewFunctionWithData(
+                const closeCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,

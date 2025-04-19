@@ -8,6 +8,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Response = WebCore.Response;
 const LOLHTML = bun.LOLHTML;
+const host_fn = JSC.host_fn;
 
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
@@ -236,9 +237,9 @@ pub const HTMLRewriter = struct {
         return global.throwInvalidArguments("Expected Response or Body", .{});
     }
 
-    pub const on = JSC.wrapInstanceMethod(HTMLRewriter, "on_", false);
-    pub const onDocument = JSC.wrapInstanceMethod(HTMLRewriter, "onDocument_", false);
-    pub const transform = JSC.wrapInstanceMethod(HTMLRewriter, "transform_", false);
+    pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false);
+    pub const onDocument = host_fn.wrapInstanceMethod(HTMLRewriter, "onDocument_", false);
+    pub const transform = host_fn.wrapInstanceMethod(HTMLRewriter, "transform_", false);
 
     pub const HTMLRewriterLoader = struct {
         rewriter: *LOLHTML.HTMLRewriter,
@@ -1135,9 +1136,9 @@ pub const TextChunk = struct {
         return this.contentHandler(LOLHTML.TextChunk.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const before = JSC.wrapInstanceMethod(TextChunk, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(TextChunk, "after_", false);
-    pub const replace = JSC.wrapInstanceMethod(TextChunk, "replace_", false);
+    pub const before = host_fn.wrapInstanceMethod(TextChunk, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(TextChunk, "after_", false);
+    pub const replace = host_fn.wrapInstanceMethod(TextChunk, "replace_", false);
 
     pub fn remove(
         this: *TextChunk,
@@ -1312,7 +1313,7 @@ pub const DocEnd = struct {
         return this.contentHandler(LOLHTML.DocEnd.append, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const append = JSC.wrapInstanceMethod(DocEnd, "append_", false);
+    pub const append = host_fn.wrapInstanceMethod(DocEnd, "append_", false);
 
     pub fn finalize(this: *DocEnd) void {
         this.deref();
@@ -1389,9 +1390,9 @@ pub const Comment = struct {
         return this.contentHandler(LOLHTML.Comment.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const before = JSC.wrapInstanceMethod(Comment, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(Comment, "after_", false);
-    pub const replace = JSC.wrapInstanceMethod(Comment, "replace_", false);
+    pub const before = host_fn.wrapInstanceMethod(Comment, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(Comment, "after_", false);
+    pub const replace = host_fn.wrapInstanceMethod(Comment, "replace_", false);
 
     pub fn remove(
         this: *Comment,
@@ -1539,9 +1540,9 @@ pub const EndTag = struct {
         return this.contentHandler(LOLHTML.EndTag.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const before = JSC.wrapInstanceMethod(EndTag, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(EndTag, "after_", false);
-    pub const replace = JSC.wrapInstanceMethod(EndTag, "replace_", false);
+    pub const before = host_fn.wrapInstanceMethod(EndTag, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(EndTag, "after_", false);
+    pub const replace = host_fn.wrapInstanceMethod(EndTag, "replace_", false);
 
     pub fn remove(
         this: *EndTag,
@@ -1759,11 +1760,11 @@ pub const Element = struct {
         return callFrame.this();
     }
 
-    pub const onEndTag = JSC.wrapInstanceMethod(Element, "onEndTag_", false);
-    pub const getAttribute = JSC.wrapInstanceMethod(Element, "getAttribute_", false);
-    pub const hasAttribute = JSC.wrapInstanceMethod(Element, "hasAttribute_", false);
-    pub const setAttribute = JSC.wrapInstanceMethod(Element, "setAttribute_", false);
-    pub const removeAttribute = JSC.wrapInstanceMethod(Element, "removeAttribute_", false);
+    pub const onEndTag = host_fn.wrapInstanceMethod(Element, "onEndTag_", false);
+    pub const getAttribute = host_fn.wrapInstanceMethod(Element, "getAttribute_", false);
+    pub const hasAttribute = host_fn.wrapInstanceMethod(Element, "hasAttribute_", false);
+    pub const setAttribute = host_fn.wrapInstanceMethod(Element, "setAttribute_", false);
+    pub const removeAttribute = host_fn.wrapInstanceMethod(Element, "removeAttribute_", false);
 
     fn contentHandler(this: *Element, comptime Callback: (fn (*LOLHTML.Element, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.element == null)
@@ -1853,12 +1854,12 @@ pub const Element = struct {
         );
     }
 
-    pub const before = JSC.wrapInstanceMethod(Element, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(Element, "after_", false);
-    pub const prepend = JSC.wrapInstanceMethod(Element, "prepend_", false);
-    pub const append = JSC.wrapInstanceMethod(Element, "append_", false);
-    pub const replace = JSC.wrapInstanceMethod(Element, "replace_", false);
-    pub const setInnerContent = JSC.wrapInstanceMethod(Element, "setInnerContent_", false);
+    pub const before = host_fn.wrapInstanceMethod(Element, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(Element, "after_", false);
+    pub const prepend = host_fn.wrapInstanceMethod(Element, "prepend_", false);
+    pub const append = host_fn.wrapInstanceMethod(Element, "append_", false);
+    pub const replace = host_fn.wrapInstanceMethod(Element, "replace_", false);
+    pub const setInnerContent = host_fn.wrapInstanceMethod(Element, "setInnerContent_", false);
 
     ///  Removes the element with all its content.
     pub fn remove(

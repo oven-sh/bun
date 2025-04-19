@@ -254,7 +254,7 @@ pub const FD = packed struct(backing_int) {
             },
             .mac => result: {
                 bun.assert(fd.native() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.native()))) {
+                break :result switch (bun.sys.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

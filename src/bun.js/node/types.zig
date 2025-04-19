@@ -1178,7 +1178,7 @@ pub const PathOrBlob = union(enum) {
 
     const Blob = JSC.WebCore.Blob;
 
-    pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
+    pub fn fromJSNoCopy(ctx: *JSC.JSGlobalObject, args: *JSC.CallFrame.ArgumentsSlice) bun.JSError!PathOrBlob {
         if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,

@@ -1,3 +1,9 @@
+comptime {
+    if (bun.Environment.isWindows) {
+        @export(&Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+    }
+}
+
 pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
     return this.isShuttingDown();
 }
@@ -27,11 +33,8 @@ export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMac
     this.exit_on_uncaught_exception = true;
 }
 
-pub extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;
-pub extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
-
 comptime {
-    const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
+    const Bun__Process__send = JSC.toJSHostFn(Bun__Process__send_);
     @export(&Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
 pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
@@ -64,7 +67,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(globalObject, callback, ex);
         } else {
-            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
             Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
         }
         return .false;
@@ -85,11 +88,11 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(globalObject, callback, ex);
         } else {
-            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
             Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
         }
     }
@@ -115,13 +118,13 @@ pub export fn Bun__ensureProcessIPCInitialized(globalObject: *JSGlobalObject) vo
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     JSC.markBinding(@src());
 
-    global.bunVM().eventLoop().enqueueTask(Task.init(task));
+    global.bunVM().eventLoop().enqueueTask(JSC.Task.init(task));
 }
 
 pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
     JSC.markBinding(@src());
 
-    global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
+    global.bunVM().eventLoop().enqueueTaskWithTimeout(JSC.Task.init(task), milliseconds);
 }
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
@@ -140,7 +143,7 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
     JSC.markBinding(@src());
 
     global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(
-        JSC.ConcurrentTask.create(Task.init(task)),
+        JSC.ConcurrentTask.create(JSC.Task.init(task)),
     );
 }
 
@@ -172,12 +175,6 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
 
 pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
     return jsc_vm.uvLoop();
-}
-
-comptime {
-    if (Environment.isWindows) {
-        @export(&Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
-    }
 }
 
 export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
@@ -225,8 +222,16 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     }
 
     const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
-    const prev = synthetic_allocation_limit;
-    synthetic_allocation_limit = limit;
-    string_allocation_limit = limit;
+    const prev = VirtualMachine.synthetic_allocation_limit;
+    VirtualMachine.synthetic_allocation_limit = limit;
+    VirtualMachine.string_allocation_limit = limit;
     return JSValue.jsNumber(prev);
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const JSC = bun.jsc;
+const VirtualMachine = JSC.VirtualMachine;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const PluginRunner = VirtualMachine.PluginRunner;

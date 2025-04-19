@@ -246,8 +246,9 @@ pub const Source = struct {
             return bun_is_stdio_null[0] == 1;
         }
 
+        pub extern "c" fn bun_initialize_process() void;
         pub fn init() void {
-            bun.C.bun_initialize_process();
+            bun_initialize_process();
 
             if (Environment.isWindows) {
                 WindowsStdio.init();
@@ -264,11 +265,12 @@ pub const Source = struct {
             }
         }
 
+        pub extern "c" fn bun_restore_stdio() void;
         pub fn restore() void {
             if (Environment.isWindows) {
                 WindowsStdio.restore();
             } else {
-                bun.C.bun_restore_stdio();
+                bun_restore_stdio();
             }
         }
     };

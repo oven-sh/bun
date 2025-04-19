@@ -90,7 +90,7 @@ pub const FetchTasklet = struct {
     promise: JSC.JSPromise.Strong,
     concurrent_task: JSC.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
-    memory_reporter: *JSC.MemoryReportingAllocator,
+    memory_reporter: *bun.MemoryReportingAllocator,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -119,7 +119,7 @@ pub const FetchTasklet = struct {
     is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
 
-    tracker: JSC.AsyncTaskTracker,
+    tracker: JSC.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
@@ -378,9 +378,9 @@ pub const FetchTasklet = struct {
         return JSValue.jsUndefined();
     }
     comptime {
-        const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
+        const jsonResolveRequestStream = JSC.toJSHostFn(onResolveRequestStream);
         @export(&jsonResolveRequestStream, .{ .name = "Bun__FetchTasklet__onResolveRequestStream" });
-        const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
+        const jsonRejectRequestStream = JSC.toJSHostFn(onRejectRequestStream);
         @export(&jsonRejectRequestStream, .{ .name = "Bun__FetchTasklet__onRejectRequestStream" });
     }
 
@@ -1457,7 +1457,7 @@ fn dataURLResponse(
 }
 
 comptime {
-    const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
+    const Bun__fetchPreconnect = JSC.toJSHostFn(Bun__fetchPreconnect_);
     @export(&Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
 }
 pub fn Bun__fetchPreconnect_(
@@ -1518,7 +1518,7 @@ const StringOrURL = struct {
 };
 
 comptime {
-    const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
+    const Bun__fetch = JSC.toJSHostFn(Bun__fetch_);
     @export(&Bun__fetch, .{ .name = "Bun__fetch" });
 }
 
@@ -1552,7 +1552,7 @@ pub fn Bun__fetch_(
     var headers: ?Headers = null;
     var method = Method.GET;
 
-    var args = JSC.Node.ArgumentsSlice.init(vm, arguments.slice());
+    var args = JSC.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
 
     var url = ZigURL{};
     var first_arg = args.nextEat().?;
@@ -2731,6 +2731,7 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
         headers_.deinit();
     }
 }
+
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
@@ -2750,7 +2751,7 @@ const FetchRedirect = http.FetchRedirect;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
-const Headers = JSC.WebCore.Headers;
+const Headers = bun.http.Headers;
 const Method = @import("../../http/method.zig").Method;
 const Body = JSC.WebCore.Body;
 const Async = bun.Async;
@@ -2761,6 +2762,6 @@ const X509 = @import("../api/bun/x509.zig");
 const FetchHeaders = JSC.FetchHeaders;
 const Environment = bun.Environment;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const s3 = bun.S3;
 const picohttp = bun.picohttp;

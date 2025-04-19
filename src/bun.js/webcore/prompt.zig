@@ -1,10 +1,10 @@
 //! Implements prompt, alert, and confirm Web API
 comptime {
-    const js_alert = JSC.toJSHostFunction(alert);
+    const js_alert = JSC.toJSHostFn(alert);
     @export(&js_alert, .{ .name = "WebCore__alert" });
-    const js_prompt = JSC.toJSHostFunction(prompt.call);
+    const js_prompt = JSC.toJSHostFn(prompt.call);
     @export(&js_prompt, .{ .name = "WebCore__prompt" });
-    const js_confirm = JSC.toJSHostFunction(confirm);
+    const js_confirm = JSC.toJSHostFn(confirm);
     @export(&js_confirm, .{ .name = "WebCore__confirm" });
 }
 

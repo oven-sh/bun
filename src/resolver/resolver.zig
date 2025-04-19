@@ -4356,7 +4356,7 @@ pub const GlobalCache = enum {
 
 comptime {
     _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&JSC.toJSHostFunction(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
+    @export(&JSC.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 

@@ -4,7 +4,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     object.put(
         globalThis,
         JSC.ZigString.static("satisfies"),
-        JSC.NewFunction(
+        JSC.host_fn.NewFunction(
             globalThis,
             JSC.ZigString.static("satisfies"),
             2,
@@ -16,7 +16,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     object.put(
         globalThis,
         JSC.ZigString.static("order"),
-        JSC.NewFunction(
+        JSC.host_fn.NewFunction(
             globalThis,
             JSC.ZigString.static("order"),
             2,

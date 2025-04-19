@@ -40,7 +40,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwInvalidArguments(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
-        const err = JSC.toInvalidArguments(fmt, args, this);
+        const err = this.toInvalidArguments(fmt, args);
         return this.throwValue(err);
     }
 
@@ -201,7 +201,7 @@ pub const JSGlobalObject = opaque {
         comptime expected: usize,
         got: usize,
     ) JSC.JSValue {
-        return JSC.toTypeError(.MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
+        return this.toTypeError(.MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got });
     }
 
     /// Not enough arguments passed to function named `name_`
@@ -718,7 +718,7 @@ pub const JSGlobalObject = opaque {
         // when querying from JavaScript, 'func.len'
         comptime argument_count: u32,
     ) JSValue {
-        return JSC.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, JSC.toJSHostFunction(function), false, false, null);
+        return JSC.host_fn.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, JSC.toJSHostFn(function), false, false, null);
     }
 
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.

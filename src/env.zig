@@ -30,7 +30,7 @@ pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @i
 /// All calls to `@export` should be gated behind this check, so that code
 /// generators that compile Zig code know not to reference and compile a ton of
 /// unused code.
-pub const export_cpp_apis = @import("builtin").output_mode == .Obj or isTest;
+pub const export_cpp_apis = false and (@import("builtin").output_mode == .Obj or isTest);
 
 pub const build_options = @import("build_options");
 

@@ -9,7 +9,7 @@ const std = @import("std");
 const JSC = bun.JSC;
 const generic = opaque {
     pub fn value(this: *const generic) JSC.JSValue {
-        return @bitCast(@intFromPtr(this));
+        return @enumFromInt(@as(JSC.JSValue.backing_int, @bitCast(@intFromPtr(this))));
     }
 };
 pub const Private = anyopaque;

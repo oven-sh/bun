@@ -9,6 +9,8 @@ comptime {
 // TODO: make this JSGlobalObject local for better security
 pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 
+pub const Crypto = @import("webcore/Crypto.zig");
+pub const AbortSignal = @import("bindings/AbortSignal.zig").AbortSignal;
 pub const WebWorker = @import("web_worker.zig").WebWorker;
 pub const AutoFlusher = @import("webcore/AutoFlusher.zig");
 pub const EncodingLabel = @import("webcore/EncodingLabel.zig").EncodingLabel;
@@ -65,13 +67,13 @@ pub const Pipe = struct {
 
     pub const Function = *const fn (
         ctx: *anyopaque,
-        stream: ReadableStream.Result,
+        stream: streams.Result,
         allocator: std.mem.Allocator,
     ) void;
 
     pub fn Wrap(comptime Type: type, comptime function: anytype) type {
         return struct {
-            pub fn pipe(self: *anyopaque, stream: ReadableStream.Result, allocator: std.mem.Allocator) void {
+            pub fn pipe(self: *anyopaque, stream: streams.Result, allocator: std.mem.Allocator) void {
                 function(
                     @as(*Type, @ptrCast(@alignCast(self))),
                     stream,

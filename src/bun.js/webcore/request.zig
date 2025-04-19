@@ -5,7 +5,7 @@ url: bun.String = bun.String.empty,
 // NOTE(@cirospaciari): renamed to _headers to avoid direct manipulation, use getFetchHeaders, setFetchHeaders, ensureFetchHeaders and hasFetchHeaders instead
 _headers: ?*FetchHeaders = null,
 signal: ?*AbortSignal = null,
-body: *JSC.BodyValueRef,
+body: *Body.Value.HiveRef,
 method: Method = Method.GET,
 request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
 https: bool = false,
@@ -105,7 +105,7 @@ pub const InternalJSEventCallback = struct {
 pub fn init(
     url: bun.String,
     headers: ?*FetchHeaders,
-    body: *JSC.BodyValueRef,
+    body: *Body.Value.HiveRef,
     method: Method,
 ) Request {
     return Request{
@@ -944,7 +944,7 @@ const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
@@ -971,7 +971,7 @@ const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const InternalBlob = JSC.WebCore.InternalBlob;
 const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;

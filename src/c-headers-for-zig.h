@@ -22,6 +22,7 @@
 #include "pwd.h"
 #include <unistd.h>
 #include <netdb.h>
+#include <string.h>
 #endif
 
 #if DARWIN
@@ -32,6 +33,7 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include <sys/spawn.h>
+#include <mach/processor_info.h>
 #elif LINUX
 #include <sys/statfs.h>
 #include <sys/stat.h>

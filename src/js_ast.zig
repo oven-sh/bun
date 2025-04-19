@@ -8251,7 +8251,7 @@ pub const Macro = struct {
                             } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
-                            } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
+                            } else if (value.as(bun.api.ResolveMessage) != null or value.as(bun.api.BuildMessage) != null) {
                                 _ = this.macro.vm.uncaughtException(this.global, value, false);
                                 return error.MacroFailed;
                             }

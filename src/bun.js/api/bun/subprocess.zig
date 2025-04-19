@@ -34,10 +34,10 @@ ipc_data: ?IPC.IPCData,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
-abort_signal: ?*JSC.AbortSignal = null,
+abort_signal: ?*webcore.AbortSignal = null,
 
 event_loop_timer_refd: bool = false,
-event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+event_loop_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .SubprocessTimeout,
     .next = .{
         .sec = 0,
@@ -873,7 +873,7 @@ pub fn getStdio(
 }
 
 pub const Source = union(enum) {
-    blob: JSC.WebCore.AnyBlob,
+    blob: JSC.WebCore.Blob.Any,
     array_buffer: JSC.ArrayBuffer.Strong,
     detached: void,
 
@@ -2300,7 +2300,7 @@ pub fn spawnMaybeSync(
                         "";
                     if (display_path.len > 0) {
                         var systemerror = err.withPath(display_path).toSystemError();
-                        if (errno == .NOENT) systemerror.errno = -bun.C.UV_ENOENT;
+                        if (errno == .NOENT) systemerror.errno = -bun.sys.UV_E.NOENT;
                         return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
                     }
                 },
@@ -2605,7 +2605,7 @@ fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bu
     const err = JSC.SystemError{
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
-        .errno = -bun.C.UV_ENOENT,
+        .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.createUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));
@@ -2695,6 +2695,7 @@ const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
+const webcore = bun.webcore;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const which = bun.which;

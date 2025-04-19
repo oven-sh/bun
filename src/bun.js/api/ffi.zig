@@ -756,10 +756,10 @@ pub const FFI = struct {
 
             function.compile(napi_env) catch |err| {
                 if (!globalThis.hasException()) {
-                    const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
+                    const ret = globalThis.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
                         @errorName(err),
                         function_name,
-                    }, globalThis);
+                    });
                     return globalThis.throwValue(ret);
                 }
                 return error.JSError;
@@ -774,11 +774,11 @@ pub const FFI = struct {
                 },
                 .compiled => |*compiled| {
                     const str = ZigString.init(bun.asByteSlice(function_name));
-                    const cb = JSC.NewRuntimeFunction(
+                    const cb = JSC.host_fn.NewRuntimeFunction(
                         globalThis,
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
-                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        bun.cast(*const JSC.JSHostFn, compiled.ptr),
                         false,
                         true,
                         function.symbol_from_dynamic_library,
@@ -1118,7 +1118,7 @@ pub const FFI = struct {
                 },
                 .compiled => |*compiled| {
                     const str = ZigString.init(bun.asByteSlice(function_name));
-                    const cb = JSC.NewRuntimeFunction(
+                    const cb = JSC.host_fn.NewRuntimeFunction(
                         global,
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
@@ -1221,7 +1221,7 @@ pub const FFI = struct {
                 .compiled => |*compiled| {
                     const name = &ZigString.init(bun.asByteSlice(function_name));
 
-                    const cb = JSC.NewRuntimeFunction(
+                    const cb = JSC.host_fn.NewRuntimeFunction(
                         global,
                         name,
                         @as(u32, @intCast(function.arg_types.items.len)),
@@ -1288,7 +1288,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(.INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
+                    return global.toTypeError(.INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()});
                 });
             }
         }
@@ -1320,7 +1320,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(.INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
+                return global.toTypeError(.INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()});
             };
         }
 
@@ -1379,7 +1379,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
+                return global.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop});
             }
 
             var function: Function = .{ .allocator = allocator };
@@ -2399,8 +2399,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.State) void {
         state.addSymbol("memset", &memset) catch unreachable;
         state.addSymbol("memcpy", &memcpy) catch unreachable;
-        state.addSymbol("NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open) catch unreachable;
-        state.addSymbol("NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close) catch unreachable;
+        state.addSymbol("NapiHandleScope__open", &bun.api.napi.NapiHandleScope.NapiHandleScope__open) catch unreachable;
+        state.addSymbol("NapiHandleScope__close", &bun.api.napi.NapiHandleScope.NapiHandleScope__close) catch unreachable;
 
         state.addSymbol("JSVALUE_TO_INT64_SLOW", workaround.JSVALUE_TO_INT64) catch unreachable;
         state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;

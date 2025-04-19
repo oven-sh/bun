@@ -11,6 +11,8 @@ const stringZ = bun.stringZ;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
+const ModuleInfo = analyze_transpiled_module.ModuleInfo;
 
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -79,6 +81,7 @@ inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) Resolve
         .source_url = bun.String.static(@tagName(name)),
         .tag = name,
         .source_code_needs_deref = false,
+        .module_info = null,
     };
 }
 
@@ -244,7 +247,7 @@ pub const RuntimeTranspilerStore = struct {
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
-        var resolved_source = ResolvedSource{};
+        var resolved_source = ResolvedSource.unfilled;
         if (package_json) |pkg| {
             switch (pkg.module_type) {
                 .cjs => {
@@ -290,7 +293,7 @@ pub const RuntimeTranspilerStore = struct {
         generation_number: u32 = 0,
         log: logger.Log,
         parse_error: ?anyerror = null,
-        resolved_source: ResolvedSource = ResolvedSource{},
+        resolved_source: ResolvedSource = ResolvedSource.unfilled,
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
 
@@ -404,6 +407,7 @@ pub const RuntimeTranspilerStore = struct {
             var cache = JSC.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
 
             var vm = this.vm;
@@ -555,6 +559,19 @@ pub const RuntimeTranspilerStore = struct {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
+                var module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+                if (entry.esm_record.len > 0) {
+                    if (entry.metadata.module_type == .cjs) {
+                        @panic("TranspilerCache contained cjs module with module info");
+                    }
+                    module_info = analyze_transpiled_module.ModuleInfoDeserialized.create(entry.esm_record, bun.default_allocator) catch |e| switch (e) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        // uh oh! invalid module info in cache
+                        // (not sure what to do here)
+                        error.BadModuleInfo => @panic("TranspilerCache contained invalid module info"),
+                    };
+                }
+
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = switch (entry.output_code) {
@@ -567,6 +584,7 @@ pub const RuntimeTranspilerStore = struct {
                         },
                     },
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .module_info = module_info,
                     .tag = this.resolved_source.tag,
                 };
 
@@ -582,6 +600,7 @@ pub const RuntimeTranspilerStore = struct {
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                    .module_info = null,
                     .tag = this.resolved_source.tag,
                 };
                 this.resolved_source.source_code.ensureHash();
@@ -635,6 +654,10 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator, parse_result.ast.is_from_typescript) catch bun.outOfMemory();
+            // defer module_info.destroy(); // TODO: do not leak module_info
+
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
@@ -644,6 +667,7 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    module_info,
                 ) catch |err| {
                     this.parse_error = err;
                     return;
@@ -676,10 +700,12 @@ pub const RuntimeTranspilerStore = struct {
 
                 break :brk result;
             };
+
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = source_code,
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
+                .module_info = if (module_info) |mi| mi.asDeserialized() else null,
                 .tag = this.resolved_source.tag,
             };
         }
@@ -1394,6 +1420,10 @@ pub const ModuleLoader = struct {
             var printer = VirtualMachine.source_code_printer.?.*;
             printer.ctx.reset();
 
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator, parse_result.ast.is_from_typescript) catch bun.outOfMemory();
+            // defer module_info.destroy(); // TODO: do not leak module_info
+
             {
                 var mapper = jsc_vm.sourceMapHandler(&printer);
                 defer VirtualMachine.source_code_printer.?.* = printer;
@@ -1403,6 +1433,7 @@ pub const ModuleLoader = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    module_info,
                 );
             }
 
@@ -1427,7 +1458,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                resolved_source.is_commonjs_module = is_commonjs_module;
 
                 return resolved_source;
             }
@@ -1437,7 +1468,9 @@ pub const ModuleLoader = struct {
                 .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
+
+                .module_info = if (module_info) |mi| mi.asDeserialized() else null,
             };
         }
 
@@ -1498,6 +1531,7 @@ pub const ModuleLoader = struct {
                     .source_code = bun.String.empty,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
+                    .module_info = null,
                 };
             }
         }
@@ -1564,6 +1598,7 @@ pub const ModuleLoader = struct {
                 var cache = JSC.RuntimeTranspilerCache{
                     .output_code_allocator = allocator,
                     .sourcemap_allocator = bun.default_allocator,
+                    .esm_record_allocator = bun.default_allocator,
                 };
 
                 const old = jsc_vm.transpiler.log;
@@ -1729,6 +1764,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = ResolvedSource.Tag.json_for_object_loader,
+                        .module_info = null,
                     };
                 }
 
@@ -1742,6 +1778,7 @@ pub const ModuleLoader = struct {
                         },
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
+                        .module_info = null,
                     };
                 }
 
@@ -1753,6 +1790,7 @@ pub const ModuleLoader = struct {
                             .source_url = input_specifier.createIfDifferent(path.text),
                             .jsvalue_for_export = JSValue.createEmptyObject(jsc_vm.global, 0),
                             .tag = .exports_object,
+                            .module_info = null,
                         };
                     }
 
@@ -1762,6 +1800,7 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                         .tag = .exports_object,
+                        .module_info = null,
                     };
                 }
 
@@ -1776,6 +1815,7 @@ pub const ModuleLoader = struct {
                         .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                         .bytecode_cache_size = bytecode_slice.len,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                        .module_info = null,
                     };
                 }
 
@@ -1792,6 +1832,7 @@ pub const ModuleLoader = struct {
                             .source_url = input_specifier.createIfDifferent(path.text),
                             .is_commonjs_module = true,
                             .tag = .javascript,
+                            .module_info = null,
                         };
                     }
                 }
@@ -1804,6 +1845,19 @@ pub const ModuleLoader = struct {
 
                     if (comptime Environment.allow_assert) {
                         dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
+                    }
+
+                    var module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+                    if (entry.esm_record.len > 0) {
+                        if (entry.metadata.module_type == .cjs) {
+                            @panic("TranspilerCache contained cjs module with module info");
+                        }
+                        module_info = analyze_transpiled_module.ModuleInfoDeserialized.create(entry.esm_record, bun.default_allocator) catch |e| switch (e) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            // uh oh! invalid module info in cache
+                            // (not sure what to do here)
+                            error.BadModuleInfo => @panic("TranspilerCache contained invalid module info"),
+                        };
                     }
 
                     return ResolvedSource{
@@ -1837,6 +1891,7 @@ pub const ModuleLoader = struct {
 
                             break :brk ResolvedSource.Tag.javascript;
                         },
+                        .module_info = module_info,
                     };
                 }
 
@@ -1891,6 +1946,11 @@ pub const ModuleLoader = struct {
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
                 defer source_code_printer.* = printer;
+
+                const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator, parse_result.ast.is_from_typescript) catch bun.outOfMemory();
+                // defer module_info.destroy(); // TODO: do not leak module_info
+
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
 
@@ -1900,6 +1960,7 @@ pub const ModuleLoader = struct {
                         &printer,
                         .esm_ascii,
                         mapper.get(),
+                        module_info,
                     );
                 };
 
@@ -1948,8 +2009,9 @@ pub const ModuleLoader = struct {
                     },
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                    .is_commonjs_module = is_commonjs_module,
                     .tag = tag,
+                    .module_info = if (module_info) |mi| mi.asDeserialized() else null,
                 };
             },
             // provideFetch() should be called
@@ -2016,6 +2078,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
+                        .module_info = null,
                     };
                 }
 
@@ -2075,6 +2138,7 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,
+                    .module_info = null,
                 };
             },
 
@@ -2086,6 +2150,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
+                        .module_info = null,
                     };
                 }
 
@@ -2100,6 +2165,7 @@ pub const ModuleLoader = struct {
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .export_default_object,
+                    .module_info = null,
                 };
             },
 
@@ -2111,6 +2177,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
+                        .module_info = null,
                     };
                 }
 
@@ -2181,6 +2248,7 @@ pub const ModuleLoader = struct {
                     .jsvalue_for_export = value,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
+                    .module_info = null,
                     .tag = .export_default_object,
                 };
             },
@@ -2292,6 +2360,7 @@ pub const ModuleLoader = struct {
                             .source_url = .empty,
                             .cjs_custom_extension_index = index,
                             .tag = .common_js_custom_extension,
+                            .module_info = null,
                         });
                         return null;
                     },
@@ -2417,6 +2486,7 @@ pub const ModuleLoader = struct {
                                         .source_url = .empty,
                                         .cjs_custom_extension_index = index,
                                         .tag = .common_js_custom_extension,
+                                        .module_info = null,
                                     });
                                     return null;
                                 },
@@ -2508,6 +2578,7 @@ pub const ModuleLoader = struct {
                 .source_url = specifier,
                 .tag = .esm,
                 .source_code_needs_deref = true,
+                .module_info = null,
             },
             .@"bun:internal-for-testing" => {
                 if (!Environment.isDebug) {
@@ -2521,6 +2592,7 @@ pub const ModuleLoader = struct {
                 .source_code = String.init(Runtime.Runtime.sourceCode()),
                 .specifier = specifier,
                 .source_url = specifier,
+                .module_info = null,
             },
             inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier),
         };
@@ -2540,6 +2612,7 @@ pub const ModuleLoader = struct {
                     .source_code = bun.String.createUTF8(entry.source.contents),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
+                    .module_info = null,
                 };
             }
         } else if (jsc_vm.standalone_module_graph) |graph| {
@@ -2562,6 +2635,7 @@ pub const ModuleLoader = struct {
                         .specifier = specifier,
                         .source_url = specifier.dupeRef(),
                         .source_code_needs_deref = false,
+                        .module_info = null,
                     };
                 }
 
@@ -2574,6 +2648,7 @@ pub const ModuleLoader = struct {
                     .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                     .bytecode_cache_size = file.bytecode.len,
                     .is_commonjs_module = file.module_format == .cjs,
+                    .module_info = null,
                 };
             }
         }

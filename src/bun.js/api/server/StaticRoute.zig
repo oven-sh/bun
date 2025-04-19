@@ -6,6 +6,24 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
+/// Represents a parsed byte range from a Range header
+const ByteRange = struct {
+    /// Start position (inclusive)
+    start: u64,
+    /// End position (inclusive)
+    end: u64,
+};
+
+/// Result of parsing a Range header value
+const RangeParseResult = union(enum) {
+    /// Range is valid and satisfiable
+    Valid: ByteRange,
+    /// Range is valid but unsatisfiable (e.g., start >= file size)
+    Unsatisfiable,
+    /// Range is invalid (e.g., malformed syntax)
+    Invalid,
+};
+
 // TODO: Remove optional. StaticRoute requires a server object or else it will
 // not ensure it is alive while sending a large blob.
 ref_count: RefCount,
@@ -17,11 +35,13 @@ has_content_disposition: bool = false,
 headers: Headers = .{
     .allocator = bun.default_allocator,
 },
+etag: ?bun.String = null,
 
 pub const InitFromBytesOptions = struct {
     server: ?AnyServer,
     mime_type: ?*const bun.http.MimeType = null,
     status_code: u16 = 200,
+    etag: ?bun.String = null,
 };
 
 /// Ownership of `blob` is transferred to this function.
@@ -40,6 +60,7 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
         .headers = headers,
         .server = options.server,
         .status_code = options.status_code,
+        .etag = options.etag,
     });
 }
 
@@ -53,6 +74,10 @@ pub fn sendBlobThenDeinit(resp: AnyResponse, blob: *const AnyBlob, options: Init
 fn deinit(this: *StaticRoute) void {
     this.blob.detach();
     this.headers.deinit();
+    
+    if (this.etag) |etag| {
+        etag.deref();
+    }
 
     bun.destroy(this);
 }
@@ -69,16 +94,20 @@ pub fn clone(this: *StaticRoute, globalThis: *JSC.JSGlobalObject) !*StaticRoute 
         .headers = try this.headers.clone(),
         .server = this.server,
         .status_code = this.status_code,
+        .etag = this.etag,
     });
 }
 
 pub fn memoryCost(this: *const StaticRoute) usize {
-    return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
+    var cost = @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
+    if (this.etag) |etag| {
+        cost += etag.byteSlice().len;
+    }
+    return cost;
 }
 
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!*StaticRoute {
     if (argument.as(JSC.WebCore.Response)) |response| {
-
         // The user may want to pass in the same Response object multiple endpoints
         // Let's let them do that.
         response.body.value.toBlobIfPossible();
@@ -116,11 +145,18 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         };
 
         var has_content_disposition = false;
+        var etag: ?bun.String = null;
 
         if (response.init.headers) |headers| {
             has_content_disposition = headers.fastHas(.ContentDisposition);
             headers.fastRemove(.TransferEncoding);
             headers.fastRemove(.ContentLength);
+            
+            // Extract ETag if present
+            if (headers.fastGet(.ETag)) |etag_value| {
+                // Convert ZigString to Bun String
+                etag = bun.String.fromBytes(etag_value.slice());
+            }
         }
 
         const headers: Headers = if (response.init.headers) |headers|
@@ -128,6 +164,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .body = &blob,
             }) catch {
                 blob.detach();
+                if (etag) |e| e.deref();
                 globalThis.throwOutOfMemory();
                 return error.JSError;
             }
@@ -144,6 +181,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
             .headers = headers,
             .server = null,
             .status_code = response.statusCode(),
+            .etag = etag,
         });
     }
 
@@ -191,7 +229,71 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 // HEAD requests have no body.
 pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     req.setYield(false);
+    
+    // Check for If-None-Match header for conditional HEAD
+    if (this.etag != null and this.status_code == 200) {
+        if (req.header("if-none-match")) |if_none_match| {
+            // We have an If-None-Match header and an ETag
+            const etag_slice = this.etag.?.byteSlice();
+            
+            // Check if the header value is "*" - matches any existing resource
+            if (std.mem.eql(u8, if_none_match, "*")) {
+                // Resource exists, so return 304 Not Modified
+                this.handleConditionalRequest(resp);
+                return;
+            }
+            
+            // Parse and check for ETag matches
+            var current_etag_start: usize = 0;
+            var i: usize = 0;
+            
+            // Process comma-separated list of ETags
+            while (i <= if_none_match.len) {
+                const is_end = i == if_none_match.len;
+                const is_separator = if (!is_end) if_none_match[i] == ',' else false;
+                
+                if (is_end or is_separator) {
+                    var etag_value = if_none_match[current_etag_start..i];
+                    
+                    // Trim whitespace
+                    while (etag_value.len > 0 and std.ascii.isWhitespace(etag_value[0])) {
+                        etag_value = etag_value[1..];
+                    }
+                    while (etag_value.len > 0 and std.ascii.isWhitespace(etag_value[etag_value.len - 1])) {
+                        etag_value = etag_value[0 .. etag_value.len - 1];
+                    }
+                    
+                    // If any ETag matches, return 304 Not Modified
+                    if (weakETagMatch(etag_value, etag_slice)) {
+                        this.handleConditionalRequest(resp);
+                        return;
+                    }
+                    
+                    current_etag_start = i + 1; // Skip the separator
+                }
+                
+                i += 1;
+            }
+        }
+    }
+    
+    // Note: We intentionally do not process Range headers for HEAD requests
+    // Per RFC 9110, Range is primarily for GET requests
+    // Simply ignore Range header for HEAD and process as normal HEAD request
+    
     this.onHEAD(resp);
+}
+
+/// Handle a successful conditional request by returning 304 Not Modified
+fn handleConditionalRequest(this: *StaticRoute, resp: AnyResponse) void {
+    bun.debugAssert(this.server != null);
+    this.ref();
+    if (this.server) |server| {
+        server.onPendingRequest();
+        resp.timeout(server.config().idleTimeout);
+    }
+    resp.corked(renderNotModified, .{ this, resp });
+    this.onResponseComplete(resp);
 }
 
 pub fn onHEAD(this: *StaticRoute, resp: AnyResponse) void {
@@ -213,7 +315,118 @@ fn renderMetadataAndEnd(this: *StaticRoute, resp: AnyResponse) void {
 
 pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     req.setYield(false);
+    
+    // Check for If-None-Match header for conditional GET/HEAD
+    if (this.etag != null and this.status_code == 200) {
+        if (req.header("if-none-match")) |if_none_match| {
+            // We have an If-None-Match header and an ETag
+            const etag_slice = this.etag.?.byteSlice();
+            
+            // Check if the header value is "*" - matches any existing resource
+            if (std.mem.eql(u8, if_none_match, "*")) {
+                // Resource exists, so return 304 Not Modified
+                this.handleConditionalRequest(resp);
+                return;
+            }
+            
+            // Parse and check for ETag matches
+            var current_etag_start: usize = 0;
+            var i: usize = 0;
+            
+            // Process comma-separated list of ETags
+            while (i <= if_none_match.len) {
+                const is_end = i == if_none_match.len;
+                const is_separator = if (!is_end) if_none_match[i] == ',' else false;
+                
+                if (is_end or is_separator) {
+                    var etag_value = if_none_match[current_etag_start..i];
+                    
+                    // Trim whitespace
+                    while (etag_value.len > 0 and std.ascii.isWhitespace(etag_value[0])) {
+                        etag_value = etag_value[1..];
+                    }
+                    while (etag_value.len > 0 and std.ascii.isWhitespace(etag_value[etag_value.len - 1])) {
+                        etag_value = etag_value[0 .. etag_value.len - 1];
+                    }
+                    
+                    // If any ETag matches, return 304 Not Modified
+                    if (weakETagMatch(etag_value, etag_slice)) {
+                        this.handleConditionalRequest(resp);
+                        return;
+                    }
+                    
+                    current_etag_start = i + 1; // Skip the separator
+                }
+                
+                i += 1;
+            }
+        }
+    }
+    
+    // Range header handling (only for GET requests, not for HEAD)
+    // Only process Range if blob has content and status is 200 (OK)
+    if (this.cached_blob_size > 0 and this.status_code == 200) {
+        if (req.header("range")) |range_header| {
+            // Parse and validate the Range header
+            const range_result = parseRangeHeader(range_header, this.cached_blob_size);
+            
+            switch (range_result) {
+                .Valid => |range| {
+                    // Handle partial content for the given range
+                    this.handlePartialContent(resp, range);
+                    return;
+                },
+                .Unsatisfiable => {
+                    // Handle unsatisfiable range
+                    this.handleRangeNotSatisfiable(resp);
+                    return;
+                },
+                .Invalid => {
+                    // Invalid Range header, proceed with normal 200 OK response
+                },
+            }
+        }
+    }
+    
+    // If we get here, proceed with normal request handling
     this.on(resp);
+}
+
+/// Handle a Range Not Satisfiable request by returning 416
+fn handleRangeNotSatisfiable(this: *StaticRoute, resp: AnyResponse) void {
+    bun.debugAssert(this.server != null);
+    this.ref();
+    if (this.server) |server| {
+        server.onPendingRequest();
+        resp.timeout(server.config().idleTimeout);
+    }
+    resp.corked(renderRangeNotSatisfiable, .{ this, resp });
+    this.onResponseComplete(resp);
+}
+
+/// Handle a Partial Content request by returning 206 with the requested range
+fn handlePartialContent(this: *StaticRoute, resp: AnyResponse, range: ByteRange) void {
+    bun.debugAssert(this.server != null);
+    this.ref();
+    if (this.server) |server| {
+        server.onPendingRequest();
+        resp.timeout(server.config().idleTimeout);
+    }
+    
+    // Set the current range for streaming
+    current_range = range;
+    
+    var finished = false;
+    resp.corked(renderPartialContent, .{ this, resp, range, &finished });
+    
+    if (finished) {
+        // Clear the current range
+        current_range = null;
+        this.onResponseComplete(resp);
+        return;
+    }
+    
+    this.toAsync(resp);
 }
 
 pub fn on(this: *StaticRoute, resp: AnyResponse) void {
@@ -239,6 +452,8 @@ fn toAsync(this: *StaticRoute, resp: AnyResponse) void {
 }
 
 fn onAborted(this: *StaticRoute, resp: AnyResponse) void {
+    // Clear the current range if set when aborted
+    current_range = null;
     this.onResponseComplete(resp);
 }
 
@@ -246,6 +461,10 @@ fn onResponseComplete(this: *StaticRoute, resp: AnyResponse) void {
     resp.clearAborted();
     resp.clearOnWritable();
     resp.clearTimeout();
+    
+    // Clear the current range (if set) when response is complete
+    current_range = null;
+    
     if (this.server) |server| {
         server.onStaticRequestComplete();
     }
@@ -283,13 +502,35 @@ fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     return true;
 }
 
+// Global variable to store the current byte range for partial content streaming
+// This is needed because onWritableBytes doesn't allow passing additional context
+threadlocal var current_range: ?ByteRange = null;
+
 fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     const blob = this.blob;
     const all_bytes = blob.slice();
-
-    const bytes = all_bytes[@min(all_bytes.len, write_offset)..];
-
-    return resp.tryEnd(bytes, all_bytes.len, resp.shouldCloseConnection());
+    
+    // Check if this is a range request
+    if (current_range) |range| {
+        // Get the range-relative offset
+        const range_size = range.end - range.start + 1;
+        const range_offset = range.start + @min(write_offset, range_size);
+        
+        // Ensure the offset isn't past the end
+        if (range_offset > range.end) {
+            return true; // We've sent everything
+        }
+        
+        // Calculate remaining bytes in range
+        const bytes_to_send = @min(all_bytes.len - range_offset, range.end + 1 - range_offset);
+        const bytes = all_bytes[range_offset..][0..bytes_to_send];
+        
+        return resp.tryEnd(bytes, range_size, resp.shouldCloseConnection());
+    } else {
+        // Regular (non-range) request
+        const bytes = all_bytes[@min(all_bytes.len, write_offset)..];
+        return resp.tryEnd(bytes, all_bytes.len, resp.shouldCloseConnection());
+    }
 }
 
 fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {
@@ -326,8 +567,51 @@ fn renderMetadata(this: *StaticRoute, resp: AnyResponse) void {
         204
     else
         status;
-
+    
     this.doWriteStatus(status, resp);
+    
+    // Copy ETag from the StaticRoute to the headers if it's not already there
+    if (this.etag) |etag| {
+        const etag_slice = etag.byteSlice();
+        if (etag_slice.len > 0) {
+            // Check if ETag is already in headers
+            var has_etag = false;
+            const entries = this.headers.entries.slice();
+            for (entries.items(.name), 0..entries.len) |name, _| {
+                const name_str = this.headers.asStr(name);
+                if (bun.strings.eqlCaseInsensitiveASCII(name_str, "etag", true)) {
+                    has_etag = true;
+                    break;
+                }
+            }
+            
+            // Add ETag to headers if not found
+            if (!has_etag) {
+                this.headers.append("ETag", etag_slice) catch {};
+            }
+        }
+    }
+    
+    // Add Accept-Ranges header for GET requests if serving a blob with size > 0
+    // This advertises that we support Range requests
+    if (size > 0) {
+        // Check if Accept-Ranges is already in headers
+        var has_accept_ranges = false;
+        const entries = this.headers.entries.slice();
+        for (entries.items(.name), 0..entries.len) |name, _| {
+            const name_str = this.headers.asStr(name);
+            if (bun.strings.eqlCaseInsensitiveASCII(name_str, "accept-ranges", true)) {
+                has_accept_ranges = true;
+                break;
+            }
+        }
+        
+        // Add Accept-Ranges to headers if not found
+        if (!has_accept_ranges) {
+            this.headers.append("Accept-Ranges", "bytes") catch {};
+        }
+    }
+    
     this.doWriteHeaders(resp);
 }
 
@@ -353,3 +637,207 @@ const AnyServer = JSC.API.AnyServer;
 const AnyBlob = JSC.WebCore.AnyBlob;
 const writeStatus = @import("../server.zig").writeStatus;
 const AnyResponse = uws.AnyResponse;
+
+/// Compare two ETags using weak comparison per RFC 9110 §8.8.3.2
+/// Returns true if they match
+fn weakETagMatch(etag1: []const u8, etag2: []const u8) bool {
+    // If either is empty, no match
+    if (etag1.len == 0 or etag2.len == 0) {
+        return false;
+    }
+
+    // Extract the actual tag content, skipping the W/ prefix if present
+    var actual_etag1 = etag1;
+    var actual_etag2 = etag2;
+
+    // Check for W/ prefix (weak ETag) and skip it
+    if (actual_etag1.len >= 3 and std.mem.eql(u8, actual_etag1[0..2], "W/")) {
+        actual_etag1 = actual_etag1[2..];
+    }
+    if (actual_etag2.len >= 3 and std.mem.eql(u8, actual_etag2[0..2], "W/")) {
+        actual_etag2 = actual_etag2[2..];
+    }
+
+    // Compare the actual entity-tags
+    return std.mem.eql(u8, actual_etag1, actual_etag2);
+}
+
+/// Parse a Range header value according to RFC 9110 §14.2
+/// Supports only 'bytes' unit and only single ranges for now
+/// Returns a RangeParseResult indicating valid, unsatisfiable, or invalid
+fn parseRangeHeader(range_header: []const u8, total_size: u64) RangeParseResult {
+    // Verify bytes unit prefix
+    if (!std.mem.startsWith(u8, range_header, "bytes=")) {
+        return .Invalid;
+    }
+
+    // Skip "bytes=" prefix
+    const ranges_part = range_header[6..];
+    
+    // We currently only support a single range
+    if (std.mem.indexOfScalar(u8, ranges_part, ',') != null) {
+        // Multiple ranges requested, which we don't support yet - proceed with 200 OK
+        return .Invalid;
+    }
+    
+    const range_spec = ranges_part;
+    
+    // Handle suffix range: "bytes=-N" where N is the suffix length
+    if (range_spec.len > 0 and range_spec[0] == '-') {
+        // Extract suffix length
+        const suffix_len = std.fmt.parseInt(u64, range_spec[1..], 10) catch {
+            return .Invalid;
+        };
+        
+        // If suffix length is 0, or larger than the total size, it's unsatisfiable
+        if (suffix_len == 0 or suffix_len > total_size) {
+            return .Unsatisfiable;
+        }
+        
+        // Calculate start and end based on suffix
+        const start = total_size - suffix_len;
+        const end = total_size - 1; // inclusive end
+        
+        return .{ .Valid = .{
+            .start = start,
+            .end = end,
+        }};
+    }
+    
+    // Handle range with start: "bytes=N-" or "bytes=N-M"
+    const dash_index = std.mem.indexOfScalar(u8, range_spec, '-') orelse {
+        return .Invalid;
+    };
+    
+    // Parse start value
+    const start = std.fmt.parseInt(u64, range_spec[0..dash_index], 10) catch {
+        return .Invalid;
+    };
+    
+    // If start is beyond the total size, it's unsatisfiable
+    if (start >= total_size) {
+        return .Unsatisfiable;
+    }
+    
+    // Handle open-ended range: "bytes=N-"
+    if (dash_index == range_spec.len - 1) {
+        return .{ .Valid = .{
+            .start = start,
+            .end = total_size - 1, // inclusive end is the last byte
+        }};
+    }
+    
+    // Handle fully specified range: "bytes=N-M"
+    const end = std.fmt.parseInt(u64, range_spec[dash_index + 1..], 10) catch {
+        return .Invalid;
+    };
+    
+    // If end is less than start, it's invalid
+    if (end < start) {
+        return .Invalid;
+    }
+    
+    // If end is beyond the total size, clamp it to the maximum possible
+    const clamped_end = @min(end, total_size - 1);
+    
+    return .{ .Valid = .{
+        .start = start,
+        .end = clamped_end,
+    }};
+}
+
+/// Renders a 304 Not Modified response
+fn renderNotModified(this: *StaticRoute, resp: AnyResponse) void {
+    this.doWriteStatus(304, resp);
+    
+    // Copy ETag from the StaticRoute to the headers if it's not already there - same as renderMetadata
+    if (this.etag) |etag| {
+        const etag_slice = etag.byteSlice();
+        if (etag_slice.len > 0) {
+            // Check if ETag is already in headers
+            var has_etag = false;
+            const entries = this.headers.entries.slice();
+            for (entries.items(.name), 0..entries.len) |name, _| {
+                const name_str = this.headers.asStr(name);
+                if (bun.strings.eqlCaseInsensitiveASCII(name_str, "etag", true)) {
+                    has_etag = true;
+                    break;
+                }
+            }
+            
+            // Add ETag to headers if not found
+            if (!has_etag) {
+                this.headers.append("ETag", etag_slice) catch {};
+            }
+        }
+    }
+    
+    this.doWriteHeaders(resp);
+    resp.endWithoutBody(resp.shouldCloseConnection());
+}
+
+/// Renders a 416 Range Not Satisfiable response
+fn renderRangeNotSatisfiable(this: *StaticRoute, resp: AnyResponse) void {
+    this.doWriteStatus(416, resp);
+    
+    // Add Content-Range header indicating total size (e.g., Content-Range: bytes */1000)
+    var content_range_buf: [64]u8 = undefined;
+    const content_range = std.fmt.bufPrint(&content_range_buf, "bytes */{d}", .{this.cached_blob_size}) catch unreachable;
+    resp.writeHeader("Content-Range", content_range);
+    
+    // Include ETag if available
+    if (this.etag) |etag| {
+        const etag_slice = etag.byteSlice();
+        if (etag_slice.len > 0) {
+            resp.writeHeader("ETag", etag_slice);
+        }
+    }
+    
+    this.doWriteHeaders(resp);
+    resp.endWithoutBody(resp.shouldCloseConnection());
+}
+
+/// Renders a 206 Partial Content response with the specified byte range
+fn renderPartialContent(this: *StaticRoute, resp: AnyResponse, range: ByteRange, did_finish: *bool) void {
+    this.doWriteStatus(206, resp);
+    
+    // Add Content-Range header indicating the range being sent and total size
+    var content_range_buf: [128]u8 = undefined;
+    const content_range = std.fmt.bufPrint(&content_range_buf, "bytes {d}-{d}/{d}", .{
+        range.start, range.end, this.cached_blob_size
+    }) catch unreachable;
+    resp.writeHeader("Content-Range", content_range);
+    
+    // Set Content-Length to the size of the range being sent
+    const range_length = range.end - range.start + 1;
+    resp.writeHeaderInt("Content-Length", range_length);
+    
+    // Include ETag if available
+    if (this.etag) |etag| {
+        const etag_slice = etag.byteSlice();
+        if (etag_slice.len > 0) {
+            resp.writeHeader("ETag", etag_slice);
+        }
+    }
+    
+    // Write other headers
+    this.doWriteHeaders(resp);
+    
+    // Send the range of bytes
+    this.renderBytesRange(resp, range, did_finish);
+}
+
+/// Sends a range of bytes from the blob
+fn renderBytesRange(this: *StaticRoute, resp: AnyResponse, range: ByteRange, did_finish: *bool) void {
+    const blob = this.blob;
+    const all_bytes = blob.slice();
+    
+    // Ensure we don't read past the end of the array
+    const start = @min(range.start, all_bytes.len);
+    const end = @min(range.end + 1, all_bytes.len); // +1 because end is inclusive, but slice is exclusive
+    
+    const bytes = all_bytes[start..end];
+    const range_length = range.end - range.start + 1;
+    
+    did_finish.* = resp.tryEnd(bytes, range_length, resp.shouldCloseConnection());
+}

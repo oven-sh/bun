@@ -3247,7 +3247,7 @@ function ClientRequest(input, options, cb) {
     options.host =
       validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
 
-  const setHost = options.setHost === undefined || Boolean(options.setHost);
+  const setHost = options.setHost === undefined || !!options.setHost;
 
   this[kSocketPath] = options.socketPath;
 

@@ -1,4 +1,8 @@
 /// <reference types="../../build/debug/codegen/generated.d.ts" />
+/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
+/// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
+/// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
+
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
@@ -425,7 +429,13 @@ declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string, isESM?: boolean, isUserRequireResolve?: boolean, paths?: string[]): string;
+declare function $resolveSync(
+  name: string,
+  from: string,
+  isESM?: boolean,
+  isUserRequireResolve?: boolean,
+  paths?: string[],
+): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;

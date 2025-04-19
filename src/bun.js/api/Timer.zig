@@ -1415,7 +1415,7 @@ pub const WTFTimer = struct {
     }
 
     pub export fn WTFTimer__runIfImminent(vm: *VirtualMachine) void {
-        vm.eventLoop().runImminentGCTimer();
+        _ = vm.eventLoop().runImminentGCTimer();
     }
 
     pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {

@@ -24,6 +24,7 @@ class DOMWrapperWorld;
 #include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "BunGCController.h"
 namespace Zig {
 }
 
@@ -79,11 +80,9 @@ class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
 public:
-    explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);
-
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*, void*);
+    static void create(JSC::VM& vm, void* bunVM, JSC::HeapType heapType);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -115,7 +114,11 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    Bun::GCController& gcController() { return m_gcController; }
+
 private:
+    explicit JSVMClientData(JSC::VM&, void* bunVM, RefPtr<JSC::SourceProvider>, JSC::HeapType heapType);
+
     bool isWebCoreJSClientData() const final { return true; }
 
     BunBuiltinNames m_builtinNames;
@@ -132,6 +135,7 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
+    Bun::GCController m_gcController;
 };
 
 } // namespace WebCore

@@ -970,10 +970,10 @@ const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
-const InlineBlob = JSC.WebCore.InlineBlob;
+const InlineBlob = JSC.WebCore.Blob.Inline;
 const AnyBlob = JSC.WebCore.Blob.Any;
-const InternalBlob = JSC.WebCore.InternalBlob;
-const BodyMixin = JSC.WebCore.BodyMixin;
+const InternalBlob = JSC.WebCore.Blob.Internal;
+const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;

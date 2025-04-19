@@ -259,7 +259,7 @@ pub const File = struct {
 
     pub fn unlink(this: *const File, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         return switch (this.pathlike) {
-            .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
+            .path => |path_like| JSC.Node.fs.Async.unlink.create(globalThis, undefined, .{
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
@@ -333,7 +333,7 @@ pub const S3 = struct {
 
             pub const new = bun.TrivialNew(@This());
 
-            pub fn resolve(result: S3.S3DeleteResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
@@ -359,7 +359,7 @@ pub const S3 = struct {
         const proxy = if (proxy_url) |url| url.href else null;
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
-        S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+        bun.S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .global = globalThis,
@@ -416,10 +416,10 @@ pub const S3 = struct {
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
 
-        const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+        const options = bun.S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
         store.ref();
 
-        S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
+        bun.S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .resolvedlistOptions = options,

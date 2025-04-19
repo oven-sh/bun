@@ -46,7 +46,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch return null;
     defer tmpfile.fd.close();
 
-    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+    switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
         &tmpname_buf, // not used
 
         .{
@@ -2488,7 +2488,7 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target)) |replacement| {
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;

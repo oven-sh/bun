@@ -647,8 +647,7 @@ pub const JSValue = enum(i64) {
         if (Environment.isDebug) {
             bun.assert(function.isCallable());
         }
-        const num_args = @typeInfo(@TypeOf(args)).array.len;
-        switch (num_args) {
+        switch (comptime bun.len(@as(@TypeOf(args), undefined))) {
             1 => Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
             2 => Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
             else => @compileError("needs more copy paste"),
@@ -1783,16 +1782,16 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__symbolKeyFor(this, global, str);
     }
 
-    extern fn JSC__JSValue___then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSC.JSHostFunctionPtr, reject: JSC.JSHostFunctionPtr) void;
-    pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSNativeFn, reject: JSNativeFn) void {
+    extern fn JSC__JSValue___then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const JSC.JSHostFn, reject: *const JSC.JSHostFn) void;
+    pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSC.JSHostFnZig, reject: JSC.JSHostFnZig) void {
         return JSC__JSValue___then(this, global, ctx, toJSHostFunction(resolve), toJSHostFunction(reject));
     }
 
-    pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSC.JSHostFunctionPtr, reject: JSC.JSHostFunctionPtr) void {
+    pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const JSC.JSHostFn, reject: *const JSC.JSHostFn) void {
         return JSC__JSValue___then(this, global, ctx, resolve, reject);
     }
 
-    pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSNativeFn, reject: JSNativeFn) void {
+    pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSC.JSHostFnZig, reject: JSC.JSHostFnZig) void {
         if (comptime bun.Environment.allow_assert)
             bun.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
         return this._then(global, JSValue.fromPtr(ctx), resolve, reject);
@@ -2713,7 +2712,7 @@ pub const JSValue = enum(i64) {
 
                     var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
                     for (value, 0..) |*item, i| {
-                        const res = toJS(globalObject, *Child, item, lifetime);
+                        const res = fromAny(globalObject, *Child, item, lifetime);
                         if (res == .zero) return .zero;
                         array.putIndex(
                             globalObject,
@@ -2801,8 +2800,6 @@ const JSMap = JSC.JSMap;
 const JSArrayIterator = JSC.JSArrayIterator;
 const JSFunction = JSC.JSFunction;
 const JSCell = JSC.JSCell;
-const Exports = @import("./exports.zig");
-const JSNativeFn = JSC.JSNativeFn;
 
 const AnyPromise = JSC.AnyPromise;
 const DOMURL = JSC.DOMURL;

@@ -28,7 +28,7 @@ pub const SystemError = extern struct {
     extern fn SystemError__toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue;
     extern fn SystemError__toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSC.JSGlobalObject) JSValue;
 
-    pub fn getErrno(this: *const SystemError) bun.C.E {
+    pub fn getErrno(this: *const SystemError) bun.sys.E {
         // The inverse in bun.sys.Error.toSystemError()
         return @enumFromInt(this.errno * -1);
     }

@@ -476,8 +476,8 @@ pub const Archiver = struct {
                                 switch (bun.sys.openatWindows(.fromNative(dir_fd), path, flags, 0)) {
                                     .result => |fd| fd,
                                     .err => |e| switch (e.errno) {
-                                        @intFromEnum(bun.C.E.PERM),
-                                        @intFromEnum(bun.C.E.NOENT),
+                                        @intFromEnum(bun.sys.E.PERM),
+                                        @intFromEnum(bun.sys.E.NOENT),
                                         => brk: {
                                             bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
                                             break :brk try bun.sys.openatWindows(.fromNative(dir_fd), path, flags, 0).unwrap();

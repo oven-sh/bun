@@ -7,7 +7,7 @@
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
 //! For questions about DevServer, please consult the delusional @paperclover
-pub const DevServer = @This();
+const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;

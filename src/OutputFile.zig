@@ -128,7 +128,7 @@ pub const SavedFile = struct {
         const store = JSC.WebCore.Blob.Store.initFile(
             JSC.Node.PathOrFileDescriptor{
                 .path = JSC.Node.PathLike{
-                    .string = JSC.PathString.init(path),
+                    .string = bun.PathString.init(path),
                 },
             },
             mime_type,
@@ -251,7 +251,7 @@ pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u
             }
 
             var path_buf: bun.PathBuffer = undefined;
-            _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+            _ = try JSC.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
                 .data = .{ .buffer = .{
                     .buffer = .{
                         .ptr = @constCast(value.bytes.ptr),
@@ -263,7 +263,7 @@ pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u
                 .mode = if (f.is_executable) 0o755 else 0o644,
                 .dirfd = .fromStdDir(root_dir),
                 .file = .{ .path = .{
-                    .string = JSC.PathString.init(rel_path),
+                    .string = bun.PathString.init(rel_path),
                 } },
             }).unwrap();
         },
@@ -278,7 +278,7 @@ pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u
 }
 
 pub fn moveTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
-    try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.posix.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.posix.toPosixPath(rel_path)), 0));
+    try bun.sys.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.posix.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.posix.toPosixPath(rel_path)), 0));
 }
 
 pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {

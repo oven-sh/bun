@@ -158,7 +158,7 @@ pub const CopyFile = struct {
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    JSC.Node.default_permission,
+                    JSC.Node.fs.default_permission,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                         .result => |result_fd| result_fd,
@@ -234,7 +234,7 @@ pub const CopyFile = struct {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if (!bun.canUseCopyFileRangeSyscall()) {
-            switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+            switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                 .err => |err| {
                     this.system_error = err.toSystemError();
                     return bun.errnoToZigErr(err.errno);
@@ -254,12 +254,12 @@ pub const CopyFile = struct {
                 .splice => bun.C.splice(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
             };
 
-            switch (bun.C.getErrno(written)) {
+            switch (bun.sys.getErrno(written)) {
                 .SUCCESS => {},
 
                 .NOSYS, .XDEV => {
                     // TODO: this should use non-blocking I/O.
-                    switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                    switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                         .err => |err| {
                             this.system_error = err.toSystemError();
                             return bun.errnoToZigErr(err.errno);
@@ -292,7 +292,7 @@ pub const CopyFile = struct {
                     // to a read/write loop
                     if (total_written == 0) {
                         // TODO: this should use non-blocking I/O.
-                        switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                        switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
                                 return bun.errnoToZigErr(err.errno);
@@ -339,7 +339,7 @@ pub const CopyFile = struct {
                         var total_written: u64 = 0;
 
                         // TODO: this should use non-blocking I/O.
-                        switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
+                        switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
                                 return bun.errnoToZigErr(err.errno);
@@ -433,7 +433,7 @@ pub const CopyFile = struct {
                         if (this.doClonefile()) {
                             if (this.max_length != Blob.max_size and this.max_length < @as(SizeType, @intCast(stat_.?.size))) {
                                 // If this fails...well, there's not much we can do about it.
-                                _ = bun.C.truncate(
+                                _ = bun.c.truncate(
                                     this.destination_file_store.pathlike.path.sliceZ(&path_buf),
                                     @as(std.posix.off_t, @intCast(this.max_length)),
                                 );
@@ -498,11 +498,12 @@ pub const CopyFile = struct {
                 return;
             }
 
-            if (posix.S.ISREG(stat.mode) and
-                this.max_length > bun.C.preallocate_length and
+            if (bun.sys.preallocate_supported and
+                posix.S.ISREG(stat.mode) and
+                this.max_length > bun.sys.preallocate_length and
                 this.max_length != Blob.max_size)
             {
-                bun.C.preallocate_file(this.destination_fd.cast(), 0, this.max_length) catch {};
+                bun.sys.preallocate_file(this.destination_fd.cast(), 0, this.max_length) catch {};
             }
         }
 
@@ -822,7 +823,7 @@ pub const CopyFileWindows = struct {
                     result.close();
                     return .{
                         .err = .{
-                            .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EMFILE))),
+                            .errno = @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.EMFILE))),
                             .syscall = .open,
                             .path = pathlike.path.slice(),
                         },
@@ -981,8 +982,8 @@ pub const CopyFileWindows = struct {
         if (rc.errno()) |errno| {
             this.throw(.{
                 // #6336
-                .errno = if (errno == @intFromEnum(bun.C.SystemErrno.EPERM))
-                    @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.ENOENT)))
+                .errno = if (errno == @intFromEnum(bun.sys.SystemErrno.EPERM))
+                    @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.ENOENT)))
                 else
                     errno,
                 .syscall = .copyfile,
@@ -1062,7 +1063,7 @@ pub const CopyFileWindows = struct {
         // TODO: optimize this
         @branchHint(.cold);
 
-        var node_fs: JSC.Node.NodeFS = .{};
+        var node_fs: JSC.Node.fs.NodeFS = .{};
         _ = node_fs.truncate(
             .{
                 .path = this.destination_file_store.data.file.pathlike,
@@ -1089,7 +1090,7 @@ pub const CopyFileWindows = struct {
         var destination = &this.destination_file_store.data.file;
         if (destination.pathlike != .path) {
             this.throw(.{
-                .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EINVAL))),
+                .errno = @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.EINVAL))),
                 .syscall = .mkdir,
             });
             return;
@@ -1132,12 +1133,12 @@ pub const IOWhich = enum {
 };
 
 const unsupported_directory_error = SystemError{
-    .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EISDIR))),
+    .errno = @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.EISDIR))),
     .message = bun.String.static("That doesn't work on folders"),
     .syscall = bun.String.static("fstat"),
 };
 const unsupported_non_regular_file_error = SystemError{
-    .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.ENOTSUP))),
+    .errno = @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.ENOTSUP))),
     .message = bun.String.static("Non-regular files aren't supported yet"),
     .syscall = bun.String.static("fstat"),
 };

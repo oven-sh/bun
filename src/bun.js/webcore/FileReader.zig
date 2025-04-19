@@ -42,7 +42,7 @@ pub const Lazy = union(enum) {
     };
 
     pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
-    pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
+    pub fn openFileBlob(file: *Blob.Store.File) JSC.Maybe(OpenedFileBlob) {
         var this = OpenedFileBlob{ .fd = bun.invalid_fd };
         var file_buf: bun.PathBuffer = undefined;
         var is_nonblocking = false;
@@ -163,7 +163,7 @@ pub fn setup(
     this.event_loop = this.parent().globalThis.bunVM().eventLoop();
 }
 
-pub fn onStart(this: *FileReader) streams.Result {
+pub fn onStart(this: *FileReader) streams.Start {
     this.reader.setParent(this);
     const was_lazy = this.lazy != .none;
     var pollable = false;

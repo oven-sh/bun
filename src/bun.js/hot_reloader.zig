@@ -256,7 +256,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             _: *@This(),
             err: bun.sys.Error,
         ) void {
-            Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
+            Output.err(@as(bun.sys.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
             if (bun.Environment.isDebug) {
                 @panic("Watcher crash");
             }
@@ -488,4 +488,4 @@ const MappingList = SourceMap.Mapping.List;
 const SourceProviderMap = SourceMap.SourceProviderMap;
 const uv = bun.windows.libuv;
 const uws = bun.uws;
-const Fs = bun.fs.FileSystem;
+const Fs = bun.fs;

@@ -224,7 +224,7 @@ pub fn create(
     return this;
 }
 
-pub fn setup(this: *FileSink, options: *const streams.Start.FileSinkOptions) JSC.Maybe(void) {
+pub fn setup(this: *FileSink, options: *const FileSink.Options) JSC.Maybe(void) {
     // TODO: this should be concurrent.
     var isatty = false;
     var is_nonblocking = false;

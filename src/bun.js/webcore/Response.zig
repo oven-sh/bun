@@ -122,7 +122,7 @@ pub fn redirectLocation(this: *const Response) ?[]const u8 {
     return this.header(.Location);
 }
 
-pub fn header(this: *const Response, name: JSC.FetchHeaders.HTTPHeaderName) ?[]const u8 {
+pub fn header(this: *const Response, name: bun.webcore.FetchHeaders.HTTPHeaderName) ?[]const u8 {
     return if ((this.init.headers orelse return null).fastGet(name)) |str|
         str.slice()
     else
@@ -760,10 +760,10 @@ const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 const Mutex = bun.Mutex;
 
-const InlineBlob = JSC.WebCore.InlineBlob;
+const InlineBlob = JSC.WebCore.Blob.Inline;
 const AnyBlob = JSC.WebCore.Blob.Any;
-const InternalBlob = JSC.WebCore.InternalBlob;
-const BodyMixin = JSC.WebCore.BodyMixin;
+const InternalBlob = JSC.WebCore.Blob.Internal;
+const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;

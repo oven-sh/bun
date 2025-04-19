@@ -11,7 +11,7 @@ const Output = bun.Output;
 const S3Client = @import("./S3Client.zig");
 const S3 = bun.S3;
 const S3Stat = @import("./S3Stat.zig").S3Stat;
-pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
+pub fn writeFormat(s3: *Blob.Store.S3, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
     // detect virtual host style bucket name

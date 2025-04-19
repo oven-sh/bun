@@ -681,14 +681,14 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected Request object", .{});
                         };
                     },
-                    jsc.WebCore.JSValue => {
+                    jsc.JSValue => {
                         const val = eater(&iter) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("Missing argument", .{});
                         };
                         args[i] = val;
                     },
-                    ?jsc.WebCore.JSValue => {
+                    ?jsc.JSValue => {
                         args[i] = eater(&iter);
                     },
                     else => @compileError(std.fmt.comptimePrint("Unexpected Type " ++ @typeName(ArgType) ++ " at argument {d} in {s}#{s}", .{ i, @typeName(Container), name })),

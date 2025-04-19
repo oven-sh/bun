@@ -9,7 +9,9 @@ const JSError = bun.JSError;
 extern const JSC__JSObject__maxInlineCapacity: c_uint;
 
 pub const JSObject = opaque {
-    pub const maxInlineCapacity = JSC__JSObject__maxInlineCapacity;
+    pub inline fn maxInlineCapacity() c_uint {
+        return JSC__JSObject__maxInlineCapacity;
+    }
 
     extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
     extern fn JSC__JSObject__putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, len: usize) void;

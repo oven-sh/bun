@@ -64,8 +64,8 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
-    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.Lifetime) JSC.JSValue {
-        return JSC.toJS(this, @TypeOf(value), value, lifetime);
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.JSValue.FromAnyLifetime) JSC.JSValue {
+        return .fromAny(this, @TypeOf(value), value, lifetime);
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."

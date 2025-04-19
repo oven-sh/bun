@@ -112,7 +112,7 @@ pub fn WorkTask(comptime Context: type) type {
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
-                .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
+                .async_task_tracker = JSC.Debugger.AsyncTaskTracker.init(vm),
             });
             this.ref.ref(this.event_loop.virtual_machine);
 
@@ -2128,7 +2128,7 @@ pub const MiniEventLoop = struct {
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
-                    .file = JSC.WebCore.Blob.FileStore{
+                    .file = .{
                         .pathlike = .{
                             .fd = fd,
                         },
@@ -2159,7 +2159,7 @@ pub const MiniEventLoop = struct {
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
-                    .file = JSC.WebCore.Blob.FileStore{
+                    .file = .{
                         .pathlike = .{
                             .fd = fd,
                         },

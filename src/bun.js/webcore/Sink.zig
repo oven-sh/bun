@@ -5,6 +5,8 @@ vtable: VTable,
 status: Status = Status.closed,
 used: bool = false,
 
+pub const ArrayBufferSink = @import("ArrayBufferSink.zig");
+
 pub const pending = Sink{
     .ptr = @as(*anyopaque, @ptrFromInt(0xaaaaaaaa)),
     .vtable = undefined,
@@ -325,7 +327,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             if (this.sink.signal.isDead())
                 return;
             this.sink.signal.clear();
-            const value = @as(JSValue, @enumFromInt(@as(JSC.JSValueReprInt, @bitCast(@intFromPtr(ptr)))));
+            const value = @as(JSValue, @enumFromInt(@as(JSC.JSValue.backing_int, @bitCast(@intFromPtr(ptr)))));
             value.unprotect();
             detachPtr(value);
         }
@@ -434,11 +436,10 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const args_list = callframe.arguments_old(4);
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
-                const err = JSC.toTypeError(
+                const err = globalThis.toTypeError(
                     if (args.len == 0) .MISSING_ARGS else .INVALID_ARG_TYPE,
                     "writeUTF8() expects a string",
                     .{},
-                    globalThis,
                 );
                 return globalThis.throwValue(err);
             }

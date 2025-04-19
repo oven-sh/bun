@@ -7,6 +7,7 @@
 // TODO: Split and organize this file. It is likely worth moving many functions
 // into methods on `bun.FD`, and keeping this namespace to just overall stuff
 // like `Error`, `Maybe`, `Tag`, and so on.
+const sys = @This(); // to avoid ambiguous references.
 const platform_defs = switch (Environment.os) {
     .windows => @import("errno/windows_errno.zig"),
     .linux => @import("errno/linux_errno.zig"),
@@ -56,12 +57,11 @@ const Environment = bun.Environment;
 const JSC = bun.JSC;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathString = bun.PathString;
-const Syscall = @This();
 const SystemError = JSC.SystemError;
 
 const linux = syscall;
 
-pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
+pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;
 
 pub const F_OK = 0;
 pub const X_OK = 1;
@@ -343,7 +343,7 @@ pub const Error = struct {
     fd: bun.FileDescriptor = bun.invalid_fd,
     from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
     path: []const u8 = "",
-    syscall: Syscall.Tag = Syscall.Tag.TODO,
+    syscall: sys.Tag = sys.Tag.TODO,
     dest: []const u8 = "",
 
     pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
@@ -353,14 +353,14 @@ pub const Error = struct {
         return copy;
     }
 
-    pub fn fromCode(errno: E, syscall_tag: Syscall.Tag) Error {
+    pub fn fromCode(errno: E, syscall_tag: sys.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(@intFromEnum(errno))),
             .syscall = syscall_tag,
         };
     }
 
-    pub fn fromCodeInt(errno: anytype, syscall_tag: Syscall.Tag) Error {
+    pub fn fromCodeInt(errno: anytype, syscall_tag: sys.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
             .syscall = syscall_tag,
@@ -416,7 +416,7 @@ pub const Error = struct {
         };
     }
 
-    pub inline fn withPathAndSyscall(this: Error, path: anytype, syscall_: Syscall.Tag) Error {
+    pub inline fn withPathAndSyscall(this: Error, path: anytype, syscall_: sys.Tag) Error {
         if (std.meta.Child(@TypeOf(path)) == u16) {
             @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
         }
@@ -612,7 +612,7 @@ pub const Error = struct {
 
     pub inline fn todo() Error {
         if (Environment.isDebug) {
-            @panic("bun.sys.Error.todo() was called");
+            @panic("Error.todo() was called");
         }
         return Error{ .errno = todo_errno, .syscall = .TODO };
     }
@@ -1730,7 +1730,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         if (comptime Environment.allow_assert)
             log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
-        return switch (Syscall.getErrno(rc)) {
+        return switch (sys.getErrno(rc)) {
             .SUCCESS => .{ .result = .fromNative(@intCast(rc)) },
             .INTR => continue,
             else => |err| {
@@ -1896,7 +1896,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 }
                 const errno = (SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
                 return .{
-                    .err = Syscall.Error{
+                    .err = sys.Error{
                         .errno = @intFromEnum(errno),
                         .syscall = .write,
                         .fd = fd,
@@ -2165,7 +2165,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = kernel32.ReadFile(fd.native(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
             if (rc == windows.FALSE) {
                 const ret: Maybe(usize) = .{
-                    .err = Syscall.Error{
+                    .err = sys.Error{
                         .errno = @intFromEnum(bun.windows.getLastErrno()),
                         .syscall = .read,
                         .fd = fd,
@@ -2387,7 +2387,7 @@ pub fn renameatConcurrently(
         .err => |e| {
             if (opts.move_fallback and e.getErrno() == E.XDEV) {
                 bun.Output.debugWarn("renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()", .{});
-                return bun.C.moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
+                return moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
             }
             return .{ .err = e };
         },
@@ -2406,7 +2406,7 @@ pub fn renameatConcurrentlyWithoutFallback(
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
             // just rename it. We don't need to delete anything.
-            var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+            var err = switch (renameat2(from_dir_fd, from, to_dir_fd, to, .{
                 .exclude = true,
             })) {
                 // if ENOENT don't retry
@@ -2423,7 +2423,7 @@ pub fn renameatConcurrentlyWithoutFallback(
                     else => false,
                 }) {
                     did_atomically_replace = true;
-                    switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+                    switch (renameat2(from_dir_fd, from, to_dir_fd, to, .{
                         .exchange = true,
                     })) {
                         .err => {},
@@ -2441,7 +2441,7 @@ pub fn renameatConcurrentlyWithoutFallback(
         } else {
             std.fs.deleteTreeAbsolute(to) catch {};
         }
-        switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
+        switch (renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };
             },
@@ -2460,7 +2460,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
     while (true) {
         const rc = switch (comptime Environment.os) {
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
-            .mac => bun.C.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             else => @compileError("renameat2() is not implemented on this platform"),
         };
 
@@ -2791,7 +2791,7 @@ pub fn mmap(
     const fail = std.c.MAP_FAILED;
     if (rc == fail) {
         return .initErr(.{
-            .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))),
+            .errno = @as(sys.Error.Int, @truncate(@intFromEnum(getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))),
             .syscall = .mmap,
         });
     }
@@ -2905,7 +2905,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
             break;
         }
 
-        const err: ?Syscall.Error = err: {
+        const err: ?sys.Error = err: {
 
             // Set O_CLOEXEC first.
             inline for (0..2) |i| {
@@ -3010,7 +3010,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
             fn once() c_int {
                 const strings = bun.strings;
                 const default_out_size = 512 * 1024;
-                const pipe_max_size_fd = switch (bun.sys.open("/proc/sys/fs/pipe-max-size", bun.O.RDONLY, 0)) {
+                const pipe_max_size_fd = switch (open("/proc/sys/fs/pipe-max-size", bun.O.RDONLY, 0)) {
                     .result => |fd2| fd2,
                     .err => |err| {
                         log("Failed to open /proc/sys/fs/pipe-max-size: {d}\n", .{err.errno});
@@ -3019,7 +3019,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
                 };
                 defer pipe_max_size_fd.close();
                 var max_pipe_size_buf: [128]u8 = undefined;
-                const max_pipe_size = switch (bun.sys.read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
+                const max_pipe_size = switch (read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
                     .result => |bytes_read| std.fmt.parseInt(i64, strings.trim(max_pipe_size_buf[0..bytes_read], "\n"), 10) catch |err| {
                         log("Failed to parse /proc/sys/fs/pipe-max-size: {any}\n", .{@errorName(err)});
                         return default_out_size;
@@ -3188,7 +3188,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
     if (comptime Environment.isLinux) {
         // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
-        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(bun.C.getErrno(rc)) });
+        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
             return JSC.Maybe(bool){ .result = true };
         }
@@ -3198,7 +3198,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
-    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(bun.C.getErrno(rc)) });
+    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
         return JSC.Maybe(bool){ .result = true };
     }
@@ -3232,7 +3232,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Nod
             return Maybe(void).success;
         }
 
-        switch (bun.C.getErrno(rc)) {
+        switch (getErrno(rc)) {
             .INTR => continue,
             else => return Maybe(void).errnoSysFd(rc, .futimens, fd).?,
         }
@@ -3263,7 +3263,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC
             return Maybe(void).success;
         }
 
-        switch (bun.C.getErrno(rc)) {
+        switch (getErrno(rc)) {
             .INTR => continue,
             else => return Maybe(void).errnoSysP(rc, .utimensat, path).?,
         }
@@ -3273,7 +3273,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC
 }
 
 pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
-    return switch (bun.sys.fcntl(
+    return switch (fcntl(
         fd,
         std.posix.F.GETFL,
         0,
@@ -3300,7 +3300,7 @@ pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) 
     const new_flags: i32 = if (nonblocking) current_flags | @as(i32, bun.O.NONBLOCK) else current_flags & ~@as(i32, bun.O.NONBLOCK);
 
     if (new_flags != current_flags) {
-        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, @intCast(new_flags)))) {
+        switch (fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, @intCast(new_flags)))) {
             .err => |err| return .{ .err = err },
             .result => {},
         }
@@ -3366,7 +3366,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             return .{ .result = .file };
         } else {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
-            return .{ .err = bun.sys.Error.fromCode(.UNKNOWN, .access) };
+            return .{ .err = Error.fromCode(.UNKNOWN, .access) };
         };
     }
 
@@ -3559,7 +3559,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     }
 
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
-    const out = switch (fcntl(fd, @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0))) {
+    const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
@@ -3905,7 +3905,7 @@ pub const File = struct {
         // On Windows, close the file before moving it.
         if (Environment.isWindows) this.close();
         const cwd = bun.FD.cwd();
-        try bun.C.moveFileZWithHandle(this.handle, cwd, src, cwd, dest);
+        try bun.sys.moveFileZWithHandle(this.handle, cwd, src, cwd, dest);
     }
 
     fn stdIoRead(this: File, buf: []u8) ReadError!usize {
@@ -4023,9 +4023,9 @@ pub const File = struct {
         var read_amount: usize = 0;
         while (read_amount < buf.len) {
             switch (if (comptime Environment.isPosix)
-                bun.sys.pread(this.handle, buf[read_amount..], @intCast(read_amount))
+                pread(this.handle, buf[read_amount..], @intCast(read_amount))
             else
-                bun.sys.read(this.handle, buf[read_amount..])) {
+                sys.read(this.handle, buf[read_amount..])) {
                 .err => |err| {
                     return .{ .err = err };
                 },
@@ -4063,9 +4063,9 @@ pub const File = struct {
             }
 
             switch (if (comptime Environment.isPosix)
-                bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)
+                pread(this.handle, list.unusedCapacitySlice(), total)
             else
-                bun.sys.read(this.handle, list.unusedCapacitySlice())) {
+                sys.read(this.handle, list.unusedCapacitySlice())) {
                 .err => |err| {
                     return .{ .err = err };
                 },
@@ -4134,10 +4134,10 @@ pub const File = struct {
             }
 
             if (comptime ElementType == u8 and std.meta.sentinel(@TypeOf(path)) == null) {
-                break :brk Syscall.openatA(from(dir_fd).handle, path, O.RDONLY, 0);
+                break :brk sys.openatA(from(dir_fd).handle, path, O.RDONLY, 0);
             }
 
-            break :brk Syscall.openat(from(dir_fd).handle, path, O.RDONLY, 0);
+            break :brk sys.openat(from(dir_fd).handle, path, O.RDONLY, 0);
         };
 
         const this = switch (rc) {
@@ -4579,7 +4579,7 @@ const Stat = std.fs.File.Stat;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
-        @compileError("Not implemented yet, consider using bun.sys.lstat()");
+        @compileError("Not implemented yet, consider using lstat()");
     }
 
     var st = std.mem.zeroes(libc_stat);
@@ -4631,12 +4631,12 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
 pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    switch (bun.sys.renameatConcurrentlyWithoutFallback(from_dir, filename, to_dir, destination)) {
+    switch (renameatConcurrentlyWithoutFallback(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
-                _ = bun.sys.rmdirat(to_dir, destination.ptr);
-                try bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap();
+                _ = rmdirat(to_dir, destination.ptr);
+                try renameat(from_dir, filename, to_dir, destination).unwrap();
                 return;
             }
 
@@ -4651,19 +4651,19 @@ pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: b
 }
 
 pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (renameat(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
-                _ = bun.sys.rmdirat(to_dir, destination.ptr);
+                _ = rmdirat(to_dir, destination.ptr);
 
-                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
+                try (renameat(from_dir, filename, to_dir, destination).unwrap());
                 return;
             }
 
             if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
-                _ = bun.sys.unlinkat(from_dir, filename);
+                _ = unlinkat(from_dir, filename);
             }
 
             return bun.errnoToZigErr(err.errno);
@@ -4679,7 +4679,7 @@ pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_di
 }
 
 pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {
-    const in_handle = switch (bun.sys.openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644)) {
+    const in_handle = switch (openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644)) {
         .result => |f| f,
         .err => |e| return .{ .err = e },
     };
@@ -4693,29 +4693,29 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         var buf0: bun.WPathBuffer = undefined;
         var buf1: bun.WPathBuffer = undefined;
 
-        const dest = switch (bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0, .{})) {
+        const dest = switch (normalizePathWindows(u8, to_dir, destination, &buf0, .{})) {
             .result => |x| x,
             .err => |e| return .{ .err = e },
         };
         const src_len = bun.windows.GetFinalPathNameByHandleW(in_handle.cast(), &buf1, buf1.len, 0);
         if (src_len == 0) {
-            return Maybe(void).errno(bun.C.E.BUSY, .GetFinalPathNameByHandle);
+            return Maybe(void).errno(bun.sys.E.BUSY, .GetFinalPathNameByHandle);
         } else if (src_len >= buf1.len) {
-            return Maybe(void).errno(bun.C.E.NAMETOOLONG, .GetFinalPathNameByHandle);
+            return Maybe(void).errno(bun.sys.E.NAMETOOLONG, .GetFinalPathNameByHandle);
         }
         const src = buf1[0..src_len :0];
         return bun.copyFile(src, dest);
     } else {
-        const stat_ = switch (bun.sys.fstat(in_handle)) {
+        const stat_ = switch (fstat(in_handle)) {
             .result => |s| s,
             .err => |e| return .{ .err = e },
         };
 
         // Attempt to delete incase it already existed.
         // This fixes ETXTBUSY on Linux
-        _ = bun.sys.unlinkat(to_dir, destination);
+        _ = unlinkat(to_dir, destination);
 
-        const out_handle = switch (bun.sys.openat(
+        const out_handle = switch (openat(
             to_dir,
             destination,
             bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
@@ -4736,8 +4736,8 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         }
 
         if (comptime Environment.isPosix) {
-            _ = fchmod(out_handle.cast(), stat_.mode);
-            _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
+            _ = bun.c.fchmod(out_handle.cast(), stat_.mode);
+            _ = bun.c.fchown(out_handle.cast(), stat_.uid, stat_.gid);
         }
 
         return Maybe(void).success;
@@ -4826,4 +4826,151 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         },
         else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
     }
+}
+
+pub const preallocate_length = switch (bun.Environment.os) {
+    .linux => 2048 * 1024,
+    else => {},
+};
+pub const preallocate_supported = @TypeOf(preallocate_length) != void;
+
+// https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
+//  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64
+//
+// hyperfine "./micro 1024 temp" "./micro 1024 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 1024 temp
+//   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.6 ms, System: 0.1 ms]
+//   Range (min … max):     1.2 ms …   2.3 ms    67 runs
+// Benchmark 2: ./micro 1024 temp --preallocate
+//   Time (mean ± σ):       1.8 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+//   Range (min … max):     1.4 ms …   2.2 ms    121 runs
+// Summary
+//   './micro 1024 temp --preallocate' ran
+//     1.01 ± 0.13 times faster than './micro 1024 temp'
+//
+// hyperfine "./micro 65432 temp" "./micro 65432 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 65432 temp
+//   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.7 ms, System: 0.1 ms]
+//   Range (min … max):     1.2 ms …   2.3 ms    94 runs
+// Benchmark 2: ./micro 65432 temp --preallocate
+//   Time (mean ± σ):       2.0 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+//   Range (min … max):     1.7 ms …   2.3 ms    108 runs
+// Summary
+//   './micro 65432 temp' ran
+//     1.08 ± 0.12 times faster than './micro 65432 temp --preallocate'
+//
+// hyperfine "./micro 654320 temp" "./micro 654320 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 654320 temp
+//   Time (mean ± σ):       2.3 ms ±   0.2 ms    [User: 0.9 ms, System: 0.3 ms]
+//   Range (min … max):     1.9 ms …   2.9 ms    96 runs
+//
+// Benchmark 2: ./micro 654320 temp --preallocate
+//   Time (mean ± σ):       2.2 ms ±   0.1 ms    [User: 0.9 ms, System: 0.2 ms]
+//   Range (min … max):     1.9 ms …   2.7 ms    115 runs
+//
+//   Warning: Command took less than 5 ms to complete. Results might be inaccurate.
+//
+// Summary
+//   './micro 654320 temp --preallocate' ran
+//     1.04 ± 0.10 times faster than './micro 654320 temp'
+//
+// hyperfine "./micro 6543200 temp" "./micro 6543200 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 6543200 temp
+//   Time (mean ± σ):       6.3 ms ±   0.4 ms    [User: 0.4 ms, System: 4.9 ms]
+//   Range (min … max):     5.8 ms …   8.6 ms    84 runs
+//
+// Benchmark 2: ./micro 6543200 temp --preallocate
+//   Time (mean ± σ):       5.5 ms ±   0.3 ms    [User: 0.5 ms, System: 3.9 ms]
+//   Range (min … max):     5.1 ms …   7.1 ms    93 runs
+//
+// Summary
+//   './micro 6543200 temp --preallocate' ran
+//     1.14 ± 0.09 times faster than './micro 6543200 temp'
+//
+// hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 65432000 temp
+//   Time (mean ± σ):      52.9 ms ±   0.4 ms    [User: 3.1 ms, System: 48.7 ms]
+//   Range (min … max):    52.4 ms …  54.4 ms    36 runs
+//
+// Benchmark 2: ./micro 65432000 temp --preallocate
+//   Time (mean ± σ):      44.6 ms ±   0.8 ms    [User: 2.3 ms, System: 41.2 ms]
+//   Range (min … max):    44.0 ms …  47.3 ms    37 runs
+//
+// Summary
+//   './micro 65432000 temp --preallocate' ran
+//     1.19 ± 0.02 times faster than './micro 65432000 temp'
+//
+// hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp"
+// Benchmark 1: ./micro 65432000 temp
+//   Time (mean ± σ):      51.7 ms ±   0.9 ms    [User: 2.1 ms, System: 49.6 ms]
+//   Range (min … max):    50.7 ms …  54.1 ms    49 runs
+//
+// Benchmark 2: ./micro 65432000 temp --preallocate
+//   Time (mean ± σ):      43.8 ms ±   2.3 ms    [User: 2.2 ms, System: 41.4 ms]
+//   Range (min … max):    42.7 ms …  54.7 ms    56 runs
+//
+// Summary
+//   './micro 65432000 temp --preallocate' ran
+//     1.18 ± 0.06 times faster than './micro 65432000 temp'
+//
+pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.posix.off_t) anyerror!void {
+    switch (Environment.os) {
+        .linux => {
+            _ = std.os.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
+        },
+        .mac => {
+            // benchmarking this did nothing on macOS
+            // i verified it wasn't returning -1
+
+            // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
+            // var fstore = zeroes(fstore_t);
+            // fstore.fst_flags = F_ALLOCATECONTIG;
+            // fstore.fst_posmode = F_PEOFPOSMODE;
+            // fstore.fst_offset = 0;
+            // fstore.fst_length = len + offset;
+            // var rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
+        },
+        else => {}, // not tested,
+    }
+}
+
+pub fn dlopen(filename: [:0]const u8, flags: std.c.RTLD) ?*anyopaque {
+    if (comptime Environment.isWindows) {
+        return bun.windows.LoadLibraryA(filename);
+    }
+
+    return std.c.dlopen(filename, flags);
+}
+
+pub fn dlsymImpl(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
+    if (comptime Environment.isWindows) {
+        return bun.windows.GetProcAddressA(handle, name);
+    } else if (comptime Environment.isMac or Environment.isLinux) {
+        return std.c.dlsym(handle, name.ptr);
+    }
+
+    @compileError("dlsym unimplemented for this target");
+}
+
+pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
+    if (comptime @typeInfo(Type) != .pointer) {
+        @compileError("dlsym must be a pointer type (e.g. ?const *fn()). Received " ++ @typeName(Type) ++ ".");
+    }
+
+    const Wrapper = struct {
+        pub var function: Type = undefined;
+        var failed = false;
+        pub var once = std.once(loadOnce);
+        fn loadOnce() void {
+            function = bun.cast(Type, dlsymImpl(@call(bun.callmod_inline, handle_getter, .{}), name) orelse {
+                failed = true;
+                return;
+            });
+        }
+    };
+    Wrapper.once.call();
+    if (Wrapper.failed) {
+        return null;
+    }
+    return Wrapper.function;
 }

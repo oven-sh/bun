@@ -35,7 +35,7 @@ const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const Blob = bun.webcore.Blob;
-const FetchHeaders = bun.jsc.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
@@ -178,7 +178,7 @@ pub const Sendfile = struct {
                 std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
-            const errcode = bun.C.getErrno(val);
+            const errcode = bun.sys.getErrno(val);
 
             this.remain -|= @as(u64, @intCast(this.offset -| begin));
 
@@ -192,7 +192,7 @@ pub const Sendfile = struct {
         } else if (Environment.isPosix) {
             var sbytes: std.posix.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
-            const errcode = bun.C.getErrno(std.c.sendfile(
+            const errcode = bun.sys.getErrno(std.c.sendfile(
                 this.fd.cast(),
                 socket.fd().cast(),
                 signed_offset,

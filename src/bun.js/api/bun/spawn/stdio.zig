@@ -47,7 +47,7 @@ pub const Stdio = union(enum) {
         stdin_used_as_out,
         out_used_as_stdin,
         blob_used_as_out,
-        uv_pipe: bun.C.E,
+        uv_pipe: bun.sys.E,
 
         pub fn toStr(this: *const @This()) []const u8 {
             return switch (this.*) {

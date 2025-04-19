@@ -3602,3 +3602,12 @@ pub const macho = @import("./macho.zig");
 pub const valkey = @import("./valkey/index.zig");
 
 pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
+
+pub fn move(dest: []u8, src: []const u8) void {
+    if (comptime Environment.allow_assert) {
+        if (src.len != dest.len) {
+            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
+        }
+    }
+    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
+}

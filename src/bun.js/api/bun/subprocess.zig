@@ -549,7 +549,7 @@ const Readable = union(enum) {
                     return globalThis.throwOutOfMemory();
                 };
 
-                return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.ArrayBuffer.Marked.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSValue.jsUndefined();
@@ -626,7 +626,7 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) JSC.API.Bun.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
     this.setEventLoopTimerRefd(false);
     if (this.event_loop_timer.state == .CANCELLED) return .disarm;
     if (this.hasExited()) {
@@ -1189,7 +1189,7 @@ pub const PipeReader = struct {
         switch (this.state) {
             .done => |bytes| {
                 defer this.state = .{ .done = &.{} };
-                return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.ArrayBuffer.Marked.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSC.JSValue.undefined;
@@ -1477,7 +1477,7 @@ const Writable = union(enum) {
                     }
                     return pipe.toJSWithDestructor(
                         globalThis,
-                        JSC.WebCore.sink_destructor.Ptr.init(subprocess),
+                        JSC.WebCore.Sink.DestructorPtr.init(subprocess),
                     );
                 }
             },
@@ -2433,7 +2433,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdin == .pipe) {
-        subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+        subprocess.stdin.pipe.signal = JSC.WebCore.streams.Signal.init(&subprocess.stdin);
     }
 
     const out = if (comptime !is_sync)

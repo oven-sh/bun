@@ -415,7 +415,7 @@ pub const WriteFileWindows = struct {
             &this.io_request,
             &(std.posix.toPosixPath(path) catch {
                 this.throw(bun.sys.Error{
-                    .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
+                    .errno = @intFromEnum(bun.sys.E.NAMETOOLONG),
                     .syscall = .open,
                 });
                 return;

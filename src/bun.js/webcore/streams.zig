@@ -124,7 +124,7 @@ pub const Start = union(Tag) {
                     if (!path.isString()) {
                         return .{
                             .err = Syscall.Error{
-                                .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                                .errno = @intFromEnum(bun.sys.SystemErrno.EINVAL),
                                 .syscall = .write,
                             },
                         };
@@ -142,7 +142,7 @@ pub const Start = union(Tag) {
                     if (!fd_value.isAnyInt()) {
                         return .{
                             .err = Syscall.Error{
-                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
                                 .syscall = .write,
                             },
                         };
@@ -157,7 +157,7 @@ pub const Start = union(Tag) {
                         };
                     } else {
                         return .{ .err = Syscall.Error{
-                            .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                            .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
                             .syscall = .write,
                         } };
                     }
@@ -1748,7 +1748,7 @@ const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = WebCore.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = bun.Output;
@@ -1767,7 +1767,7 @@ const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const E = bun.C.E;
+const E = bun.sys.E;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;

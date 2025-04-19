@@ -102,7 +102,7 @@ pub const PatchFile = struct {
                     const filedir = bun.path.dirname(filepath.slice(), .auto);
                     const mode = part.file_creation.mode;
 
-                    var nodefs = bun.JSC.Node.NodeFS{};
+                    var nodefs = bun.api.node.fs.NodeFS{};
                     if (filedir.len > 0) {
                         if (nodefs.mkdirRecursive(.{
                             .path = .{ .string = bun.PathString.init(filedir) },

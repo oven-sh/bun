@@ -2399,7 +2399,7 @@ pub const PostgresSQLConnection = struct {
                 };
 
                 var stack_buf: [70]DataCell = undefined;
-                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSC__JSObject__maxInlineCapacity)];
+                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSObject.maxInlineCapacity())];
                 var free_cells = false;
                 defer {
                     for (cells[0..putter.count]) |*cell| {
@@ -2408,7 +2408,7 @@ pub const PostgresSQLConnection = struct {
                     if (free_cells) bun.default_allocator.free(cells);
                 }
 
-                if (statement.fields.len >= JSC.JSC__JSObject__maxInlineCapacity) {
+                if (statement.fields.len >= JSC.JSObject.maxInlineCapacity()) {
                     cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
@@ -3006,7 +3006,7 @@ pub const PostgresSQLStatement = struct {
                 nonDuplicatedCount -= 1;
             }
         }
-        const ids = if (nonDuplicatedCount <= JSC.JSC__JSObject__maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+        const ids = if (nonDuplicatedCount <= JSC.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
 
         var i: usize = 0;
         for (this.fields) |*field| {
@@ -3030,7 +3030,7 @@ pub const PostgresSQLStatement = struct {
             i += 1;
         }
 
-        if (nonDuplicatedCount > JSC.JSC__JSObject__maxInlineCapacity) {
+        if (nonDuplicatedCount > JSC.JSObject.maxInlineCapacity()) {
             this.cached_structure.set(globalObject, null, ids);
         } else {
             this.cached_structure.set(globalObject, JSC.JSObject.createStructure(

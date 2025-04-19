@@ -1351,7 +1351,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             }
 
             var pipe = this.source orelse {
-                const err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe);
+                const err = bun.sys.Error.fromCode(bun.sys.E.PIPE, .pipe);
                 this.last_write_result = .{ .err = err };
                 onError(this.parent, err);
                 this.closeWithoutReporting();

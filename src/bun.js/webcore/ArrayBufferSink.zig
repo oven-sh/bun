@@ -1,3 +1,6 @@
+const ArrayBufferSink = @This();
+pub const JSSink = webcore.Sink.JSSink(@This(), "ArrayBufferSink");
+
 bytes: bun.ByteList,
 allocator: std.mem.Allocator,
 done: bool = false,
@@ -11,7 +14,7 @@ pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
     this.signal = signal;
 }
 
-pub fn start(this: *ArrayBufferSink, stream_start: StreamStart) JSC.Maybe(void) {
+pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) JSC.Maybe(void) {
     this.bytes.len = 0;
     var list = this.bytes.listManaged(this.allocator);
     list.clearRetainingCapacity();
@@ -84,7 +87,7 @@ pub fn construct(
     };
 }
 
-pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.next) |*next| {
         return next.writeBytes(data);
     }
@@ -96,7 +99,7 @@ pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
     return .{ .owned = len };
 }
 pub const writeBytes = write;
-pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.next) |*next| {
         return next.writeLatin1(data);
     }
@@ -106,7 +109,7 @@ pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
     this.signal.ready(null, null);
     return .{ .owned = len };
 }
-pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.next) |*next| {
         return next.writeUTF16(data);
     }
@@ -177,4 +180,14 @@ pub fn memoryCost(this: *const ArrayBufferSink) usize {
     return this.bytes.cap;
 }
 
-pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
+const std = @import("std");
+const bun = @import("bun");
+const JSC = bun.JSC;
+const Syscall = bun.sys;
+const Sink = webcore.Sink;
+const webcore = bun.webcore;
+const streams = webcore.streams;
+const Signal = webcore.streams.Signal;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ArrayBuffer = JSC.ArrayBuffer;

@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <string.h>
+#include <sys/clonefile.h>
 #endif
 
 #if DARWIN
@@ -34,6 +35,8 @@
 #include <net/if.h>
 #include <sys/spawn.h>
 #include <mach/processor_info.h>
+#include <sys/stdio.h>
+#include <copyfile.h>
 #elif LINUX
 #include <sys/statfs.h>
 #include <sys/stat.h>

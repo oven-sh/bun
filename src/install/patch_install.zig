@@ -445,7 +445,7 @@ pub const PatchTask = struct {
 
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
-                if (e.getErrno() == bun.C.E.NOENT) {
+                if (e.getErrno() == .NOENT) {
                     const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
                     const args = .{
                         this.callback.calc_hash.patchfile_path,

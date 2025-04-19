@@ -372,7 +372,7 @@ pub const PosixSpawn = struct {
             });
 
         // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
-        // That is why bun.C.getErrno() is not used here, since that checks for -1.
+        // That is why bun.sys.getErrno() is not used here, since that checks for -1.
         if (rc == 0) {
             return Maybe(pid_t){ .result = pid };
         }

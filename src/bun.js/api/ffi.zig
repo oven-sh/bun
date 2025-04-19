@@ -815,11 +815,11 @@ pub const FFI = struct {
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
         if (!interface.isObject()) {
-            return JSC.toInvalidArguments("Expected object", .{}, globalThis);
+            return globalThis.toInvalidArguments("Expected object", .{});
         }
 
         if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable()) {
-            return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
+            return globalThis.toInvalidArguments("Expected callback function", .{});
         }
 
         const allocator = VirtualMachine.get().allocator;
@@ -904,7 +904,7 @@ pub const FFI = struct {
         const allocator = VirtualMachine.get().allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-            return JSC.toInvalidArguments("Expected an object", .{}, global);
+            return global.toInvalidArguments("Expected an object", .{});
         }
 
         var function: Function = .{ .allocator = allocator };
@@ -989,7 +989,7 @@ pub const FFI = struct {
     /// Creates an Exception object indicating that options object is invalid.
     /// The exception is not thrown on the VM.
     fn invalidOptionsArg(global: *JSGlobalObject) JSValue {
-        return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
+        return global.toInvalidArguments("Expected an options object with symbol names", .{});
     }
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object_value: JSC.JSValue) JSC.JSValue {
@@ -1022,7 +1022,7 @@ pub const FFI = struct {
         };
 
         if (name.len == 0) {
-            return JSC.toInvalidArguments("Invalid library name", .{}, global);
+            return global.toInvalidArguments("Invalid library name", .{});
         }
 
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
@@ -1035,7 +1035,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
-            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
+            return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
         var dylib: std.DynLib = brk: {
@@ -1071,7 +1071,7 @@ pub const FFI = struct {
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name }, global);
+                    const ret = global.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name });
                     for (symbols.values()) |*value| {
                         bun.default_allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(bun.default_allocator);
@@ -1085,11 +1085,11 @@ pub const FFI = struct {
             }
 
             function.compile(napi_env) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
+                const ret = global.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
                     name,
-                }, global);
+                });
                 for (symbols.values()) |*value| {
                     value.deinit(global);
                 }
@@ -1122,7 +1122,7 @@ pub const FFI = struct {
                         global,
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
-                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        bun.cast(*const JSC.JSHostFn, compiled.ptr),
                         false,
                         true,
                         function.symbol_from_dynamic_library,
@@ -1165,7 +1165,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
-            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
+            return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
         var obj = JSValue.createEmptyObject(global, symbols.count());
@@ -1178,7 +1178,7 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
 
             if (function.symbol_from_dynamic_library == null) {
-                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)}, global);
+                const ret = global.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)});
                 for (symbols.values()) |*value| {
                     allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
@@ -1188,10 +1188,10 @@ pub const FFI = struct {
             }
 
             function.compile(napi_env) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
+                const ret = global.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
-                }, global);
+                });
                 for (symbols.values()) |*value| {
                     value.deinit(global);
                 }
@@ -1225,7 +1225,7 @@ pub const FFI = struct {
                         global,
                         name,
                         @as(u32, @intCast(function.arg_types.items.len)),
-                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        bun.cast(*JSC.JSHostFn, compiled.ptr),
                         false,
                         true,
                         function.symbol_from_dynamic_library,

@@ -629,7 +629,7 @@ pub const TestScope = struct {
         const args = callframe.arguments_old(1);
         defer globalThis.bunVM().autoGarbageCollect();
 
-        if (JSC.getFunctionData(function)) |data| {
+        if (JSC.host_fn.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
             const expect_count = expect.active_test_expectation_counter.actual;
             const current_test = task.testScope();
@@ -638,7 +638,7 @@ pub const TestScope = struct {
             else
                 .{ .pass = expect_count };
 
-            JSC.setFunctionData(function, null);
+            JSC.host_fn.setFunctionData(function, null);
             if (args.len > 0) {
                 const err = args.ptr[0];
                 if (err.isEmptyOrUndefinedOrNull()) {
@@ -908,9 +908,9 @@ pub const DescribeScope = struct {
         const args = callframe.arguments_old(1);
         defer ctx.bunVM().autoGarbageCollect();
 
-        if (JSC.getFunctionData(function)) |data| {
+        if (JSC.host_fn.getFunctionData(function)) |data| {
             var scope = bun.cast(*DescribeScope, data);
-            JSC.setFunctionData(function, null);
+            JSC.host_fn.setFunctionData(function, null);
             if (args.len > 0) {
                 const err = args.ptr[0];
                 if (!err.isEmptyOrUndefinedOrNull()) {

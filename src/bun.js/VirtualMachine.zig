@@ -524,12 +524,12 @@ pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObjec
 
     if (this.is_handling_uncaught_exception) {
         this.runErrorHandler(err, null);
-        JSC.Process.exit(globalObject, 7);
+        bun.api.node.process.exit(globalObject, 7);
         @panic("Uncaught exception while handling uncaught exception");
     }
     if (this.exit_on_uncaught_exception) {
         this.runErrorHandler(err, null);
-        JSC.Process.exit(globalObject, 1);
+        bun.api.node.process.exit(globalObject, 1);
         @panic("made it past Bun__Process__exit");
     }
     this.is_handling_uncaught_exception = true;
@@ -599,10 +599,10 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
-pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
+pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
     return this.node_fs orelse brk: {
-        this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
-        this.node_fs.?.* = Node.NodeFS{
+        this.node_fs = bun.default_allocator.create(Node.fs.NodeFS) catch unreachable;
+        this.node_fs.?.* = Node.fs.NodeFS{
             // only used when standalone module graph is enabled
             .vm = if (this.standalone_module_graph != null) this else null,
         };
@@ -732,7 +732,7 @@ pub inline fn enqueueTask(this: *VirtualMachine, task: JSC.Task) void {
     this.eventLoop().enqueueTask(task);
 }
 
-pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: *JSC.BunTimer.ImmediateObject) void {
+pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: *bun.api.Timer.ImmediateObject) void {
     this.eventLoop().enqueueImmediateTask(task);
 }
 
@@ -817,7 +817,7 @@ fn getOriginTimestamp() u64 {
 pub inline fn isLoaded() bool {
     return VMHolder.vm != null;
 }
-const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
+const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
 pub fn initWithModuleGraph(
     opts: Options,
 ) !*VirtualMachine {
@@ -843,7 +843,7 @@ pub fn initWithModuleGraph(
         .transpiler = transpiler,
         .console = console,
         .log = log,
-        .timer = JSC.BunTimer.All.init(),
+        .timer = bun.api.Timer.All.init(),
         .origin = transpiler.options.origin,
         .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
         .source_mappings = undefined,
@@ -963,7 +963,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .console = console,
         .log = log,
 
-        .timer = JSC.BunTimer.All.init(),
+        .timer = bun.api.Timer.All.init(),
 
         .origin = transpiler.options.origin,
 
@@ -1120,7 +1120,7 @@ pub fn initWorker(
         .console = console,
         .log = log,
 
-        .timer = JSC.BunTimer.All.init(),
+        .timer = bun.api.Timer.All.init(),
         .origin = transpiler.options.origin,
 
         .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
@@ -1213,7 +1213,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .transpiler = transpiler,
         .console = console,
         .log = log,
-        .timer = JSC.BunTimer.All.init(),
+        .timer = bun.api.Timer.All.init(),
         .origin = transpiler.options.origin,
         .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
         .source_mappings = undefined,
@@ -1425,7 +1425,7 @@ fn _resolve(
         ret.result = null;
         ret.path = specifier;
         return;
-    } else if (JSC.HardcodedModule.Alias.get(specifier, .bun)) |result| {
+    } else if (JSC.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun)) |result| {
         ret.result = null;
         ret.path = result.path;
         return;
@@ -1596,7 +1596,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         }
     }
 
-    if (JSC.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
+    if (JSC.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
         res.* = ErrorableString.ok(
             if (is_user_require_resolve and hardcoded.node_builtin)
                 specifier
@@ -3565,5 +3565,5 @@ const options = bun.options;
 const webcore = bun.webcore;
 const Global = bun.Global;
 const DotEnv = bun.DotEnv;
-const HotReloader = JSC.hot_reloader;
+const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;

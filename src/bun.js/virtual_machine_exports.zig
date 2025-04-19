@@ -234,4 +234,4 @@ const JSC = bun.jsc;
 const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const PluginRunner = VirtualMachine.PluginRunner;
+const PluginRunner = bun.transpiler.PluginRunner;

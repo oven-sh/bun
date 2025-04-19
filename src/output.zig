@@ -1157,7 +1157,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
 
         // enums
         if (info == .@"enum") {
-            const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
+            const errno: bun.sys.SystemErrno = @enumFromInt(@intFromEnum(info));
             break :display_name .{ @tagName(errno), false };
         }
 

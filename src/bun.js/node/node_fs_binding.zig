@@ -7,17 +7,17 @@ const system = std.posix.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
 const FeatureFlags = bun.FeatureFlags;
-const Args = JSC.Node.NodeFS.Arguments;
+const Args = JSC.Node.fs.NodeFS.Arguments;
 const d = JSC.d;
 
-const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
+const NodeFSFunction = fn (this: *JSC.Node.fs.Binding, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);
 
-/// Returns bindings to call JSC.Node.NodeFS.<function>.
+/// Returns bindings to call JSC.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
 fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
-    const function = @field(JSC.Node.NodeFS, @tagName(function_name));
+    const function = @field(JSC.Node.fs.NodeFS, @tagName(function_name));
     const fn_info = @typeInfo(@TypeOf(function)).@"fn";
     if (fn_info.params.len != 3) {
         @compileError("Expected fn(NodeFS, Arguments) Return for NodeFS." ++ @tagName(function_name));
@@ -25,7 +25,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
     const Arguments = fn_info.params[1].type.?;
 
     return struct {
-        pub fn runSync(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn runSync(this: *Binding, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             defer slice.deinit();
 
@@ -46,7 +46,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
             };
         }
 
-        pub fn runAsync(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn runAsync(this: *Binding, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             slice.will_be_async = true;
             var deinit = false;
@@ -75,10 +75,10 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 }
             }
 
-            const Task = @field(JSC.Node.Async, @tagName(function_name));
+            const Task = @field(node.fs.Async, @tagName(function_name));
             switch (comptime function_name) {
                 .cp => return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena),
-                .readdir => if (args.recursive) return JSC.Node.Async.readdir_recursive.create(globalObject, args, globalObject.bunVM()),
+                .readdir => if (args.recursive) return node.fs.AsyncReaddirRecursiveTask.create(globalObject, args, globalObject.bunVM()),
                 else => {},
             }
             return Task.create(globalObject, this, args, globalObject.bunVM());
@@ -94,7 +94,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 }
 
 pub const Binding = struct {
-    node_fs: bun.api.node.fs.NodeFS = .{},
+    node_fs: node.fs.NodeFS = .{},
 
     pub const js = JSC.Codegen.JSNodeJSFS;
     pub const toJS = js.toJS;

@@ -163,7 +163,7 @@ pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: Mutab
     try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
 }
 
-fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
+pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
     this.lock();
     defer this.unlock();
 
@@ -297,4 +297,4 @@ const js_printer = bun.js_printer;
 const Output = bun.Output;
 
 const std = @import("std");
-const Allocator = std.heap.Allocator;
+const Allocator = std.mem.Allocator;

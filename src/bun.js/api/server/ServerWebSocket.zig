@@ -1135,7 +1135,7 @@ pub fn getBinaryType(
 pub fn setBinaryType(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
     log("setBinaryType()", .{});
 
-    const btype = JSC.BinaryType.fromJSValue(globalThis, value) catch return false;
+    const btype = JSC.ArrayBuffer.BinaryType.fromJSValue(globalThis, value) catch return false;
     switch (btype orelse
         // some other value which we don't support
         .Float64Array) {

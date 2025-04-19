@@ -163,7 +163,7 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
 
-const SystemErrno = bun.C.SystemErrno;
+const SystemErrno = bun.sys.SystemErrno;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -3045,15 +3045,15 @@ pub extern "kernel32" fn SetFileInformationByHandle(
     bufferSize: DWORD,
 ) BOOL;
 
-pub fn getLastErrno() bun.C.E {
-    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
+pub fn getLastErrno() bun.sys.E {
+    return (bun.sys.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
 pub fn getLastError() anyerror {
     return bun.errnoToZigErr(getLastErrno());
 }
 
-pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
+pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.sys.E {
     return switch (err) {
         .SUCCESS => .SUCCESS,
         .ACCESS_DENIED => .PERM,
@@ -3951,7 +3951,7 @@ pub fn moveOpenedFileAt(
     var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
 
     const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_file_name.len * 2;
-    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.C.E.NAMETOOLONG, .NtSetInformationFile);
+    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.sys.E.NAMETOOLONG, .NtSetInformationFile);
 
     const rename_info = @as(*w.FILE_RENAME_INFORMATION_EX, @ptrCast(&rename_info_buf));
     var io_status_block: w.IO_STATUS_BLOCK = undefined;

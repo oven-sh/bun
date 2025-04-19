@@ -289,7 +289,7 @@ pub const Value = union(Tag) {
         Message: bun.String,
         JSValue: JSC.Strong,
 
-        pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.WebCore.StreamResult.StreamError {
+        pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) streams.Result.StreamError {
             return switch (this.*) {
                 .AbortReason => .{
                     .AbortReason = this.AbortReason,
@@ -1366,7 +1366,7 @@ pub fn Mixin(comptime Type: type) type {
 pub const ValueBufferer = struct {
     const log = bun.Output.scoped(.BodyValueBufferer, false);
 
-    const ArrayBufferSink = JSC.WebCore.ArrayBufferSink;
+    const ArrayBufferSink = bun.webcore.Sink.ArrayBufferSink;
     const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?Body.Value.ValueError, is_async: bool) void;
 
     ctx: *anyopaque,
@@ -1459,7 +1459,7 @@ pub const ValueBufferer = struct {
         }
     }
 
-    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.ReadFileResultType) void {
+    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.read_file.ReadFileResultType) void {
         switch (bytes) {
             .err => |err| {
                 log("onFinishedLoadingFile Error", .{});
@@ -1475,7 +1475,7 @@ pub const ValueBufferer = struct {
             },
         }
     }
-    fn onStreamPipe(sink: *@This(), stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
+    fn onStreamPipe(sink: *@This(), stream: JSC.WebCore.streams.Result, allocator: std.mem.Allocator) void {
         const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
 
         defer {
@@ -1643,7 +1643,7 @@ pub const ValueBufferer = struct {
                         return;
                     }
 
-                    byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
+                    byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
@@ -1702,7 +1702,7 @@ const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = bun.Output;
@@ -1733,3 +1733,4 @@ const AnyBlob = Blob.Any;
 const InternalBlob = Blob.Internal;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
+const streams = JSC.WebCore.streams;

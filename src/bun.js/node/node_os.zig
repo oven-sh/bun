@@ -345,11 +345,11 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
                 &result,
             );
 
-            if (ret == @intFromEnum(bun.C.E.INTR))
+            if (ret == @intFromEnum(bun.sys.E.INTR))
                 continue;
 
             // If the system call wants more memory, double it.
-            if (ret == @intFromEnum(bun.C.E.RANGE)) {
+            if (ret == @intFromEnum(bun.sys.E.RANGE)) {
                 const len = string_bytes.len;
                 bun.default_allocator.free(string_bytes);
                 string_bytes = "";

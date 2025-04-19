@@ -84,6 +84,6 @@ pub const Tmpfile = struct {
             }
         }
 
-        try bun.C.moveFileZWithHandle(this.fd, this.destination_dir, this.tmpfilename, this.destination_dir, destname);
+        try bun.sys.moveFileZWithHandle(this.fd, this.destination_dir, this.tmpfilename, this.destination_dir, destname);
     }
 };

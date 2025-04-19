@@ -2,11 +2,10 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const WebCore = @import("../webcore/response.zig");
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Response = WebCore.Response;
+const Response = bun.webcore.Response;
 const LOLHTML = bun.LOLHTML;
 const host_fn = JSC.host_fn;
 
@@ -403,7 +402,7 @@ pub const HTMLRewriter = struct {
         context: *LOLHTMLContext,
         response: *Response,
         response_value: JSC.Strong = .empty,
-        bodyValueBufferer: ?JSC.WebCore.ValueBufferer = null,
+        bodyValueBufferer: ?JSC.WebCore.Body.ValueBufferer = null,
         tmp_sync_error: ?*JSC.JSValue = null,
 
         // const log = bun.Output.scoped(.BufferOutputSink, false);
@@ -486,7 +485,7 @@ pub const HTMLRewriter = struct {
 
             const value = original.getBodyValue();
             sink.ref();
-            sink.bodyValueBufferer = JSC.WebCore.ValueBufferer.init(sink, @ptrCast(&onFinishedBuffering), sink.global, bun.default_allocator);
+            sink.bodyValueBufferer = JSC.WebCore.Body.ValueBufferer.init(sink, @ptrCast(&onFinishedBuffering), sink.global, bun.default_allocator);
             response_js_value.ensureStillAlive();
 
             sink.bodyValueBufferer.?.run(value) catch |buffering_error| {

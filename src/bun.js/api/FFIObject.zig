@@ -414,16 +414,16 @@ const ValueOrError = union(enum) {
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
     if (!value.isNumber()) {
-        return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis) };
+        return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
     const num = value.asPtrAddress();
     if (num == 0) {
-        return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
+        return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
     }
 
     // if (!std.math.isFinite(num)) {
-    //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
+    //     return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
     // }
 
     var addr = @as(usize, @bitCast(num));
@@ -438,40 +438,40 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
             }
 
             if (addr == 0) {
-                return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
             }
 
             if (!std.math.isFinite(byte_off.asNumber())) {
-                return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
             }
         } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
             // do nothing
         } else {
-            return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis) };
+            return .{ .err = globalThis.toInvalidArguments("Expected number for byteOffset", .{}) };
         }
     }
 
     if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-        return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis) };
+        return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
     }
 
     if (byteLength) |valueLength| {
         if (!valueLength.isEmptyOrUndefinedOrNull()) {
             if (!valueLength.isNumber()) {
-                return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length must be a number.", .{}) };
             }
 
             if (valueLength.asNumber() == 0.0) {
-                return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}) };
             }
 
             const length_i = valueLength.toInt64();
             if (length_i < 0) {
-                return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}) };
             }
 
             if (length_i > max_addressable_memory) {
-                return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}) };
             }
 
             const length = @as(usize, @intCast(length_i));
@@ -520,17 +520,17 @@ pub fn toArrayBuffer(
                         if (getCPtr(ctx_value)) |ctx_ptr| {
                             ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                         } else if (!ctx_value.isUndefinedOrNull()) {
-                            return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
+                            return globalThis.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{});
                         }
                     }
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
                     callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 
@@ -562,17 +562,17 @@ pub fn toBuffer(
                         if (getCPtr(ctx_value)) |ctx_ptr| {
                             ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                         } else if (!ctx_value.isEmptyOrUndefinedOrNull()) {
-                            return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
+                            return globalThis.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{});
                         }
                     }
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
                     callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 

@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.Encoder;
+const Encoder = JSC.WebCore.encoding;
 const Mutex = bun.Mutex;
 
 const VirtualMachine = JSC.VirtualMachine;
@@ -202,7 +202,7 @@ pub const FSWatcher = struct {
     };
 
     pub const FSWatchTaskWindows = struct {
-        event: Event = .{ .@"error" = .{ .errno = @intFromEnum(bun.C.SystemErrno.EINVAL), .syscall = .watch } },
+        event: Event = .{ .@"error" = .{ .errno = @intFromEnum(bun.sys.SystemErrno.EINVAL), .syscall = .watch } },
         ctx: *FSWatcher,
 
         /// Unused: To match the API of the posix version
@@ -339,7 +339,7 @@ pub const FSWatcher = struct {
         path: PathLike,
         listener: JSC.JSValue,
         global_this: *JSC.JSGlobalObject,
-        signal: ?*JSC.AbortSignal,
+        signal: ?*webcore.AbortSignal,
         persistent: bool,
         recursive: bool,
         encoding: JSC.Node.Encoding,
@@ -353,7 +353,7 @@ pub const FSWatcher = struct {
             defer if (should_deinit_path) path.deinit();
 
             var listener: JSC.JSValue = .zero;
-            var signal: ?*JSC.AbortSignal = null;
+            var signal: ?*webcore.AbortSignal = null;
             var persistent: bool = true;
             var recursive: bool = false;
             var encoding: JSC.Node.Encoding = .utf8;
@@ -389,7 +389,7 @@ pub const FSWatcher = struct {
 
                     // abort signal
                     if (try options_or_callable.getTruthy(ctx, "signal")) |signal_| {
-                        if (JSC.AbortSignal.fromJS(signal_)) |signal_obj| {
+                        if (webcore.AbortSignal.fromJS(signal_)) |signal_obj| {
                             //Keep it alive
                             signal_.ensureStillAlive();
                             signal = signal_obj;

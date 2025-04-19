@@ -339,7 +339,7 @@ pub const StringOrBuffer = union(enum) {
 };
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
-/// See `JSC.WebCore.Encoder` for encoding and decoding functions.
+/// See `JSC.WebCore.encoding` for encoding and decoding functions.
 /// must match src/bun.js/bindings/BufferEncodingType.h
 pub const Encoding = enum(u8) {
     utf8,
@@ -434,7 +434,7 @@ pub const Encoding = enum(u8) {
                 return JSC.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = JSC.WebCore.Encoder.toStringComptime(input, globalObject, enc);
+                const res = JSC.WebCore.encoding.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
                     return globalObject.throwValue(res) catch .zero;
                 }
@@ -468,7 +468,7 @@ pub const Encoding = enum(u8) {
                 return JSC.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = JSC.WebCore.Encoder.toStringComptime(input, globalObject, enc);
+                const res = JSC.WebCore.encoding.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
                     return globalObject.throwValue(res) catch .zero;
                 }

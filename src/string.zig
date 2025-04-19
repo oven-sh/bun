@@ -673,14 +673,14 @@ pub const String = extern struct {
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
         if (self.isUTF16()) {
-            return JSC.WebCore.Encoder.encodeIntoFrom16(self.utf16(), out, enc, true);
+            return JSC.WebCore.encoding.encodeIntoFrom16(self.utf16(), out, enc, true);
         }
 
         if (self.isUTF8()) {
             @panic("TODO");
         }
 
-        return JSC.WebCore.Encoder.encodeIntoFrom8(self.latin1(), out, enc);
+        return JSC.WebCore.encoding.encodeIntoFrom8(self.latin1(), out, enc);
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
@@ -1157,7 +1157,7 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return .{
-            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
+            .underlying = JSC.WebCore.encoding.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
         };
     }
 

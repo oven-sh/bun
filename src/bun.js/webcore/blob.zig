@@ -235,7 +235,7 @@ const FormDataContext = struct {
                         .file => |file| {
 
                             // TODO: make this async + lazy
-                            const res = JSC.Node.NodeFS.readFile(
+                            const res = JSC.Node.fs.NodeFS.readFile(
                                 globalThis.bunVM().nodeFS(),
                                 .{
                                     .encoding = .buffer,
@@ -780,14 +780,12 @@ const Retry = enum { @"continue", fail, no };
 pub noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string: [:0]const u8, err_path: []const u8) Retry {
     if (err.getErrno() == .NOENT and this.mkdirp_if_not_exists) {
         if (std.fs.path.dirname(path_string)) |dirname| {
-            var node_fs: JSC.Node.NodeFS = .{};
-            switch (node_fs.mkdirRecursive(
-                JSC.Node.Arguments.Mkdir{
-                    .path = .{ .string = bun.PathString.init(dirname) },
-                    .recursive = true,
-                    .always_return_none = true,
-                },
-            )) {
+            var node_fs: JSC.Node.fs.NodeFS = .{};
+            switch (node_fs.mkdirRecursive(.{
+                .path = .{ .string = bun.PathString.init(dirname) },
+                .recursive = true,
+                .always_return_none = true,
+            })) {
                 .result => {
                     this.mkdirp_if_not_exists = false;
                     return .@"continue";
@@ -842,7 +840,7 @@ fn writeFileWithEmptySourceToDestination(
                     // #6336
                     .PERM => {
                         was_eperm = true;
-                        result.err.errno = @intCast(@intFromEnum(bun.C.E.NOENT));
+                        result.err.errno = @intCast(@intFromEnum(bun.sys.E.NOENT));
                         continue :err .NOENT;
                     },
                     .NOENT => {
@@ -856,7 +854,7 @@ fn writeFileWithEmptySourceToDestination(
                                 // exists, so we shouldn't try to mkdir it
                                 // also means PERM is _actually_ a
                                 // permissions issue
-                                if (was_eperm) result.err.errno = @intCast(@intFromEnum(bun.C.E.PERM));
+                                if (was_eperm) result.err.errno = @intCast(@intFromEnum(bun.sys.E.PERM));
                                 break :err;
                             },
                         };
@@ -875,7 +873,7 @@ fn writeFileWithEmptySourceToDestination(
                         // not above, returning if it is.
                         var buf: bun.PathBuffer = undefined;
                         // TODO: respect `options.mode`
-                        const mode: bun.Mode = JSC.Node.default_permission;
+                        const mode: bun.Mode = JSC.Node.fs.default_permission;
                         while (true) {
                             const open_res = bun.sys.open(file.pathlike.path.sliceZ(&buf), bun.O.CREAT | bun.O.TRUNC, mode);
                             switch (open_res) {
@@ -1029,7 +1027,7 @@ pub fn writeFileWithSourceDestination(
                 destination_blob.size,
             );
         }
-        var file_copier = Store.CopyFile.create(
+        var file_copier = copy_file.CopyFile.create(
             bun.default_allocator,
             destination_store,
             source_store,
@@ -2475,7 +2473,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
         };
         defer input_path.deinit();
 
-        const stream_start: JSC.WebCore.StreamStart = .{
+        const stream_start: JSC.WebCore.streams.Start = .{
             .FileSink = .{
                 .input_path = input_path,
             },
@@ -2725,7 +2723,7 @@ pub fn getWriter(
     };
 
     if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-        stream_start = try JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
+        stream_start = try JSC.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
         stream_start.FileSink.input_path = input_path;
     }
 
@@ -4129,7 +4127,7 @@ pub const Any = union(enum) {
         return JSC.JSPromise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
-    pub fn wrap(this: *Any, promise: JSC.AnyPromise, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) void {
+    pub fn wrap(this: *Any, promise: JSC.AnyPromise, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) void {
         promise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
@@ -4593,7 +4591,7 @@ pub fn FileOpener(comptime This: type) type {
                     &this.req,
                     path,
                     open_flags_,
-                    JSC.Node.default_permission,
+                    JSC.Node.fs.default_permission,
                     &WrappedCallback.callback,
                 );
                 if (rc.errEnum()) |errno| {
@@ -4607,11 +4605,11 @@ pub fn FileOpener(comptime This: type) type {
             }
 
             while (true) {
-                this.opened_fd = switch (bun.sys.open(path, open_flags_, JSC.Node.default_permission)) {
+                this.opened_fd = switch (bun.sys.open(path, open_flags_, JSC.Node.fs.default_permission)) {
                     .result => |fd| fd,
                     .err => |err| {
                         if (comptime @hasField(This, "mkdirp_if_not_exists")) {
-                            if (err.errno == @intFromEnum(bun.C.E.NOENT)) {
+                            if (err.errno == @intFromEnum(bun.sys.E.NOENT)) {
                                 switch (mkdirIfNotExists(this, err, path, path_string.slice())) {
                                     .@"continue" => continue,
                                     .fail => {
@@ -4731,7 +4729,7 @@ const http = bun.http;
 const JSC = bun.JSC;
 const io = bun.io;
 const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = bun.Output;

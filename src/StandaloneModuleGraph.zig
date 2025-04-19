@@ -659,7 +659,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 if (comptime !Environment.isWindows) {
-                    _ = bun.C.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
                 return cloned_executable_fd;
             },
@@ -727,7 +727,7 @@ pub const StandaloneModuleGraph = struct {
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
                 _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
-                    _ = bun.C.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
 
                 return cloned_executable_fd;
@@ -832,7 +832,7 @@ pub const StandaloneModuleGraph = struct {
             Global.exit(1);
         };
 
-        bun.C.moveFileZWithHandle(
+        bun.sys.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
             bun.sliceTo(&(try std.posix.toPosixPath(temp_location)), 0),

@@ -91,7 +91,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 
                 .Null, .Empty => {
                     break :brk .{
-                        .InternalBlob = JSC.WebCore.InternalBlob{
+                        .InternalBlob = .{
                             .bytes = std.ArrayList(u8).init(bun.default_allocator),
                         },
                     };

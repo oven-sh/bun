@@ -65,7 +65,7 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Maybe
     const errno: usize = @intCast(err.errno);
 
     switch (errno) {
-        @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
+        @as(usize, @intFromEnum(Syscall.E.NOTDIR)) => {
             if (this.bltn().stderr.needsIO() == null) {
                 const buf = this.bltn().fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                 _ = this.bltn().writeNoIO(.stderr, buf);
@@ -78,7 +78,7 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Maybe
             this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
             return Maybe(void).success;
         },
-        @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
+        @as(usize, @intFromEnum(Syscall.E.NOENT)) => {
             if (this.bltn().stderr.needsIO() == null) {
                 const buf = this.bltn().fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                 _ = this.bltn().writeNoIO(.stderr, buf);

@@ -247,10 +247,10 @@ pub const ShellLsTask = struct {
         const fd = switch (ShellSyscall.openat(this.cwd, this.path, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
             .err => |e| {
                 switch (e.getErrno()) {
-                    bun.C.E.NOENT => {
+                    .NOENT => {
                         this.err = this.errorWithPath(e, this.path);
                     },
-                    bun.C.E.NOTDIR => {
+                    .NOTDIR => {
                         this.result_kind = .file;
                         this.addEntry(this.path);
                     },

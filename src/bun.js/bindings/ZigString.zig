@@ -235,7 +235,7 @@ pub const ZigString = extern struct {
             return this.len * 2;
         }
 
-        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
+        return JSC.WebCore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
     }
 
     pub fn latin1ByteLength(this: ZigString) usize {

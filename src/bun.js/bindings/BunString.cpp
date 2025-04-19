@@ -429,13 +429,11 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     // Using tryCreateUninitialized here breaks stuff..
     // https://github.com/oven-sh/bun/issues/3931
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, length);
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, throwScope);
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
-    }
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     for (size_t i = 0; i < length; ++i) {
         array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return JSValue::encode(array);

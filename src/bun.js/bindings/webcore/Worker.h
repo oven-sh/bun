@@ -68,8 +68,9 @@ public:
     using ThreadSafeRefCounted::ref;
 
     void terminate();
-    bool wasTerminated() const { return m_terminationFlags & TerminatedFlag; }
+    bool wasTerminated() const;
     bool hasPendingActivity() const;
+    bool isClosingOrTerminated() const;
     bool updatePtr();
 
     String identifier() const { return m_identifier; }
@@ -94,6 +95,8 @@ public:
 
     void drainEvents();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
+    // Fire a 'message' event in the Worker for messages that were sent before the Worker started running
+    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
     void dispatchError(WTF::String message);
     void dispatchExit(int32_t exitCode);
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
@@ -269,6 +270,38 @@ describe("web worker", () => {
       done();
     });
   });
+
+  describe("worker event", () => {
+    test("is fired with the right object", () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let worker: Worker | undefined = undefined;
+      let called = false;
+      process.once("worker", eventWorker => {
+        called = true;
+        expect(eventWorker as any).toBe(worker);
+        resolve();
+      });
+      worker = new Worker(new URL("data:text/javascript,"));
+      expect(called).toBeFalse();
+      return promise;
+    });
+
+    test("cannot fake a node:worker_threads Worker", () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let worker: Worker | undefined = undefined;
+      let called = false;
+      process.once("worker", eventWorker => {
+        called = true;
+        expect(eventWorker as any).toBe(worker);
+        resolve();
+      });
+      // make sure that the native constructor requires a secret symbol to emit a
+      // node:worker_threads object
+      worker = new (Worker as any)(new URL("data:text/javascript,"), {}, Symbol(), 5);
+      expect(called).toBeFalse();
+      return promise;
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory
@@ -305,13 +338,13 @@ describe("worker_threads", () => {
     expect(code).toBe(2);
   });
 
-  test.todo("worker terminating forcefully properly interrupts", async () => {
+  test("worker terminating forcefully properly interrupts", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
     await new Promise<void>(done => {
       worker.on("message", () => done());
     });
     const code = await worker.terminate();
-    expect(code).toBe(0);
+    expect(code).toBe(1);
   });
 
   test("worker without argv/execArgv", async () => {
@@ -349,14 +382,10 @@ describe("worker_threads", () => {
 
   test("worker with eval = false fails with code", async () => {
     let has_error = false;
-    try {
-      const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
-    } catch (err) {
-      expect(err.constructor.name).toEqual("TypeError");
-      expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
-      has_error = true;
-    }
-    expect(has_error).toBe(true);
+    const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
+    const [err] = await once(worker, "error");
+    expect(err.constructor.name).toEqual("Error");
+    expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
   });
 
   test("worker with eval = true succeeds with valid code", async () => {

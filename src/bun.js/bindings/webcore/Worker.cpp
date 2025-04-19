@@ -29,6 +29,7 @@
 
 // #include "ContentSecurityPolicy.h"
 // #include "DedicatedWorkerGlobalScope.h"
+#include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
@@ -68,7 +69,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorker__requestTerminate(
+extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
 
 static Lock allWorkersLock;
@@ -190,7 +191,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
                                                .value_or(std::span<WTF::StringImpl*> {});
     void* impl = WebWorker__create(
         worker.ptr(),
-        jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(),
+        defaultGlobalObject(context.jsGlobalObject())->bunVM(),
         nameStr,
         urlStr,
         &errorMessage,
@@ -262,7 +263,7 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__requestTerminate(impl_);
+    WebWorker__notifyNeedTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -291,6 +292,11 @@ void Worker::terminate()
 //     }
 // }
 
+bool Worker::wasTerminated() const
+{
+    return m_terminationFlags & TerminatedFlag;
+}
+
 bool Worker::hasPendingActivity() const
 {
     auto onlineClosingFlags = m_onlineClosingFlags.load();
@@ -299,6 +305,11 @@ bool Worker::hasPendingActivity() const
     }
 
     return !(m_terminationFlags & TerminatedFlag);
+}
+
+bool Worker::isClosingOrTerminated() const
+{
+    return m_onlineClosingFlags & ClosingFlag;
 }
 
 void Worker::dispatchEvent(Event& event)
@@ -356,7 +367,12 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
+}
 
+void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
+{
+    Locker lock(this->m_pendingTasksMutex);
+    auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
         auto tasks = std::exchange(this->m_pendingTasks, {});
         lock.unlockEarly();
@@ -375,6 +391,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         });
     }
 }
+
 void Worker::dispatchError(WTF::String message)
 {
 
@@ -454,6 +471,11 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
     worker->dispatchOnline(globalObject);
 }
 
+extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)
+{
+    worker->fireEarlyMessages(globalObject);
+}
+
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
@@ -467,7 +489,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
 }
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -482,8 +504,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     auto port = callFrame->argument(0);
 
     if (!port.isObject()) {
-        throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-        return {};
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
@@ -493,8 +514,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-    return {};
+    return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
@@ -504,26 +524,42 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
+    JSMap* environmentData = nullptr;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
-        if (worker && options.data) {
-            auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
-            RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.data);
-            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
-            RETURN_IF_EXCEPTION(scope, {});
-            workerData = deserialized;
-        }
+        auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
+        RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.workerDataAndEnvironmentData);
+        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+        RETURN_IF_EXCEPTION(scope, {});
+        // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+        auto* pair = jsCast<JSArray*>(deserialized);
+        ASSERT(pair->length() == 2);
+        workerData = pair->getIndexQuickly(0);
+        RETURN_IF_EXCEPTION(scope, {});
+        environmentData = jsCast<JSMap*>(pair->getIndexQuickly(1));
+        RETURN_IF_EXCEPTION(scope, {});
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
+    } else {
+        environmentData = JSMap::create(vm, globalObject->mapStructure());
+        RETURN_IF_EXCEPTION(scope, {});
     }
+    globalObject->m_nodeWorkerEnvironmentData.set(vm, globalObject, environmentData);
 
-    JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 1, threadId);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 3, globalObject->nodeWorkerObjectSymbol());
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 4, environmentData);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }

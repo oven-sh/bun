@@ -291,3 +291,17 @@ test("eval does not leak source code", async () => {
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
 });
+
+test("worker event", () => {
+  const { promise, resolve } = Promise.withResolvers();
+  let worker: Worker | undefined = undefined;
+  let called = false;
+  process.once("worker", eventWorker => {
+    called = true;
+    expect(eventWorker as any).toBe(worker);
+    resolve();
+  });
+  worker = new Worker(new URL("data:text/javascript,"));
+  expect(called).toBeFalse();
+  return promise;
+});

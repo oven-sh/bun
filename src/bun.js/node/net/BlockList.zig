@@ -18,7 +18,9 @@ pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-pub usingnamespace JSC.Codegen.JSBlockList;
+const js = JSC.Codegen.JSBlockList;
+pub const fromJS = js.fromJS;
+pub const toJS = js.toJS;
 
 ref_count: RefCount = .init(),
 globalThis: *JSC.JSGlobalObject,

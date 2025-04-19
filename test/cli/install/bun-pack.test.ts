@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, test, it } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack, tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -909,26 +909,85 @@ describe("bundledDependnecies", () => {
 });
 
 describe("files", () => {
-  test("CHANGELOG is not included by default", async () => {
-    await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
+  describe("When 'files' is set in package.json", () => {
+    let dir: string;
+    let tarball: any;
+    beforeAll(async () => {
+      dir = tempDirWithFiles("bun-pack-files", {
+        "package.json": JSON.stringify({
           name: "pack-files-changelog",
           version: "1.1.1",
-          files: ["lib"],
+          files: ["index.ts"],
         }),
-      ),
-      write(join(packageDir, "CHANGELOG.md"), "hello"),
-      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
-    ]);
+        "index.ts": "console.log('hello ./index.ts')",
+        "foo.ts": "console.log('hello ./foo.ts')",
+        "LICENSE": "hello",
+        "LICENCE": "hello",
+        "LICENSE.txt": "hello",
+        "LICENSE.md": "hello",
+        "LICENCE.txt": "hello",
+        "CHANGELOG.md": "hello",
+        "changelog": "hello",
+      });
+      await write(join(dir, "licence"), "hello");
+      await write(join(dir, "license"), "hello");
+      console.log(dir);
+      await pack(dir, bunEnv);
+      tarball = readTarball(join(dir, "pack-files-changelog-1.1.1.tgz"));
+      expect(tarball.entries).toBeArray();
+    });
 
-    await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.1.tgz"));
-    expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/lib/index.js" },
-    ]);
+    it("should not include changelogs", () => {
+      expect(tarball.entries).not.toContainEqual(expect.objectContaining({ "pathname": "package/CHANGELOG.md" }));
+      expect(tarball.entries).not.toContainEqual(expect.objectContaining({ "pathname": "package/changelog" }));
+    });
+
+    it("always includes package.json", () => {
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/package.json" }));
+    });
+
+    it("includes license files", () => {
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/LICENSE" }));
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/LICENCE" }));
+    });
+
+    it("special file inclusion is case insensitive", async () => {
+      // dir/tarball must be re-created here b/c files with the same name, just
+      // different casing, aren't getting created
+      let dir = tempDirWithFiles("bun-pack-files-case-insensitive", {
+        "package.json": JSON.stringify({
+          name: "pack-files-changelog",
+          version: "1.1.1",
+          files: ["index.ts"],
+        }),
+        "index.ts": "console.log('hello ./index.ts')",
+        "license": "MIT",
+        "licence": "MIT",
+        "license.txt": "MIT",
+        "licence.md": "MIT",
+      });
+      await pack(dir, bunEnv);
+      let tarball = readTarball(join(dir, "pack-files-changelog-1.1.1.tgz"));
+
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/license" }));
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/licence" }));
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/license.txt" }));
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/licence.md" }));
+    });
+
+    it("includes variants of license files", () => {
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/LICENSE.md" }));
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/LICENSE.txt" }));
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/LICENCE.txt" }));
+    });
+
+    it("includes files in 'files'", () => {
+      expect(tarball.entries).toContainEqual(expect.objectContaining({ "pathname": "package/index.ts" }));
+    });
+
+    it('does not include source files not explicitly in "files"', () => {
+      expect(tarball.entries).not.toContainEqual({ "pathname": "package/foo.ts" });
+    });
   });
 
   test(".npmignore cannot exclude CHANGELOG", async () => {

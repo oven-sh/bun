@@ -1555,7 +1555,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onWritable(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onWritable", .{});
+            log("onWritable {s}", .{if (this.handlers.is_server) "S" else "C"});
             if (this.socket.isDetached()) return;
             if (this.native_callback.onWritable()) return;
             const handlers = this.handlers;
@@ -1584,7 +1584,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onTimeout(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onTimeout", .{});
+            log("onTimeout {s}", .{if (this.handlers.is_server) "S" else "C"});
             if (this.socket.isDetached()) return;
 
             const handlers = this.handlers;
@@ -1607,7 +1607,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         fn handleConnectError(this: *This, errno: c_int) void {
-            log("onConnectError({d}, {})", .{ errno, this.ref_count });
+            log("onConnectError {} ({d}, {})", .{ this.handlers.is_server, errno, this.ref_count });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
@@ -1720,7 +1720,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count.active_counts });
+            log("onOpen {s} {} {}", .{ if (this.handlers.is_server) "S" else "C", this.socket.isDetached(), this.ref_count.active_counts });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -1728,7 +1728,7 @@ fn NewSocket(comptime ssl: bool) type {
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
             this.socket = socket;
             JSC.markBinding(@src());
-            log("onOpen ssl: {}", .{comptime ssl});
+            log("onOpen {s} ssl: {}", .{ if (this.handlers.is_server) "S" else "C", comptime ssl });
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
@@ -1819,7 +1819,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onEnd(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onEnd", .{});
+            log("onEnd {s}", .{if (this.handlers.is_server) "S" else "C"});
             if (this.socket.isDetached()) return;
             // Ensure the socket remains alive until this is finished
             this.ref();
@@ -1849,7 +1849,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            log("onHandshake({d})", .{success});
+            log("onHandshake {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", success });
             JSC.markBinding(@src());
             this.flags.handshake_complete = true;
             if (this.socket.isDetached()) return;
@@ -1917,7 +1917,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
-            log("onClose", .{});
+            log("onClose {s}", .{if (this.handlers.is_server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
@@ -1963,7 +1963,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             JSC.markBinding(@src());
-            log("onData({d})", .{data.len});
+            log("onData {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", data.len });
             if (this.socket.isDetached()) return;
 
             if (this.native_callback.onData(data)) return;

@@ -1312,6 +1312,18 @@ extern "C"
     return uwsRes->getWriteOffset();
   }
 
+  bool uws_res_start_body(int ssl, uws_res_r res) nonnull_fn_decl;
+  bool uws_res_start_body(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->startBody();
+    }
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->startBody();
+  }
+
   bool uws_res_has_responded(int ssl, uws_res_r res) nonnull_fn_decl;
   bool uws_res_has_responded(int ssl, uws_res_r res)
   {

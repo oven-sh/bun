@@ -112,9 +112,9 @@ public:
              * This check also serves to limit writing the header only once. */
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
                 writeHeader("Connection", "close");
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                Super::write("\r\n", 2);
             }
-
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
 
         /* if write was called and there was previously no Content-Length header set */
@@ -122,13 +122,11 @@ public:
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            
             /* Write the chunked data if there is any (this will not send zero chunks) */
             this->write(data, nullptr);
-            
 
             /* Terminating 0 chunk */
-            Super::write("\r\n0\r\n\r\n", 7);
+            Super::write("0\r\n\r\n", 5);
 
             httpResponseData->markDone();
 
@@ -453,6 +451,7 @@ public:
             writeMark();
 
             writeHeader("Transfer-Encoding", "chunked");
+            Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -460,6 +459,30 @@ public:
         /* Super::write("\r\n0\r\n\r\n", 7); */
 
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
+    }
+
+    bool startBody() {
+        writeStatus(HTTP_200_OK);
+
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                writeMark();
+                writeHeader("Transfer-Encoding", "chunked");
+            }
+
+            auto [written, failed] = Super::write("\r\n", 2);
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            return !failed;
+        } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            writeMark();
+            auto [written, failed] = Super::write("\r\n", 2);
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            return !failed;
+        }
+
+        return true;
     }
 
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
@@ -507,26 +530,27 @@ public:
             }
             return !has_failed;
         }
-        
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+        const bool is_chunked = !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest;
+
+        if (is_chunked) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
 
                 writeHeader("Transfer-Encoding", "chunked");
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+                Super::write("\r\n", 2);
             }
 
-            Super::write("\r\n", 2);
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
             writeMark();
-            Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            Super::write("\r\n", 2);
         }
         size_t total_written = 0;
         bool has_failed = false;
@@ -539,7 +563,7 @@ public:
             has_failed = has_failed || failed;
             total_written += written;
             length -= INT_MAX;
-            data = data.substr(INT_MAX);
+            data.remove_prefix(INT_MAX);
         }
         // Handle the remaining data (less than INT_MAX bytes)
         if (length > 0) {
@@ -548,12 +572,16 @@ public:
             has_failed = has_failed || failed;
             total_written += written;
         }
-        
-        /* Reset timeout on each sended chunk */
+
+        /* Reset timeout on each sent chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
             *writtenPtr = total_written;
+        }
+
+        if (is_chunked) {
+            Super::write("\r\n", 2);
         }
 
         /* If we did not fail the write, accept more */

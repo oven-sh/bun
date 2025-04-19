@@ -504,6 +504,20 @@ pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject,
     return .undefined;
 }
 
+pub fn startBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    _ = callframe;
+
+    if (this.isDone()) {
+        return .undefined;
+    }
+
+    const state = this.raw_response.state();
+    try handleEndedIfNecessary(state, globalObject);
+
+    _ = this.raw_response.startBody();
+    return .undefined;
+}
+
 pub const AbortEvent = enum(u8) {
     none = 0,
     abort = 1,

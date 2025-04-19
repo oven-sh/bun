@@ -24,7 +24,7 @@ static const JSC::HashTableValue JSPrivateKeyObjectPrototypeTableValues[] = {
     { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyType, 0 } },
     { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyDetails, 0 } },
     { "export"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_export, 1 } },
-    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_toCryptoKey, 3 } },
+    // { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_toCryptoKey, 3 } },
 };
 
 void JSPrivateKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -88,21 +88,21 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyDetails, (JSGl
     return JSValue::encode(keyDetails);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_toCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+// JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_toCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// {
+//     VM& vm = globalObject->vm();
+//     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(callFrame->thisValue());
-    if (!privateKeyObject) {
-        throwThisTypeError(*globalObject, scope, "PrivateKeyObject"_s, "toCryptoKey"_s);
-        return JSValue::encode({});
-    }
+//     JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(callFrame->thisValue());
+//     if (!privateKeyObject) {
+//         throwThisTypeError(*globalObject, scope, "PrivateKeyObject"_s, "toCryptoKey"_s);
+//         return JSValue::encode({});
+//     }
 
-    KeyObject& handle = privateKeyObject->handle();
-    JSValue algorithmValue = callFrame->argument(0);
-    JSValue extractableValue = callFrame->argument(1);
-    JSValue keyUsagesValue = callFrame->argument(2);
+//     KeyObject& handle = privateKeyObject->handle();
+//     JSValue algorithmValue = callFrame->argument(0);
+//     JSValue extractableValue = callFrame->argument(1);
+//     JSValue keyUsagesValue = callFrame->argument(2);
 
-    return JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue));
-}
+//     return JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue));
+// }

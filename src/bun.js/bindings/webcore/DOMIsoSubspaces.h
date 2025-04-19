@@ -920,7 +920,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
-    
+
     std::unique_ptr<IsoSubspace> m_subspaceForCookie;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;
@@ -939,6 +939,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;
 };
 } // namespace WebCore
 

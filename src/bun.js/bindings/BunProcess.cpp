@@ -639,8 +639,8 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     if (fired) {
         if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = jsDynamicCast<JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
-            if (nextTickQueue) nextTickQueue->drain(vm, globalObject);
+            auto nextTickQueue = globalObject->m_nextTickQueue.get();
+            nextTickQueue->drain(vm, globalObject);
         }
     }
 }
@@ -3183,13 +3183,12 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    JSValue nextTickQueueObject;
+    JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
-        auto nextTickQueue = Bun::JSNextTickQueue::create(globalObject);
-        nextTickQueueObject = nextTickQueue;
+        nextTickQueueObject = JSNextTickQueue::create(globalObject);
         globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     } else {
-        nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
+        nextTickQueueObject = globalObject->m_nextTickQueue.get();
     }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);

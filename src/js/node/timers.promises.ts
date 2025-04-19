@@ -32,17 +32,21 @@ function setTimeoutPromise(after = 1, value, options = {}) {
   } catch (error) {
     return Promise.reject(error);
   }
+  let signal;
+  let validateError;
   try {
     validateObject(options, "options");
   } catch (error) {
-    return Promise.reject(error);
+    validateError = error;
+  } finally {
+    try {
+      signal = options.signal;
+      validateAbortSignal(signal, "options.signal");
+    } catch (validateAbortSignalError) {
+      return Promise.reject(validateError ?? validateAbortSignalError);
+    }
   }
-  const { signal, ref: reference = true } = options;
-  try {
-    validateAbortSignal(signal, "options.signal");
-  } catch (error) {
-    return Promise.reject(error);
-  }
+  const { ref: reference = true } = options;
   try {
     validateBoolean(reference, "options.ref");
   } catch (error) {

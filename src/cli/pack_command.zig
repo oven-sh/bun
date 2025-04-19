@@ -706,7 +706,7 @@ pub const PackCommand = struct {
                     if (strings.eqlComptime(entry_name, "package.json")) {
                         if (entry.kind != .file) break :root_depth;
                         // find more dependencies to bundle
-                        const source = File.toSourceAt(dir, entryNameZ(entry_name, entry_subpath), ctx.allocator).unwrap() catch |err| {
+                        const source = File.toSourceAt(dir, entryNameZ(entry_name, entry_subpath), ctx.allocator, .{}).unwrap() catch |err| {
                             Output.err(err, "failed to read package.json: \"{s}\"", .{entry_subpath});
                             Global.crash();
                         };

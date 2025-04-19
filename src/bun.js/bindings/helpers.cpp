@@ -17,7 +17,12 @@ JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral syscall, int err)
 {
     auto errstr = String::fromLatin1(Bun__errnoName(err));
-    auto* instance = JSC::createError(global, makeString(syscall, "() failed: "_s, errstr, ": "_s, String::fromLatin1(strerror(err))));
+#ifdef _WIN32
+    auto strerr = uv_strerror(err);
+#else
+    auto strerr = strerror(err);
+#endif
+    auto* instance = JSC::createError(global, makeString(syscall, "() failed: "_s, errstr, ": "_s, String::fromLatin1(strerr)));
     auto& vm = global->vm();
     auto& builtinNames = WebCore::builtinNames(vm);
     instance->putDirect(vm, builtinNames.syscallPublicName(), jsString(vm, String(syscall)), 0);

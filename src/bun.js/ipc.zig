@@ -336,7 +336,14 @@ pub const SendHandle = struct {
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
         if (self.callback.isEmptyOrUndefinedOrNull()) return;
-        if (self.callback.isFunction()) {
+        if (self.callback.isArray()) {
+            var iter = self.callback.arrayIterator(global);
+            while (iter.next()) |item| {
+                if (item.isFunction()) {
+                    JSC.Bun__Process__queueNextTick1(global, item, .null);
+                }
+            }
+        } else if (self.callback.isFunction()) {
             JSC.Bun__Process__queueNextTick1(global, self.callback, .null);
         }
         self.deinit();
@@ -374,8 +381,40 @@ pub const SendQueue = struct {
     }
 
     /// returned pointer is invalidated if the queue is modified
-    pub fn startMessage(self: *SendQueue, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+    pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
         if (Environment.allow_assert) bun.debugAssert(self.has_written_version == 1);
+
+        // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
+        // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
+        if (handle == null and self.queue.items.len > 0) {
+            const last = &self.queue.items[self.queue.items.len - 1];
+            if (last.handle == null and !last.isAckNack()) {
+                if (callback.isFunction()) {
+                    // must append the callback to the end of the array if it exists
+                    if (last.callback.isUndefinedOrNull()) {
+                        // no previous callback; set it directly
+                        callback.protect(); // callback is now owned by the queue
+                        last.callback = callback;
+                    } else if (last.callback.isArray()) {
+                        // previous callback was already array; append to array
+                        last.callback.push(global, callback); // no need to protect because the callback is in the protect()ed array
+                    } else if (last.callback.isFunction()) {
+                        // previous callback was a function; convert it to an array. protect the array and unprotect the old callback. don't protect the new callback.
+                        // the array is owned by the queue and will be unprotected on deinit.
+                        const arr = JSC.JSValue.createEmptyArray(global, 2);
+                        arr.protect(); // owned by the queue
+                        arr.putIndex(global, 0, last.callback); // add the old callback to the array
+                        arr.putIndex(global, 1, callback); // add the new callback to the array
+                        last.callback.unprotect(); // owned by the array now
+                        last.callback = arr;
+                    }
+                }
+                // caller can append now
+                return last;
+            }
+        }
+
+        // fallback case: append a new message to the queue
         callback.protect(); // now it is owned by the queue and will be unprotected on deinit.
         self.queue.append(.{ .handle = handle, .callback = callback }) catch bun.outOfMemory();
         return &self.queue.items[0];
@@ -427,7 +466,7 @@ pub const SendQueue = struct {
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending
-        item.complete(global);
+        item.complete(global); // call the callback & deinit
         this.waiting_for_ack = null;
         this.continueSend(global, socket, .new_message_appended);
     }
@@ -470,7 +509,7 @@ pub const SendQueue = struct {
         if (to_send.len == 0) {
             // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
             var itm = this.queue.orderedRemove(0);
-            itm.complete(global);
+            itm.complete(global); // call the callback & deinit
             return _continueSend(this, global, socket, reason);
         }
         log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
@@ -490,7 +529,7 @@ pub const SendQueue = struct {
                 // the message was fully sent, but there may be more items in the queue.
                 // shift the queue and try to send the next item immediately.
                 var item = this.queue.orderedRemove(0);
-                item.complete(global); // free the StreamBuffer.
+                item.complete(global); // call the callback & deinit
                 return _continueSend(this, global, socket, reason);
             }
         } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
@@ -521,7 +560,7 @@ pub const SendQueue = struct {
     }
     pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle, socket: SocketType) SerializeAndSendResult {
         const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
-        const msg = self.startMessage(callback, handle);
+        const msg = self.startMessage(global, callback, handle);
         const start_offset = msg.data.list.items.len;
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;

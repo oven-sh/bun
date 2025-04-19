@@ -36,6 +36,12 @@ pub const VM = opaque {
         JSC__VM__holdAPILock(this, ctx, callback);
     }
 
+    pub fn reportAbandonedObjectGraph(vm: *VM) void {
+        JSC__VM__reportAbandonedObjectGraph(vm);
+    }
+
+    extern fn JSC__VM__reportAbandonedObjectGraph(vm: *VM) void;
+
     extern fn JSC__VM__getAPILock(vm: *VM) void;
     extern fn JSC__VM__releaseAPILock(vm: *VM) void;
 

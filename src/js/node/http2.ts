@@ -2506,7 +2506,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+        self.#parser?.emitErrorToAllStreams(errorCode);
       }
       self.close();
     },
@@ -2811,7 +2811,7 @@ class ServerHttp2Session extends Http2Session {
 }
 
 class ClientHttp2Session extends Http2Session {
-  /// close indicates that we called closed
+  /// close indicates that we called closedxr
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
@@ -2842,7 +2842,7 @@ class ClientHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 0) {
         // pushStream
-        const stream = new ClientHttp2Session(stream_id, self, null);
+        const stream = new ClientHttp2Stream(stream_id, self, null);
         self.#parser?.setStreamContext(stream_id, stream);
       }
     },
@@ -2973,7 +2973,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+        self.#parser?.emitErrorToAllStreams(errorCode);
       }
       self.close();
     },

@@ -52,7 +52,7 @@
     "fmt": "bun run prettier",
     "fmt:cpp": "bun run clang-format",
     "fmt:zig": "bun run zig-format",
-    "lint": "oxlint --config oxlint.json",
+    "lint": "bunx oxlint --config=oxlint.json --format=github src/js",
     "lint:fix": "oxlint --config oxlint.json --fix",
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",

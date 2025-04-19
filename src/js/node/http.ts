@@ -3350,6 +3350,27 @@ function ClientRequest(input, options, cb) {
     if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
     this._ensureTls().secureOptions = options.secureOptions;
   }
+  if (agent.options.ca) {
+    if (!isValidTLSArray(agent.options.ca))
+      throw new TypeError(
+        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().ca = agent.options.ca;
+  }
+  if (agent.options.cert) {
+    if (!isValidTLSArray(agent.options.cert))
+      throw new TypeError(
+        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().cert = agent.options.cert;
+  }
+  if (agent.options.key) {
+    if (!isValidTLSArray(agent.options.key))
+      throw new TypeError(
+        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().key = agent.options.key;
+  }
   this[kPath] = options.path || "/";
   if (cb) {
     this.once("response", cb);

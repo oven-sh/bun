@@ -1886,6 +1886,10 @@ const OutgoingMessagePrototype = {
     //  even if it will be rescheduled we don't want to leak an existing timer.
     clearTimeout(this[timeoutTimerSymbol]);
 
+    if (callback) {
+      this.on('timeout', callback);
+    }
+
     if (msecs === 0) {
       if (callback != null) {
         if (!$isCallable(callback)) validateFunction(callback, "callback");
@@ -1896,9 +1900,13 @@ const OutgoingMessagePrototype = {
     } else {
       this[timeoutTimerSymbol] = setTimeout(onTimeout.bind(this), msecs).unref();
 
-      if (callback != null) {
-        if (!$isCallable(callback)) validateFunction(callback, "callback");
-        this.once("timeout", callback);
+      // Node.js compatibility: also delegate to socket if available
+      if (!this[fakeSocketSymbol]) {
+        this.once('socket', function socketSetTimeoutOnConnect(socket) {
+          socket.setTimeout(msecs);
+        });
+      } else {
+        this[fakeSocketSymbol].setTimeout(msecs);
       }
     }
 
@@ -1915,7 +1923,11 @@ const OutgoingMessagePrototype = {
   },
 
   set socket(value) {
+    const prev = this[fakeSocketSymbol];
     this[fakeSocketSymbol] = value;
+    if (!prev && value) {
+      this.emit('socket', value);
+    }
   },
 
   get chunkedEncoding() {

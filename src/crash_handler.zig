@@ -40,6 +40,10 @@ const default_report_base_url = "https://bun.report";
 /// flow is not returned to the main application.
 var has_printed_message = false;
 
+/// Disabled at runtime via BUN_FEATURE_FLAG_DISABLE_CRASH_HANDLER
+/// Used in CI to allow crash dumps to work.
+pub var disable_at_runtime = false;
+
 /// Non-zero whenever the program triggered a panic.
 /// The counter is incremented/decremented atomically.
 var panicking = std.atomic.Value(u8).init(0);
@@ -840,6 +844,9 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
 var windows_segfault_handle: ?windows.HANDLE = null;
 
 pub fn resetOnPosix() void {
+    if (disable_at_runtime)
+        return;
+
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = handleSegfaultPosix },
         .mask = std.posix.empty_sigset,
@@ -850,6 +857,9 @@ pub fn resetOnPosix() void {
 
 pub fn init() void {
     if (!enable) return;
+    if (disable_at_runtime)
+        return;
+
     switch (bun.Environment.os) {
         .windows => {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
@@ -863,6 +873,8 @@ pub fn init() void {
 
 pub fn resetSegfaultHandler() void {
     if (!enable) return;
+    if (disable_at_runtime)
+        return;
 
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {

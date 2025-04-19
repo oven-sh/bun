@@ -695,6 +695,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
+    BUN_FEATURE_FLAG_DISABLE_CRASH_HANDLER: "1",
   };
 
   if (env) {

@@ -442,6 +442,9 @@ const self_hosted_watch = struct {
         const ws = "\n\r\t ";
 
         pub fn openAndParse(b: *Build, build_options: *BunBuildOptions) !ParsedNinjaConfig {
+            {
+                @panic("Code Path Disabled for Bug Report");
+            }
             const bytes = bytes: {
                 const file = try std.fs.cwd().openFile("build/debug/build.ninja", .{});
                 defer file.close();

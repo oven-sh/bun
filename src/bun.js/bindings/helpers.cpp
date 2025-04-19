@@ -2,6 +2,9 @@
 #include "helpers.h"
 #include "BunClientData.h"
 #include <string.h>
+#ifdef _WIN32
+#include <uv.h>
+#endif
 
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message, ASCIILiteral syscall, int err)
 {

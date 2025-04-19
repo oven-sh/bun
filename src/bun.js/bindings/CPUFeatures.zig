@@ -68,4 +68,4 @@ pub fn get() CPUFeatures {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");

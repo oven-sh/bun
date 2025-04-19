@@ -764,7 +764,6 @@ declare module "bun" {
    * @category Cloud Storage
    */
   class S3Client {
-    prototype: S3Client;
     /**
      * Create a new instance of an S3 bucket so that credentials can be managed
      * from a single instance instead of being passed to every method.

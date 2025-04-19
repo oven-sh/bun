@@ -624,6 +624,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setRequireHostHeader(bool value) {
+        httpContext->getSocketContextData()->requireHostHeader = value;
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

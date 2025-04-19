@@ -7603,7 +7603,7 @@ const Mutex = bun.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;

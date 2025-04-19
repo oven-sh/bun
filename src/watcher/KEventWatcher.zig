@@ -102,7 +102,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Watcher = bun.Watcher;
 const max_eviction_count = Watcher.max_eviction_count;

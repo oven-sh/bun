@@ -583,18 +583,18 @@ pub const JSValue = enum(i64) {
             // const double = try this.toNumber(global);
             const double = this.coerceToDouble(global);
             if (std.math.isNan(double)) {
-                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+                return JSC.Error.SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
             }
 
             const port = this.to(i64);
             if (0 <= port and port <= 65535) {
                 return @as(u16, @truncate(@max(0, port)));
             } else {
-                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
+                return JSC.Error.SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
             }
         }
 
-        return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+        return JSC.Error.SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
     }
 
     extern fn JSC__JSValue__isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool;
@@ -2652,7 +2652,7 @@ pub const JSValue = enum(i64) {
 pub const JSValueReprInt = JSC.JSValueReprInt;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;

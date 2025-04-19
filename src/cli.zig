@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,7 +9,6 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
-const root = @import("root");
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -1627,9 +1626,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }

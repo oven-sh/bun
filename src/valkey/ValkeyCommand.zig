@@ -153,7 +153,7 @@ pub const PromisePair = struct {
 
 const Command = @This();
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const protocol = @import("valkey_protocol.zig");
 const std = @import("std");

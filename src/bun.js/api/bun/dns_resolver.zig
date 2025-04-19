@@ -1,6 +1,6 @@
 const Bun = @This();
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const Global = bun.Global;
@@ -3239,13 +3239,13 @@ pub const DNSResolver = struct {
             return c_ares.AF.INET6;
         }
 
-        return JSC.Error.ERR_INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{slice});
+        return JSC.Error.INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{slice});
     }
 
     fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if (channel != try getChannelFromVM(globalThis) and c_ares.ares_queue_active_queries(channel) != 0) {
-            return globalThis.ERR_DNS_SET_SERVERS_FAILED("Failed to set servers: there are pending queries", .{}).throw();
+            return globalThis.ERR(.DNS_SET_SERVERS_FAILED, "Failed to set servers: there are pending queries", .{}).throw();
         }
 
         const arguments = callframe.arguments();
@@ -3311,7 +3311,7 @@ pub const DNSResolver = struct {
             };
 
             if (c_ares.ares_inet_pton(af, addressBuffer.ptr, &entries[i].addr) != 1) {
-                return JSC.Error.ERR_INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{addressSlice});
+                return JSC.Error.INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{addressSlice});
             }
 
             if (i > 0) {

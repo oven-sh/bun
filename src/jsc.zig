@@ -1,4 +1,8 @@
-// Top-level so it can access all files
+//! The `bun.JSC` namespace contains
+//!     1. bindings for JavaScriptCore APIs (bun.JSC.*)
+//!     2. zig components for Bun APIs (in bun.JSC.API or bun.JSC.*)
+//!     3. zig components for Node APIs (in bun.JSC.Node)
+//!     4. zig components for Web APIs (in bun.JSC.WebCore)
 pub usingnamespace @import("./bun.js/base.zig");
 pub usingnamespace @import("./bun.js/bindings/bindings.zig");
 pub usingnamespace @import("./bun.js/bindings/exports.zig");
@@ -74,6 +78,10 @@ pub const Node = struct {
     pub const Crypto = @import("./bun.js/node/node_crypto_binding.zig");
 };
 
+pub const js_property_iterator = @import("bun.js/bindings/JSPropertyIterator.zig");
+pub const JSPropertyIterator = js_property_iterator.JSPropertyIterator;
+pub const JSPropertyIteratorOptions = js_property_iterator.JSPropertyIteratorOptions;
+
 const std = @import("std");
 const Syscall = @import("./sys.zig");
 const Output = @import("./output.zig");
@@ -121,7 +129,7 @@ pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_li
 pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
 
 /// The calling convention used for JavaScript functions <> Native
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else

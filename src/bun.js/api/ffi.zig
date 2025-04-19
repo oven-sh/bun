@@ -1,6 +1,5 @@
 const Bun = @This();
-const root = @import("root");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const Global = bun.Global;
@@ -1291,7 +1290,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
+                    return JSC.toTypeError(.INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
                 });
             }
         }
@@ -1323,7 +1322,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
+                return JSC.toTypeError(.INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
             };
         }
 
@@ -1382,7 +1381,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
+                return JSC.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
             }
 
             var function: Function = .{ .allocator = allocator };

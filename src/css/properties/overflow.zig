@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -82,7 +82,12 @@ pub const OverflowKeyword = enum {
     /// Overflowing content scrolls if needed.
     auto,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [text-overflow](https://www.w3.org/TR/css-overflow-3/#text-overflow) property.
@@ -92,5 +97,10 @@ pub const TextOverflow = enum {
     /// Overflowing text is truncated with an ellipsis.
     ellipsis,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };

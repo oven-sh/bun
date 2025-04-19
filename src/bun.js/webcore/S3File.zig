@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
@@ -154,7 +154,7 @@ pub fn write(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     const data = args.nextEat() orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to upload", .{}).throw();
+        return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to upload", .{}).throw();
     };
 
     switch (path_or_blob) {
@@ -475,7 +475,7 @@ pub const S3BlobStatTask = struct {
 
 pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
     if (!this.isS3()) {
-        return globalThis.ERR_INVALID_THIS("presign is only possible for s3:// files", .{}).throw();
+        return globalThis.ERR(.INVALID_THIS, "presign is only possible for s3:// files", .{}).throw();
     }
 
     var method: bun.http.Method = .GET;

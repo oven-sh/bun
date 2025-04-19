@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{

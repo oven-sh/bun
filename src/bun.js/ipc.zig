@@ -336,6 +336,12 @@ pub const SendHandle = struct {
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
         if (self.callback.isEmptyOrUndefinedOrNull()) return;
+        const loop = global.bunVM().eventLoop();
+        // complete() may be called immediately after send, or it could be called from onMessage
+        // Entter the event loop and use queueNextTick so it never gets called immediately
+        loop.enter();
+        defer loop.exit();
+
         if (self.callback.isArray()) {
             var iter = self.callback.arrayIterator(global);
             while (iter.next()) |item| {
@@ -964,6 +970,12 @@ pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *JSC.CallFra
     return .undefined;
 }
 
+const IPCCommand = union(enum) {
+    handle: JSC.JSValue,
+    ack,
+    nack,
+};
+
 fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCMessage, socket: SocketType, globalThis: *JSC.JSGlobalObject) void {
     const ipc: *IPCData = this.ipc() orelse return;
     if (Environment.isDebug) {
@@ -975,6 +987,7 @@ fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCM
             .internal => |jsvalue| log("received ipc message: internal: {}", .{jsvalue.toFmt(&formatter)}),
         }
     }
+    var internal_command: ?IPCCommand = null;
     if (message == .data) handle_message: {
         // TODO: get property 'cmd' from the message, read as a string
         // to skip this property lookup (and simplify the code significantly)
@@ -998,55 +1011,71 @@ fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCM
                     break :handle_message;
                 };
                 if (cmd_str.eqlComptime("NODE_HANDLE")) {
-                    // Handle NODE_HANDLE message
-                    const ack = ipc.send_queue.incoming_fd != null;
-
-                    const packet = if (ack) getAckPacket(ipc.send_queue.mode) else getNackPacket(ipc.send_queue.mode);
-                    var handle = SendHandle{ .data = .{}, .handle = null, .callback = .zero };
-                    handle.data.write(packet) catch bun.outOfMemory();
-
-                    // Insert at appropriate position in send queue
-                    ipc.send_queue.insertMessage(handle);
-
-                    // Send if needed
-                    ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
-
-                    if (!ack) return;
-
-                    // Get file descriptor and clear it
-                    const fd = ipc.send_queue.incoming_fd.?;
-                    ipc.send_queue.incoming_fd = null;
-
-                    const target: bun.JSC.JSValue = switch (Context) {
-                        bun.JSC.Subprocess => @as(*bun.JSC.Subprocess, this).toJS(globalThis),
-                        bun.JSC.VirtualMachine.IPCInstance => bun.JSC.JSValue.null,
-                        else => @compileError("Unsupported context type: " ++ @typeName(Context)),
-                    };
-
-                    _ = ipcParse(globalThis, target, msg_data, fd.toJS(globalThis)) catch |e| {
-                        // ack written already, that's okay.
-                        const emit_error_fn = JSC.JSFunction.create(globalThis, "", emitProcessErrorEvent, 1, .{});
-                        JSC.Bun__Process__queueNextTick1(globalThis, emit_error_fn, globalThis.takeException(e));
-                        return;
-                    };
-
-                    // ipc_parse will call the callback which calls handleIPCMessage()
-                    // we have sent the ack already so the next message could arrive at any time. maybe even before
-                    // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
-                    // so hopefully ours won't either.
-                    return;
+                    internal_command = .{ .handle = msg_data };
                 } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
-                    ipc.send_queue.onAckNack(globalThis, socket, .ack);
-                    return;
+                    internal_command = .ack;
                 } else if (cmd_str.eqlComptime("NODE_HANDLE_NACK")) {
-                    ipc.send_queue.onAckNack(globalThis, socket, .nack);
-                    return;
+                    internal_command = .nack;
                 }
             }
         }
     }
 
-    this.handleIPCMessage(message, .undefined);
+    if (internal_command) |icmd| {
+        switch (icmd) {
+            .handle => |msg_data| {
+                // Handle NODE_HANDLE message
+                const ack = ipc.send_queue.incoming_fd != null;
+
+                const packet = if (ack) getAckPacket(ipc.send_queue.mode) else getNackPacket(ipc.send_queue.mode);
+                var handle = SendHandle{ .data = .{}, .handle = null, .callback = .zero };
+                handle.data.write(packet) catch bun.outOfMemory();
+
+                // Insert at appropriate position in send queue
+                ipc.send_queue.insertMessage(handle);
+
+                // Send if needed
+                ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
+
+                if (!ack) return;
+
+                // Get file descriptor and clear it
+                const fd = ipc.send_queue.incoming_fd.?;
+                ipc.send_queue.incoming_fd = null;
+
+                const target: bun.JSC.JSValue = switch (Context) {
+                    bun.JSC.Subprocess => @as(*bun.JSC.Subprocess, this).this_jsvalue,
+                    bun.JSC.VirtualMachine.IPCInstance => bun.JSC.JSValue.null,
+                    else => @compileError("Unsupported context type: " ++ @typeName(Context)),
+                };
+
+                const vm = globalThis.bunVM();
+                vm.eventLoop().enter();
+                defer vm.eventLoop().exit();
+                _ = ipcParse(globalThis, target, msg_data, fd.toJS(globalThis)) catch |e| {
+                    // ack written already, that's okay.
+                    globalThis.reportActiveExceptionAsUnhandled(e);
+                    return;
+                };
+
+                // ipc_parse will call the callback which calls handleIPCMessage()
+                // we have sent the ack already so the next message could arrive at any time. maybe even before
+                // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
+                // so hopefully ours won't either.
+                return;
+            },
+            .ack => {
+                ipc.send_queue.onAckNack(globalThis, socket, .ack);
+                return;
+            },
+            .nack => {
+                ipc.send_queue.onAckNack(globalThis, socket, .nack);
+                return;
+            },
+        }
+    } else {
+        this.handleIPCMessage(message, .undefined);
+    }
 }
 
 fn onData2(comptime Context: type, this: *Context, socket: SocketType, all_data: []const u8) void {

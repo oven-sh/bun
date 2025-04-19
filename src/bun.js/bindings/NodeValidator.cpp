@@ -701,7 +701,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
-    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+    if (!JSC::jsTypeofIsObject(globalObject, value)) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
@@ -714,7 +714,7 @@ JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObjec
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
-    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+    if (!JSC::jsTypeofIsObject(globalObject, value)) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 

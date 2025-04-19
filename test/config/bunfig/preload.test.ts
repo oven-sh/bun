@@ -112,11 +112,25 @@ describe("Given a `bunfig.toml` with a plugin preload", () => {
 }); // </given a `bunfig.toml` with a plugin preload>
 
 describe("Given a `bunfig.toml` file with a relative path to a preload in a parent directory", () => {
-  const dir = fixturePath("parent", "foo");
-
-  // FIXME
-  it("When `bun run` is run, preloads are run", async () => {
+  it("When `bun run` is run with a bunfig.toml, preloads are run", async () => {
+    const dir = fixturePath("parent", "foo");
     const [out, err, code] = await run("index.ts", { cwd: dir });
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
+    expect(code).toBe(0);
+  });
+
+  it("When `bun run` is run with a bunfig.toml in a separate directory, preloads are run", async () => {
+    const dir = fixturePath("parent");
+    const [out, err, code] = await run("foo/index.ts", { args: ["--config=foo/bunfig.toml"], cwd: dir });
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
+    expect(code).toBe(0);
+  });
+
+  it("when `bun run` is run with --preload, preloads are run", async () => {
+    const dir = fixturePath("parent", "foo", "bar");
+    const [out, err, code] = await run("index.ts", { args: ["--preload=../../preload.ts"], cwd: dir });
     expect(err).toBeEmpty();
     expect(out).toBeEmpty();
     expect(code).toBe(0);
@@ -127,7 +141,7 @@ describe("Given a `bunfig.toml` file with a relative path without a leading './'
   const dir = fixturePath("relative");
 
   // FIXME: currently treaded as an import to an external package
-  it.skip("preload = 'preload.ts' is treated like a relative path and loaded", async () => {
+  it.todo("preload = 'preload.ts' is treated like a relative path and loaded", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
     expect(err).toBeEmpty();
     expect(out).toBeEmpty();

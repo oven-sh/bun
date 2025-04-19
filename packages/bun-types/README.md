@@ -1,7 +1,7 @@
 # TypeScript types for Bun
 
 <p align="center">
-  <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
+  <a href="https://bun.sh"><img src="https://bun.sh/logo.svg" width="160" alt="Logo"></a>
 </p>
 
 These are the type definitions for Bun's JavaScript runtime APIs.

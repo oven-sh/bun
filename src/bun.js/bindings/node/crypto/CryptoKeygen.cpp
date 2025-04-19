@@ -120,7 +120,7 @@ std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* glob
         int32_t length;
         JSValue lengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "length"_s));
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        V::validateOneOf(scope, globalObject, "options.length"_s, lengthValue, { 128, 192, 256 }, &length);
+        V::validateOneOf(scope, globalObject, "options.length"_s, lengthValue, std::array { 128, 192, 256 }, &length);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         return SecretKeyJobCtx(length / CHAR_BIT);
     }

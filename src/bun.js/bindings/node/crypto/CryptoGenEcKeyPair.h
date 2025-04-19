@@ -7,7 +7,9 @@
 namespace Bun {
 
 struct EcKeyPairJobCtx : KeyPairJobCtx {
+    WTF_MAKE_TZONE_ALLOCATED(EcKeyPairJobCtx);
 
+public:
     EcKeyPairJobCtx(int curveNid, int paramEncoding, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
         , m_curveNid(curveNid)

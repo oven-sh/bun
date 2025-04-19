@@ -7,7 +7,9 @@
 namespace Bun {
 
 struct DsaKeyPairJobCtx : KeyPairJobCtx {
+    WTF_MAKE_TZONE_ALLOCATED(DsaKeyPairJobCtx);
 
+public:
     DsaKeyPairJobCtx(uint32_t modulusLength, std::optional<int32_t> divisorLength, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
         , m_modulusLength(modulusLength)

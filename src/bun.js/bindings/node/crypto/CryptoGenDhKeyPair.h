@@ -7,7 +7,9 @@
 namespace Bun {
 
 struct DhKeyPairJobCtx : KeyPairJobCtx {
+    WTF_MAKE_TZONE_ALLOCATED(DhKeyPairJobCtx);
 
+public:
     DhKeyPairJobCtx(ncrypto::DHPointer&& group, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
         , m_prime(WTFMove(group))

@@ -7,7 +7,9 @@
 namespace Bun {
 
 struct NidKeyPairJobCtx : KeyPairJobCtx {
+    WTF_MAKE_TZONE_ALLOCATED(NidKeyPairJobCtx);
 
+public:
     NidKeyPairJobCtx(int id, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
         , m_id(id)

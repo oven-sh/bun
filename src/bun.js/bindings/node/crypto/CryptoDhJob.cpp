@@ -44,7 +44,6 @@ void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     if (!m_result) {
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman failed"_s);
@@ -52,16 +51,7 @@ void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
         return;
     }
 
-    RefPtr<ArrayBuffer> buf = ArrayBuffer::tryCreateUninitialized(m_result.size(), 1);
-    if (!buf) {
-        JSObject* err = createOutOfMemoryError(lexicalGlobalObject);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
-    }
-
-    memcpy(buf->data(), m_result.data(), m_result.size());
-
-    JSValue result = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, m_result.size());
+    JSValue result = WebCore::createBuffer(lexicalGlobalObject, m_result.span());
 
     Bun__EventLoop__runCallback2(
         lexicalGlobalObject,
@@ -145,7 +135,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     JSValue optionsValue = callFrame->argument(0);
     V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
@@ -173,16 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "diffieHellman operation failed"_s);
     }
 
-    RefPtr<ArrayBuffer> buf = ArrayBuffer::tryCreateUninitialized(ctx->m_result.size(), 1);
-    if (!buf) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return JSValue::encode({});
-    }
-
-    memcpy(buf->data(), ctx->m_result.data(), ctx->m_result.size());
-
-    JSValue result = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, ctx->m_result.size());
-    return JSValue::encode(result);
+    return JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, ctx->m_result.span()));
 }
 
 } // namespace Bun

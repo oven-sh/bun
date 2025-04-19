@@ -240,6 +240,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                     debug.allocator.vtable == allocator.vtable,
                     "CowSlice.deinit called with a different allocator than the one used to create it",
                     .{},
+                    @src(),
                 );
                 if (str.isOwned()) {
                     // active borrows become invalid data
@@ -247,6 +248,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                         debug.borrows == 0,
                         "Cannot deinit() a CowSlice with active borrows. Current borrow count: {d}",
                         .{debug.borrows},
+                        @src(),
                     );
                     bun.destroy(debug);
                 } else {
@@ -287,6 +289,7 @@ comptime {
         cow_size == @sizeOf([]const u8),
         "CowSlice should be the same size as a native slice, but it was {d} bytes instead of {d}",
         .{ cow_size, @sizeOf([]const u8) },
+        null,
     );
 }
 

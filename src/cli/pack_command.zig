@@ -274,7 +274,12 @@ pub const PackCommand = struct {
     ) OOM!PackQueue {
         if (comptime Environment.isDebug) {
             for (excludes) |exclude| {
-                bun.assertf(exclude.flags.negated, "Illegal exclusion pattern '{s}'. Exclusion patterns are always negated.", .{exclude.glob});
+                bun.assertf(
+                    exclude.flags.negated,
+                    "Illegal exclusion pattern '{s}'. Exclusion patterns are always negated.",
+                    .{exclude.glob},
+                    @src(),
+                );
             }
         }
 

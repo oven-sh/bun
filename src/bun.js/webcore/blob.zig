@@ -3749,7 +3749,7 @@ pub const Blob = struct {
             const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
             store.ref();
 
-            S3.listObjects(&aws_options.credentials, options, &Wrapper.resolve, bun.new(Wrapper, .{
+            S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
                 .resolvedlistOptions = options,

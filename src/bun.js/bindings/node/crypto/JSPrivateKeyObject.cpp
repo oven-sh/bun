@@ -34,7 +34,7 @@ void setupPrivateKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& i
 {
     auto* globalObject = defaultGlobalObject(init.global);
 
-    auto* prototypeStructure = JSPrivateKeyObjectPrototype::createStructure(init.vm, init.global, globalObject->JSKeyObjectPrototype());
+    auto* prototypeStructure = JSPrivateKeyObjectPrototype::createStructure(init.vm, init.global, globalObject->KeyObjectPrototype());
     auto* prototype = JSPrivateKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
     auto* constructorStructure = JSKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());

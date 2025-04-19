@@ -54,7 +54,6 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGloba
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-    // auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     JSValue typeValue = callFrame->argument(0);
 

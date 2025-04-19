@@ -1479,7 +1479,7 @@ pub fn GlobWalker_(
                     has_relative_patterns.* = true;
                     break :out;
                 }
-                if (component.len == 2 and pattern[component.start] == '.' and pattern[component.start + 1] == '.') {
+                if (component.len == 2 and pattern[component.start] == '.' and pattern[component.start] == '.') {
                     component.syntax_hint = .DotBack;
                     has_relative_patterns.* = true;
                     break :out;

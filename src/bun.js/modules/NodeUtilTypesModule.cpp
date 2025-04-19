@@ -446,12 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsKeyObject,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-
-    if (cell->inherits<Bun::JSKeyObject>()) {
-        return JSValue::encode(jsBoolean(true));
-    }
-
-    return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsBoolean(cell->inherits<Bun::JSKeyObject>()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsCryptoKey,
     (JSC::JSGlobalObject * globalObject,

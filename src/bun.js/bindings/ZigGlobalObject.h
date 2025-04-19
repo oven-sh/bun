@@ -204,6 +204,10 @@ public:
     JSC::JSValue FileSinkPrototype() const { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() const { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* KeyObjectStructure() const { return m_JSKeyObjectClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* KeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue KeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferStructure() const { return m_JSBufferClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferConstructor() const { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
@@ -288,10 +292,6 @@ public:
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
-
-    JSC::Structure* JSKeyObjectStructure() const { return m_JSKeyObjectClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* JSKeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSKeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 

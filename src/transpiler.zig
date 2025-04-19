@@ -823,6 +823,7 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
+        source_map_is_internal: bool,
     ) !usize {
         const tracer = if (enable_source_map)
             bun.perf.trace("JSPrinter.printWithSourceMap")
@@ -853,6 +854,7 @@ pub const Transpiler = struct {
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
+                    .source_map_is_internal = source_map_is_internal,
                 },
                 enable_source_map,
             ),
@@ -879,6 +881,7 @@ pub const Transpiler = struct {
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
                     .mangled_props = null,
+                    .source_map_is_internal = source_map_is_internal,
                 },
                 enable_source_map,
             ),
@@ -915,6 +918,7 @@ pub const Transpiler = struct {
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                         .hmr_ref = ast.wrapper_ref,
                         .mangled_props = null,
+                        .source_map_is_internal = source_map_is_internal,
                     },
                     enable_source_map,
                 ),
@@ -939,6 +943,7 @@ pub const Transpiler = struct {
             false,
             null,
             null,
+            false,
         );
     }
 
@@ -949,6 +954,7 @@ pub const Transpiler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
+        source_map_is_internal: bool,
     ) !usize {
         if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
             return transpiler.printWithSourceMapMaybe(
@@ -960,6 +966,7 @@ pub const Transpiler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
+                source_map_is_internal,
             );
         }
         return transpiler.printWithSourceMapMaybe(
@@ -971,6 +978,7 @@ pub const Transpiler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
+            source_map_is_internal,
         );
     }
 

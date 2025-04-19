@@ -21,6 +21,7 @@
 
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const Duplex = require("internal/streams/duplex");
+const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
@@ -2249,15 +2250,13 @@ function Server(options?, connectionListener?) {
     throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
   }
 
-  $assert(typeof Duplex.getDefaultHighWaterMark === "function");
-
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
   const {
     maxConnections, //
     allowHalfOpen = false,
     keepAlive = false,
     keepAliveInitialDelay = 0,
-    highWaterMark = Duplex.getDefaultHighWaterMark(),
+    highWaterMark = getDefaultHighWaterMark(),
     pauseOnConnect = false,
     noDelay = false,
   } = options;

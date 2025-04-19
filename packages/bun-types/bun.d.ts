@@ -1375,21 +1375,61 @@ declare module "bun" {
    * Represents a SQL query that can be executed, with additional control methods
    * Extends Promise to allow for async/await usage
    */
-  interface SQLQuery extends Promise<any> {
+  interface SQLQuery<T = any> extends Promise<SQLQueryResult<T>> {
     /** Indicates if the query is currently executing */
     active: boolean;
     /** Indicates if the query has been cancelled */
     cancelled: boolean;
     /** Cancels the executing query */
-    cancel(): SQLQuery;
+    cancel(): SQLQuery<T>;
     /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-    simple(): SQLQuery;
+    simple(): SQLQuery<T>;
     /** Executes the query */
-    execute(): SQLQuery;
+    execute(): SQLQuery<T>;
     /** Returns the raw query result */
-    raw(): SQLQuery;
+    raw(): SQLQuery<T>;
     /** Returns only the values from the query result */
-    values(): SQLQuery;
+    values(): SQLQuery<T>;
+  }
+
+  /**
+   * A SQLQuery statement summary
+   */
+  interface SQLQueryStatement {
+    /** Template SQL query */
+    string: string;
+    /** Columns associated with the SQL query */
+    columns: SQLQueryStatementColumn[];
+  }
+
+  /**
+   * A SQLQueryStatement column
+   */
+  interface SQLQueryStatementColumn {
+    /** Name/ID of column */
+    name: string;
+    /** Table ID of column (set to zero if no table associated) */
+    table?: number;
+    /** Table column index of column (set to zero if no table associated) */
+    number?: number;
+    /** Data Type OID of column */
+    type?: number;
+  }
+
+  /**
+   * A SQLQuery result
+   */
+  interface SQLQueryResult<T = any> extends Array<T> {
+    /** Query of this result */
+    query?: SQLQuery;
+    /** Statement of this query */
+    statement?: SQLQueryStatement;
+    /** Columns of this query */
+    columns?: SQLQueryStatementColumn[];
+    /** Number of rows in this query */
+    count?: number;
+    /** The command type ran */
+    commands?: string;
   }
 
   /**

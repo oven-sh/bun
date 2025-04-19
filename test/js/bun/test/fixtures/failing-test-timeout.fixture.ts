@@ -1,20 +1,35 @@
-import { isCI, isWindows } from "harness";
+beforeEach(() => jest.setTimeout(5));
 
-jest.setTimeout(5);
+describe("sync test functions with a done() cb", () => {
+  test.failing("fail when done is never called", done => {
+    // nada
+  });
 
-describe("test.failing", () => {
-  test.failing("Timeouts still count as failures", async () => {
+  test.failing("fail when done is called after timeout", done => {
+    setTimeout(() => done(), 1000);
+  });
+});
+
+describe("async test functions", () => {
+  test.failing("fail when they never resolve", () => {
+    return new Promise((_resolve, _reject) => {
+      // lol
+    });
+  });
+
+  test.failing("fail when they don't resolve in time", async () => {
     await Bun.sleep(1000);
   });
 
-  // fixme: hangs on windows. Timer callback never fires
-  describe.skipIf(isWindows && isCI)("when using a done() callback", () => {
-    test.failing("fails when an async test never calls done()", async _done => {
+  describe("with a done() cb", () => {
+    test.failing("fail when done is never called", async done => {
       // nada
     });
 
-    test.failing("fails when a sync test never calls done()", _done => {
-      // nada
+    test.failing("fail when done is called after timeout", done => {
+      return new Promise(resolve => {
+        setTimeout(() => resolve(done()), 1000);
+      });
     });
   });
 });

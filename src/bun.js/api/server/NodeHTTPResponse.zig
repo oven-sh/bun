@@ -382,7 +382,7 @@ pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSV
 
 pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
     if (this.flags.request_has_completed or this.flags.socket_closed) {
-        return JSC.JSValue.jsNull();
+        return JSC.JSValue.jsNumber(0);
     }
 
     return JSC.JSValue.jsNumber(this.raw_response.getBufferedAmount());
@@ -997,6 +997,11 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
     const arguments = callframe.arguments_old(3).slice();
 
     return writeOrEnd(this, globalObject, arguments, .zero, false);
+}
+
+pub fn flushHeaders(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    this.raw_response.flushHeaders();
+    return .undefined;
 }
 
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

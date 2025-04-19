@@ -462,6 +462,28 @@ public:
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
 
+    void flushHeaders() {
+
+        writeStatus(HTTP_200_OK);
+
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                /* Write mark on first call to write */
+                writeMark();
+
+                writeHeader("Transfer-Encoding", "chunked");
+                Super::write("\r\n", 2);
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            }
+
+         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            writeMark();
+            Super::write("\r\n", 2);
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+        }
+    }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         writeStatus(HTTP_200_OK);

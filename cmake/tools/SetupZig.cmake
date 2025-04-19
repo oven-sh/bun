@@ -41,6 +41,10 @@ if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
 endif()
 
+if (ENABLE_ASAN_RELEASE)
+  set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+endif()
+
 optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|ReleaseSmall|Debug" "The Zig optimize level to use" DEFAULT ${DEFAULT_ZIG_OPTIMIZE})
 
 # To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of

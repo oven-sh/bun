@@ -92,6 +92,7 @@ const BunBuildOptions = struct {
         opts.addOption([:0]const u8, "sha", b.allocator.dupeZ(u8, this.sha) catch @panic("OOM"));
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
+        opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
 

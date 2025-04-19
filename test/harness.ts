@@ -31,6 +31,7 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
+export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -48,6 +49,10 @@ export const bunEnv: NodeJS.ProcessEnv = {
 };
 
 const ciEnv = { ...bunEnv };
+
+if (isASAN) {
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+}
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -875,6 +880,7 @@ export function osSlashes(path: string) {
 }
 
 import * as child_process from "node:child_process";
+import { basename } from "node:path";
 
 class WriteBlockedError extends Error {
   constructor(time) {

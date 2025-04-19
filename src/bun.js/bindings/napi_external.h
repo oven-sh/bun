@@ -59,7 +59,7 @@ public:
 
         accessor->finishCreation(vm, value, finalizer_hint, env, callback);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
         if (auto* callFrame = vm.topCallFrame) {
             auto origin = callFrame->callerSourceOrigin(vm);
             accessor->sourceOriginURL = origin.string();
@@ -97,7 +97,7 @@ public:
     NapiFinalizer m_finalizer;
     napi_env m_env;
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     String sourceOriginURL = String();
     unsigned sourceOriginLine = 0;
     unsigned sourceOriginColumn = 0;

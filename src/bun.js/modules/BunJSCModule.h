@@ -50,7 +50,7 @@
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 #if OS(DARWIN)
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1

@@ -44,7 +44,7 @@ if(WIN32)
   )
 endif()
 
-if(ENABLE_ASAN)
+if(ENABLE_ASAN OR (RELEASE AND ENABLE_ASAN_RELEASE))
   register_compiler_flags(
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address

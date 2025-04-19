@@ -45,6 +45,7 @@ import {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {boolean} [asan]
  */
 
 /**
@@ -52,7 +53,7 @@ import {
  * @returns {string}
  */
 function getTargetKey(target) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, asan } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
@@ -60,9 +61,15 @@ function getTargetKey(target) {
   if (baseline) {
     key += "-baseline";
   }
+
+  if (asan) {
+    key += "-asan";
+  }
+
   if (profile && profile !== "release") {
     key += `-${profile}`;
   }
+
   return key;
 }
 
@@ -71,7 +78,7 @@ function getTargetKey(target) {
  * @returns {string}
  */
 function getTargetLabel(target) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, asan } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -79,6 +86,11 @@ function getTargetLabel(target) {
   if (baseline) {
     label += "-baseline";
   }
+
+  if (asan) {
+    label += "-asan";
+  }
+
   if (profile && profile !== "release") {
     label += `-${profile}`;
   }
@@ -106,6 +118,7 @@ const buildPlatforms = [
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", asan: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
@@ -124,6 +137,7 @@ const testPlatforms = [
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", asan: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
@@ -160,14 +174,16 @@ function getPlatformKey(platform) {
  * @returns {string}
  */
 function getPlatformLabel(platform) {
-  const { os, arch, baseline, profile, distro, release } = platform;
+  const { os, arch, baseline, asan, distro, release } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
-  if (profile && profile !== "release") {
-    label += `-${profile}`;
+  // Special case for ASAN builds
+  if (asan) {
+    label += " (ASAN)";
   }
+
   return label;
 }
 
@@ -379,7 +395,7 @@ function getTestAgent(platform, options) {
  * @returns {Record<string, string | undefined>}
  */
 function getBuildEnv(target, options) {
-  const { profile, baseline, abi } = target;
+  const { profile, baseline, abi, asan } = target;
   const release = !profile || profile === "release";
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
@@ -391,7 +407,7 @@ function getBuildEnv(target, options) {
     CMAKE_BUILD_TYPE = "MinSizeRel";
   }
 
-  return {
+  const env = {
     CMAKE_BUILD_TYPE,
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
     ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
@@ -401,6 +417,22 @@ function getBuildEnv(target, options) {
     ABI: isMusl ? "musl" : undefined,
     CMAKE_TLS_VERIFY: "0",
   };
+
+  // ASAN configuration
+  if (asan) {
+    env.ENABLE_ASAN_RELEASE = "ON";
+    env.ENABLE_ASSERTIONS = "ON";
+    env.CMAKE_BUILD_TYPE = "Release";
+    // Disable LTO for ASAN builds as it's not necessary and can complicate debugging
+    env.ENABLE_LTO = "OFF";
+
+    // Set ASAN runtime options to disable leak detection (too noisy)
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1";
+    // Don't need LSAN options if we've disabled leak detection
+    // env.LSAN_OPTIONS = "suppressions=lsan.supp:print_suppressions=0";
+  }
+
+  return env;
 }
 
 /**
@@ -439,7 +471,6 @@ function getBuildCppStep(platform, options) {
     command: "bun run build:ci --target bun",
   };
 }
-
 /**
  * @param {Target} target
  * @returns {string}
@@ -532,9 +563,10 @@ function getBuildBunStep(platform, options) {
  * @returns {Step}
  */
 function getTestBunStep(platform, options, testOptions = {}) {
-  const { os } = platform;
+  const { asan, os } = platform;
   const { buildId, unifiedTests, testFiles } = testOptions;
 
+  // Use the proper target key for the step name
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
@@ -542,20 +574,30 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
-
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
   }
 
+  let label = `${getPlatformLabel(platform)} - test-bun`;
+  let key = `${getPlatformKey(platform)}`;
+  if (asan) {
+    label += " (ASAN)";
+    key += "-asan";
+  }
+
+  key += "-test-bun";
+
   return {
-    key: `${getPlatformKey(platform)}-test-bun`,
-    label: `${getPlatformLabel(platform)} - test-bun`,
+    key,
+    label,
     depends_on: depends,
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
+    // Use reduced parallelism for ASAN builds to avoid running out of memory
+    parallelism: unifiedTests ? undefined : asan ? 6 : os === "darwin" ? 2 : 10,
+    timeout_in_minutes: asan ? 90 : 30, // ASAN builds take significantly longer
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
@@ -827,6 +869,10 @@ function getOptionsStep() {
           {
             label: `${getEmoji("debug")} Debug`,
             value: "debug",
+          },
+          {
+            label: `🔍 ASAN Release with Assertions`,
+            value: "asan",
           },
         ],
       },

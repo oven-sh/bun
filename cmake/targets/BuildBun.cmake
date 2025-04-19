@@ -3,6 +3,8 @@ if(DEBUG)
 # elseif(ENABLE_SMOL)
 #   set(bun bun-smol-profile)
 #   set(bunStrip bun-smol)
+elseif(RELEASE AND ENABLE_ASAN_RELEASE)
+  set(bun bun-asan)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -58,6 +60,15 @@ set(BUN_ERROR_OUTPUTS
   ${BUN_ERROR_OUTPUT}/index.js
   ${BUN_ERROR_OUTPUT}/bun-error.css
 )
+
+set(DEFAULT_ENABLE_ZIG_ASAN OFF)
+if (ENABLE_ASAN_RELEASE)
+  set(DEFAULT_ENABLE_ZIG_ASAN ON)
+  # TODO:
+  # set(ENABLE_LOGS ON)
+endif()
+
+optionx(ENABLE_ZIG_ASAN BOOL "If Zig ASAN should be enabled" DEFAULT ${DEFAULT_ENABLE_ZIG_ASAN})
 
 register_bun_install(
   CWD
@@ -599,6 +610,7 @@ register_command(
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -930,6 +942,16 @@ if(NOT WIN32)
       -Wno-nullability-completeness
       -Werror
     )
+    
+    # Apply ASAN in release builds if enabled
+    if (ENABLE_ASAN_RELEASE)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
+      )
+    endif()
   endif()
 else()
   target_compile_options(${bun} PUBLIC
@@ -1265,6 +1287,9 @@ if(NOT BUN_CPP_ONLY)
     endif()
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
+    endif()
+    if(ENABLE_ASAN_RELEASE)
+      set(bunTriplet ${bunTriplet}-asan)
     endif()
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
     set(bunFiles ${bunExe} features.json)

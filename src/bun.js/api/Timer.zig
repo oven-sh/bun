@@ -161,16 +161,12 @@ pub const All = struct {
                         // prevent libuv from polling forever
                     }
                 }.cb);
-            } else {
-                vm.uwsLoop().ref();
             }
         } else if (old > 0 and new <= 0) {
             if (comptime Environment.isWindows) {
                 if (this.uv_idle.data != null) {
                     this.uv_idle.stop();
                 }
-            } else {
-                vm.uwsLoop().unref();
             }
         }
     }
@@ -209,6 +205,10 @@ pub const All = struct {
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         if (this.active_timer_count == 0) {
+            if (vm.eventLoop().immediate_tasks.items.len > 0) {
+                spec.* = .{ .nsec = 0, .sec = 0 };
+                return true;
+            }
             return false;
         }
 
@@ -234,9 +234,17 @@ pub const All = struct {
                 },
                 .lt => {
                     spec.* = min.next.duration(&now);
+                    if (vm.eventLoop().immediate_tasks.items.len > 0) {
+                        spec.* = .{ .nsec = 0, .sec = 0 };
+                    }
                     return true;
                 },
             }
+        }
+
+        if (vm.eventLoop().immediate_tasks.items.len > 0) {
+            spec.* = .{ .nsec = 0, .sec = 0 };
+            return true;
         }
 
         return false;

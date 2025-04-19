@@ -41,6 +41,19 @@
 
 extern "C" void mi_free(void* ptr);
 
+bool isStringEligibleForEarlyFree(const WTF::StringImpl& impl)
+{
+    return impl.isExternal() && !impl.isStatic() && impl.sizeInBytes() > 1024 * 128;
+}
+
+JSC::JSString* jsStringFreeEarly(JSC::VM& vm, WTF::String&& input)
+{
+    ASSERT(isStringEligibleForEarlyFree(*input.impl()));
+    auto* str = jsString(vm, WTFMove(input));
+    vm.heap.registerLargeString(str);
+    return str;
+}
+
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
@@ -126,11 +139,17 @@ extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC
 #endif
         bunString->impl.wtf->deref();
         *bunString = { .tag = BunStringTag::Dead };
+        if (!str.isEmpty() && isStringEligibleForEarlyFree(*str.impl())) {
+            return JSValue::encode(jsStringFreeEarly(vm, WTFMove(str)));
+        }
         return JSValue::encode(jsString(vm, WTFMove(str)));
     }
 
     WTF::String str = bunString->toWTFString();
     *bunString = { .tag = BunStringTag::Dead };
+    if (!str.isEmpty() && isStringEligibleForEarlyFree(*str.impl())) {
+        return JSValue::encode(jsStringFreeEarly(vm, WTFMove(str)));
+    }
     return JSValue::encode(jsString(vm, WTFMove(str)));
 }
 

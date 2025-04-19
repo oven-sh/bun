@@ -5,6 +5,13 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
 
+namespace JSC {
+class JSString;
+class VM;
+}
+
+JSC::JSString* jsStringFreeEarly(JSC::VM& vm, WTF::String&& input);
+bool isStringEligibleForEarlyFree(const WTF::StringImpl& impl);
 namespace Bun {
 class UTF8View {
 public:

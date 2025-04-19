@@ -537,7 +537,7 @@ pub const SendQueue = struct {
         if (!Environment.isDebug) return;
         log("IPC message queue ({d} items)", .{this.queue.items.len});
         for (this.queue.items) |item| {
-            log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
+            log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[0..item.data.cursor]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
         }
     }
 };

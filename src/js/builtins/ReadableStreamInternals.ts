@@ -2101,7 +2101,7 @@ export function withoutUTF8BOM(result) {
 }
 
 export function readableStreamIntoText(stream: ReadableStream) {
-  const highWaterMark = $getByIdDirectPrivate(stream, "highWatearMark");
+  const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
   const [textStream, closer] = $createTextStream(highWaterMark);
   const prom = $readStreamIntoSink(stream, textStream, false);
 

@@ -648,15 +648,11 @@ pub const TestScope = struct {
                     task.handleResult(no_err_result, .callback);
                 } else {
                     debug("done(err)", .{});
-                    const result: Result = if (current_test.tag == .fail) failing_passed: {
-                        break :failing_passed if (globalThis.clearExceptionExceptTermination())
-                            Result{ .pass = expect_count }
-                        else
-                            Result{ .fail = expect_count }; // what is the correct thing to do when terminating?
-                    } else passing_failed: {
-                        _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-                        break :passing_failed Result{ .fail = expect_count };
-                    };
+                    _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
+                    const result: Result = if (current_test.tag == .fail)
+                        Result{ .pass = expect_count }
+                    else
+                        Result{ .fail = expect_count };
                     task.handleResult(result, .callback);
                 }
             } else {

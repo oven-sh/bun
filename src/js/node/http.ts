@@ -52,7 +52,6 @@ const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kClearTimeout = Symbol("kClearTimeout");
 const kfakeSocket = Symbol("kfakeSocket");
-const kHandle = Symbol("handle");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
@@ -76,7 +75,7 @@ const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
-const { kDeprecatedReplySymbol } = require("internal/http");
+const { kDeprecatedReplySymbol, kHandle } = require("internal/http");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { isTypedArray, isArrayBuffer } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");

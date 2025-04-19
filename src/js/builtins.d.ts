@@ -54,6 +54,9 @@ declare var $sloppy;
 declare var $alwaysInline;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
+/**
+ * Overrides **
+ */
 
 interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
   $controlledReadableStream: ReadableStream<R>;
@@ -82,12 +85,20 @@ declare var ReadableStreamDefaultController: {
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   $highWaterMark: number;
   $bunNativePtr: undefined | TODO;
+  $asyncContext?: {};
+  $disturbed: boolean;
+  $state: $streamClosed | $streamErrored | $streamReadable | $streamWritable | $streamClosedAndErrored;
 }
 
 declare var ReadableStream: {
   prototype: ReadableStream;
   new (): ReadableStream;
 };
+
+interface Console {
+  $writer: ReturnType<typeof Bun.stdout.writer>;
+}
+
 // JSC defines their intrinsics in a nice list here:
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/bytecode/BytecodeIntrinsicRegistry.h
 //
@@ -158,7 +169,6 @@ declare function $isProxyObject(obj: unknown): obj is Proxy;
 declare function $isDerivedArray(): TODO;
 declare function $isGenerator(obj: unknown): obj is Generator<any, any, any>;
 declare function $isAsyncGenerator(obj: unknown): obj is AsyncGenerator<any, any, any>;
-declare function $isPromise(obj: unknown): obj is Promise<any>;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
@@ -584,6 +594,7 @@ declare interface UnderlyingSource {
   $lazy?: boolean;
   $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
+  $stream?: ReadableStream;
 }
 
 declare class OutOfMemoryError {
@@ -797,11 +808,7 @@ declare const $Object: ObjectConstructor;
 
 /** gets a property on an object */
 declare function $getByIdDirect<T = any>(obj: any, key: string): T;
-/**
- * gets a private property on an object. translates to the `op_get_by_id_direct` bytecode.
- *
- * TODO: clarify what private means exactly.
- */
+
 /**
  * Gets a private property on an object.
  * Translates to the `op_get_by_id_direct` bytecode.
@@ -814,3 +821,13 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
   obj: T,
   key: K,
 ): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;
+
+declare var $Promise: PromiseConstructor;
+
+declare function $isPromise<T>(value: unknown): value is Promise<T>;
+
+declare type $ReadableStream = ReadableStream;
+declare type $ReadableStreamBYOBReader = ReadableStreamBYOBReader;
+declare type $ReadableStreamDefaultReader = ReadableStreamDefaultReader;
+declare type $ReadableStreamDefaultController = ReadableStreamDefaultController;
+declare type $ReadableStreamDirectController = ReadableStreamDirectController;

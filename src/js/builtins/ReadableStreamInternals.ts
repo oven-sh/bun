@@ -758,7 +758,7 @@ export function assignToStream(stream, sink) {
   return $readStreamIntoSink(stream, sink, true);
 }
 
-export async function readStreamIntoSink(stream, sink, isNative) {
+export async function readStreamIntoSink(stream: ReadableStream, sink, isNative) {
   var didClose = false;
   var didThrow = false;
   var started = false;
@@ -901,7 +901,7 @@ export function handleDirectStreamErrorReject(e) {
   return Promise.$reject(e);
 }
 
-export function onPullDirectStream(controller) {
+export function onPullDirectStream(controller: ReadableStreamDirectController) {
   var stream = controller.$controlledReadableStream;
   if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
 
@@ -1125,7 +1125,7 @@ export function onFlushDirectStream() {
   }
 }
 
-export function createTextStream(_highWaterMark?: number) {
+export function createTextStream(_highWaterMark: number) {
   var sink;
   var array = [];
   var hasString = false;
@@ -1242,7 +1242,7 @@ export function createTextStream(_highWaterMark?: number) {
   return [sink, capability];
 }
 
-export function initializeTextStream(underlyingSource, highWaterMark) {
+export function initializeTextStream(underlyingSource, highWaterMark: number) {
   var [sink, closingPromise] = $createTextStream(highWaterMark);
 
   var controller = {
@@ -1269,7 +1269,7 @@ export function initializeTextStream(underlyingSource, highWaterMark) {
   return closingPromise;
 }
 
-export function initializeArrayStream(underlyingSource, _highWaterMark) {
+export function initializeArrayStream(underlyingSource, _highWaterMark: number) {
   var array = [];
   var closingPromise = $newPromiseCapability(Promise);
   var calledDone = false;
@@ -1329,7 +1329,7 @@ export function initializeArrayStream(underlyingSource, _highWaterMark) {
   return closingPromise;
 }
 
-export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
+export function initializeArrayBufferStream(underlyingSource, highWaterMark: number) {
   // This is the fallback implementation for direct streams
   // When we don't know what the destination type is
   // We assume it is a Uint8Array.
@@ -1469,7 +1469,7 @@ export function readableStreamReaderGenericCancel(reader, reason) {
   return $readableStreamCancel(stream, reason);
 }
 
-export function readableStreamCancel(stream, reason) {
+export function readableStreamCancel(stream: ReadableStream, reason: any) {
   stream.$disturbed = true;
   const state = $getByIdDirectPrivate(stream, "state");
   if (state === $streamClosed) return Promise.$resolve();
@@ -1856,7 +1856,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #closed = false;
 
     $data?: Uint8Array;
-    $stream?: ReadableStream;
+
+    // @ts-ignore-next-line
+    $stream: ReadableStream;
 
     #onClose() {
       this.#closed = true;
@@ -2248,6 +2250,7 @@ export function readableStreamDefineLazyIterators(prototype) {
       }
     } catch (e) {
       deferredError = e;
+      throw e;
     } finally {
       reader.releaseLock();
 
@@ -2257,10 +2260,6 @@ export function readableStreamDefineLazyIterators(prototype) {
           $markPromiseAsHandled(promise);
         }
       }
-    }
-
-    if (deferredError) {
-      throw deferredError;
     }
   };
   var createAsyncIterator = function asyncIterator() {

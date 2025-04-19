@@ -32,8 +32,8 @@ main_resolved_path: bun.String = bun.String.empty,
 main_hash: u32 = 0,
 entry_point: ServerEntryPoint = undefined,
 origin: URL = URL{},
-node_fs: ?*Node.NodeFS = null,
-timer: Bun.Timer.All,
+node_fs: ?*bun.api.node.fs.NodeFS = null,
+timer: bun.api.Timer.All,
 event_loop_handle: ?*JSC.PlatformEventLoop = null,
 pending_unref_counter: i32 = 0,
 preload: []const []const u8 = &.{},
@@ -79,7 +79,7 @@ macros: MacroMap,
 macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
 macro_mode: bool = false,
 no_macros: bool = false,
-auto_killer: JSC.AutoKiller = .{ .enabled = false },
+auto_killer: ProcessAutoKiller = .{ .enabled = false },
 
 has_any_macro_remappings: bool = false,
 is_from_devserver: bool = false,
@@ -89,7 +89,7 @@ has_enabled_macro_mode: bool = false,
 is_in_preload: bool = false,
 has_patched_run_main: bool = false,
 
-transpiler_store: JSC.RuntimeTranspilerStore,
+transpiler_store: ModuleLoader.RuntimeTranspilerStore,
 
 after_event_loop_callback_ctx: ?*anyopaque = null,
 after_event_loop_callback: ?JSC.OpaqueCallback = null,
@@ -145,7 +145,7 @@ aggressive_garbage_collection: GCLevel = GCLevel.none,
 module_loader: ModuleLoader = .{},
 
 gc_controller: JSC.GarbageCollectionController = .{},
-worker: ?*JSC.WebWorker = null,
+worker: ?*webcore.WebWorker = null,
 ipc: ?IPCInstanceUnion = null,
 
 debugger: ?JSC.Debugger = null,
@@ -185,6 +185,7 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
+pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
@@ -3536,7 +3537,7 @@ const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
-const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
+const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;

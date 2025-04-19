@@ -18,7 +18,7 @@ const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
-const EventLoopTimer = JSC.BunTimer.EventLoopTimer;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 const timespec = bun.timespec;
 
 const LibInfo = struct {

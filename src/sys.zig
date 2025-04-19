@@ -4573,13 +4573,17 @@ export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
     return @tagName(SystemErrno.init(err) orelse return null);
 }
 
+// TODO: this is wrong on Windows
+const libc_stat = bun.Stat;
+const Stat = std.fs.File.Stat;
+
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
         @compileError("Not implemented yet, consider using bun.sys.lstat()");
     }
 
-    var st = zeroes(libc_stat);
-    switch (errno(bun.C.lstat(path.ptr, &st))) {
+    var st = std.mem.zeroes(libc_stat);
+    switch (std.posix.errno(workaround_symbols.lstat(path.ptr, &st))) {
         .SUCCESS => {},
         .NOENT => return error.FileNotFound,
         // .EINVAL => unreachable,
@@ -4592,6 +4596,7 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
     const atime = st.atime();
     const mtime = st.mtime();
     const ctime = st.ctime();
+    const Kind = std.fs.File.Kind;
     return Stat{
         .inode = st.ino,
         .size = @as(u64, @bitCast(st.size)),

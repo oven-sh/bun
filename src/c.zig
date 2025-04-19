@@ -18,13 +18,9 @@ const C = std.c;
 const builtin = @import("builtin");
 const posix = std.posix;
 const mem = std.mem;
-const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
-const errno = posix.errno;
 const mode_t = bun.Mode;
-// TODO: this is wrong on Windows
-const libc_stat = bun.Stat;
 
 const zeroes = mem.zeroes;
 pub const darwin = @import("./darwin_c.zig");

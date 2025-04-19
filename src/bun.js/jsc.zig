@@ -141,6 +141,7 @@ pub const EventLoopTask = event_loop.EventLoopTask;
 pub const EventLoopTaskPtr = event_loop.EventLoopTaskPtr;
 pub const PosixSignalHandle = event_loop.PosixSignalHandle;
 pub const PosixSignalTask = event_loop.PosixSignalTask;
+pub const GarbageCollectionController = event_loop.GarbageCollectionController;
 
 /// Deprecated: Use `bun.sys.Maybe`
 pub const Maybe = bun.sys.Maybe;

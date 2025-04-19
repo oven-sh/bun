@@ -10,16 +10,16 @@ const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
-const CopyFilePromiseTask = bun.webcore.Blob.Store.CopyFilePromiseTask;
+const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-const ReadFileTask = bun.webcore.Blob.ReadFileTask;
-const WriteFileTask = bun.webcore.Blob.WriteFileTask;
-const napi_async_work = JSC.napi.napi_async_work;
+const ReadFileTask = bun.webcore.Blob.read_file.ReadFileTask;
+const WriteFileTask = bun.webcore.Blob.write_file.WriteFileTask;
+const napi_async_work = bun.api.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
-const NapiFinalizerTask = bun.JSC.napi.NapiFinalizerTask;
+const NapiFinalizerTask = bun.api.napi.NapiFinalizerTask;
 
 const Waker = bun.Async.Waker;
 
@@ -378,12 +378,12 @@ pub const JSCScheduler = struct {
     }
 };
 
-const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
-const HotReloadTask = JSC.HotReloader.HotReloadTask;
-const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
+const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
+const HotReloadTask = JSC.hot_reloader.HotReloader.Task;
+const FSWatchTask = bun.api.node.fs.Watcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
-const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
+const GetAddrInfoRequestTask = bun.api.DNS.GetAddrInfoRequest.Task;
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 
 const AsyncFS = bun.api.node.fs.Async;
@@ -451,9 +451,9 @@ const ImmediateObject = Timer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
-const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
+const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
 const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
-const FlushPendingFileSinkTask = JSC.WebCore.FlushPendingFileSinkTask;
+const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -1107,8 +1107,8 @@ pub const EventLoop = struct {
                     transform_task.*.runFromJS();
                     transform_task.deinit();
                 },
-                @field(Task.Tag, @typeName(JSC.napi.napi_async_work)) => {
-                    const transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
+                @field(Task.Tag, @typeName(bun.api.napi.napi_async_work)) => {
+                    const transform_task: *bun.api.napi.napi_async_work = task.get(bun.api.napi.napi_async_work).?;
                     transform_task.*.runFromJS();
                 },
                 @field(Task.Tag, @typeName(ThreadSafeFunction)) => {

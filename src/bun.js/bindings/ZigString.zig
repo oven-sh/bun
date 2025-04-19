@@ -257,7 +257,7 @@ pub const ZigString = extern struct {
             return strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16SliceAligned());
         }
 
-        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
+        return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
     }
 
     pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) OOM![]u8 {

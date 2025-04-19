@@ -94,7 +94,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 }
 
 pub const Binding = struct {
-    node_fs: node.fs.NodeFS = .{},
+    node_fs: bun.api.node.fs.NodeFS = .{},
 
     pub const js = JSC.Codegen.JSNodeJSFS;
     pub const toJS = js.toJS;
@@ -103,7 +103,7 @@ pub const Binding = struct {
 
     pub const new = bun.TrivialNew(@This());
 
-    pub fn finalize(this: *JSC.Node.NodeJSFS) void {
+    pub fn finalize(this: *Binding) void {
         if (this.node_fs.vm) |vm| {
             if (vm.node_fs == &this.node_fs) {
                 return;

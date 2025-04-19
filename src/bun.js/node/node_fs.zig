@@ -22,8 +22,8 @@ else
 // an extra stack buffer in the async case.
 pub const Flavor = enum { sync, @"async" };
 
-const ArrayBuffer = JSC.MarkedArrayBuffer;
-const Buffer = JSC.Buffer;
+const ArrayBuffer = JSC.ArrayBuffer.Marked;
+const Buffer = bun.api.node.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 pub const Async = struct {
     pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
@@ -348,7 +348,7 @@ pub const Async = struct {
             task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
             result: JSC.Maybe(ReturnType),
             ref: bun.Async.KeepAlive = .{},
-            tracker: JSC.AsyncTaskTracker,
+            tracker: JSC.Debugger.AsyncTaskTracker,
 
             /// NewAsyncFSTask supports cancelable operations via AbortSignal,
             /// so long as a "signal" field exists. The task wrapper will ensure
@@ -360,7 +360,7 @@ pub const Async = struct {
 
             pub fn create(
                 globalObject: *JSC.JSGlobalObject,
-                _: *JSC.Node.NodeJSFS,
+                _: *bun.api.node.fs.Binding,
                 args: ArgumentType,
                 vm: *JSC.VirtualMachine,
             ) JSC.JSValue {
@@ -512,7 +512,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 const result = node_fs._copySingleFileSync(
                     this.src,
                     this.dest,
-                    @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) constants.COPYFILE_EXCL else @as(u8, 0))),
                     null,
                     this.cp_task.args,
                 );
@@ -739,9 +739,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         dest,
                         if (comptime is_shell)
                             // Shell always forces copy
-                            @enumFromInt(Constants.Copyfile.force)
+                            @enumFromInt(constants.Copyfile.force)
                         else
-                            @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                            @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) constants.COPYFILE_EXCL else @as(u8, 0))),
                         attributes,
                         this.args,
                     );
@@ -768,7 +768,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     const r = nodefs._copySingleFileSync(
                         src,
                         dest,
-                        @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                        @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) constants.COPYFILE_EXCL else @as(u8, 0))),
                         stat_,
                         this.args,
                     );
@@ -941,7 +941,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     ref: bun.Async.KeepAlive = .{},
-    tracker: JSC.AsyncTaskTracker,
+    tracker: JSC.Debugger.AsyncTaskTracker,
 
     // It's not 100% clear this one is necessary
     has_result: std.atomic.Value(bool),
@@ -2995,7 +2995,7 @@ pub const Arguments = struct {
     pub const CopyFile = struct {
         src: PathLike,
         dest: PathLike,
-        mode: Constants.Copyfile,
+        mode: constants.Copyfile,
 
         pub fn deinit(this: *const CopyFile) void {
             this.src.deinit();
@@ -3023,7 +3023,7 @@ pub const Arguments = struct {
             };
             errdefer dest.deinit();
 
-            var mode: Constants.Copyfile = @enumFromInt(0);
+            var mode: constants.Copyfile = @enumFromInt(0);
             if (arguments.next()) |arg| {
                 arguments.eat();
                 mode = @enumFromInt(@intFromEnum(try FileSystemFlags.fromJSNumberOnly(ctx, arg, .copy_file)));
@@ -3043,7 +3043,7 @@ pub const Arguments = struct {
         flags: Flags,
 
         const Flags = struct {
-            mode: Constants.Copyfile,
+            mode: constants.Copyfile,
             recursive: bool,
             errorOnExist: bool,
             force: bool,
@@ -6014,7 +6014,7 @@ pub const NodeFS = struct {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
-                    @enumFromInt(if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0)),
+                    @enumFromInt(if (cp_flags.errorOnExist or !cp_flags.force) constants.COPYFILE_EXCL else @as(u8, 0)),
                     attributes,
                     args,
                 );
@@ -6036,7 +6036,7 @@ pub const NodeFS = struct {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
-                    @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) constants.COPYFILE_EXCL else @as(u8, 0))),
                     stat_,
                     args,
                 );
@@ -6135,7 +6135,7 @@ pub const NodeFS = struct {
                     const r = this._copySingleFileSync(
                         src_buf[0 .. src_dir_len + 1 + name_slice.len :0],
                         dest_buf[0 .. dest_dir_len + 1 + name_slice.len :0],
-                        @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                        @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) constants.COPYFILE_EXCL else @as(u8, 0))),
                         null,
                         args,
                     );
@@ -6193,7 +6193,7 @@ pub const NodeFS = struct {
         this: *NodeFS,
         src: bun.OSPathSliceZ,
         dest: bun.OSPathSliceZ,
-        mode: Constants.Copyfile,
+        mode: constants.Copyfile,
         /// Stat on posix, file attributes on windows
         reuse_stat: ?if (Environment.isWindows) windows.DWORD else std.posix.Stat,
         args: Arguments.Cp,
@@ -6917,7 +6917,7 @@ const windows = bun.windows;
 const c = bun.c;
 const string = bun.string;
 const JSC = bun.JSC;
-const PathString = JSC.PathString;
+const PathString = bun.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
 const system = std.posix.system;
@@ -6932,7 +6932,6 @@ const AbortSignal = bun.webcore.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const posix = std.posix;
 const darwin = std.os.darwin;
@@ -6951,5 +6950,5 @@ const uid_t = JSC.Node.uid_t;
 const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
-const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
+const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;

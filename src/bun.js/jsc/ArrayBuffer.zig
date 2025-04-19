@@ -1,5 +1,5 @@
 const ArrayBuffer = @This();
-ptr: [*]u8 = undefined,
+ptr: [*]u8 = &[0]u8{},
 offset: usize = 0,
 len: usize = 0,
 byte_len: usize = 0,
@@ -119,7 +119,7 @@ pub const Strong = struct {
     held: JSC.Strong = .empty,
 
     pub fn clear(this: *ArrayBuffer.Strong) void {
-        var ref: *JSC.napi.Ref = this.ref orelse return;
+        var ref: *bun.api.napi.Ref = this.ref orelse return;
         ref.set(JSC.JSValue.zero);
     }
 
@@ -191,7 +191,7 @@ extern "c" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const any
 extern "c" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSC.JSValue;
 
 pub fn fromTypedArray(ctx: *JSC.JSGlobalObject, value: JSC.JSValue) ArrayBuffer {
-    var out = std.mem.zeroes(ArrayBuffer);
+    var out: ArrayBuffer = .{};
     const was = value.asArrayBuffer_(ctx, &out);
     bun.assert(was);
     out.value = value;

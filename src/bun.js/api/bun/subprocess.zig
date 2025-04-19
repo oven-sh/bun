@@ -792,17 +792,17 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     if (good) {
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, callback, .null);
+            callback.callNextTick(global, .{JSValue.null});
             // we need to wait until the send is actually completed to trigger the callback
         }
     } else {
         const ex = global.createTypeErrorInstance("process.send() failed", .{});
         ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, callback, ex);
+            callback.callNextTick(global, .{ex});
         } else {
             const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            JSC.Bun__Process__queueNextTick1(global, fnvalue, ex);
+            fnvalue.callNextTick(global, .{ex});
         }
     }
 

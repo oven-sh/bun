@@ -65,10 +65,10 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     const ipc_instance = vm.getIPCInstance() orelse {
         const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(globalObject, callback, ex);
+            callback.callNextTick(globalObject, .{ex});
         } else {
             const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
+            fnvalue.callNextTick(globalObject, .{ex});
         }
         return .false;
     };
@@ -84,16 +84,16 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     if (good) {
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(globalObject, callback, .null);
+            callback.callNextTick(globalObject, .{.undefined});
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
         ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(globalObject, callback, ex);
+            callback.callNextTick(globalObject, .{ex});
         } else {
             const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-            Bun__Process__queueNextTick1(globalObject, fnvalue, ex);
+            fnvalue.callNextTick(globalObject, .{ex});
         }
     }
 

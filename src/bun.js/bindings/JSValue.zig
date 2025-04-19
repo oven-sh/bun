@@ -640,10 +640,10 @@ pub const JSValue = enum(i64) {
         ).unwrap();
     }
 
-    pub extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;
-    pub extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
+    extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;
+    extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
 
-    pub fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
+    pub inline fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
         if (Environment.isDebug) {
             bun.assert(function.isCallable());
         }

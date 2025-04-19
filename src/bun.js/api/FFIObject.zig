@@ -358,11 +358,11 @@ fn ptr_(
     }
 
     const array_buffer = value.asArrayBuffer(globalThis) orelse {
-        return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis);
+        return globalThis.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())});
     };
 
     if (array_buffer.len == 0) {
-        return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis);
+        return globalThis.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{});
     }
 
     var addr: usize = @intFromPtr(array_buffer.ptr);
@@ -372,7 +372,7 @@ fn ptr_(
     if (byteOffset) |off| {
         if (!off.isEmptyOrUndefinedOrNull()) {
             if (!off.isNumber()) {
-                return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis);
+                return globalThis.toInvalidArguments("Expected number for byteOffset", .{});
             }
         }
 
@@ -384,20 +384,20 @@ fn ptr_(
         }
 
         if (addr > @intFromPtr(array_buffer.ptr) + @as(usize, array_buffer.byte_len)) {
-            return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis);
+            return globalThis.toInvalidArguments("byteOffset out of bounds", .{});
         }
     }
 
     if (addr > max_addressable_memory) {
-        return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis);
+        return globalThis.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{});
     }
 
     if (addr == 0) {
-        return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis);
+        return globalThis.toInvalidArguments("Pointer must not be 0", .{});
     }
 
     if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-        return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis);
+        return globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{});
     }
 
     if (comptime Environment.allow_assert) {
@@ -609,18 +609,14 @@ pub fn getter(
 }
 
 const fields = .{
-    .viewSource = JSC.host_fn.wrapStaticMethod(
-        JSC.FFI,
-        "print",
-        false,
-    ),
-    .dlopen = JSC.host_fn.wrapStaticMethod(JSC.FFI, "open", false),
-    .callback = JSC.host_fn.wrapStaticMethod(JSC.FFI, "callback", false),
-    .linkSymbols = JSC.host_fn.wrapStaticMethod(JSC.FFI, "linkSymbols", false),
+    .viewSource = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "print", false),
+    .dlopen = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "open", false),
+    .callback = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "callback", false),
+    .linkSymbols = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "linkSymbols", false),
     .toBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toBuffer", false),
     .toArrayBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toArrayBuffer", false),
-    .closeCallback = JSC.host_fn.wrapStaticMethod(JSC.FFI, "closeCallback", false),
-    .CString = JSC.host_fn.wrapStaticMethod(Bun.FFIObject, "newCString", false),
+    .closeCallback = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "closeCallback", false),
+    .CString = JSC.host_fn.wrapStaticMethod(bun.api.FFIObject, "newCString", false),
 };
 const max_addressable_memory = std.math.maxInt(u56);
 

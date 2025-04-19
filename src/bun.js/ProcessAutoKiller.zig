@@ -1,5 +1,7 @@
 const ProcessAutoKiller = @This();
-const log = Output.scoped(.AutoKiller, true);
+const log = bun.Output.scoped(.AutoKiller, true);
+const bun = @import("bun");
+const std = @import("std");
 
 processes: std.AutoArrayHashMapUnmanaged(*bun.spawn.Process, void) = .{},
 enabled: bool = false,

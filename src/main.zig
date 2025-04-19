@@ -21,6 +21,12 @@ pub extern "c" var _environ: ?*anyopaque;
 pub extern "c" var environ: ?*anyopaque;
 
 pub fn main() void {
+    if (comptime Environment.isPosix) {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_CRASH_HANDLER")) {
+            bun.crash_handler.disable_at_runtime = true;
+        }
+    }
+
     bun.crash_handler.init();
 
     if (Environment.isPosix) {

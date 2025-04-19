@@ -122,7 +122,23 @@ export const npmTag: (
 ) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
   $newZigFunction("dependency.zig", "Version.Tag.inferFromJS", 1);
 
-export const readTarball: (tarball: string) => any = $newZigFunction("pack_command.zig", "bindings.jsReadTarball", 1);
+export const readTarball: (tarball: string) => Tarball = $newZigFunction(
+  "pack_command.zig",
+  "bindings.jsReadTarball",
+  1,
+);
+interface Tarball {
+  entries: TarballEntry[];
+  size: number;
+  shasum: string;
+  integrity: string;
+}
+interface TarballEntry {
+  pathname: string;
+  kind: string;
+  perm: number;
+  contents: string;
+}
 
 export const isArchitectureMatch: (architecture: string[]) => boolean = $newZigFunction(
   "npm.zig",

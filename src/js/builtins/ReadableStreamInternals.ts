@@ -1,4 +1,3 @@
-// @ts-nocheck
 /*
  * Copyright (C) 2015 Canon Inc. All rights reserved.
  * Copyright (C) 2015 Igalia.
@@ -27,7 +26,7 @@
 
 // @internal
 
-export function readableStreamReaderGenericInitialize(reader, stream) {
+export function readableStreamReaderGenericInitialize(reader: ReadableStreamDefaultReader, stream: ReadableStream) {
   $putByIdDirectPrivate(reader, "ownerReadableStream", stream);
   $putByIdDirectPrivate(stream, "reader", reader);
   if ($getByIdDirectPrivate(stream, "state") === $streamReadable)
@@ -44,7 +43,13 @@ export function readableStreamReaderGenericInitialize(reader, stream) {
   }
 }
 
-export function privateInitializeReadableStreamDefaultController(this, stream, underlyingSource, size, highWaterMark) {
+export function privateInitializeReadableStreamDefaultController(
+  this: ReadableStreamDefaultController,
+  stream: ReadableStream,
+  underlyingSource: UnderlyingSource,
+  size: QueuingStrategySize,
+  highWaterMark: QueuingStrategyHighWaterMark,
+) {
   if (!$isReadableStream(stream)) throw new TypeError("ReadableStreamDefaultController needs a ReadableStream");
 
   // readableStreamController is initialized with null value.
@@ -1017,7 +1022,7 @@ export function tryUseReadableStreamBufferedFastPath(stream, method) {
   }
 }
 
-export function onCloseDirectStream(_reason) {
+export function onCloseDirectStream(reason) {
   var stream = this.$controlledReadableStream;
   if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
 
@@ -1120,7 +1125,7 @@ export function onFlushDirectStream() {
   }
 }
 
-export function createTextStream(_highWaterMark) {
+export function createTextStream(_highWaterMark?: number) {
   var sink;
   var array = [];
   var hasString = false;
@@ -1324,7 +1329,7 @@ export function initializeArrayStream(underlyingSource, _highWaterMark) {
   return closingPromise;
 }
 
-export function initializeArrayBufferStream(underlyingSource, _highWaterMark) {
+export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
   // This is the fallback implementation for direct streams
   // When we don't know what the destination type is
   // We assume it is a Uint8Array.
@@ -1767,7 +1772,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
   const closer = [false];
 
-  function callClose(controller) {
+  function callClose(controller: ReadableStreamDefaultController) {
     try {
       var source = controller.$underlyingSource;
       const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
@@ -1838,7 +1843,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    #controller: WeakRef<ReadableByteStreamController>;
+    #controller?: WeakRef<ReadableStreamDefaultController>;
 
     // eslint-disable-next-line no-unused-vars
     pull;
@@ -1851,6 +1856,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #closed = false;
 
     $data?: Uint8Array;
+    $stream?: ReadableStream;
 
     #onClose() {
       this.#closed = true;
@@ -2092,8 +2098,9 @@ export function withoutUTF8BOM(result) {
   return result;
 }
 
-export function readableStreamIntoText(stream) {
-  const [textStream, closer] = $createTextStream($getByIdDirectPrivate(stream, "highWaterMark"));
+export function readableStreamIntoText(stream: ReadableStream) {
+  const highWaterMark = $getByIdDirectPrivate(stream, "highWatearMark");
+  const [textStream, closer] = $createTextStream(highWaterMark);
   const prom = $readStreamIntoSink(stream, textStream, false);
 
   if (prom && $isPromise(prom)) {
@@ -2103,7 +2110,11 @@ export function readableStreamIntoText(stream) {
   return closer.promise.$then($withoutUTF8BOM);
 }
 
-export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUint8Array) {
+export function readableStreamToArrayBufferDirect(
+  stream: ReadableStream,
+  underlyingSource: any,
+  asUint8Array: boolean,
+) {
   var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");

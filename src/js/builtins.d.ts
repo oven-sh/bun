@@ -55,6 +55,39 @@ declare var $alwaysInline;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 
+interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+  $controlledReadableStream: ReadableStream<R>;
+  $underlyingSource: UnderlyingSource;
+  $queue: any;
+  $started: number;
+  $closeRequested: boolean;
+  $pullAgain: boolean;
+  $pulling: boolean;
+  $strategy: any;
+
+  $pullAlgorithm(): void;
+  $pull: typeof ReadableStreamDefaultController.prototype.pull;
+  $cancel: typeof ReadableStreamDefaultController.prototype.cancel;
+  $cancelAlgorithm: (reason?: any) => void;
+  $close: typeof ReadableStreamDefaultController.prototype.close;
+  $enqueue: typeof ReadableStreamDefaultController.prototype.enqueue;
+  $error: typeof ReadableStreamDefaultController.prototype.error;
+}
+
+declare var ReadableStreamDefaultController: {
+  prototype: ReadableStreamDefaultController;
+  new (): ReadableStreamDefaultController;
+};
+
+interface ReadableStream<R = any> extends _ReadableStream<R> {
+  $highWaterMark: number;
+  $bunNativePtr: undefined | TODO;
+}
+
+declare var ReadableStream: {
+  prototype: ReadableStream;
+  new (): ReadableStream;
+};
 // JSC defines their intrinsics in a nice list here:
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/bytecode/BytecodeIntrinsicRegistry.h
 //
@@ -67,14 +100,7 @@ declare function $argument<T = any>(index: number): any | undefined;
 declare function $argumentCount(): number;
 /** array.push(item) */
 declare function $arrayPush(array: T[], item: T): void;
-/** gets a property on an object */
-declare function $getByIdDirect<T = any>(obj: any, key: string): T;
-/**
- * gets a private property on an object. translates to the `op_get_by_id_direct` bytecode.
- *
- * TODO: clarify what private means exactly.
- */
-declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
+
 /**
  * gets a property on an object
  */
@@ -161,7 +187,21 @@ declare function $throwOutOfMemoryError(): never;
 declare function $tryGetById(): TODO;
 declare function $tryGetByIdWithWellKnownSymbol(obj: any, key: WellKnownSymbol): any;
 declare function $putByIdDirect(obj: any, key: PropertyKey, value: any): void;
-declare function $putByIdDirectPrivate(obj: any, key: PropertyKey, value: any): void;
+
+/**
+ * Sets a private property on an object.
+ * Translates to the `op_put_by_id_direct` bytecode.
+ *
+ * @param obj The object to set the private property on
+ * @param key The key of the private property (without the "$" prefix)
+ * @param value The value to set the private property to
+ */
+declare function $putByIdDirectPrivate<T extends Record<`$${K}`, unknown>, K extends string>(
+  obj: T,
+  key: K,
+  value: T[`$${K}`],
+): void;
+
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
 declare function $putByValWithThisSloppy(): TODO;
 declare function $putByValWithThisStrict(): TODO;
@@ -372,7 +412,7 @@ declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazyStreamPrototypeMap(): TODO;
+declare const $lazyStreamPrototypeMap: Map<string, typeof import("node:stream/web").ReadableStreamDefaultController>;
 declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;
 declare function $main(): TODO;
@@ -734,3 +774,43 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 declare function $min(a: number, b: number): number;
 
 declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
+
+/**
+ * Schedules a callback to be invoked as a microtask.
+ */
+declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...args: Parameters<T>): void;
+
+declare function $rejectPromise(promise: Promise<unknown>, reason: unknown): void;
+declare function $resolvePromise(promise: Promise<unknown>, value: unknown): void;
+
+interface Map<K, V> {
+  $get: typeof Map.prototype.get;
+  $set: typeof Map.prototype.set;
+}
+
+interface ObjectConstructor {
+  $defineProperty: typeof Object.defineProperty;
+  $defineProperties: typeof Object.defineProperties;
+}
+
+declare const $Object: ObjectConstructor;
+
+/** gets a property on an object */
+declare function $getByIdDirect<T = any>(obj: any, key: string): T;
+/**
+ * gets a private property on an object. translates to the `op_get_by_id_direct` bytecode.
+ *
+ * TODO: clarify what private means exactly.
+ */
+/**
+ * Gets a private property on an object.
+ * Translates to the `op_get_by_id_direct` bytecode.
+ *
+ * @param obj The object to get the private property from
+ * @param key The key of the private property (without the "$" prefix)
+ * @returns The value of the private property
+ */
+declare function $getByIdDirectPrivate<T = any, K extends string = string>(
+  obj: T,
+  key: K,
+): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;

@@ -1,5 +1,8 @@
+// Hardcoded module "node:tty"
+
 // Note: please keep this module's loading constrants light, as some users
 // import it just to call `isatty`. In that case, `node:stream` is not needed.
+
 const {
   setRawMode: ttySetMode,
   isatty,
@@ -7,75 +10,65 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
+const fs = require("node:fs");
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
+  fs.ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
   this.isTTY = true;
 }
+$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
-Object.defineProperty(ReadStream, "prototype", {
-  get() {
-    const Prototype = Object.create(require("node:fs").ReadStream.prototype);
+ReadStream.prototype.setRawMode = function (flag) {
+  flag = !!flag;
 
-    Prototype.setRawMode = function (flag) {
-      flag = !!flag;
-
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
-      if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-          }
-          return this;
-        }
-
-        const handle = this.$bunNativePtr;
-        if (!handle) {
-          this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-          return this;
-        }
-
-        // If you call setRawMode before you call on('data'), the stream will
-        // not be constructed, leading to EBADF
-        // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-        this.$start();
-
-        const err = handle.setRawMode(flag);
-        if (err) {
-          this.emit("error", err);
-          return this;
-        }
-      } else {
-        const err = ttySetMode(this.fd, flag);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
+  // On windows, this goes through the stream handle itself, as it must call
+  // uv_tty_set_mode on the uv_tty_t.
+  //
+  // On POSIX, I tried to use the same approach, but it didn't work reliably,
+  // so we just use the file descriptor and use termios APIs directly.
+  if (process.platform === "win32") {
+    // Special case for stdin, as it has a shared uv_tty handle
+    // and it's stream is constructed differently
+    if (this.fd === 0) {
+      const err = ttySetMode(flag);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
       }
-
-      this.isRaw = flag;
-
       return this;
-    };
+    }
 
-    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+    const handle = this.$bunNativePtr;
+    if (!handle) {
+      this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+      return this;
+    }
 
-    return Prototype;
-  },
-  enumerable: true,
-  configurable: true,
-});
+    // If you call setRawMode before you call on('data'), the stream will
+    // not be constructed, leading to EBADF
+    // This corresponds to the `ensureConstructed` function in `native-readable.ts`
+    this.$start();
+
+    const err = handle.setRawMode(flag);
+    if (err) {
+      this.emit("error", err);
+      return this;
+    }
+  } else {
+    const err = ttySetMode(this.fd, flag);
+    if (err) {
+      this.emit("error", new Error("setRawMode failed with errno: " + err));
+      return this;
+    }
+  }
+
+  this.isRaw = flag;
+
+  return this;
+};
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);

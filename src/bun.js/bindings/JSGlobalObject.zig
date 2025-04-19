@@ -89,6 +89,17 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
     }
 
+    pub fn throwInvalidArgumentValueCustom(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+        message: []const u8,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {}", .{ argname, message, actual_string_value }).throw();
+    }
+
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
     /// Message depends on whether `expected` is present.
     /// - "The property "{argname}" is invalid. Received {value}"

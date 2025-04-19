@@ -358,9 +358,6 @@ for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   });
 }
 
-export default crypto_exports;
-/*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
-
 function createDiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding) {
   return new DiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding);
 }
@@ -505,3 +502,5 @@ crypto_exports.publicEncrypt = publicEncrypt;
 crypto_exports.publicDecrypt = publicDecrypt;
 crypto_exports.privateEncrypt = privateEncrypt;
 crypto_exports.privateDecrypt = privateDecrypt;
+
+export default crypto_exports;

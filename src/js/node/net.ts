@@ -1882,11 +1882,13 @@ function internalConnect(self, options, address, port, addressType, localAddress
   if (localAddress || localPort) {
     if (addressType === 4) {
       localAddress ||= DEFAULT_IPV4_ADDR;
-      err = self._handle.bind(localAddress, localPort);
+      // TODO:
+      // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
       localAddress ||= DEFAULT_IPV6_ADDR;
-      err = self._handle.bind6(localAddress, localPort, flags);
+      // TODO:
+      // err = self._handle.bind6(localAddress, localPort, flags);
     }
     $debug(
       "connect: binding to localAddress: %s and localPort: %d (addressType: %d)",

@@ -5925,7 +5925,7 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(abbreviated?): import("tls").PeerCertificate;
+    getPeerCertificate(abbreviated?: boolean): import("tls").PeerCertificate;
     getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**
@@ -6037,13 +6037,13 @@ declare module "bun" {
 
     renegotiate(): void;
 
-    setVerifyMode(requestCert, rejectUnauthorized): void;
+    setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void;
 
     getSession(): void;
 
     setSession(session: string | Buffer | BufferSource): void;
 
-    exportKeyingMaterial(length, label, context): void;
+    exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
 
     upgradeTLS(options: object): void;
 

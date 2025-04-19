@@ -321,6 +321,7 @@ function lookup(hostname, options, callback) {
       }
     })
     .catch(err => {
+      if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
       callback(err, null);
     });
 }

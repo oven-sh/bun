@@ -501,27 +501,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
         return std.mem.indexOf(u8, self, str);
     }
 
-    const self_len = self.len;
-    const str_len = str.len;
-
-    // > Both old and new libc's have the bug that if needle is empty,
-    // > haystack-1 (instead of haystack) is returned. And glibc 2.0 makes it
-    // > worse, returning a pointer to the last byte of haystack. This is fixed
-    // > in glibc 2.1.
-    if (self_len == 0 or str_len == 0 or self_len < str_len)
-        return null;
-
-    const self_ptr = self.ptr;
-    const str_ptr = str.ptr;
-
-    if (str_len == 1)
-        return indexOfCharUsize(self, str_ptr[0]);
-
-    const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
-
-    const i = @intFromPtr(start) - @intFromPtr(self_ptr);
-    bun.unsafeAssert(i < self_len);
-    return @as(usize, @intCast(i));
+    return bun.highway.indexOfSubstring(self, str);
 }
 
 pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {

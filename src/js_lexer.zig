@@ -3355,28 +3355,5 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 }
 
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
-    var text = text_;
-    const quote_: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, quote));
-    const backslash: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\\'));
-    const V1x16 = strings.AsciiVectorU1;
-
-    while (text.len >= strings.ascii_vector_size) {
-        const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
-
-        const any_significant =
-            @as(V1x16, @bitCast(vec > strings.max_16_ascii)) |
-            @as(V1x16, @bitCast(vec < strings.min_16_ascii)) |
-            @as(V1x16, @bitCast(quote_ == vec)) |
-            @as(V1x16, @bitCast(backslash == vec));
-
-        if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @as(u16, @bitCast(any_significant));
-            const first = @ctz(bitmask);
-            bun.assert(first < strings.ascii_vector_size);
-            return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
-        }
-        text = text[strings.ascii_vector_size..];
-    }
-
-    return null;
+    return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }

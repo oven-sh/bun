@@ -88,11 +88,11 @@ pub const FD = packed struct(backing_int) {
     }
 
     pub fn fromStdFile(file: std.fs.File) FD {
-        return .fromNative(file.handle);
+        return FD.fromNative(file.handle);
     }
 
     pub fn fromStdDir(dir: std.fs.Dir) FD {
-        return .fromNative(dir.fd);
+        return FD.fromNative(dir.fd);
     }
 
     pub fn stdFile(fd: FD) std.fs.File {
@@ -120,6 +120,7 @@ pub const FD = packed struct(backing_int) {
             },
         };
     }
+
     pub fn unwrapValid(fd: FD) ?FD {
         return if (fd.isValid()) fd else null;
     }
@@ -127,7 +128,7 @@ pub const FD = packed struct(backing_int) {
     /// When calling fd function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the `bun.FD`.
     pub fn native(fd: FD) fd_t {
-        if (Environment.isDebug and !@inComptime()) bun.assert(fd.isValid());
+        if (!@inComptime()) bun.assertf(fd.isValid(), "Cannot convert invalid fd to native", .{});
         return switch (os) {
             else => fd.value.as_system,
             .windows => switch (fd.decodeWindows()) {
@@ -149,7 +150,7 @@ pub const FD = packed struct(backing_int) {
                     if (isStdioHandle(std.os.windows.STD_INPUT_HANDLE, handle)) return 0;
                     if (isStdioHandle(std.os.windows.STD_OUTPUT_HANDLE, handle)) return 1;
                     if (isStdioHandle(std.os.windows.STD_ERROR_HANDLE, handle)) return 2;
-                    std.debug.panic(
+                    bun.Output.panic(
                         \\Cast bun.FD.uv({}) makes closing impossible!
                         \\
                         \\The supplier of fd FD should call 'FD.makeLibUVOwned',

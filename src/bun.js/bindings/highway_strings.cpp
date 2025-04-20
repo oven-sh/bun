@@ -30,6 +30,17 @@ namespace hn = hwy::HWY_NAMESPACE; // Alias for convenience
 // Type alias for SIMD vector tag
 using D8 = hn::ScalableTag<uint8_t>;
 
+int64_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    uint8_t needle)
+{
+    D8 d;
+    // Use the Find function from find-inl.h which handles both vectorized and scalar cases
+    const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
+
+    // Convert to int64_t and return -1 if not found
+    return (pos < haystack_len) ? static_cast<int64_t>(pos) : -1;
+}
+
 // --- Implementation Details ---
 
 // Helper function to lowercase ASCII character using Highway
@@ -70,7 +81,7 @@ IndexResult IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len
             const size_t current_batch_size = std::min(N, text_len - i);
             const auto text_vec = hn::LoadN(d, text + i, current_batch_size);
             const auto eq_mask = hn::Eq(text_vec, needle_vec);
-            intptr_t pos = hn::FindFirstTrue(d, eq_mask);
+            const intptr_t pos = hn::FindFirstTrue(d, eq_mask);
             if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
                 return { static_cast<int32_t>(i + pos), 1 };
             }
@@ -129,7 +140,8 @@ void ScanCharFrequencyImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, in
     const auto vec_offset_0 = hn::Set(d, '0');
 
     size_t i = 0;
-    for (; i + N <= text_len; i += N) {
+    size_t simd_text_len = text_len & ~(N - 1);
+    for (; i <= simd_text_len; i += N) {
         const auto text_vec = hn::LoadU(d, text + i);
         const auto mask_az = hn::And(hn::Ge(text_vec, vec_a), hn::Le(text_vec, vec_z));
         const auto mask_AZ = hn::And(hn::Ge(text_vec, vec_A), hn::Le(text_vec, vec_Z));
@@ -177,206 +189,155 @@ void ScanCharFrequencyImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, in
     }
 }
 
-// Implementation for finding interesting characters (Unchanged from previous correct version)
-int32_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_type)
+// Implementation for finding interesting characters in string literals
+size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
 {
-    if (text_len == 0) return -1;
+    ASSERT(text_len > 0);
     D8 d;
     const size_t N = hn::Lanes(d);
 
-    const auto vec_quote = hn::Set(d, quote_type);
-    const auto vec_bslash = hn::Set(d, '\\');
-    const auto vec_lt_space = hn::Set(d, uint8_t { 0x1F });
-    const auto vec_dollar = hn::Set(d, '$');
-    const auto vec_del = hn::Set(d, uint8_t { 0x7F });
-    const bool is_template_literal = (quote_type == '`');
+    const auto vec_quote = hn::Set(d, quote);
+    const auto vec_backslash = hn::Set(d, '\\');
+    const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 }); // Space
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 0x7E }); // ~
 
     for (size_t i = 0; i < text_len; i += N) {
         const size_t current_batch_size = std::min(N, text_len - i);
         const auto text_vec = hn::LoadN(d, text + i, current_batch_size);
+
+        // Check for quote, backslash, or characters outside printable ASCII range
         const auto mask_quote = hn::Eq(text_vec, vec_quote);
-        const auto mask_bslash = hn::Eq(text_vec, vec_bslash);
-        const auto mask_control = hn::Or(hn::Le(text_vec, vec_lt_space), hn::Eq(text_vec, vec_del));
-        auto found_mask = hn::Or(mask_quote, hn::Or(mask_bslash, mask_control));
-        if (is_template_literal) {
-            found_mask = hn::Or(found_mask, hn::Eq(text_vec, vec_dollar));
-        }
+        const auto mask_backslash = hn::Eq(text_vec, vec_backslash);
+        const auto mask_lt_min = hn::Lt(text_vec, vec_min_ascii);
+        const auto mask_gt_max = hn::Gt(text_vec, vec_max_ascii);
+
+        const auto found_mask = hn::Or(
+            hn::Or(mask_quote, mask_backslash),
+            hn::Or(mask_lt_min, mask_gt_max));
 
         intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
-            return static_cast<int32_t>(i + pos);
+            return i + pos;
         }
         if (current_batch_size != N) break;
     }
-    return -1;
+    return text_len;
 }
 
-// --- Substring Search Implementations ---
-
 // Helper for needle_len == 1
-int32_t IndexOfSubstringImpl_1(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t* HWY_RESTRICT needle)
+int32_t IndexOfSubstringImpl_1(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t needle)
 {
     D8 d;
-    const size_t N = hn::Lanes(d);
-    const auto needle_vec = hn::Set(d, needle[0]);
-
-    for (size_t i = 0; i < haystack_len; i += N) {
-        const size_t current_batch_size = std::min(N, haystack_len - i);
-        const auto haystack_vec = hn::LoadN(d, haystack + i, current_batch_size);
-        const auto eq_mask = hn::Eq(haystack_vec, needle_vec);
-        intptr_t pos = hn::FindFirstTrue(d, eq_mask);
-        if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
-            return static_cast<int32_t>(i + pos);
-        }
-        if (current_batch_size != N) break;
-    }
-    return -1;
+    // Use the Find function from find-inl.h which is optimized for this case
+    const size_t pos = hn::Find(d, needle, haystack, haystack_len);
+    return (pos < haystack_len) ? static_cast<int32_t>(pos) : -1;
 }
 
 // Helper for needle_len == 2
 int32_t IndexOfSubstringImpl_2(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t* HWY_RESTRICT needle)
 {
+    if (haystack_len < 2) return -1;
+
     D8 d;
     const size_t N = hn::Lanes(d);
+
     const auto n0 = hn::Set(d, needle[0]);
     const auto n1 = hn::Set(d, needle[1]);
-    const size_t max_pos = haystack_len - 2; // Max starting position for a 2-byte needle
+
+    // Max valid starting position for a 2-byte needle
+    const size_t max_pos = haystack_len - 2;
 
     for (size_t i = 0; i <= max_pos; i += N) {
         const size_t current_batch_size = std::min(N, max_pos + 1 - i);
-        // Load chunk starting at i
-        const auto h0 = hn::LoadN(d, haystack + i, current_batch_size);
-        // Load chunk starting at i + 1 (careful with boundary)
-        const size_t next_batch_size = std::min(N, haystack_len - (i + 1)); // Max readable from i+1
-        const auto h1 = hn::LoadN(d, haystack + i + 1, next_batch_size);
 
+        // Load chunks for first and second character positions
+        const auto h0 = hn::LoadN(d, haystack + i, current_batch_size);
+        const auto h1 = hn::LoadN(d, haystack + i + 1, std::min(current_batch_size, haystack_len - (i + 1)));
+
+        // Compare both positions
         const auto eq0 = hn::Eq(h0, n0);
         const auto eq1 = hn::Eq(h1, n1);
 
-        // Combine masks. A match at index `j` in eq0 needs a match at index `j` in eq1.
+        // Both must match
         const auto match_mask = hn::And(eq0, eq1);
 
-        intptr_t pos = hn::FindFirstTrue(d, match_mask);
-        // Check if the found position `pos` is valid within the *current* batch size
-        // for the *start* of the 2-byte sequence.
+        // Find position of first true bit
+        const intptr_t pos = hn::FindFirstTrue(d, match_mask);
         if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
             return static_cast<int32_t>(i + pos);
         }
-        if (current_batch_size != N) break; // Stop if last partial vector
+
+        // Exit the loop on a partial vector
+        if (current_batch_size < N) break;
     }
+
     return -1;
 }
 
-// Helper for needle_len >= 3 (Algorithm 1)
+// Helper for needle_len >= 3 using first and last character matching
 int32_t IndexOfSubstringImpl_GE3(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
 
+    // First and last characters of the needle
     const uint8_t first_char = needle[0];
     const uint8_t last_char = needle[needle_len - 1];
+
+    // Create vectors with repeated first and last characters
     const auto vec_first = hn::Set(d, first_char);
     const auto vec_last = hn::Set(d, last_char);
 
     const size_t last_char_offset = needle_len - 1;
     const size_t max_start_pos = haystack_len - needle_len;
 
-    // Determine safe loop limit for full vector loads
-    // Need i + N <= haystack_len AND i + last_char_offset + N <= haystack_len
-    const size_t safe_limit_plus_1 = (haystack_len >= last_char_offset + N) ? (haystack_len - (last_char_offset + N) + 1) : 0;
+    for (size_t i = 0; i <= max_start_pos; i += N) {
+        const size_t current_batch_size = std::min(N, max_start_pos + 1 - i);
 
-    // Temporary storage for potential match indices
-    alignas(HWY_ALIGNMENT) uint32_t potential_indices_array[HWY_MAX_LANES_D(hn::ScalableTag<uint32_t>)];
+        // Load chunks for first and last character positions
+        const auto haystack_first = hn::LoadN(d, haystack + i, current_batch_size);
+        const auto haystack_last = hn::LoadN(d, haystack + i + last_char_offset, current_batch_size);
 
-    size_t i = 0;
-    for (; i < safe_limit_plus_1; i += N) {
-        const auto haystack_first_chunk = hn::LoadU(d, haystack + i);
-        const auto haystack_last_chunk = hn::LoadU(d, haystack + i + last_char_offset);
+        // Compare both positions
+        const auto eq_first = hn::Eq(haystack_first, vec_first);
+        const auto eq_last = hn::Eq(haystack_last, vec_last);
 
-        const auto mask_first = hn::Eq(haystack_first_chunk, vec_first);
-        const auto mask_last = hn::Eq(haystack_last_chunk, vec_last);
-        const auto potential_matches_mask = hn::And(mask_first, mask_last);
+        // Both must match
+        const auto match_mask = hn::And(eq_first, eq_last);
 
-        if (!hn::AllFalse(d, potential_matches_mask)) {
-            // Store indices where mask is true
-            const hn::ScalableTag<uint32_t> d32;
-            const auto indices_vec = hn::BitCast(d, hn::Iota(d32, 0)); // Get lane indices 0, 1, 2...
-            const size_t num_matches = hn::CompressStore(indices_vec, potential_matches_mask, d, reinterpret_cast<uint8_t*>(potential_indices_array)); // Store indices
+        // Check if we have any matches
+        if (!hn::AllFalse(d, match_mask)) {
+            // Simple approach: check all positions sequentially
+            // This is not optimal but guaranteed to work with Highway
+            intptr_t pos = hn::FindFirstTrue(d, match_mask);
+            if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
+                const size_t match_pos = i + static_cast<size_t>(pos);
+                // Since we already know the first and last characters match,
+                // we only need to compare the middle portion
+                if (needle_len <= 2 || memcmp(haystack + match_pos + 1, needle + 1, needle_len - 2) == 0) {
+                    return static_cast<int32_t>(match_pos);
+                }
+            }
 
-            for (size_t k = 0; k < num_matches; ++k) {
-                const size_t bit_index = potential_indices_array[k]; // Get the actual lane index
-                const size_t pos = i + bit_index;
-                // Check bounds just in case (should be guaranteed by loop limit)
-                if (pos > max_start_pos) continue;
-                // Compare middle part
-                if (memcmp(haystack + pos + 1, needle + 1, needle_len - 2) == 0) {
-                    return static_cast<int32_t>(pos);
+            // Check other positions by scanning the buffer manually
+            // This is a fallback for finding additional matches in the same vector
+            for (size_t j = static_cast<size_t>(pos) + 1; j < current_batch_size; j++) {
+                // Check if the first and last characters match for this position
+                if (haystack[i + j] == first_char && haystack[i + j + last_char_offset] == last_char) {
+                    // Check the middle portion
+                    if (needle_len <= 2 || memcmp(haystack + i + j + 1, needle + 1, needle_len - 2) == 0) {
+                        return static_cast<int32_t>(i + j);
+                    }
                 }
             }
         }
-    }
 
-    // Scalar check for the remainder
-    for (; i <= max_start_pos; ++i) {
-        if (haystack[i] == first_char && haystack[i + last_char_offset] == last_char) {
-            if (memcmp(haystack + i + 1, needle + 1, needle_len - 2) == 0) {
-                return static_cast<int32_t>(i);
-            }
-        }
+        // Exit the loop on a partial vector
+        if (current_batch_size < N) break;
     }
 
     return -1;
-}
-
-// Highway SIMD implementation of indexOfInterestingCharacterInStringLiteral
-size_t indexOfInterestingCharacterInStringLiteral(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
-{
-    if (text_len == 0) return SIZE_MAX;
-
-    D8 d;
-    const size_t N = hn::Lanes(d);
-
-    // Create vectors for the characters we're looking for
-    const auto vec_quote = hn::Set(d, quote);
-    const auto vec_backslash = hn::Set(d, '\\');
-    const auto vec_min_ascii = hn::Set(d, 0x20); // Control characters are < 0x20
-    const auto vec_max_ascii = hn::Set(d, 0x7F); // Non-ASCII chars are > 0x7F
-
-    size_t i = 0;
-    // Process full vector chunks
-    for (; i + N <= text_len; i += N) {
-        const auto text_chunk = hn::LoadU(d, text + i);
-
-        // Check for quote, backslash, control chars, and non-ASCII chars
-        const auto mask_quote = hn::Eq(text_chunk, vec_quote);
-        const auto mask_backslash = hn::Eq(text_chunk, vec_backslash);
-        const auto mask_below_min = hn::Lt(text_chunk, vec_min_ascii);
-        const auto mask_above_max = hn::Gt(text_chunk, vec_max_ascii);
-
-        // Combine all masks
-        const auto combined_mask = hn::Or(hn::Or(mask_quote, mask_backslash),
-            hn::Or(mask_below_min, mask_above_max));
-
-        // Check if we found any interesting characters
-        if (!hn::AllFalse(d, combined_mask)) {
-            // Find the first match
-            intptr_t pos = hn::FindFirstTrue(d, combined_mask);
-            if (pos >= 0) {
-                return i + static_cast<size_t>(pos);
-            }
-        }
-    }
-
-    // Handle remaining characters (less than a full vector)
-    for (; i < text_len; ++i) {
-        const uint8_t c = text[i];
-        if (c == quote || c == '\\' || c < 0x20 || c > 0x7F) {
-            return i;
-        }
-    }
-
-    return SIZE_MAX; // No interesting character found
 }
 
 // Main dispatch function for IndexOfSubstring
@@ -385,7 +346,7 @@ int32_t IndexOfSubstringImpl(const uint8_t* HWY_RESTRICT haystack, size_t haysta
 {
     if (needle_len == 0) return 0;
     if (haystack_len < needle_len) return -1;
-    if (needle_len == 1) return IndexOfSubstringImpl_1(haystack, haystack_len, needle);
+    if (needle_len == 1) return IndexOfSubstringImpl_1(haystack, haystack_len, *needle);
     if (needle_len == 2) return IndexOfSubstringImpl_2(haystack, haystack_len, needle);
     return IndexOfSubstringImpl_GE3(haystack, haystack_len, needle, needle_len);
 }
@@ -406,7 +367,7 @@ int32_t IndexOfCaseInsensitiveImpl_1(const uint8_t* HWY_RESTRICT haystack, size_
         const auto haystack_vec = hn::LoadN(d, haystack + i, current_batch_size);
         const auto haystack_lower_vec = ToLower(d, haystack_vec);
         const auto eq_mask = hn::Eq(haystack_lower_vec, vec_needle_lower);
-        intptr_t pos = hn::FindFirstTrue(d, eq_mask);
+        const intptr_t pos = hn::FindFirstTrue(d, eq_mask);
         if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
             return static_cast<int32_t>(i + pos);
         }
@@ -441,7 +402,7 @@ int32_t IndexOfCaseInsensitiveImpl_2(const uint8_t* HWY_RESTRICT haystack, size_
         const auto eq1 = hn::Eq(h1_lower, vec_n1_lower);
         const auto match_mask = hn::And(eq0, eq1);
 
-        intptr_t pos = hn::FindFirstTrue(d, match_mask);
+        const intptr_t pos = hn::FindFirstTrue(d, match_mask);
         if (pos >= 0 && static_cast<size_t>(pos) < current_batch_size) {
             return static_cast<int32_t>(i + pos);
         }
@@ -527,17 +488,6 @@ int32_t IndexOfCaseInsensitiveImpl(const uint8_t* HWY_RESTRICT haystack, size_t 
     if (needle_len == 1) return IndexOfCaseInsensitiveImpl_1(haystack, haystack_len, needle);
     if (needle_len == 2) return IndexOfCaseInsensitiveImpl_2(haystack, haystack_len, needle);
     return IndexOfCaseInsensitiveImpl_GE3(haystack, haystack_len, needle, needle_len);
-}
-
-int64_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
-    uint8_t needle)
-{
-    D8 d;
-    // Use the Find function from find-inl.h which handles both vectorized and scalar cases
-    const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
-
-    // Convert to int64_t and return -1 if not found
-    return (pos < haystack_len) ? static_cast<int64_t>(pos) : -1;
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)

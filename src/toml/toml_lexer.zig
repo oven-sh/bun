@@ -958,7 +958,7 @@ pub const Lexer = struct {
 
                             var value: CodePoint = 0;
                             var c3: CodePoint = 0;
-                            var width3: u3 = 0;
+                            var width3: @TypeOf(iter.width) = 0;
 
                             _ = iterator.next(&iter) or return lexer.syntaxError();
                             c3 = iter.c;

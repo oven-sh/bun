@@ -12,7 +12,7 @@ declare module "bun" {
   type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
   type BodyInit =
     | ReadableStream
-    | Bun.XMLHttpRequestBodyInit
+    | Blob | BufferSource | string | FormData | Iterable<Uint8Array>
     | URLSearchParams
     | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
     | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);

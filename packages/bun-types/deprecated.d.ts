@@ -72,3 +72,45 @@ declare var BuildError: typeof BuildMessage;
  * @deprecated Renamed to `ResolveMessage`
  */
 declare var ResolveError: typeof ResolveMessage;
+
+declare module "bun" {
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type BeforeExitListener = (code: number) => void;
+
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type DisconnectListener = () => void;
+  
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type ExitListener = (code: number) => void;
+  
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type RejectionHandledListener = (promise: Promise<unknown>) => void;
+  
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type WarningListener = (warning: Error) => void;
+  
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type MessageListener = (message: unknown, sendHandle: unknown) => void;
+  
+  /**
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type SignalsListener = (signal: NodeJS.Signals) => void;
+
+  /**
+   * @deprecated This type is redundant with built-in types. Consider using a more specific type like BodyInit
+   */
+  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
+}

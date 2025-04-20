@@ -1179,6 +1179,7 @@ declare module "bun" {
     ttl: number;
   }
 
+  /** @deprecated Use BunFile instead */
   interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.

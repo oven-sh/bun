@@ -1940,22 +1940,27 @@ fn NewLexer_(
                         if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                 lexer.jsx_pragma._jsx = span;
+                                rest = rest[span.len..];
                             }
                         } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
                                 lexer.jsx_pragma._jsxFrag = span;
+                                rest = rest[span.len..];
                             }
                         } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
                                 lexer.jsx_pragma._jsxRuntime = span;
+                                rest = rest[span.len..];
                             }
                         } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
                                 lexer.jsx_pragma._jsxImportSource = span;
+                                rest = rest[span.len..];
                             }
                         } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
                             if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                 lexer.source_mapping_url = span;
+                                rest = rest[span.len..];
                             }
                         }
                     },

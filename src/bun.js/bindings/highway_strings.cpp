@@ -573,6 +573,50 @@ remainder_check:
     return nullptr; // Not found
 }
 
+// Implementation for WebSocket mask application
+void FillWithSkipMaskImpl(const uint8_t* mask, size_t mask_len, uint8_t* output, const uint8_t* input, size_t length, bool skip_mask)
+{
+    ASSERT(mask_len == 4);
+
+    ASSERT(length > 0);
+
+    // If we're skipping masking or there's no data, return early
+    if (skip_mask) {
+        std::memcpy(output, input, length);
+        return;
+    }
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    // Create a vector filled with the mask pattern repeating every 4 bytes
+    alignas(HWY_ALIGNMENT) uint8_t mask_pattern[HWY_MAX_LANES_D(D8)] = {};
+    for (size_t i = 0; i < HWY_MAX_LANES_D(D8); i += 4) {
+        mask_pattern[i] = mask[0];
+        mask_pattern[i + 1] = mask[1];
+        mask_pattern[i + 2] = mask[2];
+        mask_pattern[i + 3] = mask[3];
+    }
+    const auto mask_vec = hn::Load(d, mask_pattern);
+
+    // Process data in chunks of size N
+    size_t i = 0;
+    const size_t vector_length = length - (length % N);
+    for (; i < vector_length; i += N) {
+        // Load input data
+        const auto input_vec = hn::LoadU(d, input + i);
+        // XOR with mask
+        const auto masked_vec = hn::Xor(input_vec, mask_vec);
+        // Store result
+        hn::StoreU(masked_vec, d, output + i);
+    }
+
+    // Handle remaining bytes with scalar operations
+    for (; i < length; ++i) {
+        output[i] = input[i] ^ mask[i % 4];
+    }
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun
 HWY_AFTER_NAMESPACE();
@@ -596,6 +640,7 @@ HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
 HWY_EXPORT(CopyU16ToU8Impl);
 HWY_EXPORT(MemMemImpl);
+HWY_EXPORT(FillWithSkipMaskImpl);
 
 } // namespace bun
 
@@ -691,6 +736,17 @@ size_t highway_index_of_needs_escape_for_javascript_string(const uint8_t* HWY_RE
     } else {
         return HWY_DYNAMIC_DISPATCH(bun::IndexOfNeedsEscapeForJavaScriptStringImplQuote)(text, text_len, quote_char);
     }
+}
+
+void highway_fill_with_skip_mask(
+    const uint8_t* mask, // 4-byte mask array
+    size_t mask_len, // Should be 4
+    uint8_t* output, // Output buffer
+    const uint8_t* input, // Input buffer
+    size_t length, // Length of input/output
+    bool skip_mask) // Whether to skip masking
+{
+    HWY_DYNAMIC_DISPATCH(bun::FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
 }
 
 } // extern "C"

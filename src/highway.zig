@@ -57,6 +57,15 @@ extern "c" fn highway_index_of_any_char(
     chars_len: usize,
 ) usize;
 
+extern "c" fn highway_fill_with_skip_mask(
+    mask: [*]const u8,
+    mask_len: usize,
+    output: [*]u8,
+    input: [*]const u8,
+    length: usize,
+    skip_mask: bool,
+) void;
+
 /// Count frequencies of [a-zA-Z0-9_$] characters in a string
 /// Updates the provided frequency array with counts (adds delta for each occurrence)
 pub fn scanCharFrequency(text: string, freqs: *[64]i32, delta: i32) void {
@@ -229,4 +238,21 @@ extern "c" fn highway_copy_u16_to_u8(
 
 pub fn copyU16ToU8(input: []align(1) const u16, output: []u8) void {
     highway_copy_u16_to_u8(input.ptr, input.len, output.ptr);
+}
+
+/// Apply a WebSocket mask to data using SIMD acceleration
+/// If skip_mask is true, data is copied without masking
+pub fn fillWithSkipMask(mask: [4]u8, output: []u8, input: []const u8, skip_mask: bool) void {
+    if (input.len == 0) {
+        return;
+    }
+
+    highway_fill_with_skip_mask(
+        &mask,
+        4,
+        output.ptr,
+        input.ptr,
+        input.len,
+        skip_mask,
+    );
 }

@@ -574,7 +574,7 @@ remainder_check:
 }
 
 // Implementation for WebSocket mask application
-void FillWithSkipMaskImpl(const uint8_t* mask, size_t mask_len, uint8_t* output, const uint8_t* input, size_t length, bool skip_mask)
+void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
     ASSERT(mask_len == 4);
 

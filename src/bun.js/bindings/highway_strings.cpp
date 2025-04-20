@@ -8,6 +8,8 @@
 #include <hwy/highway.h>
 #include <hwy/aligned_allocator.h>
 
+#include <hwy/contrib/algo/find-inl.h>
+
 // Include the C API header for IndexResult struct definition
 #include "highway_bindings.h"
 
@@ -176,7 +178,7 @@ void ScanCharFrequencyImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, in
 }
 
 // Implementation for finding interesting characters (Unchanged from previous correct version)
-int32_t IndexOfInterestingCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_type)
+int32_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_type)
 {
     if (text_len == 0) return -1;
     D8 d;
@@ -531,25 +533,11 @@ int64_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_le
     uint8_t needle)
 {
     D8 d;
-    const size_t N = hn::Lanes(d);
-    const auto vec_needle = hn::Set(d, needle);
-    const size_t safe_limit_plus_1 = (haystack_len >= N) ? (haystack_len - N + 1) : 0;
-    for (size_t i = 0; i < safe_limit_plus_1; i += N) {
-        const auto haystack_vec = hn::LoadN(d, haystack + i, N);
-        const auto eq_mask = hn::Eq(haystack_vec, vec_needle);
-        intptr_t pos = hn::FindFirstTrue(d, eq_mask);
-        if (pos >= 0 && static_cast<size_t>(pos) < N) {
-            return static_cast<int64_t>(i + pos);
-        }
-    }
+    // Use the Find function from find-inl.h which handles both vectorized and scalar cases
+    const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
 
-    // Scalar check for the remainder
-    for (size_t i = safe_limit_plus_1; i < haystack_len; ++i) {
-        if (haystack[i] == needle) {
-            return static_cast<int64_t>(i);
-        }
-    }
-    return -1;
+    // Convert to int64_t and return -1 if not found
+    return (pos < haystack_len) ? static_cast<int64_t>(pos) : -1;
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
@@ -568,7 +556,6 @@ namespace bun {
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
 HWY_EXPORT(IndexOfCaseInsensitiveImpl);
-HWY_EXPORT(IndexOfInterestingCharImpl);
 HWY_EXPORT(IndexOfSubstringImpl);
 HWY_EXPORT(IndexOfCharImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
@@ -594,12 +581,6 @@ int32_t highway_find_substr_case_insensitive(const uint8_t* HWY_RESTRICT haystac
     const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfCaseInsensitiveImpl)(haystack, haystack_len, needle, needle_len);
-}
-
-int32_t highway_index_of_interesting_char(const uint8_t* HWY_RESTRICT text, size_t text_len,
-    uint8_t quote_type)
-{
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfInterestingCharImpl)(text, text_len, quote_type);
 }
 
 int32_t highway_index_of_substring(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,

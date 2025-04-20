@@ -179,3 +179,13 @@ pub fn indexOfAnyChar(haystack: string, chars: string) ?usize {
 
     return highway_index_of_any_char(haystack.ptr, haystack.len, chars.ptr, chars.len);
 }
+
+extern "c" fn highway_copy_u16_to_u8(
+    input: [*]align(1) const u16,
+    count: usize,
+    output: [*]u8,
+) void;
+
+pub fn copyU16ToU8(input: []align(1) const u16, output: []u8) void {
+    highway_copy_u16_to_u8(input.ptr, input.len, output.ptr);
+}

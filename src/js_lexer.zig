@@ -2122,7 +2122,7 @@ fn NewLexer_(
                         return js_ast.E.String.init(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
                     } else {
                         const result = try lexer.allocator.alloc(u8, lexer.temp_buffer_u16.items.len);
-                        strings.copyU16IntoU8(result, []const u16, lexer.temp_buffer_u16.items);
+                        strings.copyU16IntoU8(result, lexer.temp_buffer_u16.items);
                         return js_ast.E.String.init(result);
                     }
                 },

@@ -1319,43 +1319,11 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
 //     }
 // }
 
-pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: InputType) void {
-    if (comptime Environment.allow_assert) assert(input_.len <= output_.len);
-    var output = output_;
-    var input = input_;
+pub inline fn copyU16IntoU8(output: []u8, input: []align(1) const u16) void {
     if (comptime Environment.allow_assert) assert(input.len <= output.len);
+    const count = @min(input.len, output.len);
 
-    // https://zig.godbolt.org/z/9rTn1orcY
-
-    const group = @as(usize, 16);
-    // end at the last group of 16 bytes
-    var input_ptr = input.ptr;
-    var output_ptr = output.ptr;
-
-    if (comptime Environment.enableSIMD) {
-        const end_len = (@min(input.len, output.len) & ~(group - 1));
-        const last_vector_ptr = input.ptr + end_len;
-        while (last_vector_ptr != input_ptr) {
-            const input_vec1: @Vector(group, u16) = input_ptr[0..group].*;
-            inline for (0..group) |i| {
-                output_ptr[i] = @as(u8, @truncate(input_vec1[i]));
-            }
-
-            output_ptr += group;
-            input_ptr += group;
-        }
-
-        input.len -= end_len;
-        output.len -= end_len;
-    }
-
-    const last_input_ptr = input_ptr + @min(input.len, output.len);
-
-    while (last_input_ptr != input_ptr) {
-        output_ptr[0] = @as(u8, @truncate(input_ptr[0]));
-        output_ptr += 1;
-        input_ptr += 1;
-    }
+    bun.highway.copyU16ToU8(input[0..count], output[0..count]);
 }
 
 const strings = @This();
@@ -2305,11 +2273,7 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
         }
         list.items.len += i;
 
-        copyU16IntoU8(
-            list.items[list.items.len - i ..],
-            Type,
-            to_copy,
-        );
+        copyU16IntoU8(list.items[list.items.len - i ..], to_copy);
 
         if (comptime skip_trailing_replacement) {
             if (replacement.is_lead and utf16_remaining.len == 0) {
@@ -2329,7 +2293,7 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
         try list.ensureTotalCapacityPrecise(utf16_remaining.len + list.items.len);
         const old_len = list.items.len;
         list.items.len += utf16_remaining.len;
-        copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
+        copyU16IntoU8(list.items[old_len..], utf16_remaining);
     }
 
     log("UTF16 {d} -> {d} UTF8", .{ utf16.len, list.items.len });
@@ -3509,7 +3473,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
         const end = @min(i, remaining.len);
-        if (end > 0) copyU16IntoU8(remaining, Type, utf16_remaining[0..end]);
+        if (end > 0) copyU16IntoU8(remaining, utf16_remaining[0..end]);
         remaining = remaining[end..];
         utf16_remaining = utf16_remaining[end..];
 
@@ -3578,7 +3542,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
 
     if (remaining.len > 0 and !ended_on_non_ascii and utf16_remaining.len > 0) {
         const len = @min(remaining.len, utf16_remaining.len);
-        copyU16IntoU8(remaining[0..len], Type, utf16_remaining[0..len]);
+        copyU16IntoU8(remaining[0..len], utf16_remaining[0..len]);
         utf16_remaining = utf16_remaining[len..];
         remaining = remaining[len..];
     }

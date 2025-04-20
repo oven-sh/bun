@@ -149,6 +149,47 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     return text_len;
 }
 
+// Implementation function called by the dispatcher
+void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
+    uint8_t* HWY_RESTRICT output)
+{
+    // Tag for the output vector type (u8)
+    const hn::ScalableTag<uint8_t> d8;
+    // Tag for the input vector type (u16). OrderedTruncate2To takes two u16 vectors
+    // (each N/2 lanes) to produce one u8 vector (N lanes).
+    // Repartition<uint16_t, decltype(d8)> gives a u16 tag with N/2 lanes.
+    const hn::Repartition<uint16_t, decltype(d8)> d16;
+
+    const size_t N8 = hn::Lanes(d8); // Number of u8 lanes processed per iteration
+    const size_t N16 = hn::Lanes(d16); // Number of u16 lanes per input vector load
+
+    // Sanity check: we should load 2*N16 u16 elements to produce N8 u8 elements.
+    // Since sizeof(u16) == 2 * sizeof(u8), N16 should be N8 / 2.
+    // static_assert(N16 * 2 == N8, "Lane configuration mismatch"); // Highway ensures this
+
+    size_t i = 0;
+    const size_t simd_count = count - (count % N8);
+    // Process N8 elements (u8 output size) per iteration. This corresponds to
+    // loading N8 u16 input elements (2 vectors of N16 lanes each).
+    for (; i < simd_count; i += N8) {
+        // Load two input vectors of u16
+        const auto in1 = hn::LoadU(d16, input + i);
+        const auto in2 = hn::LoadU(d16, input + i + N16);
+
+        // Truncate and interleave into a single u8 vector
+        // OrderedTruncate2To(d_narrow, vec_wide_a, vec_wide_b)
+        const hn::Vec<decltype(d8)> result8 = hn::OrderedTruncate2To(d8, in1, in2);
+
+        // Store the resulting u8 vector
+        hn::StoreU(result8, d8, output + i);
+    }
+
+    // Handle remaining elements (< N8)
+    for (; i < count; ++i) {
+        output[i] = static_cast<uint8_t>(input[i]); // Truncation happens here
+    }
+}
+
 // Implementation for scanCharFrequency (Unchanged from previous correct version)
 void ScanCharFrequencyImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, int32_t* HWY_RESTRICT freqs, int32_t delta)
 {
@@ -503,12 +544,51 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIOrANSIImpl);
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
+HWY_EXPORT(CopyU16ToU8Impl);
+
 } // namespace bun
 
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
 // These need to be defined *after* the HWY_EXPORT block.
 extern "C" {
 
+static void highway_copy_u16_to_u8_impl(
+    const uint16_t* input,
+    size_t count,
+    uint8_t* output)
+{
+    return HWY_DYNAMIC_DISPATCH(bun::CopyU16ToU8Impl)(input, count, output);
+}
+
+void highway_copy_u16_to_u8(
+    // No HWY_RESTRICT
+    const uint16_t* input,
+
+    size_t count,
+    // No HWY_RESTRICT
+    uint8_t* output)
+{
+
+    if (count == 0) {
+        return;
+    }
+
+    // Check alignment of the input pointer
+    if (!hwy::IsAligned(input, alignof(uint16_t))) {
+        // Handle the first unaligned element scalar-ly
+        output[0] = static_cast<uint8_t>(input[0]);
+
+        // Call the core implementation with adjusted pointers and count,
+        // which are now guaranteed to be aligned or have count == 0.
+        // The HWY_RESTRICT inside CopyU16ToU8Impl is now valid for the
+        // ranges it operates on.
+        if (count > 1)
+            highway_copy_u16_to_u8_impl(input + 1, count - 1, output + 1);
+    } else {
+        // Input is already aligned, call the core implementation directly.
+        highway_copy_u16_to_u8_impl(input, count, output);
+    }
+}
 size_t highway_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfAnyCharImpl)(text, text_len, chars, chars_len);

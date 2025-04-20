@@ -3948,6 +3948,7 @@ void GlobalObject::drainMicrotasks()
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
         queue->drain(vm, this);
+        vm.finalizeSynchronousJSExecution();
         return;
     }
 

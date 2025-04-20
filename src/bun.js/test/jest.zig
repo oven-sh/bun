@@ -67,9 +67,8 @@ pub const TestRunner = struct {
     bail: u32 = 0,
 
     allocator: std.mem.Allocator,
-    callback: *Callback = undefined,
+    callback: *Callback,
 
-    drainer: JSC.AnyTask = undefined,
     queue: std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }) = std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }).init(default_allocator),
 
     has_pending_tests: bool = false,
@@ -87,7 +86,7 @@ pub const TestRunner = struct {
         .tag = .TestRunner,
     },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
-    test_options: *const bun.CLI.Command.TestOptions = undefined,
+    test_options: *const bun.CLI.Command.TestOptions,
 
     global_callbacks: struct {
         beforeAll: std.ArrayListUnmanaged(JSValue) = .{},
@@ -102,10 +101,7 @@ pub const TestRunner = struct {
 
     unhandled_errors_between_tests: u32 = 0,
 
-    pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
-
-    pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
-        _ = vm; // autofix
+    pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec) void {
         this.event_loop_timer.state = .FIRED;
 
         if (this.pending_test) |pending_test| {
@@ -115,15 +111,11 @@ pub const TestRunner = struct {
         }
     }
 
-    pub fn setTimeout(
-        this: *TestRunner,
-        milliseconds: u32,
-        test_id: TestRunner.Test.ID,
-    ) void {
+    pub fn setTimeout(this: *TestRunner, ms: u32, test_id: Test.ID) void {
         this.active_test_for_timeout = test_id;
 
-        if (milliseconds > 0) {
-            this.scheduleTimeout(milliseconds);
+        if (ms > 0) {
+            this.scheduleTimeout(ms);
         }
     }
 
@@ -247,7 +239,7 @@ pub const TestRunner = struct {
     pub const File = struct {
         source: logger.Source = logger.Source.initEmptyFile(""),
         log: logger.Log = logger.Log.initComptime(default_allocator),
-        module_scope: *DescribeScope = undefined,
+        module_scope: *DescribeScope,
 
         pub const List = std.MultiArrayList(File);
         pub const ID = u32;

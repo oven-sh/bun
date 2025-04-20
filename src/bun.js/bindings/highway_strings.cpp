@@ -492,6 +492,13 @@ int64_t IndexOfCharImpl(const uint8_t* haystack, size_t haystack_len,
             return static_cast<int64_t>(i + pos);
         }
     }
+
+    // Scalar check for the remainder
+    for (size_t i = safe_limit_plus_1; i < haystack_len; ++i) {
+        if (haystack[i] == needle) {
+            return static_cast<int64_t>(i);
+        }
+    }
     return -1;
 }
 

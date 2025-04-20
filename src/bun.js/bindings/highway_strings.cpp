@@ -15,8 +15,6 @@
 #include <algorithm> // For std::min, std::max
 #include <cstddef>
 #include <cstdint>
-#include <cassert> // For assert (use HWY_ASSERT for Highway asserts)
-#include <limits> // For std::numeric_limits
 
 // Wrap the SIMD implementations in the Highway namespaces
 HWY_BEFORE_NAMESPACE();

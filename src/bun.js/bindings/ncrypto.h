@@ -478,6 +478,8 @@ public:
     const EC_GROUP* getGroup() const;
     int getCurve() const;
 
+    static int GetCurveIdFromName(const char* name);
+
     inline operator bool() const { return ec_ != nullptr; }
     inline operator OSSL3_CONST EC_KEY*() const { return ec_; }
 
@@ -502,6 +504,16 @@ public:
     // If the secure heap is enabled, returns the amount of data that
     // has been allocated from the heap.
     static size_t GetSecureHeapUsed();
+
+    static DataPointer FromSpan(std::span<const uint8_t> span)
+    {
+        if (span.empty()) return {};
+        if (auto dp = Alloc(span.size())) {
+            memcpy(dp.get(), span.data(), span.size());
+            return dp;
+        }
+        return {};
+    }
 
     enum class InitSecureHeapResult {
         FAILED,
@@ -652,6 +664,7 @@ public:
 
     size_t byteLength() const;
 
+    static DataPointer toHex(const BIGNUM* bn);
     DataPointer toHex() const;
     DataPointer encode() const;
     DataPointer encodePadded(size_t size) const;
@@ -843,6 +856,20 @@ public:
         // ECPrivateKey according to SEC1.
         SEC1,
     };
+
+    static WTF::ASCIILiteral EncodingName(PKEncodingType type)
+    {
+        switch (type) {
+        case PKEncodingType::PKCS1:
+            return "pkcs1"_s;
+        case PKEncodingType::PKCS8:
+            return "pkcs8"_s;
+        case PKEncodingType::SPKI:
+            return "spki"_s;
+        case PKEncodingType::SEC1:
+            return "sec1"_s;
+        }
+    }
 
     enum class PKFormatType {
         DER,

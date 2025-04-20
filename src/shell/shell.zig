@@ -3563,26 +3563,10 @@ var stderr_mutex = bun.Mutex{};
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {
-        if (str.len < 16)
-            return hasEqSignAsciiSlow(str);
-
-        const needles: @Vector(16, u8) = @splat('=');
-
-        var i: u32 = 0;
-        while (i + 16 <= str.len) : (i += 16) {
-            const haystack = str[i..][0..16].*;
-            const result = haystack == needles;
-
-            if (std.simd.firstTrue(result)) |idx| {
-                return @intCast(i + idx);
-            }
-        }
-
-        return i + (hasEqSignAsciiSlow(str[i..]) orelse return null);
+        return bun.strings.containsChar(str, '=');
     }
 
     // TODO actually i think that this can also use the simd stuff
-
     var iter = CodepointIterator.init(str);
     var cursor = CodepointIterator.Cursor{};
     while (iter.next(&cursor)) {
@@ -3591,11 +3575,6 @@ pub fn hasEqSign(str: []const u8) ?u32 {
         }
     }
 
-    return null;
-}
-
-pub fn hasEqSignAsciiSlow(str: []const u8) ?u32 {
-    for (str, 0..) |c, i| if (c == '=') return @intCast(i);
     return null;
 }
 

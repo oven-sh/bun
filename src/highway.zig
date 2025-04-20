@@ -87,6 +87,8 @@ pub fn indexOfChar(haystack: string, needle: u8) ?usize {
         return null;
     }
 
+    bun.debugAssert(haystack[result] == needle);
+
     return result;
 }
 
@@ -119,6 +121,12 @@ pub fn indexOfNewlineOrNonASCII(haystack: string) ?usize {
     if (result == haystack.len) {
         return null;
     }
+    if (comptime Environment.isDebug) {
+        const haystack_char = haystack[result];
+        if (!(haystack_char > 127 or haystack_char < 0x20 or haystack_char == '\r' or haystack_char == '\n')) {
+            @panic("Invalid character found in indexOfNewlineOrNonASCII");
+        }
+    }
 
     return result;
 }
@@ -133,6 +141,12 @@ pub fn indexOfNewlineOrNonASCIIOrANSI(haystack: string) ?usize {
 
     if (result == haystack.len) {
         return null;
+    }
+    if (comptime Environment.isDebug) {
+        const haystack_char = haystack[result];
+        if (!(haystack_char > 127 or haystack_char < 0x20 or haystack_char == '\r' or haystack_char == '\n')) {
+            @panic("Invalid character found in indexOfNewlineOrNonASCIIOrANSI");
+        }
     }
 
     return result;
@@ -169,6 +183,13 @@ pub fn indexOfNeedsEscapeForJavaScriptString(slice: string, quote_char: u8) ?u32
         return null;
     }
 
+    if (comptime Environment.isDebug) {
+        const haystack_char = slice[result];
+        if (!(haystack_char > 127 or haystack_char < 0x20 or haystack_char == '\\' or haystack_char == quote_char or haystack_char == '$' or haystack_char == '\r' or haystack_char == '\n')) {
+            @panic("Invalid character found in indexOfNeedsEscapeForJavaScriptString");
+        }
+    }
+
     return @truncate(result);
 }
 
@@ -181,6 +202,20 @@ pub fn indexOfAnyChar(haystack: string, chars: string) ?usize {
 
     if (result == haystack.len) {
         return null;
+    }
+
+    if (comptime Environment.isDebug) {
+        const haystack_char = haystack[result];
+        var found = false;
+        for (chars) |c| {
+            if (c == haystack_char) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            @panic("Invalid character found in indexOfAnyChar");
+        }
     }
 
     return result;

@@ -1922,85 +1922,14 @@ fn NewLexer_(
                 return;
 
             var rest = text[0..end_comment_text];
-            const end = rest.ptr + rest.len;
 
-            if (comptime Environment.enableSIMD) {
-                const wrapped_len = rest.len - (rest.len % strings.ascii_vector_size);
-                const comment_end = rest.ptr + wrapped_len;
-                while (rest.ptr != comment_end) {
-                    const vec: strings.AsciiVector = rest.ptr[0..strings.ascii_vector_size].*;
-
-                    // lookahead for any # or @ characters
-                    const hashtag = @as(strings.AsciiVectorU1, @bitCast(vec == @as(strings.AsciiVector, @splat(@as(u8, '#')))));
-                    const at = @as(strings.AsciiVectorU1, @bitCast(vec == @as(strings.AsciiVector, @splat(@as(u8, '@')))));
-
-                    if (@reduce(.Max, hashtag + at) == 1) {
-                        rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
-                        if (comptime Environment.allow_assert) {
-                            bun.assert(
-                                strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '#') or
-                                    strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '@'),
-                            );
-                        }
-
-                        for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
-                            switch (c) {
-                                '@', '#' => {
-                                    const chunk = rest[i + 1 ..];
-                                    if (!lexer.has_pure_comment_before) {
-                                        if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
-                                            lexer.has_pure_comment_before = true;
-                                            continue;
-                                        }
-                                        // TODO: implement NO_SIDE_EFFECTS
-                                        // else if (strings.hasPrefixWithWordBoundary(chunk, "__NO_SIDE_EFFECTS__")) {
-                                        //     lexer.has_no_side_effect_comment_before = true;
-                                        //     continue;
-                                        // }
-                                    }
-
-                                    if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
-                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
-                                            lexer.jsx_pragma._jsx = span;
-                                        }
-                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
-                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
-                                            lexer.jsx_pragma._jsxFrag = span;
-                                        }
-                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
-                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
-                                            lexer.jsx_pragma._jsxRuntime = span;
-                                        }
-                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
-                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
-                                            lexer.jsx_pragma._jsxImportSource = span;
-                                        }
-                                    } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
-                                        if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
-                                            lexer.source_mapping_url = span;
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
-                    }
-
-                    rest.ptr += strings.ascii_vector_size;
-                }
-                rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
-            }
-
-            if (comptime Environment.allow_assert)
-                bun.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
-
-            while (rest.len > 0) {
-                const c = rest[0];
-                rest = rest[1..];
+            while (strings.indexOfAny(rest, "@#")) |i| {
+                const c = rest[i];
+                rest = rest[i + 1 ..];
                 switch (c) {
                     '@', '#' => {
                         const chunk = rest;
-                        const i = @intFromPtr(chunk.ptr) - @intFromPtr(text.ptr);
+
                         if (!lexer.has_pure_comment_before) {
                             if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
                                 lexer.has_pure_comment_before = true;

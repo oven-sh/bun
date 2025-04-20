@@ -148,7 +148,7 @@ pub fn inMapCaseInsensitive(self: []const u8, comptime ComptimeStringMap: anytyp
     return bun.String.ascii(self).inMapCaseInsensitive(ComptimeStringMap);
 }
 
-pub inline fn containsAny(in: anytype, target: string) bool {
+pub inline fn containsAny(in: anytype, target: anytype) bool {
     for (in) |str| if (contains(if (@TypeOf(str) == u8) &[1]u8{str} else bun.span(str), target)) return true;
     return false;
 }
@@ -472,11 +472,27 @@ pub fn indexOf(self: string, str: string) ?usize {
         return std.mem.indexOf(u8, self, str);
     }
 
-    if (str.len == 1) {
-        return if (indexOfChar(self, str[0])) |i| i else null;
-    }
+    const self_len = self.len;
+    const str_len = str.len;
 
-    return std.mem.indexOf(u8, self, str);
+    // > Both old and new libc's have the bug that if needle is empty,
+    // > haystack-1 (instead of haystack) is returned. And glibc 2.0 makes it
+    // > worse, returning a pointer to the last byte of haystack. This is fixed
+    // > in glibc 2.1.
+    if (self_len == 0 or str_len == 0 or self_len < str_len)
+        return null;
+
+    const self_ptr = self.ptr;
+    const str_ptr = str.ptr;
+
+    if (str_len == 1)
+        return indexOfCharUsize(self, str_ptr[0]);
+
+    const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
+
+    const i = @intFromPtr(start) - @intFromPtr(self_ptr);
+    bun.unsafeAssert(i < self_len);
+    return @as(usize, @intCast(i));
 }
 
 pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {

@@ -41,32 +41,6 @@ size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len
 
 // --- Implementation Details ---
 
-// Helper function to lowercase ASCII character using Highway
-HWY_INLINE hn::Vec<D8> ToLower(D8 d, hn::Vec<D8> c)
-{
-    const auto vec_A = hn::Set(d, 'A');
-    const auto vec_Z = hn::Set(d, 'Z');
-    const auto mask_upper = hn::And(hn::Ge(c, vec_A), hn::Le(c, vec_Z));
-    const auto lower = hn::Add(c, hn::Set(d, uint8_t { 32 })); // 'a' - 'A'
-    return hn::IfThenElse(mask_upper, lower, c);
-}
-
-// Scalar case-insensitive memcmp helper
-HWY_INLINE bool ScalarMemcmpCaseInsensitive(const uint8_t* HWY_RESTRICT s1, const uint8_t* HWY_RESTRICT s2, size_t n)
-{
-    for (size_t i = 0; i < n; ++i) {
-        uint8_t c1 = s1[i];
-        uint8_t c2 = s2[i];
-        if (c1 >= 'A' && c1 <= 'Z') c1 += ('a' - 'A');
-        if (c2 >= 'A' && c2 <= 'Z') c2 += ('a' - 'A');
-        if (c1 != c2) return false;
-    }
-    return true;
-}
-
-// --- *Impl Function Definitions ---
-
-// Implementation for indexOfAnyChar (Unchanged from previous correct version)
 size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     if (text_len == 0) return 0;
@@ -90,12 +64,9 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
         const size_t simd_text_len = text_len - (text_len % N);
         for (; i < simd_text_len; i += N) {
             const auto text_vec = hn::LoadN(d, text + i, N);
-            auto found_mask = hn::MaskFalse(d);
+            const auto found_mask = hn::Or(hn::Eq(text_vec, vec_char2), hn::Eq(text_vec, vec_char1));
 
-            found_mask = hn::Or(found_mask, hn::Eq(text_vec, vec_char1));
-            found_mask = hn::Or(found_mask, hn::Eq(text_vec, vec_char2));
-
-            intptr_t pos = hn::FindFirstTrue(d, found_mask);
+            const intptr_t pos = hn::FindFirstTrue(d, found_mask);
             if (pos >= 0) {
                 return i + pos;
             }
@@ -134,7 +105,7 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
                 }
             }
 
-            intptr_t pos = hn::FindFirstTrue(d, found_mask);
+            const intptr_t pos = hn::FindFirstTrue(d, found_mask);
             if (pos >= 0) {
                 return i + pos;
             }
@@ -153,7 +124,6 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     return text_len;
 }
 
-// Implementation function called by the dispatcher
 void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     uint8_t* HWY_RESTRICT output)
 {
@@ -292,7 +262,7 @@ size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRIC
             hn::Or(mask_quote, mask_backslash),
             hn::Or(mask_lt_min, mask_gt_max));
 
-        intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
             return i + pos;
         }
@@ -308,9 +278,6 @@ size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRIC
     return text_len;
 }
 
-// Implementation for indexOfNewlineOrNonASCII
-// Returns the 0-based index relative to the start of the *original* string (before offset)
-// Returns -1 if not found.
 size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -337,7 +304,7 @@ size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_
 
         const auto found_mask = hn::Or(hn::Or(mask_gt_max, mask_lt_min), hn::Or(mask_cr_eq, mask_nl_eq));
 
-        intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
             return i + pos;
         }
@@ -354,9 +321,6 @@ size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_
     return search_len;
 }
 
-// Implementation for indexOfNewlineOrNonASCIIOrANSI
-// Returns the 0-based index relative to the start of the *original* string (before offset)
-// Returns -1 if not found.
 size_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -387,7 +351,7 @@ size_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr,
             hn::Or(hn::Or(mask_gt_max, mask_lt_min), hn::Or(mask_cr_eq, mask_nl_eq)),
             mask_esc_eq);
 
-        intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
             // Return index relative to start_ptr
             return i + pos;
@@ -406,7 +370,6 @@ size_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr,
     return search_len;
 }
 
-// Implementation to check if a string contains newlines, non-ASCII characters, or quotes
 bool ContainsNewlineOrNonASCIIOrQuoteImpl(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
     ASSERT(text_len > 0);
@@ -455,7 +418,6 @@ bool ContainsNewlineOrNonASCIIOrQuoteImpl(const uint8_t* HWY_RESTRICT text, size
     return false;
 }
 
-// Implementation for indexOfNeedsEscapeForJavaScriptString
 template<bool is_backtick>
 static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_char)
 {
@@ -496,7 +458,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
                                                  hn::Or(mask_backslash, mask_quote)),
                                              hn::Eq(text_vec, vec_dollar));
 
-        intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
             return i + pos;
         }
@@ -505,7 +467,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Scalar check for the remainder
     for (; i < text_len; ++i) {
         const uint8_t char_ = text[i];
-        if (char_ >= 127 || char_ < 0x20 || char_ == '\\' || char_ == quote_char || (quote_char == '`' && char_ == '$')) {
+        if (char_ >= 127 || char_ < 0x20 || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
             return i;
         }
     }
@@ -521,6 +483,94 @@ size_t IndexOfNeedsEscapeForJavaScriptStringImplBacktick(const uint8_t* HWY_REST
 size_t IndexOfNeedsEscapeForJavaScriptStringImplQuote(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_char)
 {
     return IndexOfNeedsEscapeForJavaScriptStringImpl<false>(text, text_len, quote_char);
+}
+
+// Highway implementation of memmem
+// Returns a pointer to the first occurrence of `needle` in `haystack`,
+// or nullptr if not found. The return type is non-const `uint8_t*`
+// to match the standard C `memmem` signature, even though the input
+// is const. The caller should handle constness appropriately.
+uint8_t* MemMemImpl(const uint8_t* haystack, size_t haystack_len,
+    const uint8_t* needle, size_t needle_len)
+{
+    // --- Edge Cases ---
+    if (HWY_UNLIKELY(needle_len == 0)) {
+        return const_cast<uint8_t*>(haystack);
+    }
+    if (HWY_UNLIKELY(haystack_len < needle_len)) {
+        return nullptr;
+    }
+    if (HWY_UNLIKELY(needle_len == 1)) {
+        size_t index = IndexOfCharImpl(haystack, haystack_len, needle[0]);
+        if (index != haystack_len) {
+            return const_cast<uint8_t*>(haystack + index);
+        }
+        return nullptr;
+    }
+
+    // --- SIMD Setup ---
+    const hn::ScalableTag<uint8_t> d;
+    const size_t N = hn::Lanes(d);
+    const uint8_t first_needle_char = needle[0];
+    const hn::Vec<decltype(d)> v_first_needle = hn::Set(d, first_needle_char);
+    const size_t last_possible_start = haystack_len - needle_len;
+
+    // --- SIMD Main Loop ---
+    size_t i = 0;
+    while (i + N <= haystack_len && i <= last_possible_start) {
+        const hn::Vec<decltype(d)> haystack_vec = hn::LoadU(d, haystack + i);
+        hn::Mask<decltype(d)> m_starts = hn::Eq(haystack_vec, v_first_needle);
+
+        // Iterate through potential matches within this vector chunk using FindFirstTrue
+        while (!hn::AllFalse(d, m_starts)) {
+            const intptr_t bit_idx_ptr = hn::FindFirstTrue(d, m_starts);
+            // Loop condition guarantees FindFirstTrue finds something
+            HWY_ASSERT(bit_idx_ptr >= 0);
+            const size_t bit_idx = static_cast<size_t>(bit_idx_ptr);
+
+            const size_t potential_pos = i + bit_idx;
+
+            // Double-check bounds (essential if N > needle_len, and correct otherwise)
+            if (potential_pos <= last_possible_start) {
+                if (memcmp(haystack + potential_pos, needle, needle_len) == 0) {
+                    return const_cast<uint8_t*>(haystack + potential_pos);
+                }
+            } else {
+                // Optimization: If the first match found in this chunk is already
+                // beyond the last possible start, no subsequent match in this
+                // chunk can be valid.
+                goto remainder_check; // Exit both loops and proceed to scalar remainder
+            }
+
+            // Clear the found bit to find the next one in the next iteration.
+            // SetOnlyFirst creates a mask with only the first true bit set.
+            // AndNot removes that bit from m_starts.
+            const hn::Mask<decltype(d)> first_bit_mask = hn::SetOnlyFirst(m_starts);
+            m_starts = hn::AndNot(first_bit_mask, m_starts);
+        } // End while (!AllFalse)
+
+        i += N;
+    } // End SIMD loop
+
+remainder_check:
+    // --- Scalar Remainder Loop ---
+    // Check any remaining bytes that couldn't form a full vector load
+    // or potential starts within the last vector load that weren't checked
+    // because they were past last_possible_start.
+    // Start `i` from where the SIMD loop *could* have last started a valid check.
+    size_t remainder_start = (i >= N) ? (i - N) : 0;
+    // Ensure we re-check any potential starts the SIMD loop might have skipped
+    // due to the bounds check optimization or being in the final partial vector.
+    for (; remainder_start <= last_possible_start; ++remainder_start) {
+        // Optimization: Check first character before expensive memcmp
+        if (haystack[remainder_start] == first_needle_char) {
+            if (memcmp(haystack + remainder_start, needle, needle_len) == 0) {
+                return const_cast<uint8_t*>(haystack + remainder_start);
+            }
+        }
+    }
+
+    return nullptr; // Not found
 }
 
 } // namespace HWY_NAMESPACE
@@ -545,12 +595,18 @@ HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
 HWY_EXPORT(CopyU16ToU8Impl);
+HWY_EXPORT(MemMemImpl);
 
 } // namespace bun
 
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
 // These need to be defined *after* the HWY_EXPORT block.
 extern "C" {
+
+void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len)
+{
+    return HWY_DYNAMIC_DISPATCH(bun::MemMemImpl)(haystack, haystack_len, needle, needle_len);
+}
 
 static void highway_copy_u16_to_u8_impl(
     const uint16_t* input,
@@ -638,5 +694,23 @@ size_t highway_index_of_needs_escape_for_javascript_string(const uint8_t* HWY_RE
 }
 
 } // extern "C"
+
+#if OS(DARWIN)
+// On macOS, override the libc memmem with our implementation
+// This uses inline assembly to ensure the symbol is exported with the correct name
+__asm__(".globl _memmem");
+__asm__(".set _memmem, _highway_memmem");
+#elif OS(LINUX)
+// On Linux, override the libc memmem with our implementation
+// This uses the GNU-specific attribute to alias our function to the libc symbol
+// The alias will be visible across the entire program, not just this file
+extern "C" {
+// Using both "default" visibility and "weak" ensures our implementation is used
+// throughout the entire program when linked, not just in this object file
+__attribute__((visibility("default"), weak, used)) void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen)
+    __attribute__((alias("highway_memmem")));
+}
+
+#endif
 
 #endif // HWY_ONCE

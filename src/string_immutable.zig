@@ -1103,7 +1103,7 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
     bun.unsafeAssert(b.len > 0);
     bun.unsafeAssert(a.len > 0);
 
-    return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
+    return bun.highway.indexOfCaseInsensitive(a, b) != null;
 }
 
 pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
@@ -4427,15 +4427,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
 }
 
 pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
-    const ptr = bun.C.strchr(sliceZ.ptr, char) orelse return null;
-    const pos = @intFromPtr(ptr) - @intFromPtr(sliceZ.ptr);
-
-    if (comptime Environment.isDebug)
-        bun.assert(@intFromPtr(sliceZ.ptr) <= @intFromPtr(ptr) and
-            @intFromPtr(ptr) < @intFromPtr(sliceZ.ptr + sliceZ.len) and
-            pos <= sliceZ.len);
-
-    return @as(u63, @truncate(pos));
+    return @truncate(bun.highway.indexOfChar(sliceZ, char) orelse return null);
 }
 
 pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
@@ -4443,19 +4435,11 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
 }
 
 pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
-    if (slice.len == 0)
-        return null;
-
     if (comptime !Environment.isNative) {
         return std.mem.indexOfScalar(u8, slice, char);
     }
 
-    const ptr = bun.C.memchr(slice.ptr, char, slice.len) orelse return null;
-    const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
-    bun.assert(i < slice.len);
-    bun.assert(slice[i] == char);
-
-    return i;
+    return bun.highway.indexOfChar(slice, char);
 }
 
 pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
@@ -4463,15 +4447,9 @@ pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
         return std.mem.indexOfScalarPos(u8, slice, char);
     }
 
-    if (start_index >= slice.len) return null;
-
-    const ptr = bun.C.memchr(slice.ptr + start_index, char, slice.len - start_index) orelse
-        return null;
-    const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
-    bun.assert(i < slice.len);
-    bun.assert(slice[i] == char);
-
-    return i;
+    const result = bun.highway.indexOfChar(slice[start_index..], char) orelse return null;
+    bun.debugAssert(slice.len > result + start_index);
+    return result + start_index;
 }
 
 pub fn indexOfAnyPosComptime(slice: []const u8, comptime chars: []const u8, start_index: usize) ?usize {

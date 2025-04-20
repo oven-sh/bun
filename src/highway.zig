@@ -45,6 +45,12 @@ extern "c" fn highway_index_of_substring(
     needle_len: usize,
 ) i32;
 
+extern "c" fn highway_index_of_char(
+    haystack: [*]const u8,
+    haystack_len: usize,
+    needle: u8,
+) i64;
+
 /// Find any character from the chars slice in the text slice
 /// Returns the position of the first match, or null if not found
 pub fn indexOfAnyChar(text: string, chars: string) ?usize {
@@ -150,6 +156,24 @@ pub fn indexOfInterestingCharacterInSingleQuotedString(slice: string) ?usize {
 /// Helper wrapper for template literals with backticks
 pub fn indexOfInterestingCharacterInTemplateLiteral(slice: string) ?usize {
     return indexOfInterestingCharacterInStringLiteral(slice, '`');
+}
+
+pub fn indexOfChar(haystack: string, needle: u8) ?usize {
+    if (haystack.len == 0) {
+        return null;
+    }
+
+    const result = highway_index_of_char(
+        haystack.ptr,
+        haystack.len,
+        needle,
+    );
+
+    if (result < 0) {
+        return null;
+    }
+
+    return @as(usize, @intCast(result));
 }
 
 /// Fast substring search (like Zig's std.mem.indexOf but with Highway SIMD optimization)

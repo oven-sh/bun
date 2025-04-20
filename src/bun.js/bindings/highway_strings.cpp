@@ -1,4 +1,5 @@
 // Must be first
+#include "root.h"
 #undef HWY_TARGET_INCLUDE
 // Correct path to this file relative to the build root (CMakeLists.txt)
 #define HWY_TARGET_INCLUDE "highway_strings.cpp"
@@ -27,7 +28,7 @@ namespace hn = hwy::HWY_NAMESPACE; // Alias for convenience
 // Type alias for SIMD vector tag
 using D8 = hn::ScalableTag<uint8_t>;
 
-int64_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
     D8 d;
@@ -35,7 +36,7 @@ int64_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_le
     const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
 
     // Convert to int64_t and return -1 if not found
-    return (pos < haystack_len) ? static_cast<int64_t>(pos) : -1;
+    return (pos < haystack_len) ? pos : haystack_len;
 }
 
 // --- Implementation Details ---
@@ -310,11 +311,9 @@ size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRIC
 // Implementation for indexOfNewlineOrNonASCII
 // Returns the 0-based index relative to the start of the *original* string (before offset)
 // Returns -1 if not found.
-int64_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
+size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
-    if (search_len == 0) {
-        return -1;
-    }
+    ASSERT(search_len > 0);
 
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -340,7 +339,7 @@ int64_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size
 
         intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
-            return static_cast<int64_t>(i + pos);
+            return i + pos;
         }
     }
 
@@ -348,21 +347,19 @@ int64_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size
     for (; i < search_len; ++i) {
         const uint8_t char_ = start_ptr[i];
         if (char_ > 127 || char_ < 0x20 || char_ == '\n' || char_ == '\r') {
-            return static_cast<int64_t>(i);
+            return i;
         }
     }
 
-    return -1;
+    return search_len;
 }
 
 // Implementation for indexOfNewlineOrNonASCIIOrANSI
 // Returns the 0-based index relative to the start of the *original* string (before offset)
 // Returns -1 if not found.
-int64_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
+size_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
-    if (search_len == 0) {
-        return -1;
-    }
+    ASSERT(search_len > 0);
 
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -393,7 +390,7 @@ int64_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr
         intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
             // Return index relative to start_ptr
-            return static_cast<int64_t>(i + pos);
+            return i + pos;
         }
     }
 
@@ -402,11 +399,11 @@ int64_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr
         const uint8_t char_ = start_ptr[i];
         if (char_ > 127 || char_ < 0x20 || char_ == '\n' || char_ == '\r' || char_ == '\x1b') {
             // Return index relative to start_ptr
-            return static_cast<int64_t>(i);
+            return i;
         }
     }
 
-    return -1;
+    return search_len;
 }
 
 // Implementation to check if a string contains newlines, non-ASCII characters, or quotes
@@ -603,7 +600,7 @@ void highway_char_frequency(const uint8_t* HWY_RESTRICT text, size_t text_len,
     HWY_DYNAMIC_DISPATCH(bun::ScanCharFrequencyImpl)(text, text_len, freqs, delta);
 }
 
-int64_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfCharImpl)(haystack, haystack_len, needle);
@@ -614,14 +611,14 @@ size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* H
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);
 }
 
-int64_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
+size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIImpl)(haystack, haystack_len);
 }
 
 // Wrapper for IndexOfNewlineOrNonASCIIOrANSIImpl
 // Returns the 0-based index relative to `haystack`, or -1 if not found.
-int64_t highway_index_of_newline_or_non_ascii_or_ansi(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
+size_t highway_index_of_newline_or_non_ascii_or_ansi(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIOrANSIImpl)(haystack, haystack_len);
 }

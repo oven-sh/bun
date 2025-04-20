@@ -21,7 +21,7 @@ extern "c" fn highway_index_of_char(
     haystack: [*]const u8,
     haystack_len: usize,
     needle: u8,
-) i64;
+) usize;
 
 extern "c" fn highway_index_of_interesting_character_in_string_literal(
     noalias text: [*]const u8,
@@ -32,12 +32,12 @@ extern "c" fn highway_index_of_interesting_character_in_string_literal(
 extern "c" fn highway_index_of_newline_or_non_ascii(
     noalias haystack: [*]const u8,
     haystack_len: usize,
-) i64;
+) usize;
 
 extern "c" fn highway_index_of_newline_or_non_ascii_or_ansi(
     noalias haystack: [*]const u8,
     haystack_len: usize,
-) i64;
+) usize;
 
 extern "c" fn highway_contains_newline_or_non_ascii_or_quote(
     noalias text: [*]const u8,
@@ -83,11 +83,11 @@ pub fn indexOfChar(haystack: string, needle: u8) ?usize {
         needle,
     );
 
-    if (result < 0) {
+    if (result == haystack.len) {
         return null;
     }
 
-    return @as(usize, @intCast(result));
+    return result;
 }
 
 pub fn indexOfInterestingCharacterInStringLiteral(slice: string, quote_type: u8) ?usize {
@@ -101,7 +101,7 @@ pub fn indexOfInterestingCharacterInStringLiteral(slice: string, quote_type: u8)
         quote_type,
     );
 
-    if (result == std.math.maxInt(usize)) {
+    if (result == slice.len) {
         return null;
     }
 
@@ -116,11 +116,11 @@ pub fn indexOfNewlineOrNonASCII(haystack: string) ?usize {
         haystack.len,
     );
 
-    if (result < 0) {
+    if (result == haystack.len) {
         return null;
     }
 
-    return @as(usize, @intCast(result));
+    return result;
 }
 
 pub fn indexOfNewlineOrNonASCIIOrANSI(haystack: string) ?usize {
@@ -131,11 +131,11 @@ pub fn indexOfNewlineOrNonASCIIOrANSI(haystack: string) ?usize {
         haystack.len,
     );
 
-    if (result < 0) {
+    if (result == haystack.len) {
         return null;
     }
 
-    return @as(usize, @intCast(result));
+    return result;
 }
 
 /// Checks if the string contains any newlines, non-ASCII characters, or quotes
@@ -177,7 +177,13 @@ pub fn indexOfAnyChar(haystack: string, chars: string) ?usize {
         return null;
     }
 
-    return highway_index_of_any_char(haystack.ptr, haystack.len, chars.ptr, chars.len);
+    const result = highway_index_of_any_char(haystack.ptr, haystack.len, chars.ptr, chars.len);
+
+    if (result == haystack.len) {
+        return null;
+    }
+
+    return result;
 }
 
 extern "c" fn highway_copy_u16_to_u8(

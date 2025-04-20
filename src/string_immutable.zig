@@ -4447,6 +4447,8 @@ pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
         return std.mem.indexOfScalarPos(u8, slice, char);
     }
 
+    if (start_index >= slice.len) return null;
+
     const result = bun.highway.indexOfChar(slice[start_index..], char) orelse return null;
     bun.debugAssert(slice.len > result + start_index);
     return result + start_index;

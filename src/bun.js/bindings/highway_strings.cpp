@@ -41,7 +41,7 @@ HWY_INLINE hn::Vec<D8> ToLower(D8 d, hn::Vec<D8> c)
 }
 
 // Scalar case-insensitive memcmp helper
-HWY_INLINE bool ScalarMemcmpCaseInsensitive(const uint8_t* s1, const uint8_t* s2, size_t n)
+HWY_INLINE bool ScalarMemcmpCaseInsensitive(const uint8_t* HWY_RESTRICT s1, const uint8_t* HWY_RESTRICT s2, size_t n)
 {
     for (size_t i = 0; i < n; ++i) {
         uint8_t c1 = s1[i];
@@ -56,7 +56,7 @@ HWY_INLINE bool ScalarMemcmpCaseInsensitive(const uint8_t* s1, const uint8_t* s2
 // --- *Impl Function Definitions ---
 
 // Implementation for indexOfAnyChar (Unchanged from previous correct version)
-IndexResult IndexOfAnyCharImpl(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len)
+IndexResult IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     if (text_len == 0 || chars_len == 0) return { -1, 0 };
     D8 d;
@@ -107,7 +107,7 @@ IndexResult IndexOfAnyCharImpl(const uint8_t* text, size_t text_len, const uint8
 }
 
 // Implementation for scanCharFrequency (Unchanged from previous correct version)
-void ScanCharFrequencyImpl(const uint8_t* text, size_t text_len, int32_t* freqs, int32_t delta)
+void ScanCharFrequencyImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, int32_t* freqs, int32_t delta)
 {
     if (text_len == 0 || delta == 0) return;
     D8 d;
@@ -176,7 +176,7 @@ void ScanCharFrequencyImpl(const uint8_t* text, size_t text_len, int32_t* freqs,
 }
 
 // Implementation for finding interesting characters (Unchanged from previous correct version)
-int32_t IndexOfInterestingCharImpl(const uint8_t* text, size_t text_len, uint8_t quote_type)
+int32_t IndexOfInterestingCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_type)
 {
     if (text_len == 0) return -1;
     D8 d;
@@ -212,7 +212,7 @@ int32_t IndexOfInterestingCharImpl(const uint8_t* text, size_t text_len, uint8_t
 // --- Substring Search Implementations ---
 
 // Helper for needle_len == 1
-int32_t IndexOfSubstringImpl_1(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle)
+int32_t IndexOfSubstringImpl_1(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t* HWY_RESTRICT needle)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -232,7 +232,7 @@ int32_t IndexOfSubstringImpl_1(const uint8_t* haystack, size_t haystack_len, con
 }
 
 // Helper for needle_len == 2
-int32_t IndexOfSubstringImpl_2(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle)
+int32_t IndexOfSubstringImpl_2(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t* HWY_RESTRICT needle)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -266,8 +266,8 @@ int32_t IndexOfSubstringImpl_2(const uint8_t* haystack, size_t haystack_len, con
 }
 
 // Helper for needle_len >= 3 (Algorithm 1)
-int32_t IndexOfSubstringImpl_GE3(const uint8_t* haystack, size_t haystack_len,
-    const uint8_t* needle, size_t needle_len)
+int32_t IndexOfSubstringImpl_GE3(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -327,9 +327,59 @@ int32_t IndexOfSubstringImpl_GE3(const uint8_t* haystack, size_t haystack_len,
     return -1;
 }
 
+// Highway SIMD implementation of indexOfInterestingCharacterInStringLiteral
+size_t indexOfInterestingCharacterInStringLiteral(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
+{
+    if (text_len == 0) return SIZE_MAX;
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    // Create vectors for the characters we're looking for
+    const auto vec_quote = hn::Set(d, quote);
+    const auto vec_backslash = hn::Set(d, '\\');
+    const auto vec_min_ascii = hn::Set(d, 0x20); // Control characters are < 0x20
+    const auto vec_max_ascii = hn::Set(d, 0x7F); // Non-ASCII chars are > 0x7F
+
+    size_t i = 0;
+    // Process full vector chunks
+    for (; i + N <= text_len; i += N) {
+        const auto text_chunk = hn::LoadU(d, text + i);
+
+        // Check for quote, backslash, control chars, and non-ASCII chars
+        const auto mask_quote = hn::Eq(text_chunk, vec_quote);
+        const auto mask_backslash = hn::Eq(text_chunk, vec_backslash);
+        const auto mask_below_min = hn::Lt(text_chunk, vec_min_ascii);
+        const auto mask_above_max = hn::Gt(text_chunk, vec_max_ascii);
+
+        // Combine all masks
+        const auto combined_mask = hn::Or(hn::Or(mask_quote, mask_backslash),
+            hn::Or(mask_below_min, mask_above_max));
+
+        // Check if we found any interesting characters
+        if (!hn::AllFalse(d, combined_mask)) {
+            // Find the first match
+            intptr_t pos = hn::FindFirstTrue(d, combined_mask);
+            if (pos >= 0) {
+                return i + static_cast<size_t>(pos);
+            }
+        }
+    }
+
+    // Handle remaining characters (less than a full vector)
+    for (; i < text_len; ++i) {
+        const uint8_t c = text[i];
+        if (c == quote || c == '\\' || c < 0x20 || c > 0x7F) {
+            return i;
+        }
+    }
+
+    return SIZE_MAX; // No interesting character found
+}
+
 // Main dispatch function for IndexOfSubstring
-int32_t IndexOfSubstringImpl(const uint8_t* haystack, size_t haystack_len,
-    const uint8_t* needle, size_t needle_len)
+int32_t IndexOfSubstringImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     if (needle_len == 0) return 0;
     if (haystack_len < needle_len) return -1;
@@ -341,7 +391,7 @@ int32_t IndexOfSubstringImpl(const uint8_t* haystack, size_t haystack_len,
 // --- Case-Insensitive Substring Search Implementations ---
 
 // Helper for needle_len == 1 (Case-Insensitive)
-int32_t IndexOfCaseInsensitiveImpl_1(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle)
+int32_t IndexOfCaseInsensitiveImpl_1(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t* HWY_RESTRICT needle)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -364,7 +414,7 @@ int32_t IndexOfCaseInsensitiveImpl_1(const uint8_t* haystack, size_t haystack_le
 }
 
 // Helper for needle_len == 2 (Case-Insensitive)
-int32_t IndexOfCaseInsensitiveImpl_2(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle)
+int32_t IndexOfCaseInsensitiveImpl_2(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, const uint8_t* HWY_RESTRICT needle)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -399,8 +449,8 @@ int32_t IndexOfCaseInsensitiveImpl_2(const uint8_t* haystack, size_t haystack_le
 }
 
 // Helper for needle_len >= 3 (Case-Insensitive - Algorithm 1)
-int32_t IndexOfCaseInsensitiveImpl_GE3(const uint8_t* haystack, size_t haystack_len,
-    const uint8_t* needle, size_t needle_len)
+int32_t IndexOfCaseInsensitiveImpl_GE3(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     D8 d;
     const size_t N = hn::Lanes(d);
@@ -467,8 +517,8 @@ int32_t IndexOfCaseInsensitiveImpl_GE3(const uint8_t* haystack, size_t haystack_
 }
 
 // Main dispatch function for IndexOfCaseInsensitive
-int32_t IndexOfCaseInsensitiveImpl(const uint8_t* haystack, size_t haystack_len,
-    const uint8_t* needle, size_t needle_len)
+int32_t IndexOfCaseInsensitiveImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     if (needle_len == 0) return 0;
     if (haystack_len < needle_len) return -1;
@@ -477,7 +527,7 @@ int32_t IndexOfCaseInsensitiveImpl(const uint8_t* haystack, size_t haystack_len,
     return IndexOfCaseInsensitiveImpl_GE3(haystack, haystack_len, needle, needle_len);
 }
 
-int64_t IndexOfCharImpl(const uint8_t* haystack, size_t haystack_len,
+int64_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
     D8 d;
@@ -521,46 +571,52 @@ HWY_EXPORT(IndexOfCaseInsensitiveImpl);
 HWY_EXPORT(IndexOfInterestingCharImpl);
 HWY_EXPORT(IndexOfSubstringImpl);
 HWY_EXPORT(IndexOfCharImpl);
+HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 } // namespace bun
 
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
 // These need to be defined *after* the HWY_EXPORT block.
 extern "C" {
 
-IndexResult highway_find_chars(const uint8_t* text, size_t text_len,
-    const uint8_t* chars, size_t chars_len)
+IndexResult highway_find_chars(const uint8_t* HWY_RESTRICT text, size_t text_len,
+    const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfAnyCharImpl)(text, text_len, chars, chars_len);
 }
 
-void highway_char_frequency(const uint8_t* text, size_t text_len,
+void highway_char_frequency(const uint8_t* HWY_RESTRICT text, size_t text_len,
     int32_t* freqs, int32_t delta)
 {
     HWY_DYNAMIC_DISPATCH(bun::ScanCharFrequencyImpl)(text, text_len, freqs, delta);
 }
 
-int32_t highway_find_substr_case_insensitive(const uint8_t* haystack, size_t haystack_len,
-    const uint8_t* needle, size_t needle_len)
+int32_t highway_find_substr_case_insensitive(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfCaseInsensitiveImpl)(haystack, haystack_len, needle, needle_len);
 }
 
-int32_t highway_index_of_interesting_char(const uint8_t* text, size_t text_len,
+int32_t highway_index_of_interesting_char(const uint8_t* HWY_RESTRICT text, size_t text_len,
     uint8_t quote_type)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfInterestingCharImpl)(text, text_len, quote_type);
 }
 
-int32_t highway_index_of_substring(const uint8_t* haystack, size_t haystack_len,
-    const uint8_t* needle, size_t needle_len)
+int32_t highway_index_of_substring(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    const uint8_t* HWY_RESTRICT needle, size_t needle_len)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfSubstringImpl)(haystack, haystack_len, needle, needle_len);
 }
 
-int64_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len,
+int64_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
+{
+    return HWY_DYNAMIC_DISPATCH(bun::IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);
 }
 
 } // extern "C"

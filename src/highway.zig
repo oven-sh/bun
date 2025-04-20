@@ -51,6 +51,12 @@ extern "c" fn highway_index_of_char(
     needle: u8,
 ) i64;
 
+extern "c" fn highway_index_of_interesting_character_in_string_literal(
+    noalias text: [*]const u8,
+    text_len: usize,
+    quote: u8,
+) usize;
+
 /// Find any character from the chars slice in the text slice
 /// Returns the position of the first match, or null if not found
 pub fn indexOfAnyChar(text: string, chars: string) ?usize {
@@ -120,27 +126,6 @@ pub fn indexOfAnyReplacement(slice: string, str: string) ?usize {
     }
 
     return indexOfAnyChar(slice, str);
-}
-
-/// High-performance indexOfInterestingCharacterInStringLiteral implementation
-/// Finds characters that need escaping in string literals, similar to indexOfNeedsEscape
-/// Returns the position of the first character that needs escaping, or null if none found
-pub fn indexOfInterestingCharacterInStringLiteral(slice: string, quote_type: u8) ?usize {
-    if (slice.len == 0) {
-        return null;
-    }
-
-    const result = highway_index_of_interesting_char(
-        slice.ptr,
-        slice.len,
-        quote_type,
-    );
-
-    if (result < 0) {
-        return null;
-    }
-
-    return @as(usize, @intCast(result));
 }
 
 /// Helper wrapper for the most common double-quoted string literals
@@ -245,3 +230,21 @@ pub const CharFreq = struct {
         }
     }
 };
+
+pub fn indexOfInterestingCharacterInStringLiteral(slice: string, quote_type: u8) ?usize {
+    if (slice.len == 0) {
+        return null;
+    }
+
+    const result = highway_index_of_interesting_character_in_string_literal(
+        slice.ptr,
+        slice.len,
+        quote_type,
+    );
+
+    if (result == std.math.maxInt(usize)) {
+        return null;
+    }
+
+    return result;
+}

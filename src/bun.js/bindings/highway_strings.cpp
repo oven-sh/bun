@@ -77,8 +77,11 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     } else if (chars_len == 2) {
         // 2 character implemenation
         // covers the most common case:
-        // - \r\n
-        // - {'\\', '/' }
+        //
+        // - { '\r', '\n' }
+        // - { '\\', '/' }
+        // - { ' ', '\t' }
+        //
         const auto vec_char1 = hn::Set(d, chars[0]);
         const auto vec_char2 = hn::Set(d, chars[1]);
 

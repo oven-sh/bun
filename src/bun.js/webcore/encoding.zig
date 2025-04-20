@@ -355,7 +355,7 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .utf8 => {
-                return strings.elementLengthLatin1IntoUTF8([]const u8, input[0..len]);
+                return strings.elementLengthLatin1IntoUTF8(input[0..len]);
             },
 
             .latin1, .ascii, .buffer => {

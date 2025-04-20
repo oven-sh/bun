@@ -96,43 +96,14 @@ fn literalLength(comptime T: type, comptime str: string) usize {
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(slice: string, comptime str: []const u8) ?OptionalUsize {
-    switch (comptime str.len) {
+    return switch (comptime str.len) {
         0 => @compileError("str cannot be empty"),
         1 => return indexOfChar(slice, str[0]),
-        else => {},
-    }
-
-    var remaining = slice;
-    if (remaining.len == 0) return null;
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            var cmp: AsciiVectorU1 = @bitCast(vec == @as(AsciiVector, @splat(@as(u8, str[0]))));
-            inline for (str[1..]) |c| {
-                cmp |= @bitCast(vec == @as(AsciiVector, @splat(@as(u8, c))));
-            }
-
-            if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
-                const first = @ctz(bitmask);
-
-                return @as(OptionalUsize, @intCast(first + slice.len - remaining.len));
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
-    }
-
-    for (remaining, 0..) |c, i| {
-        if (strings.indexOfChar(str, c) != null) {
-            return @as(OptionalUsize, @intCast(i + slice.len - remaining.len));
-        }
-    }
-
-    return null;
+        else => if (bun.highway.indexOfAnyChar(slice, str)) |i|
+            @intCast(i)
+        else
+            null,
+    };
 }
 
 pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
@@ -496,12 +467,16 @@ pub inline fn lastIndexOf(self: string, str: string) ?usize {
     return std.mem.lastIndexOf(u8, self, str);
 }
 
-pub inline fn indexOf(self: string, str: string) ?usize {
+pub fn indexOf(self: string, str: string) ?usize {
     if (comptime !bun.Environment.isNative) {
         return std.mem.indexOf(u8, self, str);
     }
 
-    return bun.highway.indexOfSubstring(self, str);
+    if (str.len == 1) {
+        return if (indexOfChar(self, str[0])) |i| i else null;
+    }
+
+    return std.mem.indexOf(u8, self, str);
 }
 
 pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
@@ -970,16 +945,13 @@ pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
     }
 }
 
-pub fn eql(self: string, other: anytype) bool {
+pub fn eql(self: string, other: []const u8) bool {
     if (self.len != other.len) return false;
     if (comptime @TypeOf(other) == *string) {
         return eql(self, other.*);
     }
 
-    for (self, 0..) |c, i| {
-        if (other[i] != c) return false;
-    }
-    return true;
+    return eqlLong(self, other, false);
 }
 
 pub fn eqlComptimeT(comptime T: type, self: []const T, comptime alt: anytype) bool {
@@ -1103,7 +1075,7 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
     bun.unsafeAssert(b.len > 0);
     bun.unsafeAssert(a.len > 0);
 
-    return bun.highway.indexOfCaseInsensitive(a, b) != null;
+    return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }
 
 pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
@@ -2774,43 +2746,8 @@ pub fn replaceLatin1WithUTF8(buf_: []u8) void {
     }
 }
 
-pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
-    // https://zig.godbolt.org/z/zzYexPPs9
-
-    var latin1 = latin1_;
-    const input_len = latin1.len;
-    var total_non_ascii_count: usize = 0;
-
-    // This is about 30% faster on large input compared to auto-vectorization
-    if (comptime Environment.enableSIMD) {
-        const end = latin1.ptr + (latin1.len - (latin1.len % ascii_vector_size));
-        while (latin1.ptr != end) {
-            const vec: AsciiVector = latin1[0..ascii_vector_size].*;
-
-            // Shifting a unsigned 8 bit integer to the right by 7 bits always produces a value of 0 or 1.
-            const cmp = vec >> @as(AsciiVector, @splat(
-                @as(u8, 7),
-            ));
-
-            // Anding that value rather than converting it into a @Vector(16, u1) produces better code from LLVM.
-            const mask: AsciiVector = cmp & @as(AsciiVector, @splat(
-                @as(u8, 1),
-            ));
-
-            total_non_ascii_count += @as(usize, @reduce(.Add, mask));
-            latin1 = latin1[ascii_vector_size..];
-        }
-
-        // an important hint to the compiler to not auto-vectorize the loop below
-        if (latin1.len >= ascii_vector_size) unreachable;
-    }
-
-    for (latin1) |c| {
-        total_non_ascii_count += @as(usize, @intFromBool(c > 127));
-    }
-
-    // each non-ascii latin1 character becomes 2 UTF8 characters
-    return input_len + total_non_ascii_count;
+pub fn elementLengthLatin1IntoUTF8(slice: []const u8) usize {
+    return bun.simdutf.length.utf8.from.latin1(slice);
 }
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
@@ -2845,20 +2782,7 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
         return latin1_.len;
     }
 
-    var count: usize = 0;
-    var latin1 = latin1_;
-    while (latin1.len > 0) {
-        const function = comptime if (std.meta.Child(Type) == u8) strings.firstNonASCIIWithType else strings.firstNonASCII16;
-        const to_write = function(Type, latin1) orelse @as(u32, @truncate(latin1.len));
-        count += to_write;
-        latin1 = latin1[to_write..];
-        if (latin1.len > 0) {
-            count += comptime if (std.meta.Child(Type) == u8) 2 else 1;
-            latin1 = latin1[1..];
-        }
-    }
-
-    return count;
+    return bun.simdutf.length.utf16.from.latin1(latin1_);
 }
 
 pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) !Escaped(u8) {
@@ -3994,44 +3918,7 @@ pub fn isAllASCII(slice: []const u8) bool {
         return true;
     }
 
-    if (bun.FeatureFlags.use_simdutf)
-        return bun.simdutf.validate.ascii(slice);
-
-    var remaining = slice;
-
-    // The NEON SIMD unit is 128-bit wide and includes 16 128-bit registers that can be used as 32 64-bit registers
-    if (comptime Environment.enableSIMD) {
-        const remaining_end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_vector_size);
-        while (remaining.ptr != remaining_end_ptr) : (remaining.ptr += ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-
-            if (@reduce(.Max, vec) > 127) {
-                return false;
-            }
-        }
-    }
-
-    const Int = u64;
-    const size = @sizeOf(Int);
-    const remaining_last8 = slice.ptr + slice.len - (slice.len % size);
-    while (remaining.ptr != remaining_last8) : (remaining.ptr += size) {
-        const bytes = @as(Int, @bitCast(remaining[0..size].*));
-        // https://dotat.at/@/2022-06-27-tolower-swar.html
-        const mask = bytes & 0x8080808080808080;
-
-        if (mask > 0) {
-            return false;
-        }
-    }
-
-    const final = slice.ptr + slice.len;
-    while (remaining.ptr != final) : (remaining.ptr += 1) {
-        if (remaining[0] > 127) {
-            return false;
-        }
-    }
-
-    return true;
+    return bun.simdutf.validate.ascii(slice);
 }
 
 // #define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
@@ -4065,166 +3952,22 @@ pub inline fn u16GetSupplementary(lead: u32, trail: u32) u32 {
 pub const u16_surrogate_offset = 56613888;
 
 pub fn firstNonASCII(slice: []const u8) ?u32 {
-    return firstNonASCIIWithType([]const u8, slice);
-}
-
-pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
-    var remaining = slice;
-
-    if (comptime bun.FeatureFlags.use_simdutf) {
-        const result = bun.simdutf.validate.with_errors.ascii(slice);
-        if (result.status == .success) {
-            return null;
-        }
-
-        return @as(u32, @truncate(result.count));
+    const result = bun.simdutf.validate.with_errors.ascii(slice);
+    if (result.status == .success) {
+        return null;
     }
 
-    if (comptime Environment.enableSIMD) {
-        if (remaining.len >= ascii_vector_size) {
-            const remaining_start = remaining.ptr;
-            const remaining_end = remaining.ptr + remaining.len - (remaining.len % ascii_vector_size);
-
-            while (remaining.ptr != remaining_end) {
-                const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-
-                if (@reduce(.Max, vec) > 127) {
-                    const Int = u64;
-                    const size = @sizeOf(Int);
-                    remaining.len -= @intFromPtr(remaining.ptr) - @intFromPtr(remaining_start);
-
-                    {
-                        const bytes = @as(Int, @bitCast(remaining[0..size].*));
-                        // https://dotat.at/@/2022-06-27-tolower-swar.html
-                        const mask = bytes & 0x8080808080808080;
-
-                        if (mask > 0) {
-                            const first_set_byte = @ctz(mask) / 8;
-                            if (comptime Environment.isDebug) {
-                                bun.assert(remaining[first_set_byte] > 127);
-                                for (0..first_set_byte) |j| {
-                                    bun.assert(remaining[j] <= 127);
-                                }
-                            }
-
-                            return @as(u32, first_set_byte) + @as(u32, @intCast(slice.len - remaining.len));
-                        }
-                        remaining = remaining[size..];
-                    }
-                    {
-                        const bytes = @as(Int, @bitCast(remaining[0..size].*));
-                        const mask = bytes & 0x8080808080808080;
-
-                        if (mask > 0) {
-                            const first_set_byte = @ctz(mask) / 8;
-                            if (comptime Environment.isDebug) {
-                                bun.assert(remaining[first_set_byte] > 127);
-                                for (0..first_set_byte) |j| {
-                                    bun.assert(remaining[j] <= 127);
-                                }
-                            }
-
-                            return @as(u32, first_set_byte) + @as(u32, @intCast(slice.len - remaining.len));
-                        }
-                    }
-                    unreachable;
-                }
-
-                // the more intuitive way, using slices, produces worse codegen
-                // specifically: it subtracts the length at the end of the loop
-                // we don't need to do that
-                // we only need to subtract the length once at the very end
-                remaining.ptr += ascii_vector_size;
-            }
-            remaining.len -= @intFromPtr(remaining.ptr) - @intFromPtr(remaining_start);
-        }
-    }
-
-    {
-        const Int = u64;
-        const size = @sizeOf(Int);
-        const remaining_start = remaining.ptr;
-        const remaining_end = remaining.ptr + remaining.len - (remaining.len % size);
-
-        if (comptime Environment.enableSIMD) {
-            // these assertions exist more so for LLVM
-            bun.unsafeAssert(remaining.len < ascii_vector_size);
-            bun.unsafeAssert(@intFromPtr(remaining.ptr + ascii_vector_size) > @intFromPtr(remaining_end));
-        }
-
-        if (remaining.len >= size) {
-            while (remaining.ptr != remaining_end) {
-                const bytes = @as(Int, @bitCast(remaining[0..size].*));
-                // https://dotat.at/@/2022-06-27-tolower-swar.html
-                const mask = bytes & 0x8080808080808080;
-
-                if (mask > 0) {
-                    remaining.len -= @intFromPtr(remaining.ptr) - @intFromPtr(remaining_start);
-                    const first_set_byte = @ctz(mask) / 8;
-                    if (comptime Environment.isDebug) {
-                        bun.unsafeAssert(remaining[first_set_byte] > 127);
-                        for (0..first_set_byte) |j| {
-                            bun.unsafeAssert(remaining[j] <= 127);
-                        }
-                    }
-
-                    return @as(u32, first_set_byte) + @as(u32, @intCast(slice.len - remaining.len));
-                }
-
-                remaining.ptr += size;
-            }
-            remaining.len -= @intFromPtr(remaining.ptr) - @intFromPtr(remaining_start);
-        }
-    }
-
-    if (comptime Environment.allow_assert) assert(remaining.len < 8);
-
-    for (remaining) |*char| {
-        if (char.* > 127) {
-            // try to prevent it from reading the length of the slice
-            return @as(u32, @truncate(@intFromPtr(char) - @intFromPtr(slice.ptr)));
-        }
-    }
-
-    return null;
+    return @as(u32, @truncate(result.count));
 }
 
 pub fn indexOfNewlineOrNonASCIIOrANSI(slice_: []const u8, offset: u32) ?u32 {
     const slice = slice_[offset..];
-    var remaining = slice;
+    const remaining = slice;
 
     if (remaining.len == 0)
         return null;
 
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\x1b')))));
-
-            if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
-                const first = @ctz(bitmask);
-
-                return @as(u32, first) + @as(u32, @intCast(slice.len - remaining.len)) + offset;
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '\x1b') {
-            return @as(u32, @truncate((@intFromPtr(char_) - @intFromPtr(slice.ptr)))) + offset;
-        }
-    }
-
-    return null;
+    return @truncate(bun.highway.indexOfNewlineOrNonASCIIOrANSI(remaining) orelse return null);
 }
 
 pub fn indexOfNewlineOrNonASCII(slice_: []const u8, offset: u32) ?u32 {
@@ -4233,7 +3976,7 @@ pub fn indexOfNewlineOrNonASCII(slice_: []const u8, offset: u32) ?u32 {
 
 pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, comptime check_start: bool) ?u32 {
     const slice = slice_[offset..];
-    var remaining = slice;
+    const remaining = slice;
 
     if (remaining.len == 0)
         return null;
@@ -4245,116 +3988,23 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
         }
     }
 
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n')))));
-
-            if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
-                const first = @ctz(bitmask);
-
-                return @as(u32, first) + @as(u32, @intCast(slice.len - remaining.len)) + offset;
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\n' or char == '\r') {
-            return @as(u32, @truncate((@intFromPtr(char_) - @intFromPtr(slice.ptr)))) + offset;
-        }
-    }
-
-    return null;
+    const i = bun.highway.indexOfNewlineOrNonASCII(remaining) orelse return null;
+    return @as(u32, @truncate(i)) + offset;
 }
 
-pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
-    const slice = slice_;
-    var remaining = slice;
-
-    if (remaining.len == 0)
-        return false;
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '"')))));
-
-            if (@reduce(.Max, cmp) > 0) {
-                return true;
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '"') {
-            return true;
-        }
-    }
-
-    return false;
+pub fn containsNewlineOrNonASCIIOrQuote(text: []const u8) bool {
+    return bun.highway.containsNewlineOrNonASCIIOrQuote(text);
 }
 
-/// JSON escape
-pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
-    var remaining = slice;
-    if (remaining.len == 0)
+/// Supports:
+/// - `"`
+/// - `'`
+/// - "`"
+pub fn indexOfNeedsEscapeForJavaScriptString(slice: []const u8, quote_char: u8) ?u32 {
+    if (slice.len == 0)
         return null;
 
-    if (remaining[0] >= 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == quote_char or (quote_char == '`' and remaining[0] == '$')) {
-        return 0;
-    }
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp: AsciiVectorU1 = if (comptime quote_char == '`') ( //
-                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                    @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
-                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
-            ) else ( //
-                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                    @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                    @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
-            );
-
-            if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
-                const first = @ctz(bitmask);
-
-                return @as(u32, first) + @as(u32, @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr)));
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\\' or char == quote_char or (quote_char == '`' and char == '$')) {
-            return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
-        }
-    }
-
-    return null;
+    return bun.highway.indexOfNeedsEscapeForJavaScriptString(slice, quote_char);
 }
 
 pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
@@ -4894,47 +4544,6 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     return null;
 }
 
-/// Fast path for printing template literal strings
-pub fn @"nextUTF16NonASCIIOr$`\\"(
-    comptime Slice: type,
-    slice: Slice,
-) ?u32 {
-    var remaining = slice;
-
-    if (comptime Environment.enableSIMD and Environment.isNative) {
-        while (remaining.len >= ascii_u16_vector_size) {
-            const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-
-            const cmp = @as(AsciiVectorU16U1, @bitCast((vec > max_u16_ascii))) |
-                @as(AsciiVectorU16U1, @bitCast((vec < min_u16_ascii))) |
-                @as(AsciiVectorU16U1, @bitCast((vec == @as(AsciiU16Vector, @splat(@as(u16, '$')))))) |
-                @as(AsciiVectorU16U1, @bitCast((vec == @as(AsciiU16Vector, @splat(@as(u16, '`')))))) |
-                @as(AsciiVectorU16U1, @bitCast((vec == @as(AsciiU16Vector, @splat(@as(u16, '\\'))))));
-
-            const bitmask = @as(u8, @bitCast(cmp));
-            const first = @ctz(bitmask);
-            if (first < ascii_u16_vector_size) {
-                return @as(u32, @intCast(@as(u32, first) +
-                    @as(u32, @intCast(slice.len - remaining.len))));
-            }
-
-            remaining = remaining[ascii_u16_vector_size..];
-        }
-    }
-
-    for (remaining, 0..) |char, i| {
-        switch (char) {
-            '$', '`', '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
-                return @as(u32, @truncate(i + (slice.len - remaining.len)));
-            },
-
-            else => {},
-        }
-    }
-
-    return null;
-}
-
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// - Invalid codepoints are replaced with `zero` parameter
 /// - Null bytes return 0
@@ -5055,31 +4664,6 @@ pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
     }
 
     return slice.len;
-}
-
-pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
-    const n = _text.len;
-    if (n > 0) {
-        var i: usize = 0;
-        const text = _text[0 .. n - 1];
-        while (i < n - 1) : (i += 1) {
-            switch (text[i]) {
-                // Check for a high surrogate
-                0xD800...0xDBFF => {
-                    // Check for a low surrogate
-                    switch (text[i + 1]) {
-                        0xDC00...0xDFFF => {
-                            return true;
-                        },
-                        else => {},
-                    }
-                },
-                else => {},
-            }
-        }
-    }
-
-    return false;
 }
 
 pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Allocator) !string {
@@ -5803,7 +5387,6 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
         else => true,
     };
 }
-
 pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
     return strings.contains(path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str);
 }

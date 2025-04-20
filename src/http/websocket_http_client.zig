@@ -902,7 +902,7 @@ const Copy = union(enum) {
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .latin1 => {
-                byte_len.* = strings.elementLengthLatin1IntoUTF8([]const u8, this.latin1);
+                byte_len.* = strings.elementLengthLatin1IntoUTF8(this.latin1);
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .bytes => {

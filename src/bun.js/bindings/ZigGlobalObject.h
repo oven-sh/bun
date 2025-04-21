@@ -204,6 +204,10 @@ public:
     JSC::JSValue FileSinkPrototype() const { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() const { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* KeyObjectStructure() const { return m_JSKeyObjectClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* KeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue KeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferStructure() const { return m_JSBufferClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferConstructor() const { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
@@ -576,6 +580,10 @@ public:
     LazyClassStructure m_JSHashClassStructure;
     LazyClassStructure m_JSECDHClassStructure;
     LazyClassStructure m_JSCipherClassStructure;
+    LazyClassStructure m_JSKeyObjectClassStructure;
+    LazyClassStructure m_JSSecretKeyObjectClassStructure;
+    LazyClassStructure m_JSPublicKeyObjectClassStructure;
+    LazyClassStructure m_JSPrivateKeyObjectClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

@@ -30,7 +30,7 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType) {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
 
   let stream;
@@ -174,7 +174,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     $debug("internalRead();");
     try {
       $assert(reader);
-      const { done, value } = await reader.read();
+      const { value } = await reader.read();
 
       if (value) {
         stream.push(value);
@@ -203,7 +203,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     }
   }
 
-  function triggerRead(size) {
+  function triggerRead(_size) {
     $debug("_read();", reader);
 
     if (reader && !shouldUnref) {

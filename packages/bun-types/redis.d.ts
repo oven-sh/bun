@@ -1,12 +1,6 @@
 declare module "bun" {
   export interface RedisOptions {
     /**
-     * URL to connect to, defaults to "redis://localhost:6379"
-     * Supported protocols: redis://, rediss://, redis+unix://, redis+tls://
-     */
-    url?: string;
-
-    /**
      * Connection timeout in milliseconds
      * @default 10000
      */

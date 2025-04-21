@@ -298,8 +298,14 @@ pub fn indexOfSpaceOrNewlineOrNonASCII(haystack: string) ?usize {
         return null;
     }
 
-    return highway_index_of_space_or_newline_or_non_ascii(
+    const result = highway_index_of_space_or_newline_or_non_ascii(
         haystack.ptr,
         haystack.len,
     );
+
+    if (result == haystack.len) {
+        return null;
+    }
+
+    return result;
 }

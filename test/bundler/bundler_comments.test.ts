@@ -213,6 +213,33 @@ describe("single-line comments", () => {
     },
   });
 
+  itBundled("leading //# sourceMappingURL= with = at end", {
+    files: {
+      "/entry.js": `//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZXhhbXBsZS5qcyIsInNvdXJjZSI6Ii8vZXhhbXBsZS5qcyJ9=\n// This is a comment\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("leading trailing newline //# sourceMappingURL= with = at end", {
+    files: {
+      "/entry.js": `//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZXhhbXBsZS5qcyIsInNvdXJjZSI6Ii8vZXhhbXBsZS5qcyJ9=\n// This is a comment\nconsole.log("hello");\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("leading newline and sourcemap, trailing newline //# sourceMappingURL= with = at end", {
+    files: {
+      "/entry.js": `\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZXhhbXBsZS5qcyIsInNvdXJjZSI6Ii8vZXhhbXBsZS5qcyJ9=\n// This is a comment\nconsole.log("hello");\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
   itBundled("__PURE__ comment in single-line comment basic", {
     files: {
       "/entry.js": `//#__PURE__\nconsole.log("hello");`,

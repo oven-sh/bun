@@ -1130,7 +1130,9 @@ class ChildProcess extends EventEmitter {
             if (!stdin)
               // This can happen if the process was already killed.
               return new ShimmedStdin();
-            return require("internal/fs/streams").writableFromFileSink(stdin);
+            const result = require("internal/fs/streams").writableFromFileSink(stdin);
+            result.readable = false;
+            return result;
           }
           case "inherit":
             return null;

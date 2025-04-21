@@ -111,6 +111,10 @@ export default [
         fn: "end",
         length: 2,
       },
+      flushHeaders: {
+        fn: "flushHeaders",
+        length: 0,
+      },
       cork: {
         fn: "cork",
         length: 1,

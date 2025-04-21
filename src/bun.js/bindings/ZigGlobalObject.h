@@ -205,6 +205,10 @@ public:
     JSC::JSValue FileSinkPrototype() const { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() const { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* KeyObjectStructure() const { return m_JSKeyObjectClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* KeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue KeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferStructure() const { return m_JSBufferClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferConstructor() const { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
@@ -485,6 +489,10 @@ public:
     V(public, LazyClassStructure, m_JSHashClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSECDHClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
+    V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
+    V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                  \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                            \

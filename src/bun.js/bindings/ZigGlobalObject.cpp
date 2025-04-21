@@ -169,6 +169,10 @@
 #include "JSDiffieHellmanGroup.h"
 #include "JSECDH.h"
 #include "JSCipher.h"
+#include "JSKeyObject.h"
+#include "JSSecretKeyObject.h"
+#include "JSPublicKeyObject.h"
+#include "JSPrivateKeyObject.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2915,6 +2919,26 @@ void GlobalObject::finishCreation(VM& vm)
             setupCipherClassStructure(init);
         });
 
+    m_JSKeyObjectClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupKeyObjectClassStructure(init);
+        });
+
+    m_JSSecretKeyObjectClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupSecretKeyObjectClassStructure(init);
+        });
+
+    m_JSPublicKeyObjectClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupPublicKeyObjectClassStructure(init);
+        });
+
+    m_JSPrivateKeyObjectClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupPrivateKeyObjectClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -3627,19 +3651,6 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 
     console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stderrValue);
-}
-
-JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName property))
-{
-    if (JSValue::decode(thisValue) != globalObject) {
-        return false;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
-    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

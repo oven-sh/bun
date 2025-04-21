@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .dlopen => |path| try writer.print("loading native module: {s}", .{path}),
         }
     }
 };

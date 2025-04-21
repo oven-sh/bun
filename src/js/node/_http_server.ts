@@ -994,7 +994,7 @@ const ServerPrototype = {
             http_res.on("finish", http_res.detachSocket.bind(http_res, socket));
           }
 
-          const { reject, resolve, promise } = $newPromiseCapability(Promise);
+          const { resolve, promise } = $newPromiseCapability(Promise);
           resolveFunction = resolve;
 
           return promise;

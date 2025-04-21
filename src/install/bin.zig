@@ -7,7 +7,6 @@ const Global = bun.Global;
 const std = @import("std");
 const strings = bun.strings;
 const Environment = @import("../env.zig");
-const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
 const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;

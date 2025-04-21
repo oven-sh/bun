@@ -973,7 +973,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain(expected: Bun.Wider<T>): void;
+    toContain(expected: T extends Iterable<infer U> ? Bun.Wider<U> : Bun.Wider<T>): void;
     /**
      * Asserts that an `object` contains a key.
      *

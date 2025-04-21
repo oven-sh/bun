@@ -249,7 +249,7 @@ pub const PostgresSQLContext = struct {
     }
 
     comptime {
-        const js_init = JSC.toJSHostFunction(init);
+        const js_init = JSC.toJSHostFn(init);
         @export(&js_init, .{ .name = "PostgresSQLContext__init" });
     }
 };
@@ -561,7 +561,7 @@ pub const PostgresSQLQuery = struct {
 
     pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(6).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const query = args.nextEat() orelse {
             return globalThis.throw("query must be a string", .{});
@@ -833,7 +833,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     comptime {
-        const jscall = JSC.toJSHostFunction(call);
+        const jscall = JSC.toJSHostFn(call);
         @export(&jscall, .{ .name = "PostgresSQLQuery__createInstance" });
     }
 };
@@ -1208,7 +1208,7 @@ pub const PostgresSQLConnection = struct {
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    timer: JSC.BunTimer.EventLoopTimer = .{
+    timer: bun.api.Timer.EventLoopTimer = .{
         .tag = .PostgresSQLConnectionTimeout,
         .next = .{
             .sec = 0,
@@ -1220,7 +1220,7 @@ pub const PostgresSQLConnection = struct {
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     max_lifetime_interval_ms: u32 = 0,
-    max_lifetime_timer: JSC.BunTimer.EventLoopTimer = .{
+    max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
         .tag = .PostgresSQLConnectionMaxLifetime,
         .next = .{
             .sec = 0,
@@ -1455,7 +1455,7 @@ pub const PostgresSQLConnection = struct {
         this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
     }
 
-    pub fn onConnectionTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
 
         this.timer.state = .FIRED;
@@ -1482,7 +1482,7 @@ pub const PostgresSQLConnection = struct {
         return .disarm;
     }
 
-    pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
         debug("onMaxLifetimeTimeout", .{});
         this.max_lifetime_timer.state = .FIRED;
         if (this.status == .failed) return .disarm;
@@ -1794,7 +1794,7 @@ pub const PostgresSQLConnection = struct {
     }
 
     comptime {
-        const jscall = JSC.toJSHostFunction(call);
+        const jscall = JSC.toJSHostFn(call);
         @export(&jscall, .{ .name = "PostgresSQLConnection__createInstance" });
     }
 
@@ -2399,7 +2399,7 @@ pub const PostgresSQLConnection = struct {
                 };
 
                 var stack_buf: [70]DataCell = undefined;
-                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSC__JSObject__maxInlineCapacity)];
+                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSObject.maxInlineCapacity())];
                 var free_cells = false;
                 defer {
                     for (cells[0..putter.count]) |*cell| {
@@ -2408,7 +2408,7 @@ pub const PostgresSQLConnection = struct {
                     if (free_cells) bun.default_allocator.free(cells);
                 }
 
-                if (statement.fields.len >= JSC.JSC__JSObject__maxInlineCapacity) {
+                if (statement.fields.len >= JSC.JSObject.maxInlineCapacity()) {
                     cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
@@ -3006,7 +3006,7 @@ pub const PostgresSQLStatement = struct {
                 nonDuplicatedCount -= 1;
             }
         }
-        const ids = if (nonDuplicatedCount <= JSC.JSC__JSObject__maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+        const ids = if (nonDuplicatedCount <= JSC.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
 
         var i: usize = 0;
         for (this.fields) |*field| {
@@ -3030,7 +3030,7 @@ pub const PostgresSQLStatement = struct {
             i += 1;
         }
 
-        if (nonDuplicatedCount > JSC.JSC__JSObject__maxInlineCapacity) {
+        if (nonDuplicatedCount > JSC.JSObject.maxInlineCapacity()) {
             this.cached_structure.set(globalObject, null, ids);
         } else {
             this.cached_structure.set(globalObject, JSC.JSObject.createStructure(

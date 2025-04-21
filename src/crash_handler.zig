@@ -1488,7 +1488,7 @@ fn crash() noreturn {
         .windows => {
             // This exit code is what Node.js uses when it calls
             // abort. This is relied on by their Node-API tests.
-            bun.C.quick_exit(134);
+            bun.Global.quick_exit(134);
         },
         else => {
             // Install default handler so that the tkill below will terminate.

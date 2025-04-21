@@ -297,7 +297,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 
                 var did_retry = false;
                 while (true) {
-                    bun.C.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
+                    bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
                         if (!did_retry) {
                             did_retry = true;
                             const dirname = bun.path.dirname(dest_z, .loose);

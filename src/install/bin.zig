@@ -586,14 +586,14 @@ pub const Bin = extern struct {
 
         err: ?anyerror = null,
 
-        pub var umask: bun.C.Mode = 0;
+        pub var umask: bun.Mode = 0;
 
         var has_set_umask = false;
 
         pub fn ensureUmask() void {
             if (!has_set_umask) {
                 has_set_umask = true;
-                umask = bun.C.umask(0);
+                umask = bun.sys.umask(0);
             }
         }
 

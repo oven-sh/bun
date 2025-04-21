@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;

@@ -48,7 +48,7 @@ const PathLike = @import("../bun.js/node/types.zig").PathLike;
 const PathString = @import("../string_types.zig").PathString;
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const Syscall = bun.sys;
-const ZigString = @import("../bun.js/bindings/bindings.zig").ZigString;
+const ZigString = bun.JSC.ZigString;
 
 // const Codepoint = u32;
 const Cursor = CodepointIterator.Cursor;
@@ -290,7 +290,7 @@ pub const DirEntryAccessor = struct {
         }
         // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
         // The glob implementation specifically checks for this error when dealing with symlinks
-        // return .{ .err = Syscall.Error.fromCode(bun.C.E.NOTDIR, Syscall.Tag.open) };
+        // return .{ .err = Syscall.Error.fromCode(bun.sys.E.NOTDIR, Syscall.Tag.open) };
         const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
             return err;
         };
@@ -472,12 +472,12 @@ pub fn GlobWalker_(
                             const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
-                                    if (e.getErrno() == bun.C.E.NOTDIR) {
+                                    if (e.getErrno() == bun.sys.E.NOTDIR) {
                                         this.iter_state = .{ .matched = path };
                                         return Maybe(void).success;
                                     }
                                     // Doesn't exist
-                                    if (e.getErrno() == bun.C.E.NOENT) {
+                                    if (e.getErrno() == bun.sys.E.NOENT) {
                                         this.iter_state = .get_next;
                                         return Maybe(void).success;
                                     }
@@ -666,7 +666,7 @@ pub fn GlobWalker_(
                     const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
                         .err => |e_| {
                             var e: bun.sys.Error = e_;
-                            if (e.getErrno() == bun.C.E.NOENT) {
+                            if (e.getErrno() == .NOENT) {
                                 this.iter_state = .get_next;
                                 return Maybe(void).success;
                             }
@@ -740,7 +740,7 @@ pub fn GlobWalker_(
                                     this.iter_state = .get_next;
                                     const maybe_dir_fd: ?Accessor.Handle = switch (try Accessor.openat(this.cwd_fd, symlink_full_path_z)) {
                                         .err => |err| brk: {
-                                            if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
+                                            if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.sys.E.NOTDIR))) {
                                                 break :brk null;
                                             }
                                             if (this.walker.error_on_broken_symlinks) return .{ .err = this.walker.handleSysErrWithPath(err, symlink_full_path_z) };

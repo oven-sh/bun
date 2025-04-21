@@ -198,7 +198,7 @@ pub const FD = packed struct(backing_int) {
                     maybe_windows_fd.close();
                 }
                 return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.E.MFILE),
+                    .errno = @intFromEnum(bun.sys.E.MFILE),
                     .syscall = syscall_tag,
                 } };
             },
@@ -247,14 +247,14 @@ pub const FD = packed struct(backing_int) {
         const result: ?bun.sys.Error = switch (os) {
             .linux => result: {
                 bun.assert(fd.native() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.close(fd.native()))) {
+                break :result switch (bun.sys.getErrno(bun.sys.syscall.close(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .mac => result: {
                 bun.assert(fd.native() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.native()))) {
+                break :result switch (bun.sys.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

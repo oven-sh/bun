@@ -90,7 +90,7 @@ pub const FetchTasklet = struct {
     promise: JSC.JSPromise.Strong,
     concurrent_task: JSC.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
-    memory_reporter: *JSC.MemoryReportingAllocator,
+    memory_reporter: *bun.MemoryReportingAllocator,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -119,7 +119,7 @@ pub const FetchTasklet = struct {
     is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
 
-    tracker: JSC.AsyncTaskTracker,
+    tracker: JSC.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
@@ -378,9 +378,9 @@ pub const FetchTasklet = struct {
         return JSValue.jsUndefined();
     }
     comptime {
-        const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
+        const jsonResolveRequestStream = JSC.toJSHostFn(onResolveRequestStream);
         @export(&jsonResolveRequestStream, .{ .name = "Bun__FetchTasklet__onResolveRequestStream" });
-        const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
+        const jsonRejectRequestStream = JSC.toJSHostFn(onRejectRequestStream);
         @export(&jsonRejectRequestStream, .{ .name = "Bun__FetchTasklet__onRejectRequestStream" });
     }
 
@@ -1173,7 +1173,7 @@ pub const FetchTasklet = struct {
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
-            .tracker = JSC.AsyncTaskTracker.init(jsc_vm),
+            .tracker = JSC.Debugger.AsyncTaskTracker.init(jsc_vm),
             .memory_reporter = fetch_options.memory_reporter,
             .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
@@ -1309,7 +1309,7 @@ pub const FetchTasklet = struct {
         globalThis: ?*JSGlobalObject,
         // Custom Hostname
         hostname: ?[]u8 = null,
-        memory_reporter: *JSC.MemoryReportingAllocator,
+        memory_reporter: *bun.MemoryReportingAllocator,
         check_server_identity: JSC.Strong = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
@@ -1425,7 +1425,7 @@ fn dataURLResponse(
     var data_url = _data_url;
 
     const data = data_url.decodeData(allocator) catch {
-        const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+        const err = globalThis.createError("failed to fetch the data URL", .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     };
     var blob = Blob.init(data, allocator, globalThis);
@@ -1457,7 +1457,7 @@ fn dataURLResponse(
 }
 
 comptime {
-    const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
+    const Bun__fetchPreconnect = JSC.toJSHostFn(Bun__fetchPreconnect_);
     @export(&Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
 }
 pub fn Bun__fetchPreconnect_(
@@ -1518,7 +1518,7 @@ const StringOrURL = struct {
 };
 
 comptime {
-    const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
+    const Bun__fetch = JSC.toJSHostFn(Bun__fetch_);
     @export(&Bun__fetch, .{ .name = "Bun__fetch" });
 }
 
@@ -1533,7 +1533,7 @@ pub fn Bun__fetch_(
     bun.Analytics.Features.fetch += 1;
     const vm = JSC.VirtualMachine.get();
 
-    var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
+    var memory_reporter = bun.default_allocator.create(bun.MemoryReportingAllocator) catch bun.outOfMemory();
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
     var allocator = memory_reporter.wrap(bun.default_allocator);
@@ -1545,14 +1545,14 @@ pub fn Bun__fetch_(
     }
 
     if (arguments.len == 0) {
-        const err = JSC.toTypeError(.MISSING_ARGS, fetch_error_no_args, .{}, ctx);
+        const err = ctx.toTypeError(.MISSING_ARGS, fetch_error_no_args, .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
     var headers: ?Headers = null;
     var method = Method.GET;
 
-    var args = JSC.Node.ArgumentsSlice.init(vm, arguments.slice());
+    var args = JSC.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
 
     var url = ZigURL{};
     var first_arg = args.nextEat().?;
@@ -1689,7 +1689,7 @@ pub fn Bun__fetch_(
 
     if (url_str.isEmpty()) {
         is_error = true;
-        const err = JSC.toTypeError(.INVALID_URL, fetch_error_blank_url, .{}, ctx);
+        const err = ctx.toTypeError(.INVALID_URL, fetch_error_blank_url, .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
@@ -1698,7 +1698,7 @@ pub fn Bun__fetch_(
         defer url_slice.deinit();
 
         var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
-            const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+            const err = ctx.createError("failed to fetch the data URL", .{});
             is_error = true;
             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         };
@@ -1708,7 +1708,7 @@ pub fn Bun__fetch_(
     }
 
     url = ZigURL.fromString(allocator, url_str) catch {
-        const err = JSC.toTypeError(.INVALID_URL, "fetch() URL is invalid", .{}, ctx);
+        const err = ctx.toTypeError(.INVALID_URL, "fetch() URL is invalid", .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
             globalThis,
@@ -1727,7 +1727,7 @@ pub fn Bun__fetch_(
         defer url_slice.deinit();
 
         var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
-            const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+            const err = globalThis.createError("failed to fetch the data URL", .{});
             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         };
         data_url.url = url_str;
@@ -2007,7 +2007,7 @@ pub fn Bun__fetch_(
                     if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
                         var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                         if (href.tag == .Dead) {
-                            const err = JSC.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
+                            const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});
                             is_error = true;
                             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }
@@ -2140,14 +2140,14 @@ pub fn Bun__fetch_(
 
     // headers: Headers | undefined;
     headers = extract_headers: {
-        var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
+        var fetch_headers_to_deref: ?*bun.webcore.FetchHeaders = null;
         defer {
             if (fetch_headers_to_deref) |fetch_headers| {
                 fetch_headers.deref();
             }
         }
 
-        const fetch_headers: ?*JSC.FetchHeaders = brk: {
+        const fetch_headers: ?*bun.webcore.FetchHeaders = brk: {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .headers)) |headers_value| {
                     if (!headers_value.isUndefined()) {
@@ -2217,7 +2217,7 @@ pub fn Bun__fetch_(
         }
 
         if (fetch_headers) |headers_| {
-            if (headers_.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+            if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                 if (hostname) |host| {
                     hostname = null;
                     allocator.free(host);
@@ -2225,7 +2225,7 @@ pub fn Bun__fetch_(
                 hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
             }
             if (url.isS3()) {
-                if (headers_.fastGet(JSC.FetchHeaders.HTTPHeaderName.Range)) |_range| {
+                if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
                     if (range) |range_| {
                         range = null;
                         allocator.free(range_);
@@ -2247,7 +2247,7 @@ pub fn Bun__fetch_(
 
     if (proxy != null and unix_socket_path.length() > 0) {
         is_error = true;
-        const err = JSC.toTypeError(.INVALID_ARG_VALUE, fetch_error_proxy_unix, .{}, ctx);
+        const err = ctx.toTypeError(.INVALID_ARG_VALUE, fetch_error_proxy_unix, .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 
@@ -2288,9 +2288,9 @@ pub fn Bun__fetch_(
                     break :blob blob;
                 } else {
                     // Consistent with what Node.js does - it rejects, not a 404.
-                    const err = JSC.toTypeError(.INVALID_ARG_VALUE, "Failed to resolve blob:{s}", .{
+                    const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "Failed to resolve blob:{s}", .{
                         url_path_decoded,
-                    }, ctx);
+                    });
                     is_error = true;
                     return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                 }
@@ -2363,14 +2363,14 @@ pub fn Bun__fetch_(
 
     if (url.protocol.len > 0) {
         if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
-            const err = JSC.toTypeError(.INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
+            const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{});
             is_error = true;
             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
     }
 
     if (!method.hasRequestBody() and body.hasBody()) {
-        const err = JSC.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
+        const err = globalThis.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
@@ -2463,7 +2463,7 @@ pub fn Bun__fetch_(
             }
 
             // TODO: make this async + lazy
-            const res = JSC.Node.NodeFS.readFile(
+            const res = JSC.Node.fs.NodeFS.readFile(
                 globalThis.bunVM().nodeFS(),
                 .{
                     .encoding = .buffer,
@@ -2731,6 +2731,7 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
         headers_.deinit();
     }
 }
+
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
@@ -2750,7 +2751,7 @@ const FetchRedirect = http.FetchRedirect;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
-const Headers = JSC.WebCore.Headers;
+const Headers = bun.http.Headers;
 const Method = @import("../../http/method.zig").Method;
 const Body = JSC.WebCore.Body;
 const Async = bun.Async;
@@ -2758,9 +2759,9 @@ const SSLConfig = @import("../api/server.zig").ServerConfig.SSLConfig;
 const Mutex = bun.Mutex;
 const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("../api/bun/x509.zig");
-const FetchHeaders = JSC.FetchHeaders;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const Environment = bun.Environment;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const s3 = bun.S3;
 const picohttp = bun.picohttp;

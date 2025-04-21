@@ -212,8 +212,11 @@ class Worker extends EventEmitter {
   #urlToRevoke = "";
   #isRunning = false;
 
-  constructor(filename: string, options: NodeWorkerOptions = {}) {
+  constructor(filename: URL | string, options: NodeWorkerOptions = {}) {
     super();
+    if ($isUndefinedOrNull(filename) || !(typeof filename === "string" || filename instanceof URL)) {
+      throw $ERR_INVALID_ARG_TYPE("filename", "string or an instance of URL", filename);
+    }
     for (const key of unsupportedOptions) {
       if (key in options && options[key] != null) {
         warnNotImplementedOnce(`worker_threads.Worker option "${key}"`);

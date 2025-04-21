@@ -2694,7 +2694,7 @@ pub fn runtimeEmbedFile(
                 abs_path,
                 std.math.maxInt(usize),
                 null,
-                @alignOf(u8),
+                .@"1",
                 '\x00',
             ) catch |e| {
                 Output.panic(

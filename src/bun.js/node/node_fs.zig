@@ -6587,21 +6587,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                                 treat_as_dir = false;
                                 continue :handle_entry;
                             },
-                            error.FileNotFound,
-                            error.AccessDenied,
-                            error.SymLinkLoop,
-                            error.ProcessFdQuotaExceeded,
-                            error.NameTooLong,
-                            error.SystemFdQuotaExceeded,
-                            error.NoDevice,
-                            error.SystemResources,
-                            error.Unexpected,
-                            error.InvalidUtf8,
-                            error.InvalidWtf8,
-                            error.BadPathName,
-                            error.NetworkNotFound,
-                            error.DeviceBusy,
-                            => |e| return e,
+                            else => |e| return e,
                         };
                         stack.appendAssumeCapacity(.{
                             .name = entry.name,
@@ -6622,21 +6608,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             continue :handle_entry;
                         },
 
-                        error.FileNotFound,
-                        error.NotDir,
-                        error.AccessDenied,
-                        error.InvalidUtf8,
-                        error.InvalidWtf8,
-                        error.SymLinkLoop,
-                        error.NameTooLong,
-                        error.SystemResources,
-                        error.ReadOnlyFileSystem,
-                        error.FileSystem,
-                        error.FileBusy,
-                        error.BadPathName,
-                        error.NetworkNotFound,
-                        error.Unexpected,
-                        => |e| return e,
+                        else => |e| return e,
                     }
                 }
             }
@@ -6680,20 +6652,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                                 continue :process_stack;
                             },
 
-                            error.AccessDenied,
-                            error.SymLinkLoop,
-                            error.ProcessFdQuotaExceeded,
-                            error.NameTooLong,
-                            error.SystemFdQuotaExceeded,
-                            error.NoDevice,
-                            error.SystemResources,
-                            error.Unexpected,
-                            error.InvalidUtf8,
-                            error.InvalidWtf8,
-                            error.BadPathName,
-                            error.NetworkNotFound,
-                            error.DeviceBusy,
-                            => |e| return e,
+                            else => |e| return e,
                         };
                     } else {
                         if (parent_dir.deleteFile(name)) {
@@ -6706,19 +6665,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                                 continue :handle_entry;
                             },
 
-                            error.AccessDenied,
-                            error.InvalidUtf8,
-                            error.InvalidWtf8,
-                            error.SymLinkLoop,
-                            error.NameTooLong,
-                            error.SystemResources,
-                            error.ReadOnlyFileSystem,
-                            error.FileSystem,
-                            error.FileBusy,
-                            error.BadPathName,
-                            error.NetworkNotFound,
-                            error.Unexpected,
-                            => |e| return e,
+                            else => |e| return e,
                         }
                     }
                 }
@@ -6742,27 +6689,10 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
 
         handle_entry: while (true) {
             if (treat_as_dir) {
-                break :iterable_dir self.openDir(sub_path, .{
+                break :iterable_dir try self.openDir(sub_path, .{
                     .no_follow = true,
                     .iterate = true,
-                }) catch |err| switch (err) {
-                    error.NotDir,
-                    error.FileNotFound,
-                    error.AccessDenied,
-                    error.SymLinkLoop,
-                    error.ProcessFdQuotaExceeded,
-                    error.NameTooLong,
-                    error.SystemFdQuotaExceeded,
-                    error.NoDevice,
-                    error.SystemResources,
-                    error.Unexpected,
-                    error.InvalidUtf8,
-                    error.InvalidWtf8,
-                    error.BadPathName,
-                    error.DeviceBusy,
-                    error.NetworkNotFound,
-                    => |e| return e,
-                };
+                });
             } else {
                 if (self.deleteFile(sub_path)) {
                     return null;
@@ -6771,22 +6701,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
                         treat_as_dir = true;
                         continue :handle_entry;
                     },
-
-                    error.FileNotFound,
-                    error.AccessDenied,
-                    error.InvalidUtf8,
-                    error.InvalidWtf8,
-                    error.SymLinkLoop,
-                    error.NameTooLong,
-                    error.SystemResources,
-                    error.ReadOnlyFileSystem,
-                    error.NotDir,
-                    error.FileSystem,
-                    error.FileBusy,
-                    error.BadPathName,
-                    error.NetworkNotFound,
-                    error.Unexpected,
-                    => |e| return e,
+                    else => |e| return e,
                 }
             }
         }
@@ -6831,20 +6746,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                                 continue :dir_it;
                             },
 
-                            error.AccessDenied,
-                            error.SymLinkLoop,
-                            error.ProcessFdQuotaExceeded,
-                            error.NameTooLong,
-                            error.SystemFdQuotaExceeded,
-                            error.NoDevice,
-                            error.SystemResources,
-                            error.Unexpected,
-                            error.InvalidUtf8,
-                            error.InvalidWtf8,
-                            error.BadPathName,
-                            error.NetworkNotFound,
-                            error.DeviceBusy,
-                            => |e| return e,
+                            else => |e| return e,
                         };
                         if (cleanup_dir_parent) |*d| d.close();
                         cleanup_dir_parent = dir;
@@ -6865,19 +6767,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                                 continue :handle_entry;
                             },
 
-                            error.AccessDenied,
-                            error.InvalidUtf8,
-                            error.InvalidWtf8,
-                            error.SymLinkLoop,
-                            error.NameTooLong,
-                            error.SystemResources,
-                            error.ReadOnlyFileSystem,
-                            error.FileSystem,
-                            error.FileBusy,
-                            error.BadPathName,
-                            error.NetworkNotFound,
-                            error.Unexpected,
-                            => |e| return e,
+                            else => |e| return e,
                         }
                     }
                 }

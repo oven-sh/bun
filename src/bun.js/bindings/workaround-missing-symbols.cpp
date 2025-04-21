@@ -29,7 +29,7 @@ extern "C" int fstat64(
     return _fstat64(_FileHandle, _Stat);
 }
 
-extern "C" int stat6b4(
+extern "C" int stat64(
     _In_z_ char const* _FileName,
     _Out_ struct _stat64* _Stat)
 {

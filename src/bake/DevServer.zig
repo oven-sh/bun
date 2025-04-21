@@ -167,7 +167,7 @@ next_bundle: struct {
     /// The list of requests that are blocked on this bundle.
     requests: DeferredRequest.List,
 },
-deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_preallocated).Fallback,
+deferred_request_pool: bun.HiveArray(DeferredRequest, DeferredRequest.max_preallocated).Fallback,
 /// UWS can handle closing the websocket connections themselves
 active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
@@ -720,13 +720,13 @@ pub fn deinit(dev: *DevServer) void {
         },
         .next_bundle = {
             var r = dev.next_bundle.requests.first;
-            while (r) |request| {
+            while (r) |request_node| : (r = request_node.next) {
+                const request = DeferredRequest.fromNode(request_node);
                 defer dev.deferred_request_pool.put(request);
                 // TODO: deinitializing in this state is almost certainly an assertion failure.
                 // This code is shipped in release because it is only reachable by experimenntal server components.
-                bun.debugAssert(request.data.handler != .server_handler);
-                request.data.deinit();
-                r = request.next;
+                bun.debugAssert(request.handler != .server_handler);
+                request.deinit();
             }
             dev.next_bundle.route_queue.deinit(allocator);
         },
@@ -895,14 +895,14 @@ pub fn memoryCost(dev: *DevServer) usize {
         // All entries are owned by the bundler arena, not DevServer, except for `requests`
         .current_bundle = if (dev.current_bundle) |bundle| {
             var r = bundle.requests.first;
-            while (r) |request| : (r = request.next) {
-                cost += @sizeOf(DeferredRequest.Node);
+            while (r) |request_node| : (r = request_node.next) {
+                cost += @sizeOf(DeferredRequest);
             }
         },
         .next_bundle = {
             var r = dev.next_bundle.requests.first;
-            while (r) |request| : (r = request.next) {
-                cost += @sizeOf(DeferredRequest.Node);
+            while (r) |request_node| : (r = request_node.next) {
+                cost += @sizeOf(DeferredRequest);
             }
             cost += memoryCostArrayHashMap(dev.next_bundle.route_queue);
         },
@@ -1277,7 +1277,8 @@ fn deferRequest(
     resp: AnyResponse,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
-    deferred.data = .{
+    deferred.* = .{
+        .node = undefined,
         .route_bundle_index = route_bundle_index,
         .handler = switch (kind) {
             .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = bun.http.Method.which(req.method()) orelse .POST } },
@@ -1286,8 +1287,8 @@ fn deferRequest(
             },
         },
     };
-    resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
-    requests_array.prepend(deferred);
+    resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, deferred);
+    requests_array.prepend(&deferred.node);
 }
 
 fn checkRouteFailures(
@@ -1645,9 +1646,9 @@ const DeferredRequest = struct {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     const max_preallocated = 16;
 
-    pub const List = std.SinglyLinkedList(DeferredRequest);
-    pub const Node = List.Node;
+    const List = std.SinglyLinkedList;
 
+    node: std.SinglyLinkedList.Node,
     route_bundle_index: RouteBundle.Index,
     handler: Handler,
 
@@ -1669,6 +1670,10 @@ const DeferredRequest = struct {
         };
     };
 
+    pub fn fromNode(node: *std.SinglyLinkedList.Node) *DeferredRequest {
+        return @fieldParentPtr("node", node);
+    }
+
     fn onAbort(this: *DeferredRequest, resp: AnyResponse) void {
         _ = resp;
         this.abort();
@@ -1677,7 +1682,7 @@ const DeferredRequest = struct {
 
     /// Calling this is only required if the desired handler is going to be avoided,
     /// such as for bundling failures or aborting the server.
-    /// Does not free the underlying `DeferredRequest.Node`
+    /// Does not free the underlying `DeferredRequest`
     fn deinit(this: *DeferredRequest) void {
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
@@ -2087,8 +2092,8 @@ pub fn finalizeBundle(
             Output.debug("current_bundle.requests.first != null. this leaves pending requests without an error page!", .{});
         }
         while (current_bundle.requests.popFirst()) |node| {
-            defer dev.deferred_request_pool.put(node);
-            const req = &node.data;
+            const req = DeferredRequest.fromNode(node);
+            defer dev.deferred_request_pool.put(req);
             req.abort();
         }
     }
@@ -2560,8 +2565,8 @@ pub fn finalizeBundle(
         dev.bundles_since_last_error = 0;
 
         while (current_bundle.requests.popFirst()) |node| {
-            defer dev.deferred_request_pool.put(node);
-            const req = &node.data;
+            const req = DeferredRequest.fromNode(node);
+            defer dev.deferred_request_pool.put(req);
 
             const rb = dev.routeBundlePtr(req.route_bundle_index);
             rb.server_state = .possible_bundling_failures;
@@ -2621,7 +2626,7 @@ pub fn finalizeBundle(
                 )
             else
                 null // TODO: How does this happen
-        else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
+        else switch (dev.routeBundlePtr(DeferredRequest.fromNode(current_bundle.requests.first.?).route_bundle_index).data) {
             .html => |html| dev.relativePath(html.html_bundle.bundle.data.path),
             .framework => |fw| file_name: {
                 const route = dev.router.routePtr(fw.route_index);
@@ -2650,8 +2655,8 @@ pub fn finalizeBundle(
     defer dev.graph_safety_lock.lock();
 
     while (current_bundle.requests.popFirst()) |node| {
-        defer dev.deferred_request_pool.put(node);
-        const req = &node.data;
+        const req = DeferredRequest.fromNode(node);
+        defer dev.deferred_request_pool.put(req);
 
         const rb = dev.routeBundlePtr(req.route_bundle_index);
         rb.server_state = .loaded;
@@ -7183,8 +7188,9 @@ pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
 pub fn onPluginsRejected(dev: *DevServer) !void {
     dev.plugin_state = .err;
     while (dev.next_bundle.requests.popFirst()) |item| {
-        defer dev.deferred_request_pool.put(item);
-        item.data.abort();
+        const request = DeferredRequest.fromNode(item);
+        defer dev.deferred_request_pool.put(request);
+        request.abort();
     }
     dev.next_bundle.route_queue.clearRetainingCapacity();
     // TODO: allow recovery from this state

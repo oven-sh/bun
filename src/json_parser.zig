@@ -47,8 +47,15 @@ const LEXER_DEBUGGER_WORKAROUND = false;
 
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
-    const LinkedList = std.SinglyLinkedList(HashMap);
-    threadlocal var list: LinkedList = undefined;
+    const Entry = struct {
+        node: std.SinglyLinkedList.Node,
+        data: HashMap,
+        fn fromNode(node: *std.SinglyLinkedList.Node) *Entry {
+            return @fieldParentPtr("node", node);
+        }
+    };
+
+    threadlocal var list: std.SinglyLinkedList = undefined;
     threadlocal var loaded: bool = false;
 
     const IdentityContext = struct {
@@ -61,26 +68,30 @@ const HashMapPool = struct {
         }
     };
 
-    pub fn get(_: std.mem.Allocator) *LinkedList.Node {
+    pub fn get(_: std.mem.Allocator) *Entry {
         if (loaded) {
             if (list.popFirst()) |node| {
-                node.data.clearRetainingCapacity();
-                return node;
+                const entry = Entry.fromNode(node);
+                entry.data.clearRetainingCapacity();
+                return entry;
             }
         }
 
-        const new_node = default_allocator.create(LinkedList.Node) catch unreachable;
-        new_node.* = LinkedList.Node{ .data = HashMap.initContext(default_allocator, IdentityContext{}) };
+        const new_node = default_allocator.create(Entry) catch unreachable;
+        new_node.* = .{
+            .node = undefined,
+            .data = HashMap.initContext(default_allocator, IdentityContext{}),
+        };
         return new_node;
     }
 
-    pub fn release(node: *LinkedList.Node) void {
+    pub fn release(entry: *Entry) void {
         if (loaded) {
-            list.prepend(node);
+            list.prepend(&entry.node);
             return;
         }
 
-        list = LinkedList{ .first = node };
+        list = .{ .first = &entry.node };
         loaded = true;
     }
 };
@@ -247,7 +258,7 @@ fn JSONLikeParser_(
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.list_allocator);
 
-                    const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
+                    const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.Entry else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
                     var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys) HashMapPool.get(p.allocator);

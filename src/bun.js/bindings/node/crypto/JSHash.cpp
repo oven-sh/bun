@@ -163,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         JSString* inputString = inputValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
+        auto encoding = parseBufferEncoding(vm, *globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
         // Validate encoding

@@ -46,23 +46,27 @@ using namespace JSC;
     macro(addEventListener) \
     macro(appendFromJS) \
     macro(argv) \
+    macro(ascii) \
     macro(assignToStream) \
     macro(associatedReadableByteStreamController) \
     macro(atimeMs) \
     macro(autoAllocateChunkSize) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
+    macro(base64) \
+    macro(base64url) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(body) \
+    macro(buffer) \
     macro(bunNativePtr) \
     macro(bunNativeType) \
     macro(byobRequest) \
     macro(cancel) \
     macro(cancelAlgorithm) \
     macro(chdir) \
-    macro(checks) \
     macro(checkBufferRead) \
+    macro(checks) \
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \
@@ -129,6 +133,7 @@ using namespace JSC;
     macro(hash) \
     macro(header) \
     macro(headers) \
+    macro(hex) \
     macro(highWaterMark) \
     macro(host) \
     macro(hostname) \
@@ -151,6 +156,7 @@ using namespace JSC;
     macro(isWindows) \
     macro(join) \
     macro(kind) \
+    macro(latin1) \
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
     macro(lineText) \
@@ -258,6 +264,7 @@ using namespace JSC;
     macro(toNamespacedPath) \
     macro(trace) \
     macro(transformAlgorithm) \
+    macro(ucs2) \
     macro(uncork) \
     macro(underlyingByteSource) \
     macro(underlyingSink) \
@@ -266,6 +273,8 @@ using namespace JSC;
     macro(unshift) \
     macro(url) \
     macro(username) \
+    macro(utf16le) \
+    macro(utf8) \
     macro(version) \
     macro(versions) \
     macro(view) \

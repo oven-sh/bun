@@ -1438,7 +1438,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
         auto keyView = keyString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        BufferEncodingType encoding = parseEnumerationAllowBuffer(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
+        BufferEncodingType encoding = parseBufferEncoding(globalObject->vm(), *globalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
         JSValue buffer = JSValue::decode(constructFromEncoding(globalObject, keyView, encoding));

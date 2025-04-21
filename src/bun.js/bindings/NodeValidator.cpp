@@ -553,7 +553,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
 
     auto encoding = callFrame->argument(1);
 
-    auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
+    auto normalized = WebCore::parseBufferEncoding(vm, *globalObject, encoding);
     if (normalized == BufferEncodingType::hex) {
         auto data = callFrame->argument(0);
 

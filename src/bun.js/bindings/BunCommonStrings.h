@@ -4,9 +4,18 @@
 // The items in this list must also be present in BunBuiltinNames.h
 // If we use it as an identifier name in hot code, we should put it in this list.
 #define BUN_COMMON_STRINGS_EACH_NAME(macro) \
-    macro(require)                          \
+    macro(ascii) \
+    macro(base64) \
+    macro(base64url) \
+    macro(buffer) \
+    macro(hex) \
+    macro(latin1) \
+    macro(mockedFunction) \
+    macro(require) \
     macro(resolve) \
-    macro(mockedFunction)
+    macro(ucs2) \
+    macro(utf16le) \
+    macro(utf8) \
 
 // These ones don't need to be in BunBuiltinNames.h
 // If we don't use it as an identifier name, but we want to avoid allocating the string frequently, put it in this list.
@@ -54,14 +63,8 @@
     macro(httpUNLINK, "UNLINK") \
     macro(httpUNLOCK, "UNLOCK") \
     macro(httpUNSUBSCRIBE, "UNSUBSCRIBE") \
-    macro(ascii, "ascii") \
-    macro(base64, "base64") \
-    macro(base64url, "base64url") \
-    macro(buffer, "buffer") \
     macro(ec, "ec") \
     macro(ed25519, "ed25519") \
-    macro(hex, "hex") \
-    macro(latin1, "latin1") \
     macro(lax, "lax") \
     macro(none, "none") \
     macro(rsa, "rsa") \
@@ -88,9 +91,6 @@
     macro(jwkX, "x") \
     macro(jwkY, "y") \
     macro(systemError, "SystemError") \
-    macro(ucs2, "ucs2") \
-    macro(utf16le, "utf16le") \
-    macro(utf8, "utf8") \
     macro(x25519, "x25519")
 
 // clang-format on

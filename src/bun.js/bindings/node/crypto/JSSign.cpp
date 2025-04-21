@@ -253,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
         JSValue encodingValue = callFrame->argument(2);
-        auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
+        auto encoding = parseBufferEncoding(vm, *globalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
@@ -415,7 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     }
 
     JSValue outputEncodingValue = callFrame->argument(1);
-    auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
+    auto outputEncoding = parseBufferEncoding(vm, *lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get RSA padding mode and salt length if applicable

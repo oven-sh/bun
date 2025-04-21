@@ -132,7 +132,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         JSString* inputString = inputValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
+        auto encoding = parseBufferEncoding(vm, *globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
         // validateEncoding()
@@ -181,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         // Handle encoding if provided
         JSC::JSValue encodingValue = callFrame->argument(0);
 
-        auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+        auto encoding = parseBufferEncoding(vm, *lexicalGlobalObject, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (encoding.has_value() && encoding.value() != BufferEncodingType::buffer) {

@@ -277,19 +277,15 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
     return val;
 }
 
-static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
+static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
 {
-    auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    const auto& view = arg_->view(lexicalGlobalObject);
-
-    std::optional<BufferEncodingType> encoded = parseEnumerationFromView<BufferEncodingType>(view);
+    std::optional<BufferEncodingType> encoded = parseBufferEncoding(vm, *lexicalGlobalObject, arg);
     if (UNLIKELY(!encoded)) {
         if (validateUnknown) {
             Bun::V::validateString(scope, lexicalGlobalObject, arg, "encoding"_s);
             RETURN_IF_EXCEPTION(scope, WebCore::BufferEncodingType::utf8);
         }
-        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
+        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg);
         return WebCore::BufferEncodingType::utf8;
     }
 
@@ -376,7 +372,7 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
         return JSC::JSValue::encode(JSC::jsNumber(0));
 
     const auto& view = str->view(lexicalGlobalObject);
-    if (view->isNull()) {
+    if (UNLIKELY(view->isNull())) {
         return {};
     }
 
@@ -589,7 +585,7 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
     RETURN_IF_EXCEPTION(scope, {});
 
     if (arg1 && arg1.isString()) {
-        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
+        std::optional<BufferEncodingType> encoded = parseBufferEncoding(vm, *lexicalGlobalObject, arg1);
         if (!encoded) {
             auto* encodingString = arg1.toString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
@@ -638,7 +634,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
                 if (!arg2.value().isUndefined()) {
-                    encoding = parseEncoding(scope, lexicalGlobalObject, arg2.value(), true);
+                    encoding = parseEncoding(scope, vm, lexicalGlobalObject, arg2.value(), true);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
             }
@@ -749,7 +745,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlo
     if (callFrame->argumentCount() > 1) {
 
         if (arg1.value().isString()) {
-            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
+            std::optional<BufferEncodingType> encoded = parseBufferEncoding(vm, *lexicalGlobalObject, arg1.value());
 
             // this one doesn't fail
             if (encoded) {
@@ -989,7 +985,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlo
     }
     auto* encoding = encodingValue.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding);
+    std::optional<BufferEncodingType> encoded = parseBufferEncoding(vm, *lexicalGlobalObject, encoding);
     return JSValue::encode(jsBoolean(!!encoded));
 }
 
@@ -1276,7 +1272,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     }
 
     if (!encodingValue.isUndefined() && value.isString()) {
-        encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, true);
+        encoding = parseEncoding(scope, vm, lexicalGlobalObject, encodingValue, true);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -1890,7 +1886,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
         return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end, encoding);
 
     if (!arg1.isUndefined()) {
-        encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
+        encoding = parseEncoding(scope, vm, lexicalGlobalObject, arg1, false);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -1974,7 +1970,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
 //     IGNORE_WARNINGS_END
 //     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
-//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+//     std::optional<BufferEncodingType> encoded = parseBufferEncoding(*lexicalGlobalObject, encodingValue);
 //     if (!encoded) {
 //         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1994,11 +1990,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
     size_t byteLength = castedThis->byteLength();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    double offset;
-    double length;
+    int64_t offset;
+    int64_t length;
 
     if (offsetValue.isUndefined()) {
         offset = 0;
+    } else if (offsetValue.isInt32()) {
+        offset = offsetValue.asInt32();
     } else if (offsetValue.isNumber()) {
         offset = offsetValue.asNumber();
     } else {
@@ -2006,7 +2004,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (lengthValue.isUndefined()) {
-        length = byteLength - offset;
+        length = static_cast<int64_t>(byteLength) - offset;
+    } else if (lengthValue.isInt32()) {
+        length = lengthValue.asInt32();
     } else if (lengthValue.isNumber()) {
         length = lengthValue.asNumber();
     } else {
@@ -2023,7 +2023,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
+    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, static_cast<uint32_t>(offset), static_cast<uint32_t>(length), encoding));
 }
 
 template<BufferEncodingType encoding>
@@ -2081,7 +2081,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         length = castedThis->byteLength();
 
         auto* str = stringValue.toString(lexicalGlobalObject);
-        auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto encoding = parseEncoding(scope, vm, lexicalGlobalObject, encodingValue, false);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     } else {
@@ -2112,7 +2113,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
     }
 
-    auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+    auto encoding = parseEncoding(scope, vm, lexicalGlobalObject, encodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));

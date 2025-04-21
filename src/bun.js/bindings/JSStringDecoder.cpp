@@ -15,6 +15,7 @@
 #include "wtf/unicode/CharacterNames.h"
 #include "wtf/SIMDUTF.h"
 #include "ErrorCode.h"
+#include "JSBufferEncodingType.h"
 
 namespace WebCore {
 
@@ -567,7 +568,7 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     auto encoding = BufferEncodingType::utf8;
     auto jsEncoding = callFrame->argument(0);
     if (!jsEncoding.isUndefinedOrNull()) {
-        std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
+        std::optional<BufferEncodingType> opt = parseBufferEncoding(vm, *lexicalGlobalObject, jsEncoding);
         if (opt.has_value()) {
             encoding = opt.value();
         } else {

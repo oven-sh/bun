@@ -3341,7 +3341,7 @@ pub const PragmaArg = enum {
         }
 
         var i: usize = 0;
-        while (isWhitespace(cursor.c) or (allow_newline and isNewline(cursor.c))) {
+        while (!isWhitespace(cursor.c) and (!allow_newline or !isNewline(cursor.c))) {
             i += cursor.width;
             if (i >= text.len) {
                 break;

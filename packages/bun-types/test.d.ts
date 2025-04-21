@@ -959,7 +959,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Array<Bun.Wider<T>> | Iterable<Bun.Wider<T>>): void;
+    toBeOneOf(expected: Iterable<Bun.Wider<T>>): void;
     /**
      * Asserts that a value contains what is expected.
      *

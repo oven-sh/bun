@@ -586,7 +586,12 @@ pub const SendQueue = struct {
         }
     }
 };
-const WindowsSocketType = bun.io.StreamingWriter(NamedPipeIPCData, NamedPipeIPCData.onWrite, NamedPipeIPCData.onError, null, NamedPipeIPCData.onPipeClose);
+const WindowsSocketType = bun.io.StreamingWriter(NamedPipeIPCData, .{
+    .onWrite = NamedPipeIPCData.onWrite,
+    .onError = NamedPipeIPCData.onError,
+    .onWritable = null,
+    .onClose = NamedPipeIPCData.onPipeClose,
+});
 const SocketType = struct {
     const Backing = switch (Environment.isWindows) {
         true => *WindowsSocketType,
@@ -896,7 +901,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
     }
 
     const ipc_data = ipc orelse {
-        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("{s}", .{@as([]const u8, switch (from) {
+        const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "{s}", .{@as([]const u8, switch (from) {
             .process => "process.send() can only be used if the IPC channel is open.",
             .subprocess => "Subprocess.send() can only be used if an IPC channel is open.",
             .subprocess_exited => "Subprocess.send() cannot be used after the process has exited.",

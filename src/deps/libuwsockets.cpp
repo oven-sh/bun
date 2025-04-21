@@ -470,6 +470,15 @@ extern "C"
       uwsApp->domain(server_name);
     }
   }
+  void uws_app_set_require_host_header(int ssl, uws_app_t *app, bool require_host_header) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setRequireHostHeader(require_host_header);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setRequireHostHeader(require_host_header);
+    }
+  }
 
   void uws_app_destroy(int ssl, uws_app_t *app)
   {
@@ -1708,6 +1717,16 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       return uwsRes->getHttpResponseData()->state;
+    }
+  }
+
+  void uws_res_flush_headers(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->flushHeaders();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res; 
+      uwsRes->flushHeaders();
     }
   }
 

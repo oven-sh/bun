@@ -447,7 +447,7 @@ const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimeoutObject = JSC.BunTimer.TimeoutObject;
 const ImmediateObject = JSC.BunTimer.ImmediateObject;
-const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
+const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
@@ -966,9 +966,16 @@ pub const EventLoop = struct {
         loop.runCallback(callback, global, thisValue, &.{ arg0, arg1 });
     }
 
+    fn externRunCallback3(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue, arg1: JSC.JSValue, arg2: JSC.JSValue) callconv(.c) void {
+        const vm = global.bunVM();
+        var loop = vm.eventLoop();
+        loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
+    }
+
     comptime {
         @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
         @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
+        @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
     }
 
     pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {

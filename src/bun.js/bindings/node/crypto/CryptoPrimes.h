@@ -4,15 +4,14 @@
 #include "helpers.h"
 #include "ncrypto.h"
 
-using namespace JSC;
-using namespace Bun;
+namespace Bun {
 
 struct CheckPrimeJobCtx {
     CheckPrimeJobCtx(ncrypto::BignumPointer candidate, int32_t checks);
     ~CheckPrimeJobCtx();
 
-    void runTask(JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback);
+    void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
+    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
     void deinit();
 
     int32_t m_checks;
@@ -25,8 +24,8 @@ struct CheckPrimeJobCtx {
 
 // Opaque struct created zig land
 struct CheckPrimeJob {
-    static CheckPrimeJob* create(JSGlobalObject*, ncrypto::BignumPointer candidate, int32_t checks, JSValue callback);
-    static void createAndSchedule(JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSValue callback);
+    static CheckPrimeJob* create(JSC::JSGlobalObject*, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
+    static void createAndSchedule(JSC::JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
 
     void schedule();
 };
@@ -35,8 +34,8 @@ struct GeneratePrimeJobCtx {
     GeneratePrimeJobCtx(int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint);
     ~GeneratePrimeJobCtx();
 
-    void runTask(JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback);
+    void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
+    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
     void deinit();
 
     int32_t m_size;
@@ -51,8 +50,10 @@ struct GeneratePrimeJobCtx {
 
 // Opaque struct created zig land
 struct GeneratePrimeJob {
-    static GeneratePrimeJob* create(JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSValue callback);
-    static void createAndSchedule(JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSValue callback);
+    static GeneratePrimeJob* create(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
+    static void createAndSchedule(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
+
+    static JSC::JSValue result(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::BignumPointer& prime, bool bigint);
 
     void schedule();
 };
@@ -61,3 +62,5 @@ JSC_DECLARE_HOST_FUNCTION(jsCheckPrime);
 JSC_DECLARE_HOST_FUNCTION(jsCheckPrimeSync);
 JSC_DECLARE_HOST_FUNCTION(jsGeneratePrime);
 JSC_DECLARE_HOST_FUNCTION(jsGeneratePrimeSync);
+
+} // namespace Bun

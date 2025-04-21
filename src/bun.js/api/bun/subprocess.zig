@@ -232,7 +232,7 @@ pub fn createResourceUsageObject(this: *Subprocess, globalObject: *JSGlobalObjec
     const pid_rusage = this.pid_rusage orelse brk: {
         if (Environment.isWindows) {
             if (this.process.poller == .uv) {
-                this.pid_rusage = PosixSpawn.uv_getrusage(&this.process.poller.uv);
+                this.pid_rusage = PosixSpawn.process.uv_getrusage(&this.process.poller.uv);
                 break :brk this.pid_rusage.?;
             }
         }
@@ -859,29 +859,30 @@ pub const StaticPipeWriter = NewStaticPipeWriter(Subprocess);
 
 pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
     return struct {
+        const This = @This();
+
+        ref_count: WriterRefCount,
         writer: IOWriter = .{},
         stdio_result: StdioResult,
         source: Source = .{ .detached = {} },
         process: *ProcessType = undefined,
         event_loop: JSC.EventLoopHandle,
-        ref_count: WriterRefCount,
         buffer: []const u8 = "",
 
         // It seems there is a bug in the Zig compiler. We'll get back to this one later
-        const WriterRefCount = bun.ptr.RefCount(This, "ref_count", _deinit, .{});
-        pub usingnamespace bun.ptr.RefCount(This, "ref_count", _deinit, .{});
+        const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});
+        pub const ref = WriterRefCount.ref;
+        pub const deref = WriterRefCount.deref;
 
-        const This = @This();
         const print = bun.Output.scoped(.StaticPipeWriter, false);
 
-        pub const IOWriter = bun.io.BufferedWriter(
-            This,
-            onWrite,
-            onError,
-            onClose,
-            getBuffer,
-            flush,
-        );
+        pub const IOWriter = bun.io.BufferedWriter(@This(), struct {
+            pub const onWritable = null;
+            pub const getBuffer = This.getBuffer;
+            pub const onClose = This.onClose;
+            pub const onError = This.onError;
+            pub const onWrite = This.onWrite;
+        });
         pub const Poll = IOWriter;
 
         pub fn updateRef(this: *This, add: bool) void {
@@ -2665,10 +2666,10 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Body = JSC.WebCore.Body;
 const IPClog = Output.scoped(.IPC, false);
 
-const PosixSpawn = bun.posix.spawn;
-const Rusage = bun.posix.spawn.Rusage;
-const Process = bun.posix.spawn.Process;
-const WaiterThread = bun.posix.spawn.WaiterThread;
+const PosixSpawn = bun.spawn;
+const Rusage = bun.spawn.Rusage;
+const Process = bun.spawn.Process;
+const WaiterThread = bun.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

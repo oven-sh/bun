@@ -1149,7 +1149,7 @@ pub const VirtualMachine = struct {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-                bun.spawn.WaiterThread.setShouldUseWaiterThread();
+                bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
             }
 
             // Only allowed for testing

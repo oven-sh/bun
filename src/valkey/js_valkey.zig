@@ -186,7 +186,7 @@ pub const JSValkeyClient = struct {
             this.connect() catch |err| {
                 this.poll_ref.unref(this.client.vm);
                 this.client.flags.needs_to_open_socket = true;
-                const err_value = globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
+                const err_value = globalObject.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
                 promise_ptr.reject(globalObject, err_value);
                 return promise;
             };
@@ -385,7 +385,7 @@ pub const JSValkeyClient = struct {
         this.poll_ref.ref(vm);
 
         this.connect() catch |err| {
-            this.failWithJSValue(this.globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION("{s} reconnecting", .{@errorName(err)}).toJS());
+            this.failWithJSValue(this.globalObject.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, "{s} reconnecting", .{@errorName(err)}).toJS());
             this.poll_ref.disable();
             return;
         };
@@ -581,7 +581,7 @@ pub const JSValkeyClient = struct {
 
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;
-                const err_value = globalThis.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
+                const err_value = globalThis.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
                 const promise = JSC.JSPromise.create(globalThis);
                 promise.reject(globalThis, err_value);
                 return promise;

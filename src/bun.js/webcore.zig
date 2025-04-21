@@ -2,8 +2,8 @@ pub usingnamespace @import("./webcore/response.zig");
 pub usingnamespace @import("./webcore/encoding.zig");
 pub usingnamespace @import("./webcore/streams.zig");
 pub usingnamespace @import("./webcore/blob.zig");
-pub usingnamespace @import("./webcore/S3Stat.zig");
-pub usingnamespace @import("./webcore/S3Client.zig");
+pub const S3Stat = @import("./webcore/S3Stat.zig").S3Stat;
+pub const S3Client = @import("./webcore/S3Client.zig").S3Client;
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
 pub const CookieMap = @import("./webcore/CookieMap.zig").CookieMap;
@@ -16,6 +16,7 @@ pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
 const Environment = bun.Environment;
 const UUID7 = @import("./uuid.zig").UUID7;
+const c = bun.c;
 
 pub const Lifetime = enum {
     clone,
@@ -268,11 +269,11 @@ pub const Prompt = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.updateStdioModeFlags(.std_in, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
+            bun.windows.updateStdioModeFlags(.std_in, .{ .unset = c.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
-                _ = bun.windows.SetConsoleMode(bun.FD.stdin().native(), mode);
+                _ = bun.c.SetConsoleMode(bun.FD.stdin().native(), mode);
             }
         };
 
@@ -371,13 +372,13 @@ pub const Crypto = struct {
     const BoringSSL = bun.BoringSSL.c;
 
     fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) bun.JSError {
-        return globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
+        return globalThis.ERR(.CRYPTO_SCRYPT_INVALID_PARAMETER, "Invalid scrypt parameters", .{}).throw();
     }
 
     fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.enum_literal), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
         if (error_type != .RangeError) @compileError("Error type not added!");
         BoringSSL.ERR_clear_error();
-        return globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
+        return globalThis.ERR(.CRYPTO_INVALID_SCRYPT_PARAMS, message, fmt).throw();
     }
 
     pub fn timingSafeEqual(_: *@This(), global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -395,7 +396,7 @@ pub const Crypto = struct {
 
         const len = a.len;
         if (b.len != len) {
-            return globalThis.ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH("Input buffers must have the same byte length", .{}).throw();
+            return globalThis.ERR(.CRYPTO_TIMING_SAFE_EQUAL_LENGTH, "Input buffers must have the same byte length", .{}).throw();
         }
 
         return JSC.jsBoolean(bun.BoringSSL.c.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
@@ -478,7 +479,7 @@ pub const Crypto = struct {
                     if (arguments[0].isString()) {
                         encoding_value = arguments[0];
                         break :brk try JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
-                            return globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
+                            return globalThis.ERR(.UNKNOWN_ENCODING, "Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
                         };
                     }
                 }
@@ -535,7 +536,7 @@ pub const Crypto = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Crypto {
-        return JSC.Error.ERR_ILLEGAL_CONSTRUCTOR.throw(globalThis, "Crypto is not constructable", .{});
+        return JSC.Error.ILLEGAL_CONSTRUCTOR.throw(globalThis, "Crypto is not constructable", .{});
     }
 
     pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {

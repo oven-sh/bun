@@ -2636,4 +2636,235 @@ if (!process.env.ONLY_ZIG) {
     `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
     initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
   );
+
+  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
+}
+
+/**
+ * Generates a basic TypeScript type signature string and corresponding Zig source comment
+ * for a given property definition.
+ * Returns null if the property should not be included in the types (e.g., private).
+ */
+function getPropertySignatureWithComment(
+  propName: string,
+  propDef: Field,
+  classDef: ClassDefinition,
+): { signature: string; comment: string | null } | null {
+  let tsPropName = propName;
+  // Handle well-known symbols
+  if (tsPropName.startsWith("@@")) {
+    tsPropName = `[Symbol.${tsPropName.slice(2)}]`;
+  } else if (/[^a-zA-Z0-9_$]/.test(tsPropName)) {
+    // Quote property names that are not valid JS identifiers (e.g., contain '-')
+    tsPropName = `"${tsPropName}"`;
+  }
+
+  if ("privateSymbol" in propDef) {
+    tsPropName = `$${propDef.privateSymbol}`;
+  }
+
+  // --- Skip internal/private properties ---
+  if ("internal" in propDef) {
+    return null;
+  }
+
+  // --- Determine Type and Readonly Status ---
+  let signature = "";
+  let isMethod = false;
+  let isReadOnly = false;
+  let commentLines: string[] = [];
+
+  if ("fn" in propDef || "builtin" in propDef) {
+    const length = propDef.length ?? 0;
+    let args = Array(length)
+      .fill(0)
+      .map((_, i) => `arg${i}?: unknown`)
+      .concat(...(length > 0 ? ["...args: unknown[]"] : []))
+      .join(", ");
+    let returnType = "unknown";
+    if (propDef.async) {
+      returnType = "Promise<unknown>";
+    }
+
+    signature = `${tsPropName}(${args}): ${returnType};`; // Basic method signature
+    isMethod = true;
+    if ("fn" in propDef) {
+      commentLines.push(
+        ` Look for a function like this:
+      * \`\`\`zig
+      * fn ${propDef.fn}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue { ... }
+      * \`\`\``,
+      );
+    } else if ("builtin" in propDef) {
+      commentLines.push(`* C++ builtin name: \`${propDef.builtin}\``);
+    }
+  } else if ("accessor" in propDef) {
+    signature = `${tsPropName}: unknown;`; // Read-write accessor
+    commentLines.push(` zig ⚡ \`${propDef.accessor.getter}\``);
+    commentLines.push(
+      ` Look for a getter like this:
+      * \`\`\`zig
+      * fn ${propDef.accessor.getter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue { ... }
+      * \`\`\``,
+    );
+    commentLines.push(
+      ` Look for a setter like this:
+      * \`\`\`zig
+      * fn ${propDef.accessor.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void 
+      * \`\`\``,
+    );
+    if (propDef.cache) {
+      commentLines.push(` Cached value ${typeof propDef.cache === "string" ? `via m_${propDef.cache}` : ""}`);
+    }
+  } else if ("getter" in propDef) {
+    signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
+    isReadOnly = !propDef.writable; // Mark readonly if only getter or explicitly not writable
+    commentLines.push(
+      ` Look for a getter like this:
+      * \`\`\`zig
+      * fn ${propDef.getter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue { ... }
+      * \`\`\``,
+    );
+    if (propDef.writable) {
+      commentLines.push(` Writable`); // Implicitly means a setter exists or is generated
+    }
+  } else if ("setter" in propDef) {
+    // Can't represent pure write-only in interfaces easily, treat as read-write
+    signature = `${tsPropName}: unknown;`;
+    commentLines.push(
+      ` Look for a setter like this:
+      * \`\`\`zig
+      * fn ${propDef.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void { ... }
+      * \`\`\``,
+    );
+  } else {
+    // Unknown property type or skipped type (like internal)
+    return null;
+  }
+
+  // --- Add Modifiers ---
+  if (isReadOnly && !isMethod) {
+    signature = `readonly ${signature}`;
+  }
+  // --- Format Comment ---
+  const comment = commentLines.length > 0 ? `/**\n      *${commentLines.join("\n      *")}\n      */` : null;
+
+  return { signature, comment };
+}
+
+/**
+ * Generates TypeScript type definitions (interfaces) for all provided class definitions.
+ * Creates content for a single ambient declaration file (ZigGeneratedClasses.d.ts).
+ */
+export function generateBuiltinTypes(classes: ClassDefinition[]): string {
+  const typeDeclarations: string[] = [];
+
+  for (const classDef of classes) {
+    // Skip classes marked as zigOnly, as they shouldn't have JS/TS counterparts
+    if ((classDef as any).zigOnly) continue;
+
+    const instanceMembers: string[] = [];
+    const staticMembers: string[] = [];
+    const constructorInterfaceName = `${classDef.name}Constructor`;
+    const staticsInterfaceName = `${classDef.name}Statics`;
+
+    // --- Process Instance Members (proto, own, values) ---
+    for (const [propName, propDef] of Object.entries(classDef.proto || {})) {
+      const result = getPropertySignatureWithComment(propName, propDef, classDef);
+      if (result) {
+        if (result.comment) instanceMembers.push(`    ${result.comment}`);
+        instanceMembers.push(`    ${result.signature}`);
+      }
+    }
+
+    for (const [propName, zigFieldName] of Object.entries(classDef.own || {})) {
+      instanceMembers.push(`    readonly ${propName}: any;`);
+    }
+
+    // --- Process Static Members (klass) ---
+    for (const [propName, propDef] of Object.entries(classDef.klass || {})) {
+      const result = getPropertySignatureWithComment(propName, propDef, classDef);
+      if (result) {
+        if (result.comment) staticMembers.push(`    ${result.comment}`);
+        staticMembers.push(`    ${result.signature}`);
+      }
+    }
+
+    // --- Generate Instance Interface ---
+    typeDeclarations.push(`  interface ${classDef.name} {`);
+    if (instanceMembers.length === 0) {
+      typeDeclarations.push(`    /* Opaque interface */`);
+    } else {
+      typeDeclarations.push(...instanceMembers);
+    }
+    typeDeclarations.push(`  }`);
+    typeDeclarations.push(""); // Blank line separator
+
+    // --- Determine if Constructor/Static Interface is needed ---
+    const hasStaticMembers = staticMembers.length > 0;
+    const isConstructible = !!classDef.construct;
+    const isCallable = !!classDef.call;
+    const hasExplicitConstructor = !classDef.noConstructor;
+
+    const needsConstructorInterface = isConstructible || isCallable || (hasStaticMembers && hasExplicitConstructor);
+    const needsStaticInterface = hasStaticMembers && !hasExplicitConstructor && !isConstructible && !isCallable;
+    const needsGlobalVar = hasExplicitConstructor || needsStaticInterface;
+
+    // --- Generate Constructor Interface (if applicable) ---
+    if (needsConstructorInterface) {
+      typeDeclarations.push(`  interface ${constructorInterfaceName} {`);
+      if (isConstructible) {
+        typeDeclarations.push(`    new(...args: any[]): ${classDef.name};`);
+        typeDeclarations.push(`    prototype: ${classDef.name};`);
+      }
+      if (isCallable) {
+        // Add call signature if the constructor itself is callable
+        typeDeclarations.push(`    (...args: any[]): any;`);
+      }
+
+      // Add static members
+      if (staticMembers.length > 0) {
+        typeDeclarations.push(`\n    // Static members`);
+        typeDeclarations.push(...staticMembers);
+      }
+      typeDeclarations.push(`  }`);
+      typeDeclarations.push(""); // Blank line separator
+    }
+
+    // --- Generate Statics Interface (if applicable, for noConstructor classes with statics) ---
+    if (needsStaticInterface) {
+      typeDeclarations.push(`  interface ${staticsInterfaceName} {`);
+      if (staticMembers.length > 0) {
+        typeDeclarations.push(`\n    // Static members`);
+        typeDeclarations.push(...staticMembers);
+      }
+      typeDeclarations.push(`  }`);
+      typeDeclarations.push(""); // Blank line separator
+    }
+
+    // --- Generate Global Variable Declaration ---
+    if (needsGlobalVar) {
+      const interfaceToUse = needsConstructorInterface ? constructorInterfaceName : staticsInterfaceName;
+      // Declare the global variable holding the constructor or static methods/props
+      typeDeclarations.push(`  var ${classDef.name}: ${interfaceToUse};`);
+      typeDeclarations.push(""); // Blank line separator
+    }
+  } // End loop through classes
+
+  // --- Assemble Final File Content ---
+  return `// GENERATED CODE - DO NOT MODIFY BY HAND
+// Generated by generate-classes.ts
+
+
+/**
+ * Type definitions for Bun's built-in classes implemented in Zig.
+ * Do not edit this file directly.
+ * @generated
+ * 
+ * This namespace does not exist at runtime!
+ */
+declare namespace $ZigGeneratedClasses {
+${typeDeclarations.map(line => (line ? "  " + line : "")).join("\n")}
+}
+`;
 }

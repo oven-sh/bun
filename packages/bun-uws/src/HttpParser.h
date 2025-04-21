@@ -483,6 +483,17 @@ namespace uWS
                 }
                 return 0;
             }
+            /* No request headers found */
+            size_t buffer_size = end - postPaddedBuffer;
+            if(buffer_size < 2) {
+                /* Fragmented request */
+                err = HTTP_ERROR_400_BAD_REQUEST;
+                return 0;
+            }
+            if(buffer_size >= 2 && postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
+                /* No headers found */
+                return (unsigned int) ((postPaddedBuffer + 2) - start);
+            }
             headers++;
 
             for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
@@ -568,7 +579,7 @@ namespace uWS
      * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
      * or [whatever, fullptr] for "break and close me, I am a parser error!" */
     template <bool ConsumeMinimally>
-    std::pair<unsigned int, void *> fenceAndConsumePostPadded(char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    std::pair<unsigned int, void *> fenceAndConsumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -579,7 +590,6 @@ namespace uWS
         data[length] = '\r';
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         bool isAncientHTTP = false;
-
         for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, isAncientHTTP)); ) {
             data += consumed;
             length -= consumed;
@@ -595,12 +605,12 @@ namespace uWS
 
             /* Add all headers to bloom filter */
             req->bf.reset();
+            
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-
             /* Break if no host header (but we can have empty string which is different from nullptr) */
-            if (!req->getHeader("host").data()) {
+            if (!isAncientHTTP && requireHostHeader && !req->getHeader("host").data()) {
                 return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
             }
 
@@ -719,7 +729,7 @@ namespace uWS
     }
 
 public:
-    std::pair<unsigned int, void *> consumePostPadded(char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    std::pair<unsigned int, void *> consumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
 
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
@@ -768,7 +778,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<true>(fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<true>(requireHostHeader,fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             if (consumed.second != user) {
                 return consumed;
             }
@@ -823,7 +833,7 @@ public:
             }
         }
 
-        std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<false>(data, length, user, reserved, &req, requestHandler, dataHandler);
+        std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
         if (consumed.second != user) {
             return consumed;
         }

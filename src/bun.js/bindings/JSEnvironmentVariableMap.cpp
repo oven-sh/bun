@@ -293,6 +293,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    RETURN_IF_EXCEPTION(scope, {});
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -337,6 +338,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 ZigString nameStr = toZigString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                 }
                 continue;

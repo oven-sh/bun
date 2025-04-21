@@ -1304,7 +1304,7 @@ class SQLArrayParameter {
   value: any;
   columns: string[];
   constructor(value, keys) {
-    if (keys?.length === 0) {
+    if (keys?.length === 0 && typeof value[0] !== "string") {
       keys = Object.keys(value[0]);
     }
 

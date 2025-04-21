@@ -34,6 +34,7 @@ const URL = @import("./url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
+const CSV = @import("./csv/csv_parser.zig").CSV;
 const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 const DataURL = @import("./resolver/data_url.zig").DataURL;
@@ -651,7 +652,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .text, .csv, .csv_no_header, .tsv, .tsv_no_header => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1210,7 +1211,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .json, .jsonc => |kind| {
+            inline .toml, .csv, .csv_no_header, .tsv, .tsv_no_header, .json, .jsonc => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1219,6 +1220,14 @@ pub const Transpiler = struct {
                     JSON.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
+                else if (kind == .csv)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = true, .delimiter = ',' }) catch return null
+                else if (kind == .csv_no_header)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = false, .delimiter = ',' }) catch return null
+                else if (kind == .tsv)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = true, .delimiter = '\t' }) catch return null
+                else if (kind == .tsv_no_header)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = false, .delimiter = '\t' }) catch return null
                 else
                     @compileError("unreachable");
 

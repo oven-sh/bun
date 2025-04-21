@@ -81,7 +81,7 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
-  let resolveNextChunk: ((end: boolean) => void) | undefined = end => {};
+  let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
@@ -227,7 +227,7 @@ function ClientRequest(input, options, cb) {
     }
   };
 
-  const onAbort = (err?: Error) => {
+  const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
     if (!this[abortedSymbol]) {
@@ -430,7 +430,9 @@ function ClientRequest(input, options, cb) {
 
             try {
               this.emit("error", err);
-            } catch (e) {}
+            } catch (_err) {
+              void _err;
+            }
           })
           .finally(() => {
             if (!keepOpen) {
@@ -575,7 +577,8 @@ function ClientRequest(input, options, cb) {
     const urlStr = input;
     try {
       var urlObject = new URL(urlStr);
-    } catch (e) {
+    } catch (_err) {
+      void _err;
       throw $ERR_INVALID_URL(`Invalid URL: ${urlStr}`);
     }
     input = urlToHttpOptions(urlObject);
@@ -634,8 +637,6 @@ function ClientRequest(input, options, cb) {
     (this[kHost] =
     options.host =
       validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
-
-  const setHost = options.setHost === undefined || !!options.setHost;
 
   this[kSocketPath] = options.socketPath;
 
@@ -843,11 +844,11 @@ function ClientRequest(input, options, cb) {
 
   this[kEmitState] = 0;
 
-  this.setSocketKeepAlive = (enable = true, initialDelay = 0) => {
+  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   };
 
-  this.setNoDelay = (noDelay = true) => {
+  this.setNoDelay = (_noDelay = true) => {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
   };
 

@@ -15,7 +15,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
-  reqSymbol,
   bodyStreamSymbol,
   statusMessageSymbol,
   statusCodeSymbol,
@@ -89,7 +88,7 @@ function assignHeaders(object, req) {
 function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
-    const paused = handle.pause();
+    handle.pause();
   }
 }
 
@@ -135,7 +134,7 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
   } else {
     this[noBodySymbol] = false;
     Readable.$call(this);
-    var { [typeSymbol]: type, [reqSymbol]: nodeReq } = options || {};
+    var { [typeSymbol]: type } = options || {};
 
     this[webRequestOrResponse] = req;
     this[typeSymbol] = type;
@@ -219,7 +218,7 @@ const IncomingMessagePrototype = {
       this.resume();
     }
   },
-  _read(size) {
+  _read(_size) {
     if (!this._consuming) {
       this._readableState.readingMore = false;
       this._consuming = true;

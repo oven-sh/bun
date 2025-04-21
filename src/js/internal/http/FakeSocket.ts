@@ -1,6 +1,6 @@
 const { kInternalSocketData, serverSymbol } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
-const { Stream, Duplex } = require("internal/stream");
+const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
@@ -23,17 +23,20 @@ var FakeSocket = class Socket extends Duplex {
     return this.writableLength;
   }
 
-  connect(port, host, connectListener) {
+  connect(_port, _host, _connectListener) {
     return this;
   }
+  _onTimeout = function () {
+    this.emit("timeout");
+  };
 
-  _destroy(err, callback) {
+  _destroy(_err, _callback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
   }
 
-  _final(callback) {}
+  _final(_callback) {}
 
   get localAddress() {
     return this.address() ? "127.0.0.1" : undefined;
@@ -51,7 +54,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {}
+  _read(_size) {}
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -95,9 +98,9 @@ var FakeSocket = class Socket extends Duplex {
 
   resetAndDestroy() {}
 
-  setKeepAlive(enable = false, initialDelay = 0) {}
+  setKeepAlive(_enable = false, _initialDelay = 0) {}
 
-  setNoDelay(noDelay = true) {
+  setNoDelay(_noDelay = true) {
     return this;
   }
 
@@ -105,7 +108,7 @@ var FakeSocket = class Socket extends Duplex {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
 
-    const [server, http_res, req] = socketData;
+    const http_res = socketData[1];
     http_res?.req?.setTimeout(timeout, callback);
     return this;
   }
@@ -114,7 +117,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(chunk, encoding, callback) {}
+  _write(_chunk, _encoding, _callback) {}
 };
 
 Object.defineProperty(FakeSocket, "name", { value: "Socket" });

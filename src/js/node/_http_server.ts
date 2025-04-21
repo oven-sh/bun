@@ -415,7 +415,7 @@ const ServerResponsePrototype = {
     return this._closed;
   },
 
-  _send(data, encoding, callback, byteLength) {
+  _send(data, encoding, callback, _byteLength) {
     const handle = this[kHandle];
     if (!handle) {
       return OutgoingMessagePrototype._send.$apply(this, arguments);
@@ -476,7 +476,7 @@ const ServerResponsePrototype = {
     // throw new Error('not implemented');
   },
 
-  destroy(err?: Error) {
+  destroy(_err?: Error) {
     if (this.destroyed) return this;
     const handle = this[kHandle];
     this.destroyed = true;
@@ -666,26 +666,7 @@ const Server = function Server(options, callback) {
 } as unknown as typeof import("node:http").Server;
 Object.defineProperty(Server, "name", { value: "Server" });
 
-function onRequestEvent(event) {
-  const [server, http_res, req] = this.socket[kInternalSocketData];
-
-  if (!http_res.finished) {
-    switch (event) {
-      case NodeHTTPResponseAbortEvent.timeout:
-        this.emit("timeout");
-        server.emit("timeout", req.socket);
-        break;
-      case NodeHTTPResponseAbortEvent.abort:
-        http_res.finished = true;
-        this.destroy();
-        break;
-    }
-  }
-}
-
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
-  const server: Server = this?.server;
-
   const socket: NodeHTTPServerSocket = this;
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
@@ -935,15 +916,6 @@ const ServerPrototype = {
           drainMicrotasks();
 
           let capturedError;
-          let rejectFunction;
-          let errorCallback = err => {
-            if (capturedError) return;
-            capturedError = err;
-            if (rejectFunction) rejectFunction(err);
-            handle && (handle.onabort = undefined);
-            handle = undefined;
-          };
-
           let resolveFunction;
           let didFinish = false;
 
@@ -1187,12 +1159,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this.writableLength;
   }
 
-  connect(port, host, connectListener) {
+  connect(_port, _host, _connectListener) {
     return this;
   }
-  _onTimeout = function () {
-    this.emit("timeout");
-  };
 
   _destroy(err, callback) {
     const handle = this[kHandle];
@@ -1260,7 +1229,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
 
-  _read(size) {
+  _read(_size) {
     // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
     this.#resumeSocket();
   }
@@ -1307,13 +1276,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   resetAndDestroy() {}
 
-  setKeepAlive(enable = false, initialDelay = 0) {}
+  setKeepAlive(_enable = false, _initialDelay = 0) {}
 
-  setNoDelay(noDelay = true) {
+  setNoDelay(_noDelay = true) {
     return this;
   }
 
-  setTimeout(timeout, callback) {
+  setTimeout(_timeout, _callback) {
     return this;
   }
 
@@ -1321,7 +1290,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(chunk, encoding, callback) {}
+  _write(_chunk, _encoding, _callback) {}
 
   pause() {
     const handle = this[kHandle];
@@ -1484,21 +1453,6 @@ function updateHasBody(response, statusCode) {
     response._hasBody = true;
   }
 }
-function ServerResponse_writevDeprecated(chunks, callback) {
-  if (chunks.length === 1 && !this.headersSent && this[firstWriteSymbol] === undefined) {
-    this[firstWriteSymbol] = chunks[0].chunk;
-    callback();
-    return;
-  }
-
-  ensureReadableStreamController.$call(this, controller => {
-    for (const chunk of chunks) {
-      controller.write(chunk.chunk);
-    }
-
-    callback();
-  });
-}
 
 function emitServerSocketEOF(self, req) {
   self.push(null);
@@ -1537,16 +1491,6 @@ function drainHeadersIfObservable() {
   }
 
   this._implicitHeader();
-}
-
-function ServerResponsePrototypeOnWritable(this: import("node:http").ServerResponse, optionalCallback) {
-  if (optionalCallback) {
-    optionalCallback();
-  }
-
-  if (!this.finished && !this.destroyed) {
-    this.emit("drain");
-  }
 }
 
 function ServerResponse_finalDeprecated(chunk, encoding, callback) {

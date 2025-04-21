@@ -154,7 +154,7 @@ const OutgoingMessagePrototype = {
     this[headersSymbol] = new Headers(value);
   },
 
-  addTrailers(headers) {
+  addTrailers(_headers) {
     throw new Error("not implemented");
   },
 
@@ -231,16 +231,16 @@ const OutgoingMessagePrototype = {
     return this.finished && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
   },
 
-  _send(data, encoding, callback, byteLength) {
+  _send(data, encoding, callback, _byteLength) {
     if (this.destroyed) {
       return false;
     }
     return this.write(data, encoding, callback);
   },
-  end(chunk, encoding, callback) {
+  end(_chunk, _encoding, _callback) {
     return this;
   },
-  destroy(err?: Error) {
+  destroy(_err?: Error) {
     if (this.destroyed) return this;
     const handle = this[kHandle];
     this.destroyed = true;

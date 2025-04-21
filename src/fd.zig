@@ -1,9 +1,4 @@
-/// Remove once https://github.com/ziglang/zig/pull/23341/files merges
-/// This workaround prevents us from using a zero-bit field in a `packed struct`, which currently
-/// causes UB (division by zero) in the Zig compiler.
-const workaround_zig_crash = is_posix;
-
-const backing_int = if (is_posix and !workaround_zig_crash) c_int else u64;
+const backing_int = if (is_posix) c_int else u64;
 const WindowsHandleNumber = u63;
 const HandleNumber = if (is_posix) c_int else WindowsHandleNumber;
 /// Abstraction over file descriptors. On POSIX, fd is a wrapper around a "fd_t",
@@ -26,7 +21,7 @@ pub const FD = packed struct(backing_int) {
     value: Value,
     kind: Kind,
     pub const Kind = if (is_posix)
-        enum(if (workaround_zig_crash) u32 else u0) { system }
+        enum(u0) { system }
     else
         enum(u1) { system = 0, uv = 1 };
     pub const Value = if (is_posix)
@@ -57,8 +52,17 @@ pub const FD = packed struct(backing_int) {
 
     /// Initialize using the c-runtime / libuv file descriptor
     pub fn fromUV(value: uv_file) FD {
+        if (@inComptime() and !(0 <= value and value <= 2))
+            @compileError(std.fmt.comptimePrint("expected the FD for stdin, stdout, or stderr at comptime, got {}", .{value}));
         return if (is_posix)
-            .{ .kind = .system, .value = .{ .as_system = value } }
+            switch (value) {
+                // workaround for https://github.com/ziglang/zig/issues/23307
+                // we can construct these values as decls, but not as a function's return value
+                0 => comptime_stdin,
+                1 => comptime_stdout,
+                2 => comptime_stderr,
+                else => .{ .kind = .system, .value = .{ .as_system = value } },
+            }
         else
             .{ .kind = .uv, .value = .{ .as_uv = value } };
     }
@@ -68,21 +72,21 @@ pub const FD = packed struct(backing_int) {
     }
 
     pub fn stdin() FD {
-        if (os != .windows) return .fromUV(0);
+        if (os != .windows) return comptime_stdin;
         const in_comptime = @inComptime();
         comptime assert(!in_comptime); // windows std handles are not known at build time
         return windows_cached_stdin;
     }
 
     pub fn stdout() FD {
-        if (os != .windows) return .fromUV(1);
+        if (os != .windows) return comptime_stdout;
         const in_comptime = @inComptime();
         comptime assert(!in_comptime); // windows std handles are not known at build time
         return windows_cached_stdout;
     }
 
     pub fn stderr() FD {
-        if (os != .windows) return .fromUV(2);
+        if (os != .windows) return comptime_stderr;
         const in_comptime = @inComptime();
         comptime assert(!in_comptime); // windows std handles are not known at build time
         return windows_cached_stderr;
@@ -638,6 +642,21 @@ pub var windows_cached_fd_set: if (Environment.isDebug) bool else void = if (Env
 pub var windows_cached_stdin: FD = undefined;
 pub var windows_cached_stdout: FD = undefined;
 pub var windows_cached_stderr: FD = undefined;
+
+// workaround for https://github.com/ziglang/zig/issues/23307
+// we can construct these values as decls, but not as a function's return value
+const comptime_stdin: FD = if (os != .windows)
+    .{ .kind = .system, .value = .{ .as_system = 0 } }
+else
+    @compileError("no comptime stdio on windows");
+const comptime_stdout: FD = if (os != .windows)
+    .{ .kind = .system, .value = .{ .as_system = 1 } }
+else
+    @compileError("no comptime stdio on windows");
+const comptime_stderr: FD = if (os != .windows)
+    .{ .kind = .system, .value = .{ .as_system = 2 } }
+else
+    @compileError("no comptime stdio on windows");
 
 const fd_t = std.posix.fd_t;
 const HANDLE = bun.windows.HANDLE;

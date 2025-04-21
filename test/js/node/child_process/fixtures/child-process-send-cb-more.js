@@ -48,6 +48,6 @@ if (process.argv[2] === "child") {
     console.error("parent got message", JSON.stringify(message).replace("ok".repeat(16384), "ok…ok"));
   });
   child.on("exit", (exitCode, signalCode) => {
-    console.error("parent got exit event", exitCode, signalCode);
+    console.error(`parent got exit event ${exitCode} ${signalCode}`);
   });
 }

@@ -38,6 +38,6 @@ process.on('exit', function() {
   assert.notStrictEqual(persistentPid, -1);
   assert.throws(function() {
     process.kill(child.pid);
-  }, /^Error: kill ESRCH$|^SystemError: kill\(\) failed: ESRCH: No such process$/);
+  }, /^Error: kill ESRCH$|^SystemError: kill\(\) failed: ESRCH: [Nn]o such process$/);
   process.kill(persistentPid);
 });

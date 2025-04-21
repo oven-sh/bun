@@ -6620,14 +6620,6 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    type OptionsToSubprocess<In extends Writable, Out extends Readable, Err extends Readable> = Subprocess<
-      In,
-      Out,
-      Err
-    >;
-
-    type OptionsToSyncSubprocess<Out extends Readable, Err extends Readable> = SyncSubprocess<Out, Err>;
-
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -6895,7 +6887,7 @@ declare module "bun" {
        */
       cmd: string[]; // to support dynamically constructed commands
     },
-  ): SpawnOptions.OptionsToSubprocess<In, Out, Err>;
+  ): Subprocess<In, Out, Err>;
 
   /**
    * Spawn a new process
@@ -6929,7 +6921,7 @@ declare module "bun" {
      */
     cmds: string[],
     options?: SpawnOptions.OptionsObject<In, Out, Err>,
-  ): SpawnOptions.OptionsToSubprocess<In, Out, Err>;
+  ): Subprocess<In, Out, Err>;
 
   /**
    * Spawn a new process
@@ -6946,11 +6938,10 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
-    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "inherit",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
+    options: SpawnOptions.OptionsObject<"ignore", Out, Err> & {
       /**
        * The command to run
        *
@@ -6969,7 +6960,7 @@ declare module "bun" {
 
       onExit?: never;
     },
-  ): SpawnOptions.OptionsToSyncSubprocess<Out, Err>;
+  ): SyncSubprocess<Out, Err>;
 
   /**
    * Synchronously spawn a new process
@@ -6982,7 +6973,6 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
-    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "inherit",
   >(
@@ -7001,8 +6991,8 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
-  ): SpawnOptions.OptionsToSyncSubprocess<Out, Err>;
+    options?: SpawnOptions.OptionsObject<"ignore", Out, Err>,
+  ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;

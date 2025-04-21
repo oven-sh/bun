@@ -12,7 +12,7 @@ fn crash() packed struct { x: u8, y: u0 } {
 }
 
 comptime {
-_ = crash();
+    _ = crash();
 }
 
 pub const Environment = @import("env.zig");

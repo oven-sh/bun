@@ -334,10 +334,10 @@ pub fn build(b: *Build) !void {
     }
 
     // zig build watch
-    const enable_watch_step = b.option(bool, "watch_step", "Enable the watch step. This reads more files so it is off by default") orelse false;
-    if (no_llvm or enable_watch_step) {
-        self_hosted_watch.selfHostedExeBuild(b, &build_options) catch @panic("OOM");
-    }
+    // const enable_watch_step = b.option(bool, "watch_step", "Enable the watch step. This reads more files so it is off by default") orelse false;
+    // if (no_llvm or enable_watch_step) {
+    //     self_hosted_watch.selfHostedExeBuild(b, &build_options) catch @panic("OOM");
+    // }
 
     // zig build check-debug
     {
@@ -433,130 +433,6 @@ pub fn build(b: *Build) !void {
         // step.dependOn(&run.step);
     }
 }
-
-/// Use information from the CMake build to add a zig step that is capable of
-/// watch-mode building Bun's C++ and Zig code incrementally. This is only
-/// useful for `--watch`.
-///
-/// NOTE: This currently does not support:
-/// - src/js/* changes
-/// - Changes which invoke any other code generator
-/// - Compiling dependencies
-/// - Changes to the build system itself
-const self_hosted_watch = struct {
-    const ParsedNinjaConfig = struct {
-        mod: *Module,
-        flags: []const []const u8,
-
-        const mem = std.mem;
-        const ws = "\n\r\t ";
-
-        pub fn openAndParse(b: *Build, build_options: *BunBuildOptions) !ParsedNinjaConfig {
-            const bytes = bytes: {
-                const file = try std.fs.cwd().openFile("build/debug/build.ninja", .{});
-                defer file.close();
-
-                // This allocation is ~2.5M
-                break :bytes try file.readToEndAllocOptions(
-                    std.heap.page_allocator,
-                    std.math.maxInt(u32),
-                    2_500_000,
-                    @alignOf(u8),
-                    null,
-                );
-            };
-            defer std.heap.page_allocator.free(bytes);
-
-            var line_start = mem.indexOfScalarPos(
-                u8,
-                bytes,
-                mem.indexOf(u8, bytes, "/bindings.cpp.o: ").?,
-                '\n',
-            ).? + 1;
-            var maybe_defines_line: ?[]const u8 = null;
-            var maybe_flags_line: ?[]const u8 = null;
-            var maybe_includes_line: ?[]const u8 = null;
-            while (true) {
-                const line_end = mem.indexOfScalarPos(u8, bytes, line_start, '\n') orelse break;
-                const line = mem.trim(u8, bytes[line_start..line_end], ws);
-                if (line.len == 0) break;
-                line_start = line_end + 1;
-                var it = mem.splitScalar(u8, line, '=');
-                const key = mem.trim(u8, it.next().?, ws);
-                const value = mem.trim(u8, it.rest(), ws);
-                if (mem.eql(u8, key, "DEFINES")) {
-                    maybe_defines_line = value;
-                } else if (mem.eql(u8, key, "FLAGS")) {
-                    maybe_flags_line = value;
-                } else if (mem.eql(u8, key, "INCLUDES")) {
-                    maybe_includes_line = value;
-                }
-            }
-
-            const mod = b.createModule(.{
-                .target = build_options.target,
-                .optimize = build_options.optimize,
-            });
-
-            {
-                const defines_line = maybe_defines_line orelse @panic("missing defines_line");
-                // TODO: does not handle spaces, not entirely sure on ninja's format here
-                var it = mem.tokenizeScalar(u8, defines_line, ' ');
-                while (it.next()) |define_raw| {
-                    const needle = "\\";
-                    const replacement = "";
-                    const define = try b.allocator.alloc(u8, mem.replacementSize(u8, define_raw, needle, replacement));
-                    _ = mem.replace(u8, define_raw, needle, replacement, define);
-                    mod.c_macros.append(b.allocator, define) catch @panic("OOM");
-                }
-            }
-            var flags = std.ArrayList([]const u8).init(b.allocator);
-            {
-                const flags_line = maybe_flags_line orelse @panic("missing flags_line");
-                var it = mem.tokenizeScalar(u8, b.dupe(flags_line), ' ');
-                while (it.next()) |flag_raw| {
-                    if (mem.eql(u8, flag_raw, "-Xclang") or mem.eql(u8, flag_raw, "-x")) {
-                        _ = it.next().?;
-                        continue;
-                    }
-                    try flags.append(flag_raw);
-                }
-            }
-
-            {
-                const includes_line = maybe_includes_line orelse @panic("missing includes_line");
-                var it = mem.tokenizeScalar(u8, includes_line, ' ');
-                while (it.next()) |flag_raw| {
-                    std.debug.assert(mem.startsWith(u8, flag_raw, "-I"));
-                    mod.addIncludePath(.{ .cwd_relative = flag_raw[2..] });
-                }
-            }
-
-            return .{ .flags = flags.items, .mod = mod };
-        }
-    };
-
-    fn selfHostedExeBuild(b: *Build, build_options: *BunBuildOptions) !void {
-        const step = b.step("watch", "Build a binary in watch mode");
-        const object = addBunObject(b, build_options);
-
-        const cpp = ParsedNinjaConfig.openAndParse(b, build_options) catch unreachable;
-
-        const exe = b.addExecutable(.{
-            .name = object.name,
-            .root_module = cpp.mod,
-        });
-        configureObj(b, build_options, exe);
-        exe.addCSourceFiles(.{
-            .root = b.path("src/bun.js/bindings"),
-            .flags = cpp.flags,
-            .files = &.{
-                "bindings.cpp",
-            },
-        });
-        step.dependOn(&b.addInstallArtifact(exe, .{}).step);
-    }
-};
 
 const TargetDescription = struct {
     os: OperatingSystem,

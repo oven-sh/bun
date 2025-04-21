@@ -7,6 +7,14 @@ const bun = @This();
 const builtin = @import("builtin");
 const std = @import("std");
 
+fn crash() packed struct { x: u8, y: u0 } {
+    return .{ .x = 0, .y = 0 };
+}
+
+comptime {
+_ = crash();
+}
+
 pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = true;

@@ -6,7 +6,7 @@ declare module "bun" {
     | Array<ShellExpression>
     | string
     | { raw: string }
-    | Subprocess
+    | Subprocess<SpawnOptions.Writable, SpawnOptions.Readable, SpawnOptions.Readable>
     | SpawnOptions.Readable
     | SpawnOptions.Writable
     | ReadableStream;

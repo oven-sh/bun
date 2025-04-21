@@ -15,9 +15,32 @@ function depromise<T>(_promise: Promise<T>): T {
 }
 
 {
+  // Test cases for https://github.com/oven-sh/bun/issues/17274
+
+  {
+    const proc = Bun.spawn(["cat"], {
+      stdin: "pipe",
+    });
+
+    proc.stdin.write("hello");
+  }
+
+  {
+    const proc = Bun.spawn(["cat"], {
+      stdin: "pipe",
+      onExit(proc, exitCode, signalCode, error) {
+        console.log(`Process exited: ${exitCode}`);
+      },
+    });
+
+    proc.stdin.write("hello");
+  }
+}
+
+{
   const proc = Bun.spawn(["echo", "hello"], {
     cwd: "./path/to/subdir", // specify a working direcory
-    env: { ...process.env, FOO: "bar" }, // specify environment variables
+    env: { FOO: "bar" }, // specify environment variables
     onExit(proc, exitCode, signalCode, error) {
       // exit handler
     },
@@ -150,5 +173,4 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }
 tsd.expectNotAssignable<ReadableSubprocess>(Bun.spawn([], {}));
 tsd.expectNotAssignable<PipedSubprocess>(Bun.spawn([], {}));
 
-tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], {}));
-tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], {}));
+tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));

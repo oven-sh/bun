@@ -1207,7 +1207,7 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd.unwrapValid() orelse bun.FD.cwd(), path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }

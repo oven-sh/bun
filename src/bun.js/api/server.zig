@@ -43,7 +43,7 @@ const Fetch = WebCore.Fetch;
 const HTTP = bun.http;
 const FetchEvent = WebCore.FetchEvent;
 const JSC = bun.JSC;
-const MarkedArrayBuffer = JSC.ArrayBuffer.Marked;
+const MarkedArrayBuffer = JSC.MarkedArrayBuffer;
 const JSValue = bun.JSC.JSValue;
 const host_fn = JSC.host_fn;
 

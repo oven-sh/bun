@@ -549,7 +549,7 @@ const Readable = union(enum) {
                     return globalThis.throwOutOfMemory();
                 };
 
-                return JSC.ArrayBuffer.Marked.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSValue.jsUndefined();
@@ -1189,7 +1189,7 @@ pub const PipeReader = struct {
         switch (this.state) {
             .done => |bytes| {
                 defer this.state = .{ .done = &.{} };
-                return JSC.ArrayBuffer.Marked.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return JSC.JSValue.undefined;

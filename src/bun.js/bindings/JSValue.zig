@@ -942,7 +942,7 @@ pub const JSValue = enum(i64) {
         JSC.markBinding(@src());
         @setRuntimeSafety(false);
         if (allocator) |alloc| {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.ArrayBuffer.MarkedArrayBuffer_deallocator);
+            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.array_buffer.MarkedArrayBuffer_deallocator);
         } else {
             return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
         }

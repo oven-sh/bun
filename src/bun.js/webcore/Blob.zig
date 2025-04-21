@@ -3653,7 +3653,7 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
             return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
                 global,
                 store,
-                JSC.ArrayBuffer.BlobArrayBuffer_deallocator,
+                JSC.array_buffer.BlobArrayBuffer_deallocator,
                 null,
             );
         },

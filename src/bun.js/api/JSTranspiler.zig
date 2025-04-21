@@ -5,7 +5,6 @@ const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
@@ -15,10 +14,8 @@ const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-
-const Request = WebCore.Request;
-
-const FetchEvent = WebCore.FetchEvent;
+const Request = bun.webcore.Request;
+const FetchEvent = bun.webcore.FetchEvent;
 const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;

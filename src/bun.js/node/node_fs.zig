@@ -22,7 +22,7 @@ else
 // an extra stack buffer in the async case.
 pub const Flavor = enum { sync, @"async" };
 
-const ArrayBuffer = JSC.ArrayBuffer.Marked;
+const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = bun.api.node.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 pub const Async = struct {
@@ -2554,7 +2554,7 @@ pub const Arguments = struct {
             const buffer_value = arguments.nextEat() orelse
                 // theoretically impossible, argument has been passed already
                 return ctx.throwInvalidArguments("buffer is required", .{});
-            const buffer: JSC.ArrayBuffer.Marked = Buffer.fromJS(ctx, buffer_value) orelse
+            const buffer: JSC.MarkedArrayBuffer = Buffer.fromJS(ctx, buffer_value) orelse
                 return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value);
 
             var args: Read = .{ .fd = fd, .buffer = buffer };
@@ -5040,7 +5040,7 @@ pub const NodeFS = struct {
                                 array_buffer.ensureStillAlive();
                                 return .{
                                     .result = .{
-                                        .buffer = JSC.ArrayBuffer.Marked{
+                                        .buffer = JSC.MarkedArrayBuffer{
                                             .buffer = array_buffer.asArrayBuffer(vm.global) orelse {
                                                 // This case shouldn't really happen.
                                                 return .{

@@ -38,7 +38,9 @@ pub const createCallback = host_fn.createCallback;
 
 // JSC Classes Bindings
 pub const AnyPromise = @import("bindings/AnyPromise.zig").AnyPromise;
-pub const ArrayBuffer = @import("jsc/ArrayBuffer.zig");
+pub const array_buffer = @import("jsc/array_buffer.zig");
+pub const ArrayBuffer = array_buffer.ArrayBuffer;
+pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
 pub const CachedBytecode = @import("bindings/CachedBytecode.zig").CachedBytecode;
 pub const CallFrame = @import("bindings/CallFrame.zig").CallFrame;
 pub const CommonAbortReason = @import("bindings/CommonAbortReason.zig").CommonAbortReason;

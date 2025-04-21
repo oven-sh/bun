@@ -18,7 +18,7 @@ pub const process = @import("node/node_process.zig");
 pub const validators = @import("node/util/validators.zig");
 pub const ErrorCode = @import("node/nodejs_error_code.zig").Code;
 
-pub const Buffer = JSC.ArrayBuffer.Marked;
+pub const Buffer = JSC.MarkedArrayBuffer;
 
 const types = @import("node/types.zig");
 pub const PathOrBlob = types.PathOrBlob;

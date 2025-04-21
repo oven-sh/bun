@@ -3893,8 +3893,6 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
 
 pub extern fn windows_enable_stdio_inheritance() void;
 
-pub extern "c" fn quick_exit(code: c_int) noreturn;
-
 /// Extracted from standard library except this takes an open file descriptor
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL

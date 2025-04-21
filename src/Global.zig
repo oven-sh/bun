@@ -110,8 +110,6 @@ pub fn isExiting() bool {
     return is_exiting.load(.monotonic);
 }
 
-pub extern "c" fn quick_exit(code: c_int) noreturn;
-
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
@@ -125,7 +123,7 @@ pub fn exit(code: u32) noreturn {
             Bun__onExit();
             std.os.windows.kernel32.ExitProcess(code);
         },
-        else => quick_exit(@bitCast(code)),
+        else => bun.c.quick_exit(@bitCast(code)),
     }
 }
 

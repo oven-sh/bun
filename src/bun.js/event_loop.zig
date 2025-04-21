@@ -919,11 +919,9 @@ pub const EventLoop = struct {
     }
 
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
-    pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
+    pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, _: *JSC.VM) void {
         JSC.markBinding(@src());
 
-        // jsc_vm.releaseWeakRefs();
-        _ = jsc_vm;
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
 
         this.virtual_machine.is_inside_deferred_task_queue = true;

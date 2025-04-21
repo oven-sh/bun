@@ -31,6 +31,7 @@ pub export fn TextEncoder__encode8(
         return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
     }
 }
+
 pub export fn TextEncoder__encode16(
     globalThis: *JSGlobalObject,
     ptr: [*]const u16,
@@ -71,7 +72,7 @@ pub export fn TextEncoder__encode16(
             @TypeOf(slice),
             slice,
         ) catch {
-            return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
+            return globalThis.toInvalidArguments("Out of memory", .{});
         };
         return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
     }

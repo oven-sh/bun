@@ -2,8 +2,9 @@
 
 comptime {
     if (bun.Environment.export_cpp_apis) {
-        _ = @import("webcore/prompt.zig");
+        _ = &@import("webcore/prompt.zig");
     }
+    _ = &@import("webcore/TextEncoder.zig");
 }
 
 // TODO: make this JSGlobalObject local for better security

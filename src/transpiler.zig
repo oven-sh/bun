@@ -618,7 +618,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text, .csv, .csv_no_header, .tsv, .tsv_no_header => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1177,7 +1177,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .yaml, .json, .jsonc => |kind| {
+            inline .toml, .yaml, .csv, .csv_no_header, .tsv, .tsv_no_header, .json, .jsonc => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1188,6 +1188,14 @@ pub const Transpiler = struct {
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .yaml)
                     YAML.parse(source, transpiler.log, allocator) catch return null
+                else if (kind == .csv)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = true, .delimiter = ',' }) catch return null
+                else if (kind == .csv_no_header)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = false, .delimiter = ',' }) catch return null
+                else if (kind == .tsv)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = true, .delimiter = '\t' }) catch return null
+                else if (kind == .tsv_no_header)
+                    CSV.parse(source, transpiler.log, allocator, false, .{ .has_header = false, .delimiter = '\t' }) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1606,6 +1614,7 @@ const strings = bun.strings;
 const api = bun.schema.api;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
+const CSV = @import("./csv/csv_parser.zig").CSV;
 const default_macro_js_value = jsc.JSValue.zero;
 
 const js_ast = bun.ast;

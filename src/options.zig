@@ -634,6 +634,10 @@ pub const Loader = enum(u8) {
     sqlite_embedded = 16,
     html = 17,
     yaml = 18,
+    csv = 19,
+    csv_no_header = 20,
+    tsv = 21,
+    tsv_no_header = 22,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -705,6 +709,8 @@ pub const Loader = enum(u8) {
             .toml, .yaml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
+            .csv, .csv_no_header => bun.http.MimeType.csv,
+            .tsv, .tsv_no_header => bun.http.MimeType.tsv,
             else => {
                 for (paths) |path| {
                     var extname = std.fs.path.extension(path);
@@ -751,6 +757,10 @@ pub const Loader = enum(u8) {
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
         map.set(.yaml, "input.yaml");
+        map.set(.csv, "input.csv");
+        map.set(.csv_no_header, "input.csv");
+        map.set(.tsv, "input.tsv");
+        map.set(.tsv_no_header, "input.tsv");
         map.set(.wasm, "input.wasm");
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
@@ -775,7 +785,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, csv, csv_no_header, tsv, tsv_no_header, wasm, bunsh, or json", .{});
         };
     }
 
@@ -794,6 +804,10 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
         .{ "yaml", .yaml },
+        .{ "csv", .csv },
+        .{ "csv_no_header", .csv_no_header },
+        .{ "tsv", .tsv },
+        .{ "tsv_no_header", .tsv_no_header },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -822,6 +836,8 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "yaml", .yaml },
+        .{ "csv", .csv },
+        .{ "tsv", .tsv },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -862,6 +878,10 @@ pub const Loader = enum(u8) {
             .jsonc => .json,
             .toml => .toml,
             .yaml => .yaml,
+            .csv => .csv,
+            .csv_no_header => .csv_no_header,
+            .tsv => .tsv,
+            .tsv_no_header => .tsv_no_header,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -884,6 +904,10 @@ pub const Loader = enum(u8) {
             .jsonc => .jsonc,
             .toml => .toml,
             .yaml => .yaml,
+            .csv => .csv,
+            .csv_no_header => .csv_no_header,
+            .tsv => .tsv,
+            .tsv_no_header => .tsv_no_header,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -912,6 +936,13 @@ pub const Loader = enum(u8) {
         };
     }
 
+    pub fn isCSVLike(loader: Loader) bool {
+        return switch (loader) {
+            .csv, .csv_no_header, .tsv, .tsv_no_header => true,
+            else => false,
+        };
+    }
+
     pub fn isJavaScriptLikeOrJSON(loader: Loader) bool {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json, .jsonc => true,
@@ -932,7 +963,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .yaml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .csv, .csv_no_header, .tsv, .tsv_no_header, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -1105,6 +1136,8 @@ const default_loaders_posix = .{
     .{ ".toml", .toml },
     .{ ".yaml", .yaml },
     .{ ".yml", .yaml },
+    .{ ".csv", .csv },
+    .{ ".tsv", .tsv },
     .{ ".wasm", .wasm },
     .{ ".node", .napi },
     .{ ".txt", .text },
@@ -1547,6 +1580,7 @@ const default_loader_ext = [_]string{
     ".toml",  ".yaml",
     ".yml",   ".wasm",
     ".txt",   ".text",
+    ".csv",   ".tsv",
 
     ".jsonc",
 };
@@ -1566,6 +1600,8 @@ const node_modules_default_loader_ext = [_]string{
     ".toml",
     ".yaml",
     ".yml",
+    ".csv",
+    ".tsv",
     ".txt",
     ".json",
     ".jsonc",

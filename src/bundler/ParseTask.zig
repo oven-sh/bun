@@ -280,15 +280,34 @@ fn getEmptyCSSAST(
     opts: js_parser.Parser.Options,
     allocator: std.mem.Allocator,
     source: *const Logger.Source,
+    loader: Loader,
 ) !JSAst {
-    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+    const root = switch (loader) {
+        .csv, .csv_no_header, .tsv, .tsv_no_header => Expr.init(E.Array, E.Array{}, Logger.Loc.Empty),
+        .text => Expr.init(E.String, E.String{ .data = "" }, Logger.Loc.Empty),
+        else => Expr.init(E.Object, E.Object{}, Logger.Loc.Empty),
+    };
+
     var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
     ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
     return ast;
 }
 
-fn getEmptyAST(log: *Logger.Log, transpiler: *Transpiler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: *const Logger.Source, comptime RootType: type) !JSAst {
-    const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
+fn getEmptyAST(
+    log: *Logger.Log,
+    transpiler: *Transpiler,
+    opts: js_parser.Parser.Options,
+    allocator: std.mem.Allocator,
+    source: *const Logger.Source,
+    loader: Loader,
+    comptime RootType: type,
+) !JSAst {
+    const root = switch (loader) {
+        .csv, .csv_no_header, .tsv, .tsv_no_header => Expr.init(E.Array, E.Array{}, Logger.Loc.Empty),
+        .text => Expr.init(E.String, E.String{ .data = "" }, Logger.Loc.Empty),
+        else => Expr.init(RootType, RootType{}, Logger.Loc.Empty),
+    };
+
     return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
 }
 
@@ -328,6 +347,7 @@ fn getAST(
                     opts,
                     allocator,
                     source,
+                    loader,
                     if (as_undefined) E.Undefined else E.Object,
                 ),
             };
@@ -358,6 +378,50 @@ fn getAST(
                 temp_log.msgs.clearAndFree();
             }
             const root = try YAML.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .csv => {
+            const trace = bun.perf.trace("Bundler.ParseCSV");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .has_header = true, .delimiter = ',' });
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .csv_no_header => {
+            const trace = bun.perf.trace("Bundler.ParseCSVNoHeader");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .has_header = false, .delimiter = ',' });
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .tsv => {
+            const trace = bun.perf.trace("Bundler.ParseTSV");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .has_header = true, .delimiter = '\t' });
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .tsv_no_header => {
+            const trace = bun.perf.trace("Bundler.ParseTSVNoHeader");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .has_header = false, .delimiter = '\t' });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {
@@ -580,7 +644,7 @@ fn getAST(
         },
         // TODO:
         .dataurl, .base64, .bunsh => {
-            return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
+            return try getEmptyAST(log, transpiler, opts, allocator, source, loader, E.String);
         },
         .file, .wasm => {
             bun.assert(loader.shouldCopyForBundling());
@@ -1227,12 +1291,14 @@ fn runWithSourceCode(
             opts,
             allocator,
             source,
+            loader,
         ) else try getEmptyAST(
             log,
             transpiler,
             opts,
             allocator,
             source,
+            loader,
             if (as_undefined) E.Undefined else E.Object,
         ),
     };
@@ -1420,6 +1486,7 @@ const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
+const CSV = @import("../csv/csv_parser.zig").CSV;
 
 const js_ast = bun.ast;
 const E = js_ast.E;

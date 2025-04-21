@@ -1,7 +1,7 @@
 // Hardcoded module "node:fs/promises"
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
-const fs = $zig("node_fs_binding.zig", "createBinding");
+const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
 
@@ -139,7 +139,7 @@ const exports = {
   exists: async function exists() {
     try {
       return await fs.exists.$apply(fs, arguments);
-    } catch (e) {
+    } catch {
       return false;
     }
   },
@@ -413,7 +413,7 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    readLines(options = undefined) {
+    readLines(_options = undefined) {
       throw new Error("BUN TODO FileHandle.readLines");
     }
 
@@ -550,7 +550,7 @@ function asyncWrap(fn: any, name: string) {
       return this.close();
     }
 
-    readableWebStream(options = kEmptyObject) {
+    readableWebStream(_options = kEmptyObject) {
       const fd = this[kFd];
       throwEBADFIfNecessary("readableWebStream", fd);
 
@@ -585,7 +585,7 @@ function asyncWrap(fn: any, name: string) {
       throw new Error("BUN TODO FileHandle.kTransferList");
     }
 
-    [kDeserialize]({ handle }) {
+    [kDeserialize](_) {
       throw new Error("BUN TODO FileHandle.kDeserialize");
     }
 
@@ -681,26 +681,31 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   let totalBytesWritten = 0;
 
+  let error: Error | undefined;
+
   try {
     totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
-  } finally {
-    if (mustClose) {
+  } catch (err) {
+    error = err as Error;
+  }
+
+  // Handle cleanup outside of try-catch
+  if (mustClose) {
+    if (typeof flag === "string" && !flag.includes("a")) {
       try {
-        if (typeof flag === "string" && !flag.includes("a")) {
-          await fs.ftruncate(fdOrPath, totalBytesWritten);
-        }
-      } finally {
-        await fs.close(fdOrPath);
-        // abort signal shadows other errors
-        if (signal?.aborted) {
-          throw signal.reason;
-        }
-      }
-    } else {
-      // abort signal shadows other errors
-      if (signal?.aborted) {
-        throw signal.reason;
-      }
+        await fs.ftruncate(fdOrPath, totalBytesWritten);
+      } catch {}
     }
+
+    await fs.close(fdOrPath);
+  }
+
+  // Abort signal shadows other errors
+  if (signal?.aborted) {
+    error = signal.reason;
+  }
+
+  if (error) {
+    throw error;
   }
 }

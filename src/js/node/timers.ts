@@ -30,7 +30,7 @@ export default {
 
     throwNotImplemented("'timers.unenroll'");
   },
-  enroll(timer, msecs) {
+  enroll(timer, _msecs) {
     if ($isCallable(timer?.refresh)) {
       timer.refresh();
       return;

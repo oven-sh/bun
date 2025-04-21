@@ -1312,7 +1312,7 @@ interface PromiseConstructor {
    * This is useful when you want to return a Promise and have code outside the Promise
    * resolve or reject it.
    *
-   * ## Example
+   * @example
    * ```ts
    * const { promise, resolve, reject } = Promise.withResolvers();
    *
@@ -1322,8 +1322,6 @@ interface PromiseConstructor {
    *
    * await promise; // "Hello world!"
    * ```
-   *
-   * `Promise.withResolvers()` is a [stage3 proposal](https://github.com/tc39/proposal-promise-with-resolvers).
    */
   withResolvers<T>(): {
     promise: Promise<T>;

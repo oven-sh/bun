@@ -145,7 +145,7 @@
  * @param {{ keepOpen?: boolean } | undefined} options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle, options) {
+export function serialize(_message, _handle, _options) {
   // sending file descriptors is not supported yet
   return null; // send the message without the file descriptor
 
@@ -214,7 +214,7 @@ export function serialize(message, handle, options) {
 export function parseHandle(target, serialized, fd) {
   const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
   const net = require("node:net");
-  const dgram = require("node:dgram");
+  // const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();

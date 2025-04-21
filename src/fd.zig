@@ -72,21 +72,21 @@ pub const FD = packed struct(backing_int) {
     }
 
     pub fn stdin() FD {
-        if (os != .windows) return comptime_stdin;
+        if (os != .windows) return .fromUV(0);
         const in_comptime = @inComptime();
         comptime assert(!in_comptime); // windows std handles are not known at build time
         return windows_cached_stdin;
     }
 
     pub fn stdout() FD {
-        if (os != .windows) return comptime_stdout;
+        if (os != .windows) return .fromUV(1);
         const in_comptime = @inComptime();
         comptime assert(!in_comptime); // windows std handles are not known at build time
         return windows_cached_stdout;
     }
 
     pub fn stderr() FD {
-        if (os != .windows) return comptime_stderr;
+        if (os != .windows) return .fromUV(2);
         const in_comptime = @inComptime();
         comptime assert(!in_comptime); // windows std handles are not known at build time
         return windows_cached_stderr;

@@ -223,7 +223,7 @@ yourself with Bun.serve().
         // use the default port via existing port detection code.
         // port: 3000,
 
-        fetch(req: Request) {
+        fetch(_req: Request) {
           return new Response("Not found", { status: 404 });
         },
       });
@@ -242,7 +242,7 @@ yourself with Bun.serve().
               // Retry with a different port up to 4 times.
               port: defaultPort++,
 
-              fetch(req: Request) {
+              fetch(_req: Request) {
                 return new Response("Not found", { status: 404 });
               },
             });

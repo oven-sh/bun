@@ -18,7 +18,7 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .dlopen => |path| try writer.print("loading native module: {s}", .{path}),
         }
     }
 };
@@ -294,7 +294,7 @@ pub fn crashHandler(
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},

@@ -22,7 +22,6 @@ function isFunction(value) {
 
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
-var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
 const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
 

@@ -140,5 +140,5 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ZigString = JSC.ZigString;

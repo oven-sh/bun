@@ -111,6 +111,7 @@ const {
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
+  setRequireHostHeader,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -124,6 +125,7 @@ const {
   Blob: (typeof globalThis)["Blob"];
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+  setRequireHostHeader: (server: any, requireHostHeader: boolean) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
 };
 
@@ -194,7 +196,8 @@ const kEmptyBuffer = Buffer.alloc(0);
 function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
+    const length = obj.length;
+    for (var i = 0; i < length; i++) {
       const item = obj[i];
       if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false; // prettier-ignore
     }
@@ -235,6 +238,9 @@ var FakeSocket = class Socket extends Duplex {
   connect(port, host, connectListener) {
     return this;
   }
+  _onTimeout = function () {
+    this.emit("timeout");
+  };
 
   _destroy(err, callback) {
     const socketData = this[kInternalSocketData];
@@ -378,6 +384,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onCloseForDestroy(closeCallback) {
     this.#onClose();
     $isCallable(closeCallback) && closeCallback();
+  }
+
+  _onTimeout() {
+    const handle = this[kHandle];
+    const response = handle?.response;
+    // if there is a response, and it has pending data,
+    // we suppress the timeout because a write is in progress
+    if (response && response.bufferedAmount > 0) {
+      return;
+    }
+    this.emit("timeout");
+  }
+  _unrefTimer() {
+    // for compatibility
   }
 
   address() {
@@ -1036,6 +1056,7 @@ const ServerPrototype = {
           socketHandle,
           isSocketNew,
           socket,
+          isAncientHTTP: boolean,
         ) {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
@@ -1044,6 +1065,9 @@ const ServerPrototype = {
           }
 
           const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
+          if (isAncientHTTP) {
+            http_req.httpVersion = "1.0";
+          }
           const http_res = new ResponseClass(http_req, {
             [kHandle]: handle,
             [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
@@ -1206,6 +1230,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
+      setRequireHostHeader(this[serverSymbol], this.requireHostHeader);
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -1462,6 +1487,7 @@ function onDataIncomingMessage(
 const IncomingMessagePrototype = {
   constructor: IncomingMessage,
   __proto__: Readable.prototype,
+  httpVersion: "1.1",
   _construct(callback) {
     // TODO: streaming
     const type = this[typeSymbol];
@@ -1632,20 +1658,22 @@ const IncomingMessagePrototype = {
   set statusMessage(value) {
     this[statusMessageSymbol] = value;
   },
-  get httpVersion() {
-    return "1.1";
-  },
-  set httpVersion(value) {
-    // noop
-  },
   get httpVersionMajor() {
-    return 1;
+    const version = this.httpVersion;
+    if (version.startsWith("1.")) {
+      return 1;
+    }
+    return 0;
   },
   set httpVersionMajor(value) {
     // noop
   },
   get httpVersionMinor() {
-    return 1;
+    const version = this.httpVersion;
+    if (version.endsWith(".1")) {
+      return 1;
+    }
+    return 0;
   },
   set httpVersionMinor(value) {
     // noop
@@ -2458,9 +2486,12 @@ const ServerResponsePrototype = {
     this._implicitHeader();
 
     const handle = this[kHandle];
-    if (handle && !this.headersSent) {
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+    if (handle) {
+      if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
+        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      }
+      handle.flushHeaders();
     }
   },
 } satisfies typeof import("node:http").ServerResponse.prototype;
@@ -2663,7 +2694,6 @@ const kOptions = Symbol("options");
 const kSocketPath = Symbol("socketPath");
 const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
-const kJoinDuplicateHeaders = Symbol("joinDuplicateHeaders");
 
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
@@ -3217,7 +3247,7 @@ function ClientRequest(input, options, cb) {
     options.host =
       validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
 
-  const setHost = options.setHost === undefined || Boolean(options.setHost);
+  const setHost = options.setHost === undefined || !!options.setHost;
 
   this[kSocketPath] = options.socketPath;
 
@@ -3249,27 +3279,25 @@ function ClientRequest(input, options, cb) {
   }
 
   const _maxHeaderSize = options.maxHeaderSize;
-  // TODO: Validators
-  // if (maxHeaderSize !== undefined)
-  //   validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  const maxHeaderSize = options.maxHeaderSize;
+  if (maxHeaderSize !== undefined) validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  this.maxHeaderSize = maxHeaderSize;
+
   this[kMaxHeaderSize] = _maxHeaderSize;
 
-  // const insecureHTTPParser = options.insecureHTTPParser;
-  // if (insecureHTTPParser !== undefined) {
-  //   validateBoolean(insecureHTTPParser, 'options.insecureHTTPParser');
-  // }
-
-  // this.insecureHTTPParser = insecureHTTPParser;
-  var _joinDuplicateHeaders = options.joinDuplicateHeaders;
-  if (_joinDuplicateHeaders !== undefined) {
-    // TODO: Validators
-    // validateBoolean(
-    //   options.joinDuplicateHeaders,
-    //   "options.joinDuplicateHeaders",
-    // );
+  const insecureHTTPParser = options.insecureHTTPParser;
+  if (insecureHTTPParser !== undefined) {
+    validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
   }
 
-  this[kJoinDuplicateHeaders] = _joinDuplicateHeaders;
+  this.insecureHTTPParser = insecureHTTPParser;
+  const joinDuplicateHeaders = options.joinDuplicateHeaders;
+
+  if (joinDuplicateHeaders !== undefined) {
+    validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+  }
+  this.joinDuplicateHeaders = joinDuplicateHeaders;
+
   if (options.pfx) {
     throw new Error("pfx is not supported");
   }
@@ -3358,7 +3386,15 @@ function ClientRequest(input, options, cb) {
 
   const { headers } = options;
   const headersArray = $isJSArray(headers);
-  if (!headersArray) {
+  if (headersArray) {
+    const length = headers.length;
+    if (length % 2 !== 0) {
+      throw $ERR_INVALID_ARG_VALUE("options.headers", headers);
+    }
+    for (let i = 0; i < length; ) {
+      this.appendHeader(headers[i++], headers[i++]);
+    }
+  } else {
     if (headers) {
       for (let key in headers) {
         this.setHeader(key, headers[key]);
@@ -3705,27 +3741,29 @@ function _writeHead(statusCode, reason, obj, response) {
     let k;
 
     if ($isArray(obj)) {
+      const length = obj.length;
       // Append all the headers provided in the array:
-      if (obj.length && $isArray(obj[0])) {
-        for (let i = 0; i < obj.length; i++) {
+      if (length && $isArray(obj[0])) {
+        for (let i = 0; i < length; i++) {
           const k = obj[i];
           if (k) response.appendHeader(k[0], k[1]);
         }
       } else {
-        if (obj.length % 2 !== 0) {
+        if (length % 2 !== 0) {
           throw new Error("raw headers must have an even number of elements");
         }
 
-        for (let n = 0; n < obj.length; n += 2) {
-          k = obj[n + 0];
-          if (k) response.setHeader(k, obj[n + 1]);
+        for (let n = 0; n < length; n += 2) {
+          k = obj[n];
+          if (k) response.appendHeader(k, obj[n + 1]);
         }
       }
     } else if (obj) {
       const keys = Object.keys(obj);
+      const length = keys.length;
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
-      for (let i = 0; i < keys.length; i++) {
+      for (let i = 0; i < length; i++) {
         k = keys[i];
         if (k) response.setHeader(k, obj[k]);
       }

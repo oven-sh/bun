@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
@@ -726,7 +726,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError {
-        return globalObject.ERR_INVALID_ARG_VALUE("encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
+        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
@@ -1004,18 +1004,18 @@ pub const PathLike = union(enum) {
                 if (arg.as(JSC.DOMURL)) |domurl| {
                     var str: bun.String = domurl.fileSystemPath() catch |err| switch (err) {
                         error.NotFileUrl => {
-                            return ctx.ERR_INVALID_URL_SCHEME("URL must be a non-empty \"file:\" path", .{}).throw();
+                            return ctx.ERR(.INVALID_URL_SCHEME, "URL must be a non-empty \"file:\" path", .{}).throw();
                         },
                         error.InvalidPath => {
-                            return ctx.ERR_INVALID_FILE_URL_PATH("URL must be a non-empty \"file:\" path", .{}).throw();
+                            return ctx.ERR(.INVALID_FILE_URL_PATH, "URL must be a non-empty \"file:\" path", .{}).throw();
                         },
                         error.InvalidHost => {
-                            return ctx.ERR_INVALID_FILE_URL_HOST("URL must be a non-empty \"file:\" path", .{}).throw();
+                            return ctx.ERR(.INVALID_FILE_URL_HOST, "URL must be a non-empty \"file:\" path", .{}).throw();
                         },
                     };
                     defer str.deref();
                     if (str.isEmpty()) {
-                        return ctx.ERR_INVALID_ARG_VALUE("URL must be a non-empty \"file:\" path", .{}).throw();
+                        return ctx.ERR(.INVALID_ARG_VALUE, "URL must be a non-empty \"file:\" path", .{}).throw();
                     }
                     arguments.eat();
 
@@ -1109,7 +1109,7 @@ pub const Valid = struct {
 
     pub fn pathNullBytes(slice: []const u8, global: *JSC.JSGlobalObject) bun.JSError!void {
         if (bun.strings.indexOfChar(slice, 0) != null) {
-            return global.ERR_INVALID_ARG_VALUE("The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
+            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
         }
     }
 };
@@ -1359,7 +1359,7 @@ pub fn modeFromJS(ctx: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!?Mod
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
             defer formatter.deinit();
-            return ctx.throwValue(ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
+            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 
@@ -1525,7 +1525,7 @@ pub const FileSystemFlags = enum(c_int) {
     pub fn fromJS(ctx: *JSC.JSGlobalObject, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
-                return ctx.throwValue(ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
+                return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
@@ -1582,19 +1582,19 @@ pub const FileSystemFlags = enum(c_int) {
                     .copy_file => 0, // constexpr int kDefaultCopyMode = 0;
                 });
             }
-            return global.ERR_INVALID_ARG_TYPE("mode must be int32 or null/undefined", .{}).throw();
+            return global.ERR(.INVALID_ARG_TYPE, "mode must be int32 or null/undefined", .{}).throw();
         }
         const min, const max = .{ 0, 7 };
         if (value.isInt32()) {
             const int: i32 = value.asInt32();
             if (int < min or int > max) {
-                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
+                return global.ERR(.OUT_OF_RANGE, comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
             }
             return @enumFromInt(int);
         } else {
             const float = value.asNumber();
             if (std.math.isNan(float) or std.math.isInf(float) or float < min or float > max) {
-                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
+                return global.ERR(.OUT_OF_RANGE, comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
             }
             return @enumFromInt(@as(i32, @intFromFloat(float)));
         }
@@ -1928,7 +1928,7 @@ pub const Process = struct {
             buf2[len2] = 0;
             break :str buf2[0..len2 :0].ptr;
         } else null;
-        _ = bun.windows.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
+        _ = bun.c.SetEnvironmentVariableW(buf1[0..len1 :0].ptr, str2);
     }
 
     comptime {

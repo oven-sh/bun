@@ -1,6 +1,6 @@
 const std = @import("std");
 const StaticExport = @import("./bindings/static_export.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -2268,7 +2268,7 @@ pub const ModuleLoader = struct {
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
         var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
-            ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
+            ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS().asVoid());
             return null;
         };
         defer if (blob_to_deinit) |*blob| blob.deinit();

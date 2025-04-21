@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Async = bun.Async;
 const string = bun.string;
 const Output = bun.Output;

@@ -1321,7 +1321,7 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 const Resolver = bun.resolver.Resolver;
 const DirInfo = bun.resolver.DirInfo;

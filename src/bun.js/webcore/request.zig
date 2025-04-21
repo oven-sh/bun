@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
@@ -767,7 +767,7 @@ pub const Request = struct {
             if (!globalThis.hasException()) {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
                 // so we must increment the reference count before calling it.
-                return globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
+                return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
             }
             return error.JSError;
         }

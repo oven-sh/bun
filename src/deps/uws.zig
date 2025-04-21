@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = bun.Environment;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
@@ -231,7 +231,7 @@ pub const UpgradedDuplex = struct {
                         this.onInternalReceiveData(payload);
                     } else {
                         // node.js errors in this case with the same error, lets keep it consistent
-                        const error_value = globalObject.ERR_STREAM_WRAP("Stream has StringDecoder set or is in objectMode", .{}).toJS();
+                        const error_value = globalObject.ERR(.STREAM_WRAP, "Stream has StringDecoder set or is in objectMode", .{}).toJS();
                         error_value.ensureStillAlive();
                         this.handlers.onError(this.handlers.ctx, error_value);
                     }
@@ -558,7 +558,12 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
     vm: *bun.JSC.VirtualMachine, //TODO: create a timeout version that dont need the JSC VM
 
-    writer: bun.io.StreamingWriter(WindowsNamedPipe, onWrite, onError, onWritable, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(@This(), .{
+        .onClose = onClose,
+        .onWritable = onWritable,
+        .onError = onError,
+        .onWrite = onWrite,
+    }) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     ssl_error: CertError = .{},
@@ -2523,9 +2528,9 @@ pub const create_bun_socket_error_t = enum(c_int) {
                 bun.debugAssert(false);
                 break :brk .null;
             },
-            .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),
-            .invalid_ca_file => globalObject.ERR_BORINGSSL("Invalid CA file", .{}).toJS(),
-            .invalid_ca => globalObject.ERR_BORINGSSL("Invalid CA", .{}).toJS(),
+            .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
+            .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
+            .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
         };
     }
 };
@@ -3048,7 +3053,11 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.getRemoteSocketInfo(),
         };
     }
-
+    pub fn flushHeaders(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.flushHeaders(),
+        };
+    }
     pub fn getWriteOffset(this: AnyResponse) u64 {
         return switch (this) {
             inline else => |resp| resp.getWriteOffset(),
@@ -3275,6 +3284,10 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn destroy(app: *ThisApp) void {
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
+        }
+
+        pub fn setRequireHostHeader(this: *ThisApp, require_host_header: bool) void {
+            return uws_app_set_require_host_header(ssl_flag, @as(*uws_app_t, @ptrCast(this)), require_host_header);
         }
 
         pub fn clearRoutes(app: *ThisApp) void {
@@ -3565,6 +3578,10 @@ pub fn NewApp(comptime ssl: bool) type {
 
             pub fn tryEnd(res: *Response, data: []const u8, total: usize, close_: bool) bool {
                 return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
+            }
+
+            pub fn flushHeaders(res: *Response) void {
+                uws_res_flush_headers(ssl_flag, res.downcast());
             }
 
             pub fn state(res: *const Response) State {
@@ -3912,6 +3929,7 @@ extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
 extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) ?*uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
+extern fn uws_app_set_require_host_header(ssl: i32, app: *uws_app_t, require_host_header: bool) void;
 extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_post(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
@@ -3977,6 +3995,7 @@ extern fn uws_res_try_end(
     total: usize,
     close: bool,
 ) bool;
+extern fn uws_res_flush_headers(ssl: i32, res: *uws_res) void;
 extern fn uws_res_pause(ssl: i32, res: *uws_res) void;
 extern fn uws_res_resume(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write_continue(ssl: i32, res: *uws_res) void;

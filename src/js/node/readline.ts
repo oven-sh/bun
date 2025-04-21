@@ -84,25 +84,17 @@ const StringPrototypeTrim = String.prototype.trim;
 const StringPrototypeNormalize = String.prototype.normalize;
 const NumberIsNaN = Number.isNaN;
 const NumberIsFinite = Number.isFinite;
-const NumberIsInteger = Number.isInteger;
-const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-const NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
 const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const DateNow = Date.now;
-const FunctionPrototype = Function.prototype;
 const StringPrototype = String.prototype;
 const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
 const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
-const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
-const ObjectAssign = Object.assign;
 const ObjectCreate = Object.create;
-const ObjectKeys = Object.keys;
-const ObjectSeal = Object.seal;
 
 var createSafeIterator = (factory, next) => {
   class SafeIterator {

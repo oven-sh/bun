@@ -382,7 +382,7 @@ pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSV
 
 pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
     if (this.flags.request_has_completed or this.flags.socket_closed) {
-        return JSC.JSValue.jsNull();
+        return JSC.JSValue.jsNumber(0);
     }
 
     return JSC.JSValue.jsNumber(this.raw_response.getBufferedAmount());
@@ -404,7 +404,7 @@ pub fn jsUnref(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *J
 
 fn handleEndedIfNecessary(state: uws.State, globalObject: *JSC.JSGlobalObject) bun.JSError!void {
     if (!state.isResponsePending()) {
-        return globalObject.ERR_HTTP_HEADERS_SENT("Stream is already ended", .{}).throw();
+        return globalObject.ERR(.HTTP_HEADERS_SENT, "Stream is already ended", .{}).throw();
     }
 }
 
@@ -428,7 +428,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, cal
     const arguments = callframe.argumentsUndef(3).slice();
 
     if (this.isDone()) {
-        return globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
+        return globalObject.ERR(.STREAM_ALREADY_FINISHED, "Stream is already ended", .{}).throw();
     }
 
     const state = this.raw_response.state();
@@ -463,7 +463,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, cal
     }
 
     if (state.isHttpStatusCalled()) {
-        return globalObject.ERR_HTTP_HEADERS_SENT("Stream already started", .{}).throw();
+        return globalObject.ERR(.HTTP_HEADERS_SENT, "Stream already started", .{}).throw();
     }
 
     do_it: {
@@ -789,12 +789,12 @@ fn writeOrEnd(
     comptime is_end: bool,
 ) bun.JSError!JSC.JSValue {
     if (this.isDone()) {
-        return globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
+        return globalObject.ERR(.STREAM_WRITE_AFTER_END, "Stream already ended", .{}).throw();
     }
 
     const state = this.raw_response.state();
     if (!state.isResponsePending()) {
-        return globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
+        return globalObject.ERR(.STREAM_WRITE_AFTER_END, "Stream already ended", .{}).throw();
     }
 
     const input_value = if (arguments.len > 0) arguments[0] else .undefined;
@@ -999,6 +999,11 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfra
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
 
+pub fn flushHeaders(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    this.raw_response.flushHeaders();
+    return .undefined;
+}
+
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).slice();
     //We dont wanna a paused socket when we call end, so is important to resume the socket
@@ -1047,7 +1052,7 @@ pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callfram
     }
 
     if (this.flags.request_has_completed or this.flags.socket_closed) {
-        return globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
+        return globalObject.ERR(.STREAM_ALREADY_FINISHED, "Stream is already ended", .{}).throw();
     }
 
     var result: JSC.JSValue = .zero;

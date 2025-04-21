@@ -3,7 +3,7 @@ const { SafeArrayIterator } = require("internal/primordials");
 const ArrayIsArray = Array.isArray;
 const ArrayPrototypePush = Array.prototype.push;
 
-function aggregateTwoErrors(innerError, outerError) {
+function aggregateTwoErrors(innerError: Error | undefined, outerError: Error & { errors?: Error[] }) {
   if (innerError && outerError && innerError !== outerError) {
     if (ArrayIsArray(outerError.errors)) {
       // If `outerError` is already an `AggregateError`.

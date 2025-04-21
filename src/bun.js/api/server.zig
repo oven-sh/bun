@@ -5154,13 +5154,26 @@ const PluginsResult = union(enum) {
     err,
 };
 
-pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
+pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { debug, production }) type {
     return struct {
-        pub usingnamespace NamespaceType;
+        pub const js = switch (protocol_enum) {
+            .http => switch (development_kind) {
+                .debug => bun.JSC.Codegen.JSDebugHTTPServer,
+                .production => bun.JSC.Codegen.JSHTTPServer,
+            },
+            .https => switch (development_kind) {
+                .debug => bun.JSC.Codegen.JSDebugHTTPSServer,
+                .production => bun.JSC.Codegen.JSHTTPSServer,
+            },
+        };
+        pub const fromJS = js.fromJS;
+        pub const toJS = js.toJS;
+        pub const toJSDirect = js.toJSDirect;
+
         pub const new = bun.TrivialNew(@This());
 
-        pub const ssl_enabled = ssl_enabled_;
-        pub const debug_mode = debug_mode_;
+        pub const ssl_enabled = protocol_enum == .https;
+        pub const debug_mode = development_kind == .debug;
 
         const ThisServer = @This();
         pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
@@ -5307,6 +5320,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn setIdleTimeout(this: *ThisServer, seconds: c_uint) void {
             this.config.idleTimeout = @truncate(@min(seconds, 255));
+        }
+
+        pub fn setRequireHostHeader(this: *ThisServer, require_host_header: bool) void {
+            if (this.app) |app| {
+                app.setRequireHostHeader(require_host_header);
+            }
         }
 
         pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyRoute) !void {
@@ -5685,7 +5704,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const route_list_value = this.setRoutes();
             if (new_config.had_routes_object) {
                 if (this.js_value.get()) |server_js_value| {
-                    NamespaceType.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                    js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
                 }
             }
         }
@@ -5700,7 +5719,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
                 if (this.js_value.get()) |server_js_value| {
-                    NamespaceType.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                    js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
                 }
             }
             return true;
@@ -5820,7 +5839,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 );
             } else {
                 const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(bun.JSC.C.JSValueGetType(ctx, first_arg.asRef()));
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
+                const err = JSC.toTypeError(.INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
 
                 return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, err);
             }
@@ -5961,7 +5980,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         port = @intCast(listener.getLocalPort());
                     }
                     break :blk bun.fmt.URLFormatter{
-                        .proto = if (comptime ssl_enabled_) .https else .http,
+                        .proto = if (comptime ssl_enabled) .https else .http,
                         .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
                         .port = port,
                     };
@@ -6130,7 +6149,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.listener = null;
             this.unref();
 
-            if (!ssl_enabled_)
+            if (!ssl_enabled)
                 this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
 
             if (!abrupt) {
@@ -6241,7 +6260,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             server.request_pool_allocator = RequestContext.pool.?;
 
-            if (comptime ssl_enabled_) {
+            if (comptime ssl_enabled) {
                 Analytics.Features.https_server += 1;
             } else {
                 Analytics.Features.http_server += 1;
@@ -6364,7 +6383,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.listener = socket;
             this.vm.event_loop_handle = Async.Loop.get();
-            if (!ssl_enabled_)
+            if (!ssl_enabled)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
         }
 
@@ -6612,7 +6631,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;
 
-            const server_request_list = NamespaceType.routeListGetCached(server.jsValueAssertAlive()).?;
+            const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
 
             if (server.globalThis.tryTakeException()) |exception| {
@@ -6859,7 +6878,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
-            const server_request_list = NamespaceType.routeListGetCached(server.jsValueAssertAlive()).?;
+            const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
 
             if (server.globalThis.tryTakeException()) |exception| {
@@ -7368,10 +7387,10 @@ pub const ServerAllConnectionsClosedTask = struct {
     }
 };
 
-pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
-pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
-pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);
-pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, true);
+pub const HTTPServer = NewServer(.http, .production);
+pub const HTTPSServer = NewServer(.https, .production);
+pub const DebugHTTPServer = NewServer(.http, .debug);
+pub const DebugHTTPSServer = NewServer(.https, .debug);
 pub const AnyServer = struct {
     ptr: Ptr,
 
@@ -7594,8 +7613,14 @@ extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
 const assert = bun.assert;
 
 pub export fn Server__setIdleTimeout(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
-    Server__setIdleTimeout_(server, seconds, globalThis) catch return;
+    Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+        },
+    };
 }
+
 pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
     if (!server.isObject()) {
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
@@ -7617,9 +7642,35 @@ pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, global
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
 }
+pub export fn Server__setRequireHostHeader(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) void {
+    Server__setRequireHostHeader_(server, require_host_header, globalThis) catch |err| switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+        },
+    };
+}
+pub fn Server__setRequireHostHeader_(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+    if (!server.isObject()) {
+        return globalThis.throw("Failed to set requireHostHeader: The 'this' value is not a Server.", .{});
+    }
+
+    if (server.as(HTTPServer)) |this| {
+        this.setRequireHostHeader(require_host_header);
+    } else if (server.as(HTTPSServer)) |this| {
+        this.setRequireHostHeader(require_host_header);
+    } else if (server.as(DebugHTTPServer)) |this| {
+        this.setRequireHostHeader(require_host_header);
+    } else if (server.as(DebugHTTPSServer)) |this| {
+        this.setRequireHostHeader(require_host_header);
+    } else {
+        return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
+    }
+}
 
 comptime {
     _ = Server__setIdleTimeout;
+    _ = Server__setRequireHostHeader;
     _ = NodeHTTPResponse.create;
 }
 

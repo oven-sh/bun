@@ -1,6 +1,6 @@
 const { isIP, isIPv6 } = require("node:net");
 
-const { checkIsHttpToken, validateFunction } = require("internal/validators");
+const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
 const {
   kBodyChunks,
@@ -26,7 +26,6 @@ const {
   kMaxHeadersCount,
   kReusedSocket,
   kOptions,
-  kJoinDuplicateHeaders,
   kTimeoutTimer,
   kEmitState,
   ClientRequestEmitState,
@@ -636,7 +635,7 @@ function ClientRequest(input, options, cb) {
     options.host =
       validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
 
-  const setHost = options.setHost === undefined || Boolean(options.setHost);
+  const setHost = options.setHost === undefined || !!options.setHost;
 
   this[kSocketPath] = options.socketPath;
 
@@ -668,27 +667,25 @@ function ClientRequest(input, options, cb) {
   }
 
   const _maxHeaderSize = options.maxHeaderSize;
-  // TODO: Validators
-  // if (maxHeaderSize !== undefined)
-  //   validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  const maxHeaderSize = options.maxHeaderSize;
+  if (maxHeaderSize !== undefined) validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  this.maxHeaderSize = maxHeaderSize;
+
   this[kMaxHeaderSize] = _maxHeaderSize;
 
-  // const insecureHTTPParser = options.insecureHTTPParser;
-  // if (insecureHTTPParser !== undefined) {
-  //   validateBoolean(insecureHTTPParser, 'options.insecureHTTPParser');
-  // }
-
-  // this.insecureHTTPParser = insecureHTTPParser;
-  var _joinDuplicateHeaders = options.joinDuplicateHeaders;
-  if (_joinDuplicateHeaders !== undefined) {
-    // TODO: Validators
-    // validateBoolean(
-    //   options.joinDuplicateHeaders,
-    //   "options.joinDuplicateHeaders",
-    // );
+  const insecureHTTPParser = options.insecureHTTPParser;
+  if (insecureHTTPParser !== undefined) {
+    validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
   }
 
-  this[kJoinDuplicateHeaders] = _joinDuplicateHeaders;
+  this.insecureHTTPParser = insecureHTTPParser;
+  const joinDuplicateHeaders = options.joinDuplicateHeaders;
+
+  if (joinDuplicateHeaders !== undefined) {
+    validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+  }
+  this.joinDuplicateHeaders = joinDuplicateHeaders;
+
   if (options.pfx) {
     throw new Error("pfx is not supported");
   }
@@ -777,7 +774,15 @@ function ClientRequest(input, options, cb) {
 
   const { headers } = options;
   const headersArray = $isJSArray(headers);
-  if (!headersArray) {
+  if (headersArray) {
+    const length = headers.length;
+    if (length % 2 !== 0) {
+      throw $ERR_INVALID_ARG_VALUE("options.headers", "headers");
+    }
+    for (let i = 0; i < length; ) {
+      this.appendHeader(headers[i++], headers[i++]);
+    }
+  } else {
     if (headers) {
       for (let key in headers) {
         this.setHeader(key, headers[key]);

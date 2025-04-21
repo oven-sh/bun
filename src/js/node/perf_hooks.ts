@@ -98,7 +98,7 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(utilization1, utilization2) {
+function eventLoopUtilization(_utilization1, _utilization2) {
   return {
     idle: 0,
     active: 0,
@@ -117,32 +117,32 @@ Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
   performance: {
-    mark(f) {
+    mark(_) {
       return performance.mark(...arguments);
     },
-    measure(f) {
+    measure(_) {
       return performance.measure(...arguments);
     },
-    clearMarks(f) {
+    clearMarks(_) {
       return performance.clearMarks(...arguments);
     },
-    clearMeasures(f) {
+    clearMeasures(_) {
       return performance.clearMeasures(...arguments);
     },
-    getEntries(f) {
+    getEntries(_) {
       return performance.getEntries(...arguments);
     },
-    getEntriesByName(f) {
+    getEntriesByName(_) {
       return performance.getEntriesByName(...arguments);
     },
-    getEntriesByType(f) {
+    getEntriesByType(_) {
       return performance.getEntriesByType(...arguments);
     },
-    setResourceTimingBufferSize(f) {
+    setResourceTimingBufferSize(_) {
       return performance.setResourceTimingBufferSize(...arguments);
     },
     timeOrigin: performance.timeOrigin,
-    toJSON(f) {
+    toJSON(_) {
       return performance.toJSON(...arguments);
     },
     onresourcetimingbufferfull: performance.onresourcetimingbufferfull,

@@ -1,9 +1,6 @@
 const { hideFromStack } = require("internal/shared");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const ArrayPrototypeIncludes = Array.prototype.includes;
-const ArrayPrototypeJoin = Array.prototype.join;
-const ArrayPrototypeMap = Array.prototype.map;
 const ArrayIsArray = Array.isArray;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;

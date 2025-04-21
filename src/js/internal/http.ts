@@ -9,6 +9,7 @@ const {
   setRequestTimeout,
   headersTuple,
   webRequestOrResponseHasBodyValue,
+  setRequireHostHeader,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -20,6 +21,7 @@ const {
   setRequestTimeout: (req: Request, timeout: number) => boolean;
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+  setRequireHostHeader: (server: any, requireHostHeader: boolean) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
@@ -48,7 +50,6 @@ const kOptions = Symbol("options");
 const kSocketPath = Symbol("socketPath");
 const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
-const kJoinDuplicateHeaders = Symbol("joinDuplicateHeaders");
 const abortedSymbol = Symbol("aborted");
 const kClearTimeout = Symbol("kClearTimeout");
 
@@ -225,7 +226,8 @@ function validateMsecs(numberlike: any, field: string) {
 function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
+    const length = obj.length;
+    for (var i = 0; i < length; i++) {
       const item = obj[i];
       if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false; // prettier-ignore
     }
@@ -414,7 +416,6 @@ export {
   kSocketPath,
   kSignal,
   kMaxHeaderSize,
-  kJoinDuplicateHeaders,
   abortedSymbol,
   kClearTimeout,
   emitErrorNextTickIfErrorListenerNT,
@@ -474,4 +475,5 @@ export {
   drainMicrotasks,
   setServerIdleTimeout,
   getRawKeys,
+  setRequireHostHeader,
 };

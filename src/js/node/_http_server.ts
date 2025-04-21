@@ -40,6 +40,7 @@ const {
   runSymbol,
   drainMicrotasks,
   setServerIdleTimeout,
+  setRequireHostHeader,
 } = require("internal/http");
 
 const { format } = require("internal/util/inspect");
@@ -493,10 +494,15 @@ const ServerResponsePrototype = {
   },
 
   flushHeaders() {
+    this._implicitHeader();
+
     const handle = this[kHandle];
-    if (handle && !this.headersSent) {
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+    if (handle) {
+      if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
+        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      }
+      handle.flushHeaders();
     }
   },
 } satisfies typeof import("node:http").ServerResponse.prototype;
@@ -904,6 +910,7 @@ const ServerPrototype = {
           socketHandle,
           isSocketNew,
           socket,
+          isAncientHTTP: boolean,
         ) {
           const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(isHTTPS);
@@ -912,6 +919,9 @@ const ServerPrototype = {
           }
 
           const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
+          if (isAncientHTTP) {
+            http_req.httpVersion = "1.0";
+          }
           const http_res = new ResponseClass(http_req, {
             [kHandle]: handle,
             [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
@@ -1074,6 +1084,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
+      setRequireHostHeader(this[serverSymbol], this.requireHostHeader);
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -1154,6 +1165,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     $isCallable(closeCallback) && closeCallback();
   }
 
+  _onTimeout() {
+    const handle = this[kHandle];
+    const response = handle?.response;
+    // If there is a response, and it has pending data,
+    // we suppress the timeout because a write is in progress.
+    if (response && response.writableLength > 0) {
+      return;
+    }
+    this.emit("timeout");
+  }
+  _unrefTimer() {
+    // for compatibility
+  }
+
   address() {
     return this[kHandle]?.remoteAddress || null;
   }
@@ -1165,6 +1190,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   connect(port, host, connectListener) {
     return this;
   }
+  _onTimeout = function () {
+    this.emit("timeout");
+  };
 
   _destroy(err, callback) {
     const handle = this[kHandle];
@@ -1369,27 +1397,29 @@ function _writeHead(statusCode, reason, obj, response) {
     let k;
 
     if ($isArray(obj)) {
+      const length = obj.length;
       // Append all the headers provided in the array:
-      if (obj.length && $isArray(obj[0])) {
-        for (let i = 0; i < obj.length; i++) {
+      if (length && $isArray(obj[0])) {
+        for (let i = 0; i < length; i++) {
           const k = obj[i];
           if (k) response.appendHeader(k[0], k[1]);
         }
       } else {
-        if (obj.length % 2 !== 0) {
+        if (length % 2 !== 0) {
           throw new Error("raw headers must have an even number of elements");
         }
 
-        for (let n = 0; n < obj.length; n += 2) {
-          k = obj[n + 0];
-          if (k) response.setHeader(k, obj[n + 1]);
+        for (let n = 0; n < length; n += 2) {
+          k = obj[n];
+          if (k) response.appendHeader(k, obj[n + 1]);
         }
       }
     } else if (obj) {
       const keys = Object.keys(obj);
+      const length = keys.length;
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
-      for (let i = 0; i < keys.length; i++) {
+      for (let i = 0; i < length; i++) {
         k = keys[i];
         if (k) response.setHeader(k, obj[k]);
       }

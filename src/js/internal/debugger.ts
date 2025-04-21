@@ -287,7 +287,7 @@ class Debugger {
           }
           socket.data.framer.onData(socket, bytes);
         },
-        drain: socket => {},
+        drain: _socket => {},
         close: socket => {
           if (socket.data) {
             const { backend, framer } = socket.data;
@@ -433,7 +433,7 @@ async function connectToUnixServer(
         hostname,
         port: Number(port),
       };
-    } catch (error) {
+    } catch {
       exit("Invalid tcp: URL:" + unix);
       return;
     }
@@ -493,7 +493,7 @@ async function connectToUnixServer(
     },
   }).catch(error => {
     // Force it to close
-    const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {});
+    const backendRaw = createBackend(executionContextId, true, () => {});
     close.$call(backendRaw);
 
     $debug("error:", error);

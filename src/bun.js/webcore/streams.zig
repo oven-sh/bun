@@ -1739,7 +1739,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         fn getThis(global: *JSGlobalObject, callframe: *const JSC.CallFrame) bun.JSError!*ThisSink {
             return switch (fromJSExtern(callframe.this())) {
                 .detached => global.throw("This " ++ abi_name ++ " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.", .{}),
-                .cast_failed => global.ERR_INVALID_THIS("Expected " ++ abi_name, .{}).throw(),
+                .cast_failed => global.ERR(.INVALID_THIS, "Expected " ++ abi_name, .{}).throw(),
                 else => |ptr| @ptrFromInt(@intFromEnum(ptr)),
             };
         }
@@ -1762,7 +1762,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
-                return globalThis.throwValue(JSC.toTypeError(.ERR_MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(JSC.toTypeError(.MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             const arg = args[0];
@@ -1770,7 +1770,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             defer arg.ensureStillAlive();
 
             if (arg.isEmptyOrUndefinedOrNull()) {
-                return globalThis.throwValue(JSC.toTypeError(.ERR_STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(JSC.toTypeError(.STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             if (arg.asArrayBuffer(globalThis)) |buffer| {
@@ -1783,7 +1783,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
 
             if (!arg.isString()) {
-                return globalThis.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return globalThis.throwValue(JSC.toTypeError(.INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
             const str = arg.toString(globalThis);
@@ -1820,7 +1820,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
-                    if (args.len == 0) .ERR_MISSING_ARGS else .ERR_INVALID_ARG_TYPE,
+                    if (args.len == 0) .MISSING_ARGS else .INVALID_ARG_TYPE,
                     "writeUTF8() expects a string",
                     .{},
                     globalThis,
@@ -2002,7 +2002,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 //             JSC.markBinding(@src());
 
 //             var this = @ptrCast(*ThisSocket, @alignCast( fromJS(globalThis, callframe.this()) orelse {
-//                 const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
+//                 const err = JSC.toTypeError(.INVALID_THIS, "Expected Socket", .{}, globalThis);
 //                 globalThis.throwValue( err);
 //                 return .zero;
 //             }));
@@ -3141,7 +3141,11 @@ pub fn ReadableStreamSource(
 
         const supports_ref = setRefUnrefFn != null;
 
-        pub usingnamespace @field(JSC.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
+        pub const js = @field(JSC.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
+        pub const toJS = js.toJS;
+        pub const fromJS = js.fromJS;
+        pub const fromJSDirect = js.fromJSDirect;
+
         pub const drainFromJS = JSReadableStreamSource.drain;
         pub const startFromJS = JSReadableStreamSource.start;
         pub const pullFromJS = JSReadableStreamSource.pull;
@@ -3220,7 +3224,7 @@ pub fn ReadableStreamSource(
                     },
                     .pending => {
                         const out = result.toJS(globalThis);
-                        ReadableStreamSourceType.pendingPromiseSetCached(this_jsvalue, globalThis, out);
+                        js.pendingPromiseSetCached(this_jsvalue, globalThis, out);
                         return out;
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
@@ -3263,7 +3267,7 @@ pub fn ReadableStreamSource(
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
-                    ReadableStreamSourceType.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
+                    js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
                     return true;
                 }
 
@@ -3272,7 +3276,7 @@ pub fn ReadableStreamSource(
                     return false;
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
-                ReadableStreamSourceType.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
+                js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
                 return true;
             }
 
@@ -3289,7 +3293,7 @@ pub fn ReadableStreamSource(
 
                 JSC.markBinding(@src());
 
-                if (ReadableStreamSourceType.onDrainCallbackGetCached(this.this_jsvalue)) |val| {
+                if (js.onDrainCallbackGetCached(this.this_jsvalue)) |val| {
                     return val;
                 }
 
@@ -3398,10 +3402,10 @@ pub fn ReadableStreamSource(
 pub const AutoFlusher = @import("./AutoFlusher.zig");
 
 pub const FileSink = struct {
+    ref_count: RefCount,
     writer: IOWriter = .{},
     event_loop_handle: JSC.EventLoopHandle,
     written: usize = 0,
-    ref_count: bun.ptr.RefCount(FileSink, "ref_count", deinit, .{}),
     pending: StreamResult.Writable.Pending = .{
         .result = .{ .done = {} },
     },
@@ -3424,16 +3428,16 @@ pub const FileSink = struct {
 
     const log = Output.scoped(.FileSink, false);
 
-    // TODO: this usingnamespace is load-bearing, likely due to a compiler bug.
-    pub usingnamespace brk: {
-        const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
-        break :brk struct {
-            pub const ref = RefCount.ref;
-            pub const deref = RefCount.deref;
-        };
-    };
+    pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
-    pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
+    pub const IOWriter = bun.io.StreamingWriter(@This(), opaque {
+        pub const onClose = FileSink.onClose;
+        pub const onWritable = FileSink.onReady;
+        pub const onError = FileSink.onError;
+        pub const onWrite = FileSink.onWrite;
+    });
     pub const Poll = IOWriter;
 
     pub fn memoryCost(this: *const FileSink) usize {
@@ -4635,7 +4639,7 @@ pub const FileReader = struct {
                 const this_value = this.parent().this_jsvalue;
                 const globalThis = this.parent().globalThis;
                 if (this_value != .zero) {
-                    if (Source.onDrainCallbackGetCached(this_value)) |cb| {
+                    if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
                         const buffered = this.buffered;
                         this.buffered = .{};
                         this.parent().incrementCount();

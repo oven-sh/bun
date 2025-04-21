@@ -603,7 +603,7 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return ZigString__toExternalU16(ptr, len, global);
@@ -790,7 +790,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return ZigString__toExternalValue(this, global);
@@ -823,7 +823,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
 

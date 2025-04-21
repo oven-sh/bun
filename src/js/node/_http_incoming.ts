@@ -190,6 +190,7 @@ function onDataIncomingMessage(
 const IncomingMessagePrototype = {
   constructor: IncomingMessage,
   __proto__: Readable.prototype,
+  httpVersion: "1.1",
   _construct(callback) {
     // TODO: streaming
     const type = this[typeSymbol];
@@ -360,20 +361,22 @@ const IncomingMessagePrototype = {
   set statusMessage(value) {
     this[statusMessageSymbol] = value;
   },
-  get httpVersion() {
-    return "1.1";
-  },
-  set httpVersion(value) {
-    // noop
-  },
   get httpVersionMajor() {
-    return 1;
+    const version = this.httpVersion;
+    if (version.startsWith("1.")) {
+      return 1;
+    }
+    return 0;
   },
   set httpVersionMajor(value) {
     // noop
   },
   get httpVersionMinor() {
-    return 1;
+    const version = this.httpVersion;
+    if (version.endsWith(".1")) {
+      return 1;
+    }
+    return 0;
   },
   set httpVersionMinor(value) {
     // noop

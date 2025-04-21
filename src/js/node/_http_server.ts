@@ -996,7 +996,6 @@ const ServerPrototype = {
 
           const { reject, resolve, promise } = $newPromiseCapability(Promise);
           resolveFunction = resolve;
-          rejectFunction = reject;
 
           return promise;
         },

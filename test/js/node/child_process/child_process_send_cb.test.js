@@ -8,6 +8,10 @@ test("child_process_send_cb", () => {
     cmd: [bunExe(), import.meta.dirname + "/fixtures/child-process-send-cb-more.js"],
     stdout: "pipe",
     stderr: "pipe",
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+    },
   });
   const stdout_text = child.stdout.toString();
   const stderr_text = child.stderr.toString();

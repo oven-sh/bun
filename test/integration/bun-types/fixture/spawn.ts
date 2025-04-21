@@ -41,7 +41,7 @@ function depromise<T>(_promise: Promise<T>): T {
 {
   const proc = Bun.spawn(["echo", "hello"], {
     cwd: "./path/to/subdir", // specify a working direcory
-    env: { FOO: "bar" }, // specify environment variables
+    env: { ...process.env, FOO: "bar" }, // specify environment variables
     onExit(proc, exitCode, signalCode, error) {
       // exit handler
     },

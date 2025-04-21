@@ -1562,6 +1562,7 @@ pub const TestRunnerTask = struct {
                 }
             };
 
+            this.globalThis.clearTerminationException();
             _ = vm.uncaughtException(this.globalThis, err, true);
         }
 

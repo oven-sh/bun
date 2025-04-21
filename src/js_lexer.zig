@@ -805,6 +805,10 @@ fn NewLexer_(
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
+        fn remaining(it: *const LexerType) []const u8 {
+            return it.source.contents[it.current..];
+        }
+
         inline fn nextCodepoint(it: *LexerType) CodePoint {
             if (it.current >= it.source.contents.len) {
                 it.end = it.source.contents.len;
@@ -1497,26 +1501,14 @@ fn NewLexer_(
                                 lexer.token = .t_slash_equals;
                             },
                             '/' => {
-                                singleLineComment: while (true) {
-                                    lexer.step();
-                                    switch (lexer.code_point) {
-                                        '\r', '\n', 0x2028, 0x2029 => {
-                                            break :singleLineComment;
-                                        },
-                                        -1 => {
-                                            break :singleLineComment;
-                                        },
-                                        else => {},
-                                    }
-                                }
-
+                                lexer.scanSingleLineComment();
                                 if (comptime is_json) {
                                     if (!json.allow_comments) {
                                         try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
                                         return;
                                     }
                                 }
-                                lexer.scanCommentText();
+                                lexer.scanCommentText(false);
                                 continue;
                             },
                             '*' => {
@@ -1570,7 +1562,7 @@ fn NewLexer_(
                                         return;
                                     }
                                 }
-                                lexer.scanCommentText();
+                                lexer.scanCommentText(true);
                                 continue;
                             },
                             else => {
@@ -1889,7 +1881,7 @@ fn NewLexer_(
             }
         }
 
-        fn scanCommentText(lexer: *LexerType) void {
+        fn scanCommentText(lexer: *LexerType, for_pragma: bool) void {
             const text = lexer.source.contents[lexer.start..lexer.end];
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
@@ -1921,54 +1913,132 @@ fn NewLexer_(
             if (comptime is_json)
                 return;
 
+            if (!for_pragma) {
+                return;
+            }
+
             var rest = text[0..end_comment_text];
 
             while (strings.indexOfAny(rest, "@#")) |i| {
                 const c = rest[i];
-                rest = rest[i + 1 ..];
+                rest = rest[@min(i + 1, rest.len)..];
                 switch (c) {
                     '@', '#' => {
                         const chunk = rest;
+                        const offset = lexer.scanPragma(lexer.start + i + (text.len - rest.len), chunk, false);
 
-                        if (!lexer.has_pure_comment_before) {
-                            if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
-                                lexer.has_pure_comment_before = true;
-                                continue;
-                            }
-                        }
-
-                        if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
-                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
-                                lexer.jsx_pragma._jsx = span;
-                                rest = rest[@intCast(span.range.len)..];
-                            }
-                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
-                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
-                                lexer.jsx_pragma._jsxFrag = span;
-                                rest = rest[@intCast(span.range.len)..];
-                            }
-                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
-                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
-                                lexer.jsx_pragma._jsxRuntime = span;
-                                rest = rest[@intCast(span.range.len)..];
-                            }
-                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
-                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
-                                lexer.jsx_pragma._jsxImportSource = span;
-                                rest = rest[@intCast(span.range.len)..];
-                            }
-                        } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
-                            if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
-                                lexer.source_mapping_url = span;
-                                rest = rest[@intCast(span.range.len)..];
-                            }
-                        }
+                        rest = rest[
+                            // The @min is necessary because the file could end
+                            // with a pragma and hasPrefixWithWordBoundary
+                            // returns true when that "word boundary" is EOF
+                            @min(offset, rest.len)..];
                     },
                     else => {},
                 }
             }
         }
 
+        /// This scans a "// comment" in a single pass over the input.
+        fn scanSingleLineComment(lexer: *LexerType) void {
+            while (true) {
+                // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
+                if (bun.highway.indexOfNewlineOrNonASCIIOrHashOrAt(lexer.remaining())) |relative_index| {
+                    const absolute_index = lexer.current + relative_index;
+                    lexer.current = absolute_index; // Move TO the interesting char
+
+                    lexer.step(); // Consume the interesting char, sets code_point, advances current
+
+                    switch (lexer.code_point) {
+                        '\r', '\n', 0x2028, 0x2029 => { // Is it a line terminator?
+                            // Found the end of the comment line.
+                            return; // Stop scanning. Lexer state is ready for the next token.
+                        },
+                        -1 => {
+                            return;
+                        }, // EOF? Stop.
+
+                        '#', '@' => {
+                            if (comptime !is_json) {
+                                const pragma_trigger_pos = lexer.end; // Position OF #/@
+                                // Use remaining() which starts *after* the consumed #/@
+                                const chunk = lexer.remaining();
+
+                                const offset = lexer.scanPragma(pragma_trigger_pos, chunk, true);
+
+                                if (offset > 0) {
+                                    // Pragma found (e.g., __PURE__).
+                                    // Advance current past the pragma's argument text.
+                                    // 'current' is already after the #/@ trigger.
+                                    lexer.current += offset;
+                                    // Do NOT consume the character immediately after the pragma.
+                                    // Let the main loop find the actual line terminator.
+
+                                    // Continue the outer loop from the position AFTER the pragma arg.
+                                    continue;
+                                }
+                                // If offset == 0, it wasn't a valid pragma start.
+                            }
+                            // Not a pragma or is_json. Treat #/@ as a normal comment character.
+                            // The character was consumed by step(). Let the outer loop continue.
+                            continue;
+                        },
+                        else => {
+                            // Non-ASCII (but not LS/PS), etc. Treat as normal comment char.
+                            // The character was consumed by step(). Let the outer loop continue.
+                            continue;
+                        },
+                    }
+                } else { // Highway found nothing until EOF
+                    // Consume the rest of the line.
+                    lexer.end = lexer.source.contents.len;
+                    lexer.current = lexer.source.contents.len;
+                    lexer.code_point = -1; // Set EOF state
+                    return;
+                }
+            }
+            unreachable;
+        }
+        /// Scans the string for a pragma.
+        /// offset is used when there's an issue with the JSX pragma later on.
+        /// Returns the byte length to advance by if found, otherwise 0.
+        fn scanPragma(lexer: *LexerType, offset_for_errors: usize, chunk: string, allow_newline: bool) usize {
+            if (!lexer.has_pure_comment_before) {
+                if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
+                    lexer.has_pure_comment_before = true;
+                    return "__PURE__".len;
+                }
+            }
+
+            if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                if (PragmaArg.scan(.skip_space_first, lexer.start + offset_for_errors, "jsx", chunk, allow_newline)) |span| {
+                    lexer.jsx_pragma._jsx = span;
+                    return "jsx".len +
+                        if (span.range.len > 0) @as(usize, @intCast(span.range.len)) else 0;
+                }
+            } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
+                if (PragmaArg.scan(.skip_space_first, lexer.start + offset_for_errors, "jsxFrag", chunk, allow_newline)) |span| {
+                    lexer.jsx_pragma._jsxFrag = span;
+                    return "jsxFrag".len +
+                        if (span.range.len > 0) @as(usize, @intCast(span.range.len)) else 0;
+                }
+            } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
+                if (PragmaArg.scan(.skip_space_first, lexer.start + offset_for_errors, "jsxRuntime", chunk, allow_newline)) |span| {
+                    lexer.jsx_pragma._jsxRuntime = span;
+                    return "jsxRuntime".len +
+                        if (span.range.len > 0) @as(usize, @intCast(span.range.len)) else 0;
+                }
+            } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
+                if (PragmaArg.scan(.skip_space_first, lexer.start + offset_for_errors, "jsxImportSource", chunk, allow_newline)) |span| {
+                    lexer.jsx_pragma._jsxImportSource = span;
+                    return "jsxImportSource".len +
+                        if (span.range.len > 0) @as(usize, @intCast(span.range.len)) else 0;
+                }
+            } else if (chunk.len >= " sourceMappingURL=".len + 1 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) { // Check includes space for prefix
+                return PragmaArg.scanSourceMappingURLValue(lexer.start, offset_for_errors, chunk, &lexer.source_mapping_url);
+            }
+
+            return 0;
+        }
         // TODO: implement this
         pub fn removeMultilineCommentIndent(_: *LexerType, _: string, text: string) string {
             return text;
@@ -3200,7 +3270,48 @@ pub const PragmaArg = enum {
     no_space_first,
     skip_space_first,
 
-    pub fn scan(kind: PragmaArg, offset_: usize, pragma: string, text_: string) ?js_ast.Span {
+    pub fn isNewline(c: CodePoint) bool {
+        return c == '\r' or c == '\n' or c == 0x2028 or c == 0x2029;
+    }
+
+    // These can be extremely long, so we use SIMD.
+    /// "//# sourceMappingURL=data:/adspaoksdpkz"
+    ///                       ^^^^^^^^^^^^^^^^^^
+    pub fn scanSourceMappingURLValue(start: usize, offset_for_errors: usize, chunk: string, result: *?js_ast.Span) usize {
+        const prefix: u32 = " sourceMappingURL=".len;
+        const url_and_rest_of_code = chunk[prefix..]; // Slice containing only the potential argument
+
+        const url_len: usize = brk: {
+            if (bun.strings.indexOfSpaceOrNewlineOrNonASCII(url_and_rest_of_code, 0)) |delimiter_pos_in_arg| {
+                // SIMD found the delimiter at index 'delimiter_pos_in_arg' relative to url start.
+                // The argument's length is exactly this index.
+                break :brk delimiter_pos_in_arg;
+            } else {
+                // SIMD found no delimiter in the entire url.
+                // The argument is the whole chunk.
+                break :brk url_and_rest_of_code.len;
+            }
+        };
+
+        // Now we have the correct argument length (url_len) and the argument text.
+        const url = url_and_rest_of_code[0..url_len];
+
+        // Calculate absolute start location of the argument
+        const absolute_arg_start = start + offset_for_errors + prefix;
+
+        result.* = js_ast.Span{
+            .range = logger.Range{
+                .len = @as(i32, @intCast(url_len)), // Correct length
+                .loc = .{ .start = @as(i32, @intCast(absolute_arg_start)) }, // Correct start
+            },
+            .text = url,
+        };
+
+        // Return total length consumed from the start of the chunk
+        return prefix + url_len; // Correct total length
+    }
+
+    pub fn scan(kind: PragmaArg, offset_: usize, pragma: string, text_: string, allow_newline: bool) ?js_ast.Span {
         var text = text_[pragma.len..];
         var iter = strings.CodepointIterator.init(text);
 
@@ -3230,7 +3341,7 @@ pub const PragmaArg = enum {
         }
 
         var i: usize = 0;
-        while (!isWhitespace(cursor.c)) {
+        while (isWhitespace(cursor.c) or (allow_newline and isNewline(cursor.c))) {
             i += cursor.width;
             if (i >= text.len) {
                 break;

@@ -39,6 +39,16 @@ extern "c" fn highway_index_of_newline_or_non_ascii_or_ansi(
     haystack_len: usize,
 ) usize;
 
+extern "c" fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
+    noalias haystack: [*]const u8,
+    haystack_len: usize,
+) usize;
+
+extern "c" fn highway_index_of_space_or_newline_or_non_ascii(
+    noalias haystack: [*]const u8,
+    haystack_len: usize,
+) usize;
+
 extern "c" fn highway_contains_newline_or_non_ascii_or_quote(
     noalias text: [*]const u8,
     text_len: usize,
@@ -254,5 +264,42 @@ pub fn fillWithSkipMask(mask: [4]u8, output: []u8, input: []const u8, skip_mask:
         input.ptr,
         input.len,
         skip_mask,
+    );
+}
+
+/// Useful for single-line JavaScript comments.
+/// Scans for:
+/// - `\n`, `\r`
+/// - Non-ASCII characters (which implicitly include `\n`, `\r`)
+/// - `#`
+/// - `@`
+pub fn indexOfNewlineOrNonASCIIOrHashOrAt(haystack: string) ?usize {
+    if (haystack.len == 0) {
+        return null;
+    }
+
+    const result = highway_index_of_newline_or_non_ascii_or_hash_or_at(
+        haystack.ptr,
+        haystack.len,
+    );
+
+    if (result == haystack.len) {
+        return null;
+    }
+
+    return result;
+}
+
+/// Scans for:
+/// - " "
+/// - Non-ASCII characters (which implicitly include `\n`, `\r`, '\t')
+pub fn indexOfSpaceOrNewlineOrNonASCII(haystack: string) ?usize {
+    if (haystack.len == 0) {
+        return null;
+    }
+
+    return highway_index_of_space_or_newline_or_non_ascii(
+        haystack.ptr,
+        haystack.len,
     );
 }

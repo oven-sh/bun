@@ -3940,18 +3940,26 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
     return @as(u32, @truncate(result.count));
 }
 
-pub fn indexOfNewlineOrNonASCIIOrANSI(slice_: []const u8, offset: u32) ?u32 {
+pub const indexOfNewlineOrNonASCIIOrANSI = indexOfNewlineOrNonASCII;
+
+/// Checks if slice[offset..] has any < 0x20 or > 127 characters
+pub fn indexOfNewlineOrNonASCII(slice_: []const u8, offset: u32) ?u32 {
+    return indexOfNewlineOrNonASCIICheckStart(slice_, offset, true);
+}
+
+pub fn indexOfSpaceOrNewlineOrNonASCII(slice_: []const u8, offset: u32) ?u32 {
     const slice = slice_[offset..];
     const remaining = slice;
 
     if (remaining.len == 0)
         return null;
 
-    return @truncate(bun.highway.indexOfNewlineOrNonASCIIOrANSI(remaining) orelse return null);
-}
+    if (remaining[0] > 127 or (remaining[0] < 0x20 and remaining[0] != 0x09)) {
+        return offset;
+    }
 
-pub fn indexOfNewlineOrNonASCII(slice_: []const u8, offset: u32) ?u32 {
-    return indexOfNewlineOrNonASCIICheckStart(slice_, offset, true);
+    const i = bun.highway.indexOfSpaceOrNewlineOrNonASCII(remaining) orelse return null;
+    return @as(u32, @truncate(i)) + offset;
 }
 
 pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, comptime check_start: bool) ?u32 {
@@ -3963,7 +3971,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
 
     if (comptime check_start) {
         // this shows up in profiling
-        if (remaining[0] > 127 or remaining[0] < 0x20 or remaining[0] == '\r' or remaining[0] == '\n') {
+        if (remaining[0] > 127 or (remaining[0] < 0x20 and remaining[0] != 0x09)) {
             return offset;
         }
     }
@@ -4897,6 +4905,75 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             return Iterator{ .bytes = str, .i = i, .c = zeroValue };
         }
 
+        const SkipResult = enum {
+            eof,
+            found,
+            not_found,
+        };
+
+        /// Advance forward until the scalar function returns true.
+        /// THe simd function is "best effort" and expected to sometimes return a result which `scalar` will return false for.
+        /// This is because we don't decode UTF-8 in the SIMD code path.
+        pub fn skip(it: *const Iterator, cursor: *Cursor, simd: *const fn (input: []const u8) ?usize, scalar: *const fn (CodePointType) bool) SkipResult {
+            while (true) {
+                // 1. Get current position. Check for EOF.
+                const current_byte_index = cursor.i;
+                if (current_byte_index >= it.bytes.len) {
+                    return .not_found; // Reached end without finding
+                }
+
+                // 2. Decode the *next* character using the standard iterator method.
+                if (!next(it, cursor)) {
+                    return .not_found; // Reached end or error during decode
+                }
+
+                // 3. Check if the character just decoded matches the scalar condition.
+                if (scalar(it.c)) {
+                    return .found; // Found it!
+                }
+
+                // 4. Optimization: Can we skip ahead using SIMD?
+                //    Scan starting from the byte *after* the character we just decoded.
+                const next_scan_start_index = cursor.i;
+                if (next_scan_start_index >= it.bytes.len) {
+                    // Just decoded the last character and it didn't match.
+                    return .not_found;
+                }
+                const remaining_slice = it.bytes[next_scan_start_index..];
+                if (remaining_slice.len == 0) {
+                    return .not_found;
+                }
+
+                // Ask SIMD for the next potential candidate.
+                if (simd(remaining_slice)) |pos| {
+                    // SIMD found a potential candidate `pos` bytes ahead.
+                    if (pos > 0) {
+                        // Jump the byte index to the start of the potential candidate.
+                        cursor.i = next_scan_start_index + @as(u32, @intCast(pos));
+                        // Reset width so next() decodes correctly from the jumped position.
+                        cursor.width = 0;
+                        // Loop will continue, starting the decode from the new cursor.i.
+                        continue;
+                    }
+                    // If pos == 0, SIMD suggests the *immediate next* character.
+                    // No jump needed, just let the loop iterate naturally.
+                    // Fallthrough to the end of the loop.
+                } else {
+                    // SIMD found no potential candidates in the rest of the string.
+                    // Since the SIMD search set is a superset of the scalar check set,
+                    // we can guarantee that no character satisfying `scalar` exists further.
+                    // Since the current character (decoded in step 2) also didn't match,
+                    // we can conclude the target character is not found.
+                    return .not_found;
+                }
+
+                // If we reach here, it means SIMD returned pos=0.
+                // Loop continues to the next iteration, processing the immediate next char.
+            } // End while true
+
+            unreachable;
+        }
+
         pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
             const pos: u32 = @as(u32, cursor.width) + cursor.i;
             if (pos >= it.bytes.len) {
@@ -5186,6 +5263,16 @@ pub fn leftHasAnyInRight(to_check: []const string, against: []const string) bool
     return false;
 }
 
+/// Returns true if the input has the prefix and the next character is not an identifier character
+/// Also returns true if the input ends with the prefix (i.e. EOF)
+///
+/// Example:
+/// ```zig
+/// // returns true
+/// hasPrefixWithWordBoundary("console.log", "console") // true
+/// hasPrefixWithWordBoundary("console.log", "log") // false
+/// hasPrefixWithWordBoundary("console.log", "console.log") // true
+/// ```
 pub fn hasPrefixWithWordBoundary(input: []const u8, comptime prefix: []const u8) bool {
     if (hasPrefixComptime(input, prefix)) {
         if (input.len == prefix.len) return true;

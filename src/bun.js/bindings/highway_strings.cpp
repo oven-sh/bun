@@ -276,6 +276,46 @@ size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRIC
     return text_len;
 }
 
+size_t IndexOfNewlineOrNonASCIIOrHashOrAtImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
+{
+    ASSERT(search_len > 0);
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_hash = hn::Set(d, '#');
+    const auto vec_at = hn::Set(d, '@');
+    const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 0x7E });
+
+    size_t i = 0;
+    const size_t simd_text_len = search_len - (search_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto vec = hn::LoadU(d, start_ptr + i);
+
+        const auto mask_hash = hn::Eq(vec, vec_hash);
+        const auto mask_at = hn::Eq(vec, vec_at);
+        const auto mask_lt_min = hn::Lt(vec, vec_min_ascii);
+        const auto mask_gt_max = hn::Gt(vec, vec_max_ascii);
+
+        const auto found_mask = hn::Or(hn::Or(mask_hash, mask_at), hn::Or(mask_lt_min, mask_gt_max));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < search_len; ++i) {
+        const uint8_t char_ = start_ptr[i];
+        if (char_ == '#' || char_ == '@' || char_ < 0x20 || char_ > 127) {
+            return i;
+        }
+    }
+
+    return search_len;
+}
+
 size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -286,21 +326,19 @@ size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_
     // SIMD constants
     const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
     const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
-    const auto vec_cr = hn::Set(d, uint8_t { '\r' });
-    const auto vec_nl = hn::Set(d, uint8_t { '\n' });
+
+    // FUTURE TODO: normalize tabs
+    // Some tests involving githubactions depend on tabs not being normalized right now.
 
     size_t i = 0;
     const size_t simd_text_len = search_len - (search_len % N);
     // Process full vectors
     for (; i < simd_text_len; i += N) {
         const auto vec = hn::LoadU(d, start_ptr + i);
-
-        const auto mask_gt_max = hn::Gt(vec, vec_max_ascii);
         const auto mask_lt_min = hn::Lt(vec, vec_min_ascii);
-        const auto mask_cr_eq = hn::Eq(vec, vec_cr);
-        const auto mask_nl_eq = hn::Eq(vec, vec_nl);
+        const auto mask_gt_max = hn::Gt(vec, vec_max_ascii);
 
-        const auto found_mask = hn::Or(hn::Or(mask_gt_max, mask_lt_min), hn::Or(mask_cr_eq, mask_nl_eq));
+        const auto found_mask = hn::Or(mask_gt_max, mask_lt_min);
 
         const intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
@@ -311,7 +349,7 @@ size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_
     // Scalar check for the remainder
     for (; i < search_len; ++i) {
         const uint8_t char_ = start_ptr[i];
-        if (char_ > 127 || char_ < 0x20 || char_ == '\n' || char_ == '\r') {
+        if (char_ > 127 || char_ < 0x20) {
             return i;
         }
     }
@@ -319,48 +357,34 @@ size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_
     return search_len;
 }
 
-size_t IndexOfNewlineOrNonASCIIOrANSIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
+size_t IndexOfSpaceOrNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
 
     D8 d;
     const size_t N = hn::Lanes(d);
 
-    // SIMD constants
+    const uint8_t after_space = ' ' + 1;
+
+    const auto vec_min_ascii_including_space = hn::Set(d, after_space);
     const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
-    const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
-    const auto vec_cr = hn::Set(d, uint8_t { '\r' });
-    const auto vec_nl = hn::Set(d, uint8_t { '\n' });
-    const auto vec_esc = hn::Set(d, uint8_t { '\x1b' }); // ANSI escape code
+    size_t simd_text_len = search_len - (search_len % N);
 
     size_t i = 0;
-    const size_t simd_text_len = search_len - (search_len % N);
-    // Process full vectors
     for (; i < simd_text_len; i += N) {
         const auto vec = hn::LoadU(d, start_ptr + i);
-
+        const auto mask_lt_min = hn::Lt(vec, vec_min_ascii_including_space);
         const auto mask_gt_max = hn::Gt(vec, vec_max_ascii);
-        const auto mask_lt_min = hn::Lt(vec, vec_min_ascii);
-        const auto mask_cr_eq = hn::Eq(vec, vec_cr);
-        const auto mask_nl_eq = hn::Eq(vec, vec_nl);
-        const auto mask_esc_eq = hn::Eq(vec, vec_esc);
-
-        const auto found_mask = hn::Or(
-            hn::Or(hn::Or(mask_gt_max, mask_lt_min), hn::Or(mask_cr_eq, mask_nl_eq)),
-            mask_esc_eq);
-
+        const auto found_mask = hn::Or(mask_gt_max, mask_lt_min);
         const intptr_t pos = hn::FindFirstTrue(d, found_mask);
         if (pos >= 0) {
-            // Return index relative to start_ptr
             return i + pos;
         }
     }
 
-    // Scalar check for the remainder
     for (; i < search_len; ++i) {
         const uint8_t char_ = start_ptr[i];
-        if (char_ > 127 || char_ < 0x20 || char_ == '\n' || char_ == '\r' || char_ == '\x1b') {
-            // Return index relative to start_ptr
+        if (char_ <= ' ' || char_ > 127) {
             return i;
         }
     }
@@ -378,8 +402,6 @@ bool ContainsNewlineOrNonASCIIOrQuoteImpl(const uint8_t* HWY_RESTRICT text, size
     // SIMD constants
     const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
     const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
-    const auto vec_cr = hn::Set(d, uint8_t { '\r' });
-    const auto vec_nl = hn::Set(d, uint8_t { '\n' });
     const auto vec_quote = hn::Set(d, uint8_t { '"' });
 
     size_t i = 0;
@@ -388,17 +410,12 @@ bool ContainsNewlineOrNonASCIIOrQuoteImpl(const uint8_t* HWY_RESTRICT text, size
     // Process full vectors
     for (; i < simd_text_len; i += N) {
         const auto vec = hn::LoadU(d, text + i);
-
-        const auto mask_gt_max = hn::Gt(vec, vec_max_ascii);
         const auto mask_lt_min = hn::Lt(vec, vec_min_ascii);
-        const auto mask_cr_eq = hn::Eq(vec, vec_cr);
-        const auto mask_nl_eq = hn::Eq(vec, vec_nl);
+        const auto mask_gt_max = hn::Gt(vec, vec_max_ascii);
+
         const auto mask_quote_eq = hn::Eq(vec, vec_quote);
 
-        const auto found_mask = hn::Or(
-            hn::Or(hn::Or(mask_gt_max, mask_lt_min),
-                hn::Or(mask_cr_eq, mask_nl_eq)),
-            mask_quote_eq);
+        const auto found_mask = hn::Or(hn::Or(mask_gt_max, mask_lt_min), mask_quote_eq);
 
         if (!hn::AllFalse(d, found_mask)) {
             return true;
@@ -408,7 +425,7 @@ bool ContainsNewlineOrNonASCIIOrQuoteImpl(const uint8_t* HWY_RESTRICT text, size
     // Scalar check for the remainder
     for (; i < text_len; ++i) {
         const uint8_t char_ = text[i];
-        if (char_ > 127 || char_ < 0x20 || char_ == '\n' || char_ == '\r' || char_ == '"') {
+        if (char_ > 127 || char_ < 0x20 || char_ == '"') {
             return true;
         }
     }
@@ -465,7 +482,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Scalar check for the remainder
     for (; i < text_len; ++i) {
         const uint8_t char_ = text[i];
-        if (char_ >= 127 || char_ < 0x20 || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
+        if (char_ >= 127 || (char_ < 0x20 && char_ != 0x09) || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
             return i;
         }
     }
@@ -627,19 +644,19 @@ namespace bun {
 
 // Define the dispatch tables. The names here must exactly match
 // the *Impl function names defined within the HWY_NAMESPACE block above.
+HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
+HWY_EXPORT(CopyU16ToU8Impl);
+HWY_EXPORT(FillWithSkipMaskImpl);
 HWY_EXPORT(IndexOfAnyCharImpl);
-HWY_EXPORT(ScanCharFrequencyImpl);
 HWY_EXPORT(IndexOfCharImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
-HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
-HWY_EXPORT(IndexOfNewlineOrNonASCIIOrANSIImpl);
-HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
-HWY_EXPORT(CopyU16ToU8Impl);
+HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
+HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
+HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
 HWY_EXPORT(MemMemImpl);
-HWY_EXPORT(FillWithSkipMaskImpl);
-
+HWY_EXPORT(ScanCharFrequencyImpl);
 } // namespace bun
 
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
@@ -715,11 +732,9 @@ size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystac
     return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIImpl)(haystack, haystack_len);
 }
 
-// Wrapper for IndexOfNewlineOrNonASCIIOrANSIImpl
-// Returns the 0-based index relative to `haystack`, or -1 if not found.
-size_t highway_index_of_newline_or_non_ascii_or_ansi(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
+size_t highway_index_of_newline_or_non_ascii_or_hash_or_at(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIOrANSIImpl)(haystack, haystack_len);
+    return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIOrHashOrAtImpl)(haystack, haystack_len);
 }
 
 bool highway_contains_newline_or_non_ascii_or_quote(const uint8_t* HWY_RESTRICT text, size_t text_len)
@@ -734,6 +749,11 @@ size_t highway_index_of_needs_escape_for_javascript_string(const uint8_t* HWY_RE
     } else {
         return HWY_DYNAMIC_DISPATCH(bun::IndexOfNeedsEscapeForJavaScriptStringImplQuote)(text, text_len, quote_char);
     }
+}
+
+size_t highway_index_of_space_or_newline_or_non_ascii(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(bun::IndexOfSpaceOrNewlineOrNonASCIIImpl)(text, text_len);
 }
 
 void highway_fill_with_skip_mask(

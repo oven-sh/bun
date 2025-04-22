@@ -168,7 +168,7 @@ pub const VM = opaque {
 
     extern fn JSC__VM__drainMicrotasks(vm: *VM) void;
     /// Drain all microtasks from the microtask queue.
-    /// 
+    ///
     /// This does _not_ drain the nextTick queue. Use
     /// `JSGlobalObject.drainMicrotasks` for that.
     pub fn drainMicrotasks(

@@ -552,7 +552,7 @@ export function readableStreamTee(stream, shouldClone) {
     $readableStreamDefaultControllerError(branch2.$readableStreamController, e);
     teeState.flags |= TeeStateFlags.closedOrErrored;
 
-    if (teeState.fllags & (TeeStateFlags.canceled1 | TeeStateFlags.canceled2))
+    if (teeState.flags & (TeeStateFlags.canceled1 | TeeStateFlags.canceled2))
       teeState.cancelPromiseCapability.resolve.$call();
   });
 

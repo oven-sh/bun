@@ -27,7 +27,7 @@ pub const BunSpawn = struct {
 
         kind: FileActionType = .none,
         path: ?[*:0]const u8 = null,
-        fds: [2]bun.FileDescriptor,
+        fds: [2]fd_t,
         flags: c_int = 0,
         mode: c_int = 0,
 
@@ -77,21 +77,21 @@ pub const BunSpawn = struct {
                 .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
                 .flags = @intCast(flags),
                 .mode = @intCast(mode),
-                .fds = .{ fd, .fromUV(0) },
+                .fds = .{ fd.native(), 0 },
             });
         }
 
         pub fn close(self: *Actions, fd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .close,
-                .fds = .{ fd, .fromUV(0) },
+                .fds = .{ fd.native(), 0 },
             });
         }
 
         pub fn dup2(self: *Actions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .dup2,
-                .fds = .{ fd, newfd },
+                .fds = .{ fd.native(), newfd.native() },
             });
         }
 

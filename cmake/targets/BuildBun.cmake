@@ -1089,6 +1089,7 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
+  Highway
   LibDeflate
   LolHtml
   Lshpack

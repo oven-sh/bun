@@ -21,7 +21,6 @@ declare module "bun" {
     | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
     | ReadableStreamDefaultReadValueResult<T>
@@ -32,14 +31,7 @@ declare module "bun" {
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
   type MultipleResolveType = "resolve" | "reject";
-  type BeforeExitListener = (code: number) => void;
-  type DisconnectListener = () => void;
-  type ExitListener = (code: number) => void;
-  type RejectionHandledListener = (promise: Promise<unknown>) => void;
   type FormDataEntryValue = File | string;
-  type WarningListener = (warning: Error) => void;
-  type MessageListener = (message: unknown, sendHandle: unknown) => void;
-  type SignalsListener = (signal: NodeJS.Signals) => void;
   type BlobPart = string | Blob | BufferSource;
   type TimerHandler = (...args: any[]) => void;
   type DOMHighResTimeStamp = number;

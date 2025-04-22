@@ -1,7 +1,7 @@
 import { $, spawnSync } from "bun";
 import { readFileSync, writeFileSync } from "fs";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, DirectoryTree, isDebug, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -185,7 +185,7 @@ class SnapshotTester {
     contents: string,
     opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean } = {},
   ) {
-    test(label, async () => await this.update(contents, opts));
+    test(label, async () => await this.update(contents, opts), isDebug ? 100_000 : 5_000);
   }
   async update(
     contents: string,

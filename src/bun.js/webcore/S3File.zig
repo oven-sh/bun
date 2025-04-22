@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
@@ -154,7 +154,7 @@ pub fn write(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     const data = args.nextEat() orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to upload", .{}).throw();
+        return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to upload", .{}).throw();
     };
 
     switch (path_or_blob) {
@@ -366,7 +366,7 @@ pub const S3BlobStatTask = struct {
     global: *JSC.JSGlobalObject,
     store: *Blob.Store,
 
-    usingnamespace bun.New(S3BlobStatTask);
+    pub const new = bun.TrivialNew(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
@@ -469,13 +469,13 @@ pub const S3BlobStatTask = struct {
     pub fn deinit(this: *S3BlobStatTask) void {
         this.store.deref();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
 pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
     if (!this.isS3()) {
-        return globalThis.ERR_INVALID_THIS("presign is only possible for s3:// files", .{}).throw();
+        return globalThis.ERR(.INVALID_THIS, "presign is only possible for s3:// files", .{}).throw();
     }
 
     var method: bun.http.Method = .GET;
@@ -510,7 +510,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
-    }, .{ .expires = expires }) catch |sign_err| {
+    }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();

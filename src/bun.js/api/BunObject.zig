@@ -38,6 +38,7 @@ pub const BunObject = struct {
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
+
     // --- Callbacks ---
 
     // --- Getters ---
@@ -71,6 +72,8 @@ pub const BunObject = struct {
     pub const unsafe = toJSGetter(Bun.getUnsafe);
     pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     pub const s3 = toJSGetter(Bun.getS3DefaultClient);
+    pub const ValkeyClient = toJSGetter(Bun.getValkeyClientConstructor);
+    pub const valkey = toJSGetter(Bun.getValkeyDefaultClient);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -130,7 +133,8 @@ pub const BunObject = struct {
         @export(&BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         @export(&BunObject.S3Client, .{ .name = getterName("S3Client") });
         @export(&BunObject.s3, .{ .name = getterName("s3") });
-
+        @export(&BunObject.ValkeyClient, .{ .name = getterName("ValkeyClient") });
+        @export(&BunObject.valkey, .{ .name = getterName("valkey") });
         // --- Getters --
 
         // -- Callbacks --
@@ -164,6 +168,7 @@ pub const BunObject = struct {
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
+
         // -- Callbacks --
     }
 };
@@ -590,7 +595,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
                 0,
             ).unwrap() catch break :use_resolved_path;
 
-            defer _ = bun.sys.close(fd);
+            defer fd.close();
             if (comptime Environment.isWindows) {
                 var wpath: bun.WPathBuffer = undefined;
                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
@@ -620,7 +625,7 @@ pub fn getArgv(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
 
 const Editor = @import("../../open.zig").Editor;
 
-pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn openInEditor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
     const args = callframe.arguments_old(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
@@ -813,7 +818,7 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
     );
 }
 
-fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
+fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -862,7 +867,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -876,7 +881,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true, false) catch {
         const err = global.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(global, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(global, err);
     };
 
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -887,11 +892,40 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
+
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+}
+
+export fn Bun__resolveSyncWithPaths(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: JSValue,
+    is_esm: bool,
+    is_user_require_resolve: bool,
+    paths_ptr: ?[*]const bun.String,
+    paths_len: usize,
+) JSC.JSValue {
+    const paths: []const bun.String = if (paths_len == 0) &.{} else paths_ptr.?[0..paths_len];
+
+    const specifier_str = specifier.toBunString(global) catch return .zero;
+    defer specifier_str.deref();
+
+    if (specifier_str.length() == 0) {
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+    }
+
+    const source_str = source.toBunString(global) catch return .zero;
+    defer source_str.deref();
+
+    const bun_vm = global.bunVM();
+    bun.assert(bun_vm.transpiler.resolver.custom_dir_paths == null);
+    bun_vm.transpiler.resolver.custom_dir_paths = paths;
+    defer bun_vm.transpiler.resolver.custom_dir_paths = null;
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
 }
@@ -905,7 +939,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }
@@ -1048,7 +1082,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     }
                     const obj = server.toJS(globalObject);
                     if (route_list_object != .zero) {
-                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                        ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
                     server.js_value.set(globalObject, obj);
 
@@ -1208,11 +1242,11 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 }
 
 pub fn getTranspilerConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.JSTranspiler.getConstructor(globalThis);
+    return JSC.API.JSTranspiler.js.getConstructor(globalThis);
 }
 
 pub fn getFileSystemRouter(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.FileSystemRouter.getConstructor(globalThis);
+    return JSC.API.FileSystemRouter.js.getConstructor(globalThis);
 }
 
 pub fn getHashObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -1224,14 +1258,32 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
 }
 
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.Glob.getConstructor(globalThis);
+    return JSC.API.Glob.js.getConstructor(globalThis);
 }
 pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.WebCore.S3Client.getConstructor(globalThis);
+    return JSC.WebCore.S3Client.js.getConstructor(globalThis);
 }
+
 pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
 }
+
+pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    const valkey = JSC.API.Valkey.create(globalThis, &[_]JSValue{.undefined}) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
+
+    return valkey.toJS(globalThis);
+}
+
+pub fn getValkeyClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.API.Valkey.js.getConstructor(globalThis);
+}
+
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
@@ -1703,7 +1755,7 @@ const conv = std.builtin.CallingConvention.Unspecified;
 const S3File = @import("../webcore/S3File.zig");
 const Bun = @This();
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uv = bun.windows.libuv;
 const Environment = bun.Environment;
 const Global = bun.Global;
@@ -1741,7 +1793,6 @@ const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
 const JSError = @import("../base.zig").JSError;
 
@@ -1750,7 +1801,6 @@ const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const Node = bun.JSC.Node;

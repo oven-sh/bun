@@ -1,6 +1,6 @@
 const c = @import("std").c;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
@@ -1685,7 +1685,7 @@ pub const Error = enum(i32) {
         hostname: ?bun.String,
         promise: JSC.JSPromise.Strong,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn init(errno: Error, syscall: []const u8, hostname: ?bun.String, promise: JSC.JSPromise.Strong) *Deferred {
             return Deferred.new(.{
@@ -1734,7 +1734,7 @@ pub const Error = enum(i32) {
                 hostname.deref();
             }
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
     };
 

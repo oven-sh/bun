@@ -9,15 +9,15 @@
 //! different definitions between platforms, as well as very common mistakes
 //! that can be made when porting definitions. It also keeps code much cleaner.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = @import("./env.zig");
 
-pub const translated = @import("translated-c-headers");
+const translated = @import("translated-c-headers");
 
 const PlatformSpecific = switch (Environment.os) {
-    .mac => @import("./darwin_c.zig"),
-    .linux => @import("./linux_c.zig"),
-    .windows => @import("./windows_c.zig"),
+    .mac => @import("darwin_c.zig"),
+    .linux => @import("linux_c.zig"),
+    .windows => @import("windows_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
@@ -161,8 +161,8 @@ pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, 
         .result => |f| f,
         .err => |e| return .{ .err = e },
     };
-    defer _ = bun.sys.close(in_handle);
-    _ = bun.sys.unlinkat(from_dir, filename);
+    defer in_handle.close();
+    _ = from_dir.unlinkat(filename);
     return copyFileZSlowWithHandle(in_handle, to_dir, destination);
 }
 
@@ -202,13 +202,13 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             .result => |fd| fd,
             .err => |e| return .{ .err = e },
         };
-        defer _ = bun.sys.close(out_handle);
+        defer out_handle.close();
 
         if (comptime Environment.isLinux) {
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
 
-        switch (bun.copyFile(in_handle.cast(), out_handle.cast())) {
+        switch (bun.copyFile(in_handle, out_handle)) {
             .err => |e| return .{ .err = e },
             .result => {},
         }
@@ -433,27 +433,20 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
 
     const Wrapper = struct {
         pub var function: Type = undefined;
-        pub var loaded: LazyStatus = LazyStatus.pending;
-    };
-
-    if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
-
-        if (result) |ptr| {
-            Wrapper.function = bun.cast(Type, ptr);
-            Wrapper.loaded = .loaded;
-            return Wrapper.function;
-        } else {
-            Wrapper.loaded = .failed;
-            return null;
+        var failed = false;
+        pub var once = std.once(loadOnce);
+        fn loadOnce() void {
+            function = bun.cast(Type, _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name) orelse {
+                failed = true;
+                return;
+            });
         }
+    };
+    Wrapper.once.call();
+    if (Wrapper.failed) {
+        return null;
     }
-
-    if (Wrapper.loaded == .loaded) {
-        return Wrapper.function;
-    }
-
-    return null;
+    return Wrapper.function;
 }
 
 pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {

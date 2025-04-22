@@ -1,5 +1,5 @@
 const js_ast = bun.JSAst;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -454,7 +454,7 @@ pub const StableSymbolCount = struct {
     }
 };
 
-const SlotAndCount = packed struct {
+const SlotAndCount = packed struct(u64) {
     slot: u32,
     count: u32,
 

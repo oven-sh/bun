@@ -79,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
 // Create a file with given contents, returns if file was newly created
 fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
     // Check if file exists and has same contents
-    if (bun.sys.File.readFrom(bun.toFD(std.fs.cwd()), filename, default_allocator).asValue()) |source_contents| {
+    if (bun.sys.File.readFrom(bun.FD.cwd(), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);
         if (strings.eqlLong(source_contents, contents, true)) {
             return .{ .result = false };
@@ -92,11 +92,11 @@ fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
     }
 
     // Open file for writing
-    const fd = switch (bun.sys.openatA(bun.toFD(std.fs.cwd()), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+    const fd = switch (bun.sys.openatA(.cwd(), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
     };
-    defer _ = bun.sys.close(fd);
+    defer fd.close();
 
     // Write contents
     switch (bun.sys.File.writeAll(.{ .handle = fd }, contents)) {
@@ -616,7 +616,7 @@ fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
     return null;
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

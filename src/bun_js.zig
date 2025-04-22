@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -68,6 +68,7 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
+                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT"),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -205,6 +206,7 @@ pub const Run = struct {
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
+                    .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT"),
                 },
             ),
             .arena = arena,
@@ -296,6 +298,28 @@ pub const Run = struct {
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         this.addConditionalGlobals();
+        do_redis_preconnect: {
+            // This must happen within the API lock, which is why it's not in the "doPreconnect" function
+            if (this.ctx.runtime_options.redis_preconnect) {
+                // Go through the global object's getter because Bun.redis is a
+                // PropertyCallback which means we don't have a WriteBarrier we can access
+                const global = vm.global;
+                const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                } orelse break :do_redis_preconnect;
+                const redis = bun_object.get(global, "redis") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                } orelse break :do_redis_preconnect;
+                const client = redis.as(bun.valkey.JSValkeyClient) orelse break :do_redis_preconnect;
+                // If connection fails, this will become an unhandled promise rejection, which is fine.
+                _ = client.doConnect(vm.global, redis) catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                };
+            }
+        }
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),
@@ -306,6 +330,8 @@ pub const Run = struct {
         if (strings.eqlComptime(this.entry_path, ".") and vm.transpiler.fs.top_level_dir.len > 0) {
             this.entry_path = vm.transpiler.fs.top_level_dir;
         }
+
+        var printed_sourcemap_warning_and_version = false;
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
@@ -320,6 +346,7 @@ pub const Run = struct {
                     vm.onExit();
 
                     if (run.any_unhandled) {
+                        printed_sourcemap_warning_and_version = true;
                         bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                         Output.prettyErrorln(
@@ -350,6 +377,7 @@ pub const Run = struct {
             vm.exit_handler.exit_code = 1;
             vm.onExit();
             if (run.any_unhandled) {
+                printed_sourcemap_warning_and_version = true;
                 bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                 Output.prettyErrorln(
@@ -437,7 +465,7 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         vm.onExit();
 
-        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+        if (this.any_unhandled and !printed_sourcemap_warning_and_version) {
             this.vm.exit_handler.exit_code = 1;
 
             bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
@@ -449,6 +477,7 @@ pub const Run = struct {
         }
 
         JSC.napi.fixDeadCodeElimination();
+        bun.crash_handler.fixDeadCodeElimination();
         vm.globalExit();
     }
 

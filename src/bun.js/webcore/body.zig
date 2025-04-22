@@ -1,11 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -144,7 +143,7 @@ pub const Body = struct {
                 return true;
             }
 
-            if (T.bodyGetCached(this_value)) |body_value| {
+            if (T.js.bodyGetCached(this_value)) |body_value| {
                 if (JSC.WebCore.ReadableStream.isDisturbedValue(body_value, globalObject)) {
                     return true;
                 }
@@ -1227,7 +1226,7 @@ pub fn BodyMixin(comptime Type: type) type {
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
-            return globalObject.ERR_BODY_ALREADY_USED("Body already used", .{}).reject();
+            return globalObject.ERR(.BODY_ALREADY_USED, "Body already used", .{}).reject();
         }
 
         pub fn getArrayBuffer(
@@ -1304,7 +1303,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             var encoder = this.getFormDataEncoding() orelse {
                 // TODO: catch specific errors from getFormDataEncoding
-                return globalObject.ERR_FORMDATA_PARSE_ERROR("Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
+                return globalObject.ERR(.FORMDATA_PARSE_ERROR, "Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
 
             if (value.* == .Locked) {
@@ -1320,7 +1319,8 @@ pub fn BodyMixin(comptime Type: type) type {
                 blob.slice(),
                 encoder.encoding,
             ) catch |err| {
-                return globalObject.ERR_FORMDATA_PARSE_ERROR(
+                return globalObject.ERR(
+                    .FORMDATA_PARSE_ERROR,
                     "FormData parse error {s}",
                     .{
                         @errorName(err),

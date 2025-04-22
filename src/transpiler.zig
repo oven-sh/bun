@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -704,7 +704,7 @@ pub const Transpiler = struct {
                         );
                 }
 
-                const buffer_writer = try js_printer.BufferWriter.init(transpiler.allocator);
+                const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (transpiler.options.target) {
@@ -796,12 +796,14 @@ pub const Transpiler = struct {
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (transpiler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
                         .pathname = pathname,
-                        .dir = dir,
+                        .dir = if (transpiler.options.output_dir_handle) |output_handle|
+                            .fromStdDir(output_handle)
+                        else
+                            .invalid,
                         .is_outdir = true,
                     },
                 };
@@ -822,7 +824,10 @@ pub const Transpiler = struct {
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
     ) !usize {
-        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
+        const tracer = if (enable_source_map)
+            bun.perf.trace("JSPrinter.printWithSourceMap")
+        else
+            bun.perf.trace("JSPrinter.print");
         defer tracer.end();
 
         const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
@@ -1177,21 +1182,21 @@ pub const Transpiler = struct {
                     transpiler.log,
                     &source,
                 ) catch null) orelse return null) {
-                    .ast => |value| ParseResult{
+                    .ast => |value| .{
                         .ast = value,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                     },
-                    .cached => ParseResult{
+                    .cached => .{
                         .ast = undefined,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
-                    .already_bundled => |already_bundled| ParseResult{
+                    .already_bundled => |already_bundled| .{
                         .ast = undefined,
                         .already_bundled = switch (already_bundled) {
                             .bun => .source_code,

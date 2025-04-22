@@ -18,7 +18,7 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .dlopen => |path| try writer.print("loading native module: {s}", .{path}),
         }
     }
 };
@@ -255,11 +255,12 @@ pub fn crashHandler(
                             \\Bun is actively working on supporting all libuv functions for POSIX
                             \\systems, please see this issue to track our progress:
                             \\
-                            \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                            \\<cyan>https://github.com/oven-sh/bun/issues/18546<r>
                             \\
                             \\
                         ;
                         writer.print(Output.prettyFmt(fmt, true), .{name}) catch std.posix.abort();
+                        has_printed_message = true;
                     }
                 } else {
                     if (Output.enable_ansi_colors) {
@@ -293,7 +294,7 @@ pub fn crashHandler(
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},
@@ -333,7 +334,7 @@ pub fn crashHandler(
                 if (debug_trace) {
                     has_printed_message = true;
 
-                    dumpStackTrace(trace.*);
+                    dumpStackTrace(trace.*, .{});
 
                     trace_str_buf.writer().print("{}", .{TraceString{
                         .trace = trace,
@@ -368,7 +369,7 @@ pub fn crashHandler(
                                 \\Bun is actively working on supporting all libuv functions for POSIX
                                 \\systems, please see this issue to track our progress:
                                 \\
-                                \\<cyan>https://github.com/oven-sh/bun/issues/4290<r>
+                                \\<cyan>https://github.com/oven-sh/bun/issues/18546<r>
                                 \\
                                 \\
                             ;
@@ -1414,9 +1415,9 @@ fn report(url: []const u8) void {
                 .hStdInput = null,
                 .hStdOutput = null,
                 .hStdError = null,
-                // .hStdInput = bun.win32.STDIN_FD.cast(),
-                // .hStdOutput = bun.win32.STDOUT_FD.cast(),
-                // .hStdError = bun.win32.STDERR_FD.cast(),
+                // .hStdInput = bun.FD.stdin().native(),
+                // .hStdOutput = bun.FD.stdout().native(),
+                // .hStdError = bun.FD.stderr().native(),
             };
             var cmd_line = std.BoundedArray(u16, 4096){};
             cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
@@ -1542,7 +1543,7 @@ noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std
             );
         }
         Output.flush();
-        dumpStackTrace(trace.*);
+        dumpStackTrace(trace.*, .{});
     } else {
         const ts = TraceString{
             .trace = trace,
@@ -1589,11 +1590,9 @@ pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.S
     handleErrorReturnTraceExtra(err, maybe_trace, false);
 }
 
-const stdDumpStackTrace = debug.dumpStackTrace;
-
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
-pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
+pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
     Output.flush();
     const stderr = std.io.getStdErr().writer();
     if (!bun.Environment.isDebug) {
@@ -1610,10 +1609,10 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         .windows => attempt_dump: {
             // Windows has issues with opening the PDB file sometimes.
             const debug_info = debug.getSelfDebugInfo() catch |err| {
-                stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
+                stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            debug.writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
+            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr()), limits) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
@@ -1624,7 +1623,15 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             // TODO(@paperclover): see if zig 0.14 fixes this
         },
         else => {
-            stdDumpStackTrace(trace);
+            // Assume debug symbol tooling is reliable.
+            const debug_info = debug.getSelfDebugInfo() catch |err| {
+                stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
+                return;
+            };
+            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr()), limits) catch |err| {
+                stderr.print("Unable to dump stack trace: {s}", .{@errorName(err)}) catch return;
+                return;
+            };
             return;
         },
     }
@@ -1670,6 +1677,9 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         .argv = argv.items,
     }) catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        if (bun.Environment.isWindows) {
+            stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch return;
+        }
         return;
     };
     if (proc.term != .Exited or proc.term.Exited != 0) {
@@ -1681,11 +1691,11 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     stderr.writeAll(proc.stderr) catch return;
 }
 
-pub fn dumpCurrentStackTrace(first_address: ?usize) void {
+pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimits) void {
     var addrs: [32]usize = undefined;
     var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
     std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
-    dumpStackTrace(stack);
+    dumpStackTrace(stack, limits);
 }
 
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
@@ -1858,11 +1868,266 @@ pub fn isPanicking() bool {
     return panicking.load(.monotonic) > 0;
 }
 
+const SourceLocation = debug.SourceLocation;
+pub const SourceAtAddress = struct {
+    source_location: ?SourceLocation,
+    symbol_name: []const u8,
+    compile_unit_name: []const u8,
+    fn deinit(self: *@This(), debug_info: *debug.SelfInfo) void {
+        if (self.source_location) |sl| debug_info.allocator.free(sl.file_name);
+    }
+};
+
+pub const WriteStackTraceLimits = struct {
+    frame_count: usize = std.math.maxInt(usize),
+    stop_at_jsc_llint: bool = false,
+};
+
+/// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
+/// frame count, or when hitting jsc LLInt Additionally, the printing function
+/// does not print the `^`, instead it highlights the word at the column. This
+/// Makes each frame take up two lines instead of three.
+pub fn writeStackTrace(
+    stack_trace: std.builtin.StackTrace,
+    out_stream: anytype,
+    debug_info: *debug.SelfInfo,
+    tty_config: std.io.tty.Config,
+    limits: WriteStackTraceLimits,
+) !void {
+    if (builtin.strip_debug_info) return error.MissingDebugInfo;
+    var frame_index: usize = 0;
+    var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
+
+    while (frames_left != 0) : ({
+        frames_left -= 1;
+        frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len;
+    }) {
+        if (frame_index >= limits.frame_count) {
+            break;
+        }
+        const return_address = stack_trace.instruction_addresses[frame_index];
+        const source = (try getSourceAtAddress(debug_info, return_address - 1)) orelse {
+            const module_name = debug_info.getModuleNameForAddress(return_address - 1);
+            try printLineInfo(
+                out_stream,
+                null,
+                return_address - 1,
+                "???",
+                module_name orelse "???",
+                tty_config,
+            );
+            continue;
+        };
+
+        if (limits.stop_at_jsc_llint and bun.strings.includes(source.symbol_name, "_llint_")) {
+            break;
+        }
+
+        try printLineInfo(
+            out_stream,
+            source.source_location,
+            return_address - 1,
+            source.symbol_name,
+            source.compile_unit_name,
+            tty_config,
+        );
+    }
+
+    if (stack_trace.index > stack_trace.instruction_addresses.len) {
+        const dropped_frames = stack_trace.index - stack_trace.instruction_addresses.len;
+
+        tty_config.setColor(out_stream, .bold) catch {};
+        try out_stream.print("({d} additional stack frames not recorded...)\n", .{dropped_frames});
+        tty_config.setColor(out_stream, .reset) catch {};
+    } else if (frames_left != 0) {
+        tty_config.setColor(out_stream, .bold) catch {};
+        try out_stream.print("({d} additional stack frames skipped...)\n", .{frames_left});
+        tty_config.setColor(out_stream, .reset) catch {};
+    }
+    out_stream.writeAll("\n") catch {};
+}
+
+/// Clone of `debug.printSourceAtAddress` but it returns the metadata as well.
+pub fn getSourceAtAddress(debug_info: *debug.SelfInfo, address: usize) !?SourceAtAddress {
+    const module = debug_info.getModuleForAddress(address) catch |err| switch (err) {
+        error.MissingDebugInfo, error.InvalidDebugInfo => return null,
+        else => return err,
+    };
+
+    const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address) catch |err| switch (err) {
+        error.MissingDebugInfo, error.InvalidDebugInfo => return null,
+        else => return err,
+    };
+
+    return .{
+        .source_location = symbol_info.source_location,
+        .symbol_name = symbol_info.name,
+        .compile_unit_name = symbol_info.compile_unit_name,
+    };
+}
+
+/// Clone of `debug.printLineInfo` as it is private.
+fn printLineInfo(
+    out_stream: anytype,
+    source_location: ?SourceLocation,
+    address: usize,
+    symbol_name: []const u8,
+    compile_unit_name: []const u8,
+    tty_config: std.io.tty.Config,
+) !void {
+    const base_path = bun.Environment.base_path ++ std.fs.path.sep_str;
+    nosuspend {
+        if (source_location) |*sl| {
+            if (bun.strings.startsWith(sl.file_name, base_path)) {
+                try tty_config.setColor(out_stream, .dim);
+                try out_stream.print("{s}", .{base_path});
+                try tty_config.setColor(out_stream, .reset);
+                try tty_config.setColor(out_stream, .bold);
+                try out_stream.print("{s}", .{sl.file_name[base_path.len..]});
+            } else {
+                try tty_config.setColor(out_stream, .bold);
+                try out_stream.print("{s}", .{sl.file_name});
+            }
+            try out_stream.print(":{d}:{d}", .{ sl.line, sl.column });
+        } else {
+            try tty_config.setColor(out_stream, .bold);
+            try out_stream.writeAll("???:?:?");
+        }
+
+        try tty_config.setColor(out_stream, .reset);
+        try out_stream.writeAll(": ");
+        try tty_config.setColor(out_stream, .dim);
+        try out_stream.print("0x{x} in", .{address});
+        try tty_config.setColor(out_stream, .reset);
+        try tty_config.setColor(out_stream, .yellow);
+        try out_stream.print(" {s}", .{symbol_name});
+        try tty_config.setColor(out_stream, .reset);
+        try tty_config.setColor(out_stream, .dim);
+        try out_stream.print(" ({s})", .{compile_unit_name});
+        try tty_config.setColor(out_stream, .reset);
+        try out_stream.writeAll("\n");
+
+        // Show the matching source code line if possible
+        if (source_location) |sl| {
+            if (printLineFromFileAnyOs(out_stream, tty_config, sl)) {
+                if (sl.column > 0 and tty_config == .no_color) {
+                    // The caret already takes one char
+                    const space_needed = @as(usize, @intCast(sl.column - 1));
+                    try out_stream.writeByteNTimes(' ', space_needed);
+                    try out_stream.writeAll("^\n");
+                }
+            } else |err| switch (err) {
+                error.EndOfFile, error.FileNotFound => {},
+                error.BadPathName => {},
+                error.AccessDenied => {},
+                else => return err,
+            }
+        }
+    }
+}
+
+/// Modified version of `debug.printLineFromFileAnyOs` that uses two passes.
+/// - Record the whole slice into a buffer
+/// - Locate the column, expand a highlight to one word.
+/// - Print the line, with the highlight.
+fn printLineFromFileAnyOs(out_stream: anytype, tty_config: std.io.tty.Config, source_location: SourceLocation) !void {
+    // Need this to always block even in async I/O mode, because this could potentially
+    // be called from e.g. the event loop code crashing.
+    var f = try std.fs.cwd().openFile(source_location.file_name, .{});
+    defer f.close();
+
+    var line_buf: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&line_buf);
+    read_line: {
+        var buf: [4096]u8 = undefined;
+        var amt_read = try f.read(buf[0..]);
+        const line_start = seek: {
+            var current_line_start: usize = 0;
+            var next_line: usize = 1;
+            while (next_line != source_location.line) {
+                const slice = buf[current_line_start..amt_read];
+                if (bun.strings.indexOfChar(slice, '\n')) |pos| {
+                    next_line += 1;
+                    if (pos == slice.len - 1) {
+                        amt_read = try f.read(buf[0..]);
+                        current_line_start = 0;
+                    } else current_line_start += pos + 1;
+                } else if (amt_read < buf.len) {
+                    return error.EndOfFile;
+                } else {
+                    amt_read = try f.read(buf[0..]);
+                    current_line_start = 0;
+                }
+            }
+            break :seek current_line_start;
+        };
+        const slice = buf[line_start..amt_read];
+        if (bun.strings.indexOfChar(slice, '\n')) |pos| {
+            const line = slice[0..pos];
+            std.mem.replaceScalar(u8, line, '\t', ' ');
+            fbs.writer().writeAll(line) catch {};
+            break :read_line;
+        } else { // Line is the last inside the buffer, and requires another read to find delimiter. Alternatively the file ends.
+            std.mem.replaceScalar(u8, slice, '\t', ' ');
+            fbs.writer().writeAll(slice) catch break :read_line;
+            while (amt_read == buf.len) {
+                amt_read = try f.read(buf[0..]);
+                if (bun.strings.indexOfChar(buf[0..amt_read], '\n')) |pos| {
+                    const line = buf[0..pos];
+                    std.mem.replaceScalar(u8, line, '\t', ' ');
+                    fbs.writer().writeAll(line) catch break :read_line;
+                    break :read_line;
+                } else {
+                    const line = buf[0..amt_read];
+                    std.mem.replaceScalar(u8, line, '\t', ' ');
+                    fbs.writer().writeAll(line) catch break :read_line;
+                }
+            }
+            break :read_line;
+        }
+        return;
+    }
+    const line_without_newline = std.mem.trimRight(u8, fbs.getWritten(), "\n");
+    if (source_location.column > line_without_newline.len) {
+        try out_stream.writeAll(line_without_newline);
+        try out_stream.writeByte('\n');
+        return;
+    }
+    // expand the highlight to one word
+    var left = source_location.column -| 1;
+    var right = left + 1;
+    while (left > 0) switch (line_without_newline[left]) {
+        else => left -= 1,
+        'a'...'z', 'A'...'Z', '0'...'9', '_', ' ', '\t' => break,
+    };
+    while (left > 0) switch (line_without_newline[left]) {
+        'a'...'z', 'A'...'Z', '0'...'9', '_' => left -= 1,
+        else => break,
+    };
+    while (right < line_without_newline.len) switch (line_without_newline[right - 1]) {
+        'a'...'z', 'A'...'Z', '0'...'9', '_' => right += 1,
+        else => break,
+    };
+    const before = line_without_newline[0..left];
+    const highlight = line_without_newline[left..right];
+    const after = line_without_newline[right..];
+    try tty_config.setColor(out_stream, .red);
+    try tty_config.setColor(out_stream, .dim);
+    try out_stream.writeAll(before);
+    try tty_config.setColor(out_stream, .reset);
+    try tty_config.setColor(out_stream, .red);
+    try out_stream.writeAll(highlight);
+    try tty_config.setColor(out_stream, .dim);
+    try out_stream.writeAll(after);
+    try tty_config.setColor(out_stream, .reset);
+    try out_stream.writeByte('\n');
+}
+
 export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
     inside_native_plugin = name;
 }
 
-fn unsupportUVFunction(name: ?[*:0]const u8) callconv(.C) void {
+export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
     std.debug.panic("unsupported uv function: {s}", .{name.?});
@@ -1882,9 +2147,12 @@ export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {
     }
 }
 
+pub fn fixDeadCodeElimination() void {
+    std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
+}
 comptime {
     _ = &Bun__crashHandler;
     if (!bun.Environment.isWindows) {
-        @export(&unsupportUVFunction, .{ .name = "CrashHandler__unsupportedUVFunction" });
+        std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
     }
 }

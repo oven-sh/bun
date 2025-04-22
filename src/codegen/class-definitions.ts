@@ -44,6 +44,13 @@ export type Field =
     } & PropertyAttribute)
   | ({
       fn: string;
+
+      /**
+       * Mark it as an async function in the TypeScript definition.
+       *
+       * Does not do anything at runtime.
+       */
+      async?: boolean;
       /**
        * Number of parameters accepted by the function.
        *
@@ -94,21 +101,44 @@ export class ClassDefinition {
   /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
+   *
+   * Example for pointers only owned by JavaScript classes:
    * ```zig
    * pub const NativeClass = struct {
-   *   pub usingnamespace bun.New(NativeClass);
    *
    *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
    *     // do stuff
-   *     return NativeClass.new(.{
+   *     return bun.new(NativeClass, .{
    *       // ...
    *     });
    *   }
    *
    *   fn finalize(this: *NativeClass) void {
    *     // free allocations owned by this class, then free the struct itself.
-   *     this.destroy();
+   *     bun.destroy(this);
    *   }
+   * };
+   * ```
+   * Example with ref counting:
+   * ```
+   * pub const RefCountedNativeClass = struct {
+   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+   *   pub const ref = RefCount.ref;
+   *   pub const deref = RefCount.deref;
+   *
+   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+   *     // do stuff
+   *     return bun.new(NativeClass, .{
+   *       // ...
+   *     });
+   *   }
+   *
+   *   fn deinit(this: *NativeClass) void {
+   *     // free allocations owned by this class, then free the struct itself.
+   *     bun.destroy(this);
+   *   }
+   *
+   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
    * };
    * ```
    * @todo remove this and require all classes to implement `finalize`.

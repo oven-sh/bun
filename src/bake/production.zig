@@ -626,7 +626,7 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
-export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
+pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
 
@@ -836,7 +836,7 @@ pub const PerThread = struct {
 };
 
 /// Given a key, returns the source code to load.
-export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
+pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     var sfa = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = sfa.get();
     const utf8 = key.toUTF8(allocator);
@@ -854,7 +854,7 @@ const TypeAndFlags = packed struct(i32) {
 
 const std = @import("std");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const OutputFile = bun.options.OutputFile;
@@ -866,3 +866,8 @@ const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
+
+fn @"export"() void {
+    _ = BakeProdResolve;
+    _ = BakeProdLoad;
+}

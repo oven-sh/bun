@@ -583,18 +583,18 @@ pub const JSValue = enum(i64) {
             // const double = try this.toNumber(global);
             const double = this.coerceToDouble(global);
             if (std.math.isNan(double)) {
-                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+                return JSC.Error.SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
             }
 
             const port = this.to(i64);
             if (0 <= port and port <= 65535) {
                 return @as(u16, @truncate(@max(0, port)));
             } else {
-                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
+                return JSC.Error.SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
             }
         }
 
-        return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+        return JSC.Error.SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
     }
 
     extern fn JSC__JSValue__isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool;
@@ -2155,6 +2155,19 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
+    pub fn getOptionalInt(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Type: type) JSError!?Type {
+        const value = try this.get(globalThis, property_name) orelse return null;
+        const info = @typeInfo(Type);
+        if (comptime info != .int) {
+            @compileError("getOptionalInt only works with integer types");
+        }
+        const is_unsigned = info.int.signedness == .unsigned;
+        const min: i64 = if (is_unsigned) 0 else @max(std.math.minInt(Type), -JSC.MAX_SAFE_INTEGER);
+        const max: i64 = @min(std.math.maxInt(Type), JSC.MAX_SAFE_INTEGER);
+
+        return try globalThis.validateIntegerRange(value, Type, 0, .{ .min = min, .max = max, .field_name = property_name });
+    }
+
     pub fn getOwnOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
         const prop = (if (comptime BuiltinName.has(property_name))
             fastGetOwn(this, globalThis, @field(BuiltinName, property_name))
@@ -2413,7 +2426,7 @@ pub const JSValue = enum(i64) {
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
         bun.assert(this.isNumber());
-        return bun.FDImpl.fromUV(this.toInt32()).encode();
+        return .fromUV(this.toInt32());
     }
 
     pub inline fn toU16(this: JSValue) u16 {
@@ -2639,7 +2652,7 @@ pub const JSValue = enum(i64) {
 pub const JSValueReprInt = JSC.JSValueReprInt;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;

@@ -1,11 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MimeType = http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const http = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 const io = bun.io;
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -57,8 +56,11 @@ const S3File = @import("S3File.zig");
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
-    pub usingnamespace bun.New(@This());
-    pub usingnamespace JSC.Codegen.JSBlob;
+    pub const new = bun.TrivialNew(@This());
+    pub const js = JSC.Codegen.JSBlob;
+    // NOTE: toJS is overridden
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     const rf = @import("blob/ReadFile.zig");
     pub const ReadFile = rf.ReadFile;
@@ -476,7 +478,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = try bun.FileDescriptor.readFrom(reader, .little);
+                        const fd = try reader.readStruct(bun.FD);
 
                         var path_or_fd = JSC.Node.PathOrFileDescriptor{
                             .fd = fd,
@@ -649,10 +651,10 @@ pub const Blob = struct {
     }
 
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
-        var this = bun.cast(*Blob, ptr);
-        var new = Blob.new(this.dupeWithContentType(true));
-        new.allocator = bun.default_allocator;
-        return new;
+        const this = bun.cast(*Blob, ptr);
+        const new_ptr = new(this.dupeWithContentType(true));
+        new_ptr.allocator = bun.default_allocator;
+        return new_ptr;
     }
 
     export fn Blob__destroy(this: *Blob) void {
@@ -719,27 +721,26 @@ pub const Blob = struct {
                             );
                         },
                         .fd => |fd| {
-                            const fd_impl = bun.FDImpl.decode(fd);
-                            if (comptime Environment.isWindows) {
-                                if (fd_impl.kind == .uv) {
-                                    try writer.print(
+                            if (Environment.isWindows) {
+                                switch (fd.decodeWindows()) {
+                                    .uv => |uv_file| try writer.print(
                                         comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
-                                        .{fd_impl.uv()},
-                                    );
-                                } else {
-                                    if (Environment.allow_assert) {
-                                        comptime assert(Environment.isWindows);
-                                        @panic("this shouldn't be reachable.");
-                                    }
-                                    try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{any}<r>)<r>", enable_ansi_colors),
-                                        .{fd_impl.system()},
-                                    );
+                                        .{uv_file},
+                                    ),
+                                    .windows => |handle| {
+                                        if (Environment.isDebug) {
+                                            @panic("this shouldn't be reachable.");
+                                        }
+                                        try writer.print(
+                                            comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>0x{x}<r>)<r>", enable_ansi_colors),
+                                            .{@intFromPtr(handle)},
+                                        );
+                                    },
                                 }
                             } else {
                                 try writer.print(
                                     comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
-                                    .{fd_impl.system()},
+                                    .{fd.native()},
                                 );
                             }
                         },
@@ -867,7 +868,7 @@ pub const Blob = struct {
     /// - doesn't exist and is created
     /// - exists and is truncated
     fn writeFileWithEmptySourceToDestination(
-        ctx: JSC.C.JSContextRef,
+        ctx: *JSC.JSGlobalObject,
         destination_blob: *Blob,
         options: WriteFileOptions,
     ) JSC.JSValue {
@@ -937,7 +938,7 @@ pub const Blob = struct {
                                         break :err;
                                     },
                                     .result => |fd| {
-                                        _ = bun.sys.close(fd);
+                                        fd.close();
                                         return JSC.JSPromise.resolvedPromiseValue(ctx, .jsNumber(0));
                                     },
                                 }
@@ -947,14 +948,14 @@ pub const Blob = struct {
                     }
 
                     result.err = result.err.withPathLike(file.pathlike);
-                    return JSC.JSPromise.rejectedPromiseValue(ctx, result.toJS(ctx));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, result.toJS(ctx));
                 }
             },
             .s3 => |*s3| {
 
                 // create empty file
                 var aws_options = s3.getCredentialsWithOptions(options.extra_options, ctx) catch |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.takeException(err));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.takeException(err));
                 };
                 defer aws_options.deinit();
 
@@ -963,7 +964,7 @@ pub const Blob = struct {
                     store: *Store,
                     global: *JSC.JSGlobalObject,
 
-                    pub usingnamespace bun.New(@This());
+                    pub const new = bun.TrivialNew(@This());
 
                     pub fn resolve(result: S3.S3UploadResult, opaque_this: *anyopaque) void {
                         const this: *@This() = @ptrCast(@alignCast(opaque_this));
@@ -977,7 +978,7 @@ pub const Blob = struct {
                     fn deinit(this: *@This()) void {
                         this.promise.deinit();
                         this.store.deref();
-                        this.destroy();
+                        bun.destroy(this);
                     }
                 };
 
@@ -1012,7 +1013,7 @@ pub const Blob = struct {
     }
 
     pub fn writeFileWithSourceDestination(
-        ctx: JSC.C.JSContextRef,
+        ctx: *JSC.JSGlobalObject,
         source_blob: *Blob,
         destination_blob: *Blob,
         options: WriteFileOptions,
@@ -1073,7 +1074,7 @@ pub const Blob = struct {
         else if (destination_type == .file and source_type == .file) {
             if (comptime Environment.isWindows) {
                 return Store.CopyFileWindows.init(
-                    destination_blob.store.?,
+                    destination_store,
                     source_store,
                     ctx.bunVM().eventLoop(),
                     options.mkdirp_if_not_exists orelse true,
@@ -1082,9 +1083,8 @@ pub const Blob = struct {
             }
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
-                destination_blob.store.?,
+                destination_store,
                 source_store,
-
                 destination_blob.offset,
                 destination_blob.size,
                 ctx,
@@ -1101,7 +1101,7 @@ pub const Blob = struct {
             ), ctx)) |stream| {
                 return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
             } else {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
             }
         } else if (destination_type == .bytes and source_type == .bytes) {
             // If this is bytes <> bytes, we can just duplicate it
@@ -1121,9 +1121,9 @@ pub const Blob = struct {
                 blob_value,
             );
         } else if (destination_type == .s3) {
-            const s3 = &destination_blob.store.?.data.s3;
+            const s3 = &destination_store.data.s3;
             var aws_options = s3.getCredentialsWithOptions(options.extra_options, ctx) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.takeException(err));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.takeException(err));
             };
             defer aws_options.deinit();
             const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
@@ -1150,7 +1150,7 @@ pub const Blob = struct {
                                 undefined,
                             );
                         } else {
-                            return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                         }
                     } else {
                         const Wrapper = struct {
@@ -1158,7 +1158,7 @@ pub const Blob = struct {
                             promise: JSC.JSPromise.Strong,
                             global: *JSC.JSGlobalObject,
 
-                            pub usingnamespace bun.New(@This());
+                            pub const new = bun.TrivialNew(@This());
 
                             pub fn resolve(result: S3.S3UploadResult, opaque_self: *anyopaque) void {
                                 const this: *@This() = @ptrCast(@alignCast(opaque_self));
@@ -1217,7 +1217,7 @@ pub const Blob = struct {
                             undefined,
                         );
                     } else {
-                        return JSC.JSPromise.rejectedPromiseValue(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
                     }
                 },
             }
@@ -1389,7 +1389,7 @@ pub const Blob = struct {
                     .Error => |*err_ref| {
                         destination_blob.detach();
                         _ = response.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => |*locked| {
                         if (destination_blob.isS3()) {
@@ -1450,7 +1450,7 @@ pub const Blob = struct {
                     .Error => |*err_ref| {
                         destination_blob.detach();
                         _ = request.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => |locked| {
                         if (destination_blob.isS3()) {
@@ -1598,7 +1598,7 @@ pub const Blob = struct {
                         return .zero;
                     }
 
-                    return JSC.JSPromise.rejectedPromiseValue(
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
@@ -1615,11 +1615,10 @@ pub const Blob = struct {
             // we only truncate if it's a path
             // if it's a file descriptor, we assume they want manual control over that behavior
             if (truncate) {
-                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
+                _ = fd.truncate(@intCast(written));
             }
-
             if (needs_open) {
-                _ = bun.sys.close(fd);
+                fd.close();
             }
         }
         if (!str.isEmpty()) {
@@ -1642,9 +1641,9 @@ pub const Blob = struct {
                             return .zero;
                         }
                         if (comptime !needs_open) {
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                         }
-                        return JSC.JSPromise.rejectedPromiseValue(
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                             globalThis,
                             err.withPath(pathlike.path.slice()).toJSC(globalThis),
                         );
@@ -1686,7 +1685,7 @@ pub const Blob = struct {
                         }
                     }
 
-                    return JSC.JSPromise.rejectedPromiseValue(
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
@@ -1698,11 +1697,7 @@ pub const Blob = struct {
 
         const truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
-        defer {
-            if (needs_open) {
-                _ = bun.sys.close(fd);
-            }
-        }
+        defer if (needs_open) fd.close();
 
         var remain = bytes;
         const end = remain.ptr + remain.len;
@@ -1723,12 +1718,12 @@ pub const Blob = struct {
                         }
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.rejectedPromiseValue(
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                             globalThis,
                             err.toJSC(globalThis),
                         );
                     }
-                    return JSC.JSPromise.rejectedPromiseValue(
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
@@ -1993,19 +1988,14 @@ pub const Blob = struct {
                     break :brk copy;
                 },
                 .fd => {
-                    const optional_store: ?*Store = switch (bun.FDTag.get(path_or_fd.fd)) {
-                        .stdin => vm.rareData().stdin(),
-                        .stderr => vm.rareData().stderr(),
-                        .stdout => vm.rareData().stdout(),
-                        else => null,
-                    };
-
-                    if (optional_store) |store| {
+                    if (path_or_fd.fd.stdioTag()) |tag| {
+                        const store = switch (tag) {
+                            .std_in => vm.rareData().stdin(),
+                            .std_err => vm.rareData().stderr(),
+                            .std_out => vm.rareData().stdout(),
+                        };
                         store.ref();
-                        return Blob.initWithStore(
-                            store,
-                            globalThis,
-                        );
+                        return Blob.initWithStore(store, globalThis);
                     }
                     break :brk path_or_fd.*;
                 },
@@ -2023,7 +2013,7 @@ pub const Blob = struct {
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn memoryCost(this: *const Store) usize {
             return if (this.hasOneRef()) @sizeOf(@This()) + switch (this.data) {
@@ -2212,7 +2202,7 @@ pub const Blob = struct {
                 },
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
 
         const SerializeTag = enum(u8) {
@@ -2229,7 +2219,7 @@ pub const Blob = struct {
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try fd.writeTo(writer, .little);
+                            try writer.writeStruct(fd);
                         },
                         .path => |path| {
                             const path_slice = path.slice();
@@ -2261,7 +2251,7 @@ pub const Blob = struct {
             return try Blob.Store.init(list.items, allocator);
         }
 
-        pub fn FileOpenerMixin(comptime This: type) type {
+        pub fn FileOpener(comptime This: type) type {
             return struct {
                 context: *This,
 
@@ -2274,7 +2264,7 @@ pub const Blob = struct {
                 else
                     bun.O.RDONLY | __opener_flags;
 
-                pub inline fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
+                fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
                     var buf: bun.PathBuffer = undefined;
                     var path_string = if (@hasField(This, "file_store"))
                         this.file_store.pathlike.path
@@ -2354,7 +2344,7 @@ pub const Blob = struct {
                     Callback(this, this.opened_fd);
                 }
 
-                pub const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
+                const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
 
                 pub fn getFd(this: *This, comptime Callback: OpenCallback) void {
                     if (this.opened_fd != invalid_fd) {
@@ -2378,15 +2368,13 @@ pub const Blob = struct {
                         }
                     }
 
-                    this.getFdByOpening(Callback);
+                    getFdByOpening(this, Callback);
                 }
             };
         }
 
-        pub fn FileCloserMixin(comptime This: type) type {
+        pub fn FileCloser(comptime This: type) type {
             return struct {
-                const Closer = @This();
-
                 fn scheduleClose(request: *io.Request) io.Action {
                     var this: *This = @alignCast(@fieldParentPtr("io_request", request));
                     return io.Action{
@@ -2427,12 +2415,12 @@ pub const Blob = struct {
 
                     if (is_allowed_to_close_fd and
                         this.opened_fd != invalid_fd and
-                        !this.opened_fd.isStdio())
+                        this.opened_fd.stdioTag() == null)
                     {
                         if (comptime Environment.isWindows) {
-                            bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
+                            bun.Async.Closer.close(this.opened_fd, this.loop);
                         } else {
-                            _ = bun.sys.close(this.opened_fd);
+                            _ = this.opened_fd.closeAllowingBadFileDescriptor(null);
                         }
                         this.opened_fd = invalid_fd;
                     }
@@ -2493,7 +2481,7 @@ pub const Blob = struct {
                     const rc = libuv.uv_fs_read(
                         loop,
                         &this.io_request,
-                        bun.uvfdcast(read_write_loop.source_fd),
+                        read_write_loop.source_fd.uv(),
                         @ptrCast(&read_write_loop.uv_buf),
                         1,
                         -1,
@@ -2540,7 +2528,7 @@ pub const Blob = struct {
                     const rc2 = libuv.uv_fs_write(
                         event_loop.virtual_machine.event_loop_handle.?,
                         &this.io_request,
-                        bun.uvfdcast(destination_fd),
+                        destination_fd.uv(),
                         @ptrCast(&this.read_write_loop.uv_buf),
                         1,
                         -1,
@@ -2591,7 +2579,7 @@ pub const Blob = struct {
                         const rc2 = libuv.uv_fs_write(
                             this.event_loop.virtual_machine.event_loop_handle.?,
                             &this.io_request,
-                            bun.uvfdcast(destination_fd),
+                            destination_fd.uv(),
                             @ptrCast(&this.read_write_loop.uv_buf),
                             1,
                             -1,
@@ -2619,26 +2607,26 @@ pub const Blob = struct {
 
                 pub fn close(this: *ReadWriteLoop) void {
                     if (this.must_close_source_fd) {
-                        if (bun.toLibUVOwnedFD(this.source_fd)) |fd| {
+                        if (this.source_fd.makeLibUVOwned()) |fd| {
                             bun.Async.Closer.close(
-                                bun.uvfdcast(fd),
+                                fd,
                                 bun.Async.Loop.get(),
                             );
                         } else |_| {
-                            _ = bun.sys.close(this.source_fd);
+                            this.source_fd.close();
                         }
                         this.must_close_source_fd = false;
                         this.source_fd = invalid_fd;
                     }
 
                     if (this.must_close_destination_fd) {
-                        if (bun.toLibUVOwnedFD(this.destination_fd)) |fd| {
+                        if (this.destination_fd.makeLibUVOwned()) |fd| {
                             bun.Async.Closer.close(
-                                bun.uvfdcast(fd),
+                                fd,
                                 bun.Async.Loop.get(),
                             );
                         } else |_| {
-                            _ = bun.sys.close(this.destination_fd);
+                            this.destination_fd.close();
                         }
                         this.must_close_destination_fd = false;
                         this.destination_fd = invalid_fd;
@@ -2660,7 +2648,7 @@ pub const Blob = struct {
                 this.onComplete(this.read_write_loop.written);
             }
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn init(
                 destination_file_store: *Store,
@@ -2701,8 +2689,8 @@ pub const Blob = struct {
                             bun.O.WRONLY | bun.O.CREAT,
                         0,
                     )) {
-                        .result => |result| bun.toLibUVOwnedFD(result) catch {
-                            _ = bun.sys.close(result);
+                        .result => |result| result.makeLibUVOwned() catch {
+                            result.close();
                             return .{
                                 .err = .{
                                     .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EMFILE))),
@@ -2961,7 +2949,7 @@ pub const Blob = struct {
                 this.source_file_store.deref();
                 this.promise.deinit();
                 this.io_request.deinit();
-                this.destroy();
+                bun.destroy(this);
             }
 
             fn mkdirp(
@@ -3136,14 +3124,14 @@ pub const Blob = struct {
             pub fn doCloseFile(this: *CopyFile, comptime which: IOWhich) void {
                 switch (which) {
                     .both => {
-                        _ = bun.sys.close(this.destination_fd);
-                        _ = bun.sys.close(this.source_fd);
+                        this.destination_fd.close();
+                        this.source_fd.close();
                     },
                     .destination => {
-                        _ = bun.sys.close(this.destination_fd);
+                        this.destination_fd.close();
                     },
                     .source => {
-                        _ = bun.sys.close(this.source_fd);
+                        this.source_fd.close();
                     },
                 }
             }
@@ -3162,7 +3150,7 @@ pub const Blob = struct {
                         open_source_flags,
                         0,
                     )) {
-                        .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                        .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                             .result => |result_fd| result_fd,
                             .err => |errno| {
                                 this.system_error = errno.toSystemError();
@@ -3184,7 +3172,7 @@ pub const Blob = struct {
                             open_destination_flags,
                             JSC.Node.default_permission,
                         )) {
-                            .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                            .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                                 .result => |result_fd| result_fd,
                                 .err => |errno| {
                                     this.system_error = errno.toSystemError();
@@ -3196,8 +3184,8 @@ pub const Blob = struct {
                                     .@"continue" => continue,
                                     .fail => {
                                         if (which == .both) {
-                                            _ = bun.sys.close(this.source_fd);
-                                            this.source_fd = .zero;
+                                            this.source_fd.close();
+                                            this.source_fd = .invalid;
                                         }
                                         return bun.errnoToZigErr(errno.errno);
                                     },
@@ -3205,8 +3193,8 @@ pub const Blob = struct {
                                 }
 
                                 if (which == .both) {
-                                    _ = bun.sys.close(this.source_fd);
-                                    this.source_fd = .zero;
+                                    this.source_fd.close();
+                                    this.source_fd = .invalid;
                                 }
 
                                 this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
@@ -3673,7 +3661,7 @@ pub const Blob = struct {
                 store: *Store,
                 global: *JSC.JSGlobalObject,
 
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub fn resolve(result: S3.S3DeleteResult, opaque_self: *anyopaque) void {
                     const self: *@This() = @ptrCast(@alignCast(opaque_self));
@@ -3689,10 +3677,10 @@ pub const Blob = struct {
                     }
                 }
 
-                fn deinit(self: *@This()) void {
-                    self.store.deref();
-                    self.promise.deinit();
-                    self.destroy();
+                fn deinit(wrap: *@This()) void {
+                    wrap.store.deref();
+                    wrap.promise.deinit();
+                    bun.destroy(wrap);
                 }
             };
             const promise = JSC.JSPromise.Strong.init(globalThis);
@@ -3710,6 +3698,67 @@ pub const Blob = struct {
 
             return value;
         }
+
+        pub fn listObjects(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, listOptions: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
+            if (!listOptions.isEmptyOrUndefinedOrNull() and !listOptions.isObject()) {
+                return globalThis.throwInvalidArguments("S3Client.listObjects() needs a S3ListObjectsOption as it's first argument", .{});
+            }
+
+            const Wrapper = struct {
+                promise: JSC.JSPromise.Strong,
+                store: *Store,
+                resolvedlistOptions: S3.S3ListObjectsOptions,
+                global: *JSC.JSGlobalObject,
+
+                pub fn resolve(result: S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+                    const self: *@This() = @ptrCast(@alignCast(opaque_self));
+                    defer self.deinit();
+                    const globalObject = self.global;
+
+                    switch (result) {
+                        .success => |list_result| {
+                            defer list_result.deinit();
+                            self.promise.resolve(globalObject, list_result.toJS(globalObject));
+                        },
+
+                        inline .not_found, .failure => |err| {
+                            self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        },
+                    }
+                }
+
+                fn deinit(self: *@This()) void {
+                    self.store.deref();
+                    self.promise.deinit();
+                    self.resolvedlistOptions.deinit();
+                    self.destroy();
+                }
+
+                pub inline fn destroy(self: *@This()) void {
+                    bun.destroy(self);
+                }
+            };
+
+            const promise = JSC.JSPromise.Strong.init(globalThis);
+            const value = promise.value();
+            const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = if (proxy_url) |url| url.href else null;
+            var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
+            defer aws_options.deinit();
+
+            const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+            store.ref();
+
+            S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
+                .promise = promise,
+                .store = store, // store is needed in case of not found error
+                .resolvedlistOptions = options,
+                .global = globalThis,
+            }), proxy);
+
+            return value;
+        }
+
         pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3Store {
             credentials.ref();
             return .{
@@ -3842,7 +3891,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const thisValue = callframe.this();
-        if (Blob.streamGetCached(thisValue)) |cached| {
+        if (js.streamGetCached(thisValue)) |cached| {
             return cached;
         }
         var recommended_chunk_size: SizeType = 0;
@@ -3868,7 +3917,7 @@ pub const Blob = struct {
                         // in the case we have a file descriptor store, we want to de-duplicate
                         // readable streams. in every other case we want `.stream()` to be it's
                         // own stream.
-                        Blob.streamSetCached(thisValue, globalThis, stream);
+                        js.streamSetCached(thisValue, globalThis, stream);
                     },
                     else => {},
                 },
@@ -4049,7 +4098,7 @@ pub const Blob = struct {
         poll_ref: bun.Async.KeepAlive = .{},
 
         handler: S3ReadHandler,
-        usingnamespace bun.New(S3BlobDownloadTask);
+        pub const new = bun.TrivialNew(S3BlobDownloadTask);
         pub const S3ReadHandler = *const fn (this: *Blob, globalthis: *JSGlobalObject, raw_bytes: []u8) JSValue;
 
         pub fn callHandler(this: *S3BlobDownloadTask, raw_bytes: []u8) JSValue {
@@ -4104,7 +4153,7 @@ pub const Blob = struct {
             this.blob.store.?.deref();
             this.poll_ref.unref(this.globalThis.bunVM());
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -4191,13 +4240,13 @@ pub const Blob = struct {
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         sink: *JSC.WebCore.FileSink,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn deinit(this: *@This()) void {
             this.promise.deinit();
             this.readable_stream_ref.deinit();
             this.sink.deref();
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -4218,7 +4267,7 @@ pub const Blob = struct {
     pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(2);
         var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
-        defer this.sink.deinit();
+        defer this.sink.deref();
         const err = args.ptr[0];
 
         var strong = this.readable_stream_ref;
@@ -4241,13 +4290,13 @@ pub const Blob = struct {
 
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
         };
 
         if (this.isS3()) {
             const s3 = &this.store.?.data.s3;
             var aws_options = s3.getCredentialsWithOptions(extra_options, globalThis) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.takeException(err));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.takeException(err));
             };
             defer aws_options.deinit();
 
@@ -4271,7 +4320,7 @@ pub const Blob = struct {
         }
 
         if (store.data != .file) {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("Blob is read-only", .{}));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is read-only", .{}));
         }
 
         const file_sink = brk_sink: {
@@ -4289,7 +4338,7 @@ pub const Blob = struct {
                             break :brk result;
                         },
                         .err => |err| {
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.withPath(path).toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJSC(globalThis));
                         },
                     }
                     unreachable;
@@ -4310,10 +4359,10 @@ pub const Blob = struct {
                         }
                     }
 
-                    break :brk switch (bun.FDTag.get(fd)) {
-                        .stdout, .stderr => true,
+                    break :brk if (fd.stdioTag()) |tag| switch (tag) {
+                        .std_out, .std_err => true,
                         else => false,
-                    };
+                    } else false;
                 };
                 var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
                 sink.writer.owns_fd = pathlike != .fd;
@@ -4322,7 +4371,7 @@ pub const Blob = struct {
                     switch (sink.writer.startSync(fd, false)) {
                         .err => |err| {
                             sink.deref();
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                         },
                         else => {},
                     }
@@ -4330,7 +4379,7 @@ pub const Blob = struct {
                     switch (sink.writer.start(fd, true)) {
                         .err => |err| {
                             sink.deref();
-                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                         },
                         else => {},
                     }
@@ -4365,7 +4414,7 @@ pub const Blob = struct {
             switch (sink.start(stream_start)) {
                 .err => |err| {
                     sink.deref();
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
                 },
                 else => {},
             }
@@ -4394,7 +4443,7 @@ pub const Blob = struct {
 
         if (assignment_result.toError()) |err| {
             file_sink.deref();
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
 
         if (!assignment_result.isEmptyOrUndefinedOrNull()) {
@@ -4430,7 +4479,7 @@ pub const Blob = struct {
 
                         readable_stream.cancel(globalThis);
 
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, promise.result(globalThis.vm()));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, promise.result(globalThis.vm()));
                     },
                 }
             } else {
@@ -4438,7 +4487,7 @@ pub const Blob = struct {
 
                 readable_stream.cancel(globalThis);
 
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, assignment_result);
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
             }
         }
         file_sink.deref();
@@ -4553,10 +4602,10 @@ pub const Blob = struct {
                     }
                 }
 
-                break :brk switch (bun.FDTag.get(fd)) {
-                    .stdout, .stderr => true,
+                break :brk if (fd.stdioTag()) |tag| switch (tag) {
+                    .std_out, .std_err => true,
                     else => false,
-                };
+                } else false;
             };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
             sink.writer.owns_fd = pathlike != .fd;
@@ -4809,7 +4858,7 @@ pub const Blob = struct {
         if (value.isEmptyOrUndefinedOrNull()) {
             this.name.deref();
             this.name = bun.String.dead;
-            Blob.nameSetCached(jsThis, globalThis, value);
+            js.nameSetCached(jsThis, globalThis, value);
             return true;
         }
         if (value.isString()) {
@@ -4826,7 +4875,7 @@ pub const Blob = struct {
                 return false;
             };
             // We don't need to increment the reference count since tryFromJS already did it.
-            Blob.nameSetCached(jsThis, globalThis, value);
+            js.nameSetCached(jsThis, globalThis, value);
             old_name.deref();
             return true;
         }
@@ -5263,19 +5312,19 @@ pub const Blob = struct {
             return S3File.toJSUnchecked(globalObject, this);
         }
 
-        return Blob.toJSUnchecked(globalObject, this);
+        return js.toJSUnchecked(globalObject, this);
     }
 
     pub fn deinit(this: *Blob) void {
         this.detach();
         this.name.deref();
-        this.name = bun.String.dead;
+        this.name = .dead;
 
         // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;
             bun.debugAssert(alloc.vtable == bun.default_allocator.vtable);
-            this.destroy();
+            bun.destroy(this);
         }
     }
 

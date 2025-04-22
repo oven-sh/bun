@@ -12,6 +12,7 @@
 #include <JavaScriptCore/Error.h>
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -257,7 +258,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
 
     // Check if we have initialization arguments
     JSValue algorithmValue = callFrame->argument(0);
-    Bun::V::validateString(scope, globalObject, algorithmValue, "hmac"_s);
+    V::validateString(scope, globalObject, algorithmValue, "hmac"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Get encoding next before stringifying algorithm
@@ -267,8 +268,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
         encodingValue = options.get(globalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!encodingValue.isNull()) {
-            Bun::V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
+        if (!encodingValue.isUndefinedOrNull()) {
+            V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -278,11 +279,10 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
 
     JSValue key = callFrame->argument(1);
 
-    Vector<uint8_t> keyData;
-    prepareSecretKey(globalObject, scope, keyData, key, encodingValue);
+    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, key, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    hmac->init(globalObject, scope, algorithm, keyData.span());
+    hmac->init(globalObject, scope, algorithm, keyObject.symmetricKey().span());
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(hmac);
@@ -293,7 +293,7 @@ JSC_DEFINE_HOST_FUNCTION(callHmac, (JSC::JSGlobalObject * globalObject, JSC::Cal
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    throwTypeError(globalObject, scope, "Class constructor Hmac cannot be invoked without 'new'"_s);
+    throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "Hmac"_s);
     return JSC::encodedJSUndefined();
 }
 

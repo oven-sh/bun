@@ -7,8 +7,12 @@ pub const CryptoHasher = union(enum) {
 
     const Digest = EVP.Digest;
 
-    pub usingnamespace JSC.Codegen.JSCryptoHasher;
-    usingnamespace bun.New(@This());
+    pub const js = JSC.Codegen.JSCryptoHasher;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub const new = bun.TrivialNew(@This());
 
     // For using only CryptoHasherZig in c++
     pub const Extern = struct {
@@ -224,7 +228,7 @@ pub const CryptoHasher = union(enum) {
                 inline else => |*str| {
                     defer str.deinit();
                     const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                        return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                        return globalThis.ERR(.INVALID_ARG_VALUE, "Unknown encoding: {s}", .{str.slice()}).throw();
                     };
 
                     return hashToEncoding(globalThis, &evp, input, encoding);
@@ -307,7 +311,7 @@ pub const CryptoHasher = union(enum) {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.JSObject,
     ) JSC.JSValue {
-        return CryptoHasher.getConstructor(globalObject);
+        return CryptoHasher.js.getConstructor(globalObject);
     }
 
     pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -364,16 +368,13 @@ pub const CryptoHasher = union(enum) {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        var new: CryptoHasher = undefined;
-        switch (this.*) {
-            .evp => |*inner| {
-                new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
-            },
-            .hmac => |inner| {
+        const copied: CryptoHasher = switch (this.*) {
+            .evp => |*inner| .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() },
+            .hmac => |inner| brk: {
                 const hmac = inner orelse {
                     return throwHmacConsumed(globalObject);
                 };
-                new = .{
+                break :brk .{
                     .hmac = hmac.copy() catch {
                         const err = createCryptoError(globalObject, BoringSSL.ERR_get_error());
                         BoringSSL.ERR_clear_error();
@@ -381,11 +382,9 @@ pub const CryptoHasher = union(enum) {
                     },
                 };
             },
-            .zig => |*inner| {
-                new = .{ .zig = inner.copy() };
-            },
-        }
-        return CryptoHasher.new(new).toJS(globalObject);
+            .zig => |*inner| .{ .zig = inner.copy() },
+        };
+        return CryptoHasher.new(copied).toJS(globalObject);
     }
 
     pub fn digest_(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.Node.StringOrBuffer) bun.JSError!JSC.JSValue {
@@ -394,7 +393,7 @@ pub const CryptoHasher = union(enum) {
                 inline else => |*str| {
                     defer str.deinit();
                     const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                        return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                        return globalThis.ERR(.INVALID_ARG_VALUE, "Unknown encoding: {s}", .{str.slice()}).throw();
                     };
 
                     return this.digestToEncoding(globalThis, encoding);
@@ -477,7 +476,7 @@ pub const CryptoHasher = union(enum) {
                 }
             },
         }
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -518,7 +517,7 @@ const CryptoHasherZig = struct {
                 inline else => |*str| {
                     defer str.deinit();
                     const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                        return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                        return globalThis.ERR(.INVALID_ARG_VALUE, "Unknown encoding: {s}", .{str.slice()}).throw();
                     };
 
                     if (encoding == .buffer) {
@@ -665,7 +664,10 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
 
         const ThisHasher = @This();
 
-        pub usingnamespace @field(JSC.Codegen, "JS" ++ name);
+        pub const js = @field(JSC.Codegen, "JS" ++ name);
+        pub const toJS = js.toJS;
+        pub const fromJS = js.fromJS;
+        pub const fromJSDirect = js.fromJSDirect;
 
         pub const digest = JSC.wrapInstanceMethod(ThisHasher, "digest_", false);
         pub const hash = JSC.wrapStaticMethod(ThisHasher, "hash_", false);
@@ -742,7 +744,7 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                            return globalThis.ERR(.INVALID_ARG_VALUE, "Unknown encoding: {s}", .{str.slice()}).throw();
                         };
 
                         return hashToEncoding(globalThis, input, encoding);
@@ -766,12 +768,12 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.JSObject,
         ) JSC.JSValue {
-            return ThisHasher.getConstructor(globalObject);
+            return ThisHasher.js.getConstructor(globalObject);
         }
 
         pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             if (this.digested) {
-                return globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to update", .{}).throw();
+                return globalThis.ERR(.INVALID_STATE, name ++ " hasher already digested, create a new instance to update", .{}).throw();
             }
             const thisValue = callframe.this();
             const input = callframe.argument(0);
@@ -793,14 +795,14 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
             output: ?JSC.Node.StringOrBuffer,
         ) bun.JSError!JSC.JSValue {
             if (this.digested) {
-                return globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
+                return globalThis.ERR(.INVALID_STATE, name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
             }
             if (output) |*string_or_buffer| {
                 switch (string_or_buffer.*) {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                            return globalThis.ERR(.INVALID_ARG_VALUE, "Unknown encoding: {s}", .{str.slice()}).throw();
                         };
 
                         return this.digestToEncoding(globalThis, encoding);
@@ -878,7 +880,7 @@ const Crypto = JSC.API.Bun.Crypto;
 const Hashers = @import("../../../sha.zig");
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
 const MutableString = bun.MutableString;

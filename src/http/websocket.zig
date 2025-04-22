@@ -3,7 +3,7 @@
 const std = @import("std");
 
 const posix = std.posix;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -37,7 +37,7 @@ pub const Opcode = enum(u4) {
     }
 };
 
-pub const WebsocketHeader = packed struct {
+pub const WebsocketHeader = packed struct(u16) {
     len: u7,
     mask: bool,
     opcode: Opcode,

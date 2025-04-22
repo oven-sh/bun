@@ -47,7 +47,7 @@ const assert = std.debug.assert;
 const fmt16 = std.unicode.fmtUtf16Le;
 
 const is_standalone = @import("root") == @This();
-const bun = if (!is_standalone) @import("root").bun else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
+const bun = if (!is_standalone) @import("bun") else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
 const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
 const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
 
@@ -620,7 +620,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         true => spawn_command_line: {
             // When the shebang flag is set, we expect two u32s containing byte lengths of the bin and arg components
             // This is not needed for the other case because the other case does not have an args component.
-            const ShebangMetadataPacked = packed struct {
+            const ShebangMetadataPacked = packed struct(u64) {
                 bin_path_len_bytes: u32,
                 args_len_bytes: u32,
             };
@@ -771,9 +771,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         .cbReserved2 = 0,
         .lpReserved2 = null,
         // The standard handles outside of standalone may be tampered with.
-        .hStdInput = if (is_standalone) ProcessParameters.hStdInput else bun.win32.STDIN_FD.cast(),
-        .hStdOutput = if (is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
-        .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.win32.STDERR_FD.cast(),
+        .hStdInput = if (is_standalone) ProcessParameters.hStdInput else bun.FD.stdin().native(),
+        .hStdOutput = if (is_standalone) ProcessParameters.hStdOutput else bun.FD.stdout().native(),
+        .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.FD.stderr().native(),
     };
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {

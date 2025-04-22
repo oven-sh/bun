@@ -1,4 +1,8 @@
-// Top-level so it can access all files
+//! The `bun.JSC` namespace contains
+//!     1. bindings for JavaScriptCore APIs (bun.JSC.*)
+//!     2. zig components for Bun APIs (in bun.JSC.API or bun.JSC.*)
+//!     3. zig components for Node APIs (in bun.JSC.Node)
+//!     4. zig components for Web APIs (in bun.JSC.WebCore)
 pub usingnamespace @import("./bun.js/base.zig");
 pub usingnamespace @import("./bun.js/bindings/bindings.zig");
 pub usingnamespace @import("./bun.js/bindings/exports.zig");
@@ -54,6 +58,7 @@ pub const API = struct {
     pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
     pub const HTMLBundle = @import("./bun.js/api/server/HTMLBundle.zig");
+    pub const Valkey = @import("./valkey/js_valkey.zig").JSValkeyClient;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
@@ -71,6 +76,10 @@ pub const Node = struct {
     };
     pub const Crypto = @import("./bun.js/node/node_crypto_binding.zig");
 };
+
+pub const js_property_iterator = @import("bun.js/bindings/JSPropertyIterator.zig");
+pub const JSPropertyIterator = js_property_iterator.JSPropertyIterator;
+pub const JSPropertyIteratorOptions = js_property_iterator.JSPropertyIteratorOptions;
 
 const std = @import("std");
 const Syscall = @import("./sys.zig");
@@ -100,12 +109,18 @@ pub const Subprocess = API.Bun.Subprocess;
 ///  1. `bun src/bun.js/scripts/generate-classes.ts`
 ///  2. Scan for **/*.classes.ts files in src/bun.js/src
 ///  3. Generate a JS wrapper for each class in:
-///        - Zig: generated_classes.zig
-///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
+///     - Zig: generated_classes.zig
+///     - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
 ///  4. For the Zig code to successfully compile:
-///        - Add it to generated_classes_list.zig
-///        - pub usingnamespace JSC.Codegen.JSMyClassName;
-///  5. make clean-bindings && make bindings -j10
+///     - Add it to generated_classes_list.zig
+///     - Expose the generated methods:
+///       ```zig
+///       pub const js = JSC.Codegen.JSMyClassName;
+///       pub const toJS = js.toJS;
+///       pub const fromJS = js.fromJS;
+///       pub const fromJSDirect = js.fromJSDirect;
+///       ```
+///  5. `bun run build`
 ///
 pub const Codegen = @import("ZigGeneratedClasses");
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;
@@ -113,7 +128,7 @@ pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_li
 pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
 
 /// The calling convention used for JavaScript functions <> Native
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else

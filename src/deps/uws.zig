@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = bun.Environment;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
@@ -231,7 +231,7 @@ pub const UpgradedDuplex = struct {
                         this.onInternalReceiveData(payload);
                     } else {
                         // node.js errors in this case with the same error, lets keep it consistent
-                        const error_value = globalObject.ERR_STREAM_WRAP("Stream has StringDecoder set or is in objectMode", .{}).toJS();
+                        const error_value = globalObject.ERR(.STREAM_WRAP, "Stream has StringDecoder set or is in objectMode", .{}).toJS();
                         error_value.ensureStillAlive();
                         this.handlers.onError(this.handlers.ctx, error_value);
                     }
@@ -558,7 +558,12 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
     vm: *bun.JSC.VirtualMachine, //TODO: create a timeout version that dont need the JSC VM
 
-    writer: bun.io.StreamingWriter(WindowsNamedPipe, onWrite, onError, onWritable, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(@This(), .{
+        .onClose = onClose,
+        .onWritable = onWritable,
+        .onError = onError,
+        .onWrite = onWrite,
+    }) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     ssl_error: CertError = .{},
@@ -572,11 +577,12 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     current_timeout: u32 = 0,
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         disconnected: bool = true,
         is_closed: bool = false,
         is_client: bool = false,
         is_ssl: bool = false,
+        _: u4 = 0,
     };
     pub const Handlers = struct {
         ctx: *anyopaque,
@@ -1488,11 +1494,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             }
             const socket = this.socket.get() orelse return bun.invalid_fd;
 
+            // on windows uSockets exposes SOCKET
             return if (comptime Environment.isWindows)
-                // on windows uSockets exposes SOCKET
-                bun.toFD(@as(bun.FDImpl.System, @ptrCast(socket.getNativeHandle(is_ssl).?)))
+                .fromNative(@ptrCast(socket.getNativeHandle(is_ssl).?))
             else
-                bun.toFD(@as(i32, @intCast(@intFromPtr(socket.getNativeHandle(is_ssl)))));
+                .fromNative(@intCast(@intFromPtr(socket.getNativeHandle(is_ssl))));
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
@@ -1653,6 +1659,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
+        pub fn remotePort(this: ThisSocket) i32 {
+            return switch (this.socket) {
+                .connected => |socket| socket.remotePort(is_ssl),
+                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+            };
+        }
+
         /// `buf` cannot be longer than 2^31 bytes long.
         pub fn remoteAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
@@ -1755,7 +1768,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             this: *This,
             comptime socket_field_name: ?[]const u8,
         ) ?ThisSocket {
-            const socket_ = ThisSocket{ .socket = .{ .connected = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null } };
+            const socket_ = ThisSocket{ .socket = .{ .connected = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle.asSocketFd()) orelse return null } };
 
             if (socket_.ext(*anyopaque)) |holder| {
                 holder.* = this;
@@ -2515,9 +2528,9 @@ pub const create_bun_socket_error_t = enum(c_int) {
                 bun.debugAssert(false);
                 break :brk .null;
             },
-            .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),
-            .invalid_ca_file => globalObject.ERR_BORINGSSL("Invalid CA file", .{}).toJS(),
-            .invalid_ca => globalObject.ERR_BORINGSSL("Invalid CA", .{}).toJS(),
+            .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
+            .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
+            .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
         };
     }
 };
@@ -3007,6 +3020,10 @@ pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@intFromBool(ssl), this);
     }
+    pub fn getLocalAddress(this: *ListenSocket, ssl: bool, buf: []u8) ![]const u8 {
+        const self: *uws.Socket = @ptrCast(this);
+        return self.localAddress(ssl, buf);
+    }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
         const self: *uws.Socket = @ptrCast(this);
         return self.localPort(ssl);
@@ -3036,7 +3053,11 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.getRemoteSocketInfo(),
         };
     }
-
+    pub fn flushHeaders(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.flushHeaders(),
+        };
+    }
     pub fn getWriteOffset(this: AnyResponse) u64 {
         return switch (this) {
             inline else => |resp| resp.getWriteOffset(),
@@ -3263,6 +3284,10 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn destroy(app: *ThisApp) void {
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
+        }
+
+        pub fn setRequireHostHeader(this: *ThisApp, require_host_header: bool) void {
+            return uws_app_set_require_host_header(ssl_flag, @as(*uws_app_t, @ptrCast(this)), require_host_header);
         }
 
         pub fn clearRoutes(app: *ThisApp) void {
@@ -3555,6 +3580,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
             }
 
+            pub fn flushHeaders(res: *Response) void {
+                uws_res_flush_headers(ssl_flag, res.downcast());
+            }
+
             pub fn state(res: *const Response) State {
                 return uws_res_state(ssl_flag, @as(*const uws_res, @ptrCast(@alignCast(res))));
             }
@@ -3626,10 +3655,10 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
                 if (comptime Environment.isWindows) {
                     // on windows uSockets exposes SOCKET
-                    return bun.toFD(@as(bun.FDImpl.System, @ptrCast(uws_res_get_native_handle(ssl_flag, res.downcast()))));
+                    return .fromNative(@ptrCast(uws_res_get_native_handle(ssl_flag, res.downcast())));
                 }
 
-                return bun.toFD(@as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast())))));
+                return .fromNative(@intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast()))));
             }
             pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
                 var buf: [*]const u8 = undefined;
@@ -3900,6 +3929,7 @@ extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
 extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) ?*uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
+extern fn uws_app_set_require_host_header(ssl: i32, app: *uws_app_t, require_host_header: bool) void;
 extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_post(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
@@ -3965,6 +3995,7 @@ extern fn uws_res_try_end(
     total: usize,
     close: bool,
 ) bool;
+extern fn uws_res_flush_headers(ssl: i32, res: *uws_res) void;
 extern fn uws_res_pause(ssl: i32, res: *uws_res) void;
 extern fn uws_res_resume(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write_continue(ssl: i32, res: *uws_res) void;

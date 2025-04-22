@@ -28,7 +28,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(err);
     }
 
-    pub const throwTerminationException = JSGlobalObject__throwTerminationException;
+    pub const requestTermination = JSGlobalObject__requestTermination;
     pub const clearTerminationException = JSGlobalObject__clearTerminationException;
 
     pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool {
@@ -47,9 +47,9 @@ pub const JSGlobalObject = opaque {
     pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) bun.JSError {
         return switch (arg_names.len) {
             0 => @compileError("requires at least one argument"),
-            1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
-            2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
-            3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
+            1 => this.ERR(.MISSING_ARGS, "The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
+            2 => this.ERR(.MISSING_ARGS, "The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
+            3 => this.ERR(.MISSING_ARGS, "The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
             else => @compileError("implement this message"),
         };
     }
@@ -61,7 +61,7 @@ pub const JSGlobalObject = opaque {
         comptime field: []const u8,
         comptime typename: []const u8,
     ) JSC.JSValue {
-        return this.ERR_INVALID_ARG_TYPE(comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
+        return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
     pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.Lifetime) JSC.JSValue {
@@ -86,7 +86,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
     }
 
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
@@ -102,9 +102,9 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         if (comptime expected) |_expected| {
-            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
         } else {
-            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
         }
     }
 
@@ -124,7 +124,7 @@ pub const JSGlobalObject = opaque {
         opt1: []const u8,
         opt2: []const u8,
     ) JSError {
-        return this.ERR_INCOMPATIBLE_OPTION_PAIR("Option \"{s}\" cannot be used in combination with option \"{s}\"", .{ opt1, opt2 }).throw();
+        return this.ERR(.INCOMPATIBLE_OPTION_PAIR, "Option \"{s}\" cannot be used in combination with option \"{s}\"", .{ opt1, opt2 }).throw();
     }
 
     pub fn throwInvalidScryptParams(
@@ -134,10 +134,10 @@ pub const JSGlobalObject = opaque {
         if (err != 0) {
             var buf: [256]u8 = undefined;
             const msg = bun.BoringSSL.c.ERR_error_string_n(err, &buf, buf.len);
-            return this.ERR_CRYPTO_INVALID_SCRYPT_PARAMS("Invalid scrypt params: {s}", .{msg}).throw();
+            return this.ERR(.CRYPTO_INVALID_SCRYPT_PARAMS, "Invalid scrypt params: {s}", .{msg}).throw();
         }
 
-        return this.ERR_CRYPTO_INVALID_SCRYPT_PARAMS("Invalid scrypt params", .{}).throw();
+        return this.ERR(.CRYPTO_INVALID_SCRYPT_PARAMS, "Invalid scrypt params", .{}).throw();
     }
 
     /// "The {argname} argument must be of type {typename}. Received {value}"
@@ -149,7 +149,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentTypeValue2(
@@ -160,7 +160,7 @@ pub const JSGlobalObject = opaque {
     ) JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
     /// "The <argname> argument must be one of type <typename>. Received <value>"
@@ -172,7 +172,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -181,7 +181,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: i64,
     ) bun.JSError {
-        return this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -192,7 +192,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
     }
 
     pub fn createNotEnoughArguments(
@@ -201,7 +201,7 @@ pub const JSGlobalObject = opaque {
         comptime expected: usize,
         got: usize,
     ) JSC.JSValue {
-        return JSC.toTypeError(.ERR_MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
+        return JSC.toTypeError(.MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
     }
 
     /// Not enough arguments passed to function named `name_`
@@ -323,7 +323,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn createInvalidArgs(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(this, fmt, args);
+        return JSC.Error.INVALID_ARG_TYPE.fmt(this, fmt, args);
     }
 
     pub const SysErrOptions = struct {
@@ -426,8 +426,9 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
-    pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
-        return @as(C_API.JSContextRef, @ptrCast(this));
+    // TODO: delete these two fns
+    pub fn ref(this: *JSGlobalObject) *JSGlobalObject {
+        return this;
     }
     pub const ctx = ref;
 
@@ -458,6 +459,18 @@ pub const JSGlobalObject = opaque {
 
     pub fn clearException(this: *JSGlobalObject) void {
         return JSGlobalObject__clearException(this);
+    }
+
+    /// Clear the currently active exception off the VM unless it is a
+    /// termination exception.
+    ///
+    /// Returns `true` if the exception was cleared, `false` if it was a
+    /// termination exception. Use `clearException` to unconditionally clear
+    /// exceptions.
+    ///
+    /// It is safe to call this function when no exception is present.
+    pub fn clearExceptionExceptTermination(this: *JSGlobalObject) bool {
+        return JSGlobalObject__clearExceptionExceptTermination(this);
     }
 
     /// Clears the current exception and returns that value. Requires compile-time
@@ -621,10 +634,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) bun.JSError {
-        // TODO:
-        // This works around a Zig compiler bug
-        // when using this.ERR_OUT_OF_RANGE.
-        return JSC.Error.ERR_OUT_OF_RANGE.throw(this, "{}", .{bun.fmt.outOfRange(value, options)});
+        return this.ERR(.OUT_OF_RANGE, "{}", .{bun.fmt.outOfRange(value, options)}).throw();
     }
 
     pub const IntegerRange = struct {
@@ -652,6 +662,9 @@ pub const JSGlobalObject = opaque {
             }
         }
         const field_name = comptime range.field_name;
+        if (comptime field_name.len == 0) {
+            @compileError("field_name must not be empty");
+        }
         const always_allow_zero = comptime range.always_allow_zero;
         const min = range.min;
         const max = range.max;
@@ -714,8 +727,6 @@ pub const JSGlobalObject = opaque {
         return .{ .globalObject = this };
     }
 
-    pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
-
     pub fn ERR(global: *JSGlobalObject, comptime code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) @import("ErrorCode").ErrorBuilder(code, fmt, @TypeOf(args)) {
         return .{ .global = global, .args = args };
     }
@@ -724,11 +735,12 @@ pub const JSGlobalObject = opaque {
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
     extern fn JSGlobalObject__clearException(*JSGlobalObject) void;
+    extern fn JSGlobalObject__clearExceptionExceptTermination(*JSGlobalObject) bool;
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
-    extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+    extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
     extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
     pub fn create(
@@ -739,6 +751,9 @@ pub const JSGlobalObject = opaque {
         eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
+        const trace = bun.perf.trace("JSGlobalObject.create");
+        defer trace.end();
+
         v.eventLoop().ensureWaker();
         const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
 
@@ -788,7 +803,7 @@ pub const JSGlobalObject = opaque {
 const CommonStrings = JSC.CommonStrings;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;

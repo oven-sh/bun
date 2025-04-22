@@ -106,7 +106,7 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
-    uint32_t hash;
+    uint32_t cjsCustomExtensionIndex;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
@@ -132,6 +132,7 @@ typedef struct SystemError {
     BunString path;
     BunString syscall;
     BunString hostname;
+    /// MinInt if not specified
     int fd;
     BunString dest;
 } SystemError;
@@ -347,7 +348,10 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     BunString* specifier,
     BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result, bool allowPromise);
+    ErrorableResolvedSource* result,
+    bool allowPromise,
+    bool isCommonJSRequire,
+    BunLoaderType forceLoaderType);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
@@ -396,6 +400,7 @@ extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, si
 
 extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>

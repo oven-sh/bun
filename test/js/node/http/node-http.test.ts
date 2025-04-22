@@ -2317,3 +2317,103 @@ it("should handle data if not immediately handled", async () => {
     server.close();
   }
 });
+
+it("Empty requests should not be Transfer-Encoding: chunked", async () => {
+  const server = http.createServer((req, res) => {
+    res.end(JSON.stringify(req.headers));
+  });
+  await once(server.listen(0), "listening");
+  const url = `http://localhost:${server.address().port}`;
+  try {
+    for (let method of ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      http
+        .request(
+          url,
+          {
+            method,
+          },
+          res => {
+            const body: Uint8Array[] = [];
+            res.on("data", chunk => {
+              body.push(chunk);
+            });
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(Buffer.concat(body).toString()));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          },
+        )
+        .on("error", reject)
+        .end();
+
+      const headers = (await promise) as Record<string, string | undefined>;
+      expect(headers).toBeDefined();
+      expect(headers["transfer-encoding"]).toBeUndefined();
+      switch (method) {
+        case "GET":
+        case "DELETE":
+        case "OPTIONS":
+          // Content-Length will not be present for GET, DELETE, and OPTIONS
+          // aka DELETE in node.js will be undefined and in bun it will be 0
+          // this is not outside the spec but is different between node.js and bun
+          expect(headers["content-length"]).toBeOneOf(["0", undefined]);
+          break;
+        default:
+          expect(headers["content-length"]).toBeDefined();
+          break;
+      }
+    }
+  } finally {
+    server.close();
+  }
+});
+
+it("should reject non-standard body writes when rejectNonStandardBodyWrites is true", async () => {
+  {
+    let body_not_allowed_on_write;
+    let body_not_allowed_on_end;
+
+    for (const rejectNonStandardBodyWrites of [true, false, undefined]) {
+      await using server = http.createServer({
+        rejectNonStandardBodyWrites,
+      });
+
+      server.on("request", (req, res) => {
+        body_not_allowed_on_write = false;
+        body_not_allowed_on_end = false;
+        res.writeHead(204);
+
+        try {
+          res.write("bun");
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+          body_not_allowed_on_write = true;
+        }
+        try {
+          res.end("bun");
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+          body_not_allowed_on_end = true;
+          // if we throw here, we need to call end() to actually end the request
+          res.end();
+        }
+      });
+
+      await once(server.listen(0), "listening");
+      const url = `http://localhost:${server.address().port}`;
+
+      {
+        await fetch(url, {
+          method: "GET",
+        }).then(res => res.text());
+
+        expect(body_not_allowed_on_write).toBe(rejectNonStandardBodyWrites || false);
+        expect(body_not_allowed_on_end).toBe(rejectNonStandardBodyWrites || false);
+      }
+    }
+  }
+});

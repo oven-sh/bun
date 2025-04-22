@@ -28,10 +28,11 @@ const {
   upgradeDuplexToTLS,
   isNamedPipeSocket,
   normalizedArgsSymbol,
+  getBufferedAmount,
 } = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener, SocketHandler } from "bun";
-import type { ServerOpts, Server as ServerType } from "node:net";
+import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
 
@@ -43,9 +44,6 @@ var IPv4Reg;
 // IPv6 Segment
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg;
-
-const DEFAULT_IPV4_ADDR = "0.0.0.0";
-const DEFAULT_IPV6_ADDR = "::";
 
 function isIPv4(s): boolean {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
@@ -76,7 +74,6 @@ const { connect: bunConnect } = Bun;
 var { setTimeout } = globalThis;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
-const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
@@ -114,10 +111,6 @@ function emitCloseNT(self, hasError) {
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
-}
-function finishSocket(hasError) {
-  detachSocket(this);
-  this.emit("close", hasError);
 }
 function destroyNT(self, err) {
   self.destroy(err);
@@ -305,7 +298,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 };
 
-const SocketEmitEndNT = (self, err?) => {
+const SocketEmitEndNT = (self, _err?) => {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -483,8 +476,6 @@ function Socket(options?) {
   const {
     socket,
     signal,
-    write,
-    read,
     allowHalfOpen = false,
     onread = null,
     noDelay = false,
@@ -587,6 +578,22 @@ Socket.prototype.address = function address() {
   };
 };
 
+Socket.prototype._onTimeout = function () {
+  // if there is pending data, write is in progress
+  // so we suppress the timeout
+  if (this._pendingData) {
+    return;
+  }
+
+  const handle = this._handle;
+  // if there is a handle, and it has pending data,
+  // we suppress the timeout because a write is in progress
+  if (handle && getBufferedAmount(handle) > 0) {
+    return;
+  }
+  this.emit("timeout");
+};
+
 Object.defineProperty(Socket.prototype, "bufferSize", {
   get: function () {
     return this.writableLength;
@@ -672,14 +679,6 @@ Socket.prototype.connect = function connect(...args) {
     socket,
     localAddress,
     localPort,
-    // TODOs
-    family,
-    hints,
-    lookup,
-    noDelay,
-    keepAlive,
-    keepAliveInitialDelay,
-    requestCert,
     rejectUnauthorized,
     pauseOnConnect,
     servername,
@@ -1310,25 +1309,10 @@ Server.prototype.address = function address() {
       return unix;
     }
 
-    //TODO: fix adress when host is passed
-    let address = server.hostname;
-    const type = isIP(address);
-    const port = server.port;
-    if (typeof port === "number") {
-      return {
-        port,
-        address,
-        family: type ? `IPv${type}` : undefined,
-      };
-    }
-    if (type) {
-      return {
-        address,
-        family: type ? `IPv${type}` : undefined,
-      };
-    }
-
-    return address;
+    const out = {};
+    const err = this._handle.getsockname(out);
+    if (err) throw new ErrnoException(err, "address");
+    return out;
   }
   return null;
 };
@@ -1411,7 +1395,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
         }
-      } else if (!Number.isSafeInteger(port) || port < 0) {
+      } else if (port === undefined) {
         port = 0;
       }
 
@@ -1493,7 +1477,7 @@ Server.prototype[kRealListen] = function (
   reusePort,
   tls,
   contexts,
-  onListen,
+  _onListen,
 ) {
   if (path) {
     this._handle = Bun.listen({
@@ -1695,9 +1679,9 @@ function toNumber(x) {
 class BlockList {
   constructor() {}
 
-  addSubnet(net, prefix, type) {}
+  addSubnet(_net, _prefix, _type) {}
 
-  check(address, type) {
+  check(_address, _type) {
     return false;
   }
 }

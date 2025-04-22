@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const C = @import("std").zig.c_builtins;
 const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
 const time_t = C.time_t;
@@ -18932,7 +18932,7 @@ pub const CertError = error{
     INVALID_CALL,
     STORE_LOOKUP,
     NAME_CONSTRAINTS_WITHOUT_SANS,
-    UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
+    UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
 };
 
 pub fn getCertErrorFromNo(error_no: i32) CertError {
@@ -19003,7 +19003,7 @@ pub fn getCertErrorFromNo(error_no: i32) CertError {
         X509_V_ERR_INVALID_CALL => error.INVALID_CALL,
         X509_V_ERR_STORE_LOOKUP => error.STORE_LOOKUP,
         X509_V_ERR_NAME_CONSTRAINTS_WITHOUT_SANS => error.NAME_CONSTRAINTS_WITHOUT_SANS,
-        else => error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
+        else => error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     };
 }
 

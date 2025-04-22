@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const sys = bun.sys;
 const linux = std.os.linux;
@@ -16,7 +16,7 @@ pub const Source = @import("./source.zig").Source;
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
-    epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) .zero else 0,
+    epoll_fd: if (Environment.isLinux) bun.FileDescriptor else void = if (Environment.isLinux) .invalid,
 
     cached_now: posix.timespec = .{
         .nsec = 0,
@@ -31,7 +31,7 @@ pub const Loop = struct {
             .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
         };
         if (comptime Environment.isLinux) {
-            loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+            loop.epoll_fd = .fromNative(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
 
             {
                 var epoll = std.mem.zeroes(std.os.linux.epoll_event);
@@ -526,7 +526,7 @@ pub const Poll = struct {
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @as(u64, @intCast(fd.native())),
                     .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
@@ -535,7 +535,7 @@ pub const Poll = struct {
                     .ext = .{ generation_number_monotonic, 0 },
                 },
                 .writable => .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @as(u64, @intCast(fd.native())),
                     .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -544,7 +544,7 @@ pub const Poll = struct {
                     .ext = .{ generation_number_monotonic, 0 },
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @as(u64, @intCast(fd.native())),
                     .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
@@ -552,7 +552,7 @@ pub const Poll = struct {
                     .flags = std.c.EV.DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @as(u64, @intCast(fd.native())),
                     .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -694,3 +694,4 @@ pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
 pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
 pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
 pub const FileType = @import("./pipes.zig").FileType;
+pub const MaxBuf = @import("./MaxBuf.zig");

@@ -2,10 +2,9 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
@@ -341,13 +340,13 @@ pub const JSBundler = struct {
 
                 defer path.deinit();
 
-                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                var dir = bun.FD.fromStdDir(std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
                     return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                };
+                });
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
-                const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
+                const rootdir = dir.getFdPath(&rootdir_buf) catch |err| {
                     return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);
@@ -952,7 +951,7 @@ pub const JSBundler = struct {
             is_onLoad: bool,
         ) bool {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.hasAnyMatches");
+            const tracer = bun.perf.trace("JSBundler.hasAnyMatches");
             defer tracer.end();
 
             const namespace_string = if (path.isFile())
@@ -974,7 +973,7 @@ pub const JSBundler = struct {
             is_server_side: bool,
         ) void {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
+            const tracer = bun.perf.trace("JSBundler.matchOnLoad");
             defer tracer.end();
             debug("JSBundler.matchOnLoad(0x{x}, {s}, {s})", .{ @intFromPtr(this), namespace, path });
             const namespace_string = if (namespace.len == 0)
@@ -996,7 +995,7 @@ pub const JSBundler = struct {
             import_record_kind: bun.ImportKind,
         ) void {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnResolve");
+            const tracer = bun.perf.trace("JSBundler.matchOnResolve");
             defer tracer.end();
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
@@ -1019,7 +1018,7 @@ pub const JSBundler = struct {
             is_bake: bool,
         ) !JSValue {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
+            const tracer = bun.perf.trace("JSBundler.addPlugin");
             defer tracer.end();
             return JSBundlerPlugin__runSetupFunction(
                 this,
@@ -1090,7 +1089,10 @@ pub const JSBundler = struct {
 
 const Blob = JSC.WebCore.Blob;
 pub const BuildArtifact = struct {
-    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+    pub const js = JSC.Codegen.JSBuildArtifact;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     blob: JSC.WebCore.Blob,
     loader: options.Loader = .file,

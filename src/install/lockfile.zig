@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
@@ -2556,7 +2556,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
     else
         std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
-    const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
+    const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
             Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();

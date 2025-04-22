@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
@@ -71,7 +71,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 const signal = args.signal orelse break :check_early_abort;
                 if (signal.reasonIfAborted(globalObject)) |reason| {
                     deinit = true;
-                    return JSC.JSPromise.rejectedPromiseValue(globalObject, reason.toJS(globalObject));
+                    return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, reason.toJS(globalObject));
                 }
             }
 
@@ -96,8 +96,12 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 pub const NodeJSFS = struct {
     node_fs: JSC.Node.NodeFS = .{},
 
-    pub usingnamespace JSC.Codegen.JSNodeJSFS;
-    pub usingnamespace bun.New(@This());
+    pub const js = JSC.Codegen.JSNodeJSFS;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub const new = bun.TrivialNew(@This());
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {
         if (this.node_fs.vm) |vm| {
@@ -106,7 +110,7 @@ pub const NodeJSFS = struct {
             }
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

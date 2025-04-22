@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
 const Blob = bun.JSC.WebCore.Blob;
@@ -7,8 +7,8 @@ const invalid_fd = bun.invalid_fd;
 const SystemError = JSC.SystemError;
 const SizeType = Blob.SizeType;
 const io = bun.io;
-const FileOpenerMixin = Store.FileOpenerMixin;
-const FileCloserMixin = Store.FileCloserMixin;
+const FileOpener = Store.FileOpener;
+const FileCloser = Store.FileCloser;
 const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
 const JSPromise = JSC.JSPromise;
@@ -85,8 +85,8 @@ pub const ReadFile = struct {
     close_after_io: bool = false,
     state: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.running),
 
-    pub usingnamespace FileOpenerMixin(ReadFile);
-    pub usingnamespace FileCloserMixin(ReadFile);
+    pub const getFd = FileOpener(@This()).getFd;
+    pub const doClose = FileCloser(@This()).doClose;
 
     pub fn update(this: *ReadFile) void {
         if (Environment.isWindows) return; //why
@@ -541,8 +541,8 @@ pub const ReadFile = struct {
 };
 
 pub const ReadFileUV = struct {
-    pub usingnamespace FileOpenerMixin(ReadFileUV);
-    pub usingnamespace FileCloserMixin(ReadFileUV);
+    pub const getFd = FileOpener(@This()).getFd;
+    pub const doClose = FileCloser(@This()).doClose;
 
     loop: *libuv.Loop,
     file_store: FileStore,
@@ -632,7 +632,7 @@ pub const ReadFileUV = struct {
         this.req.deinit();
         this.req.data = this;
 
-        if (libuv.uv_fs_fstat(this.loop, &this.req, bun.uvfdcast(opened_fd), &onFileInitialStat).errEnum()) |errno| {
+        if (libuv.uv_fs_fstat(this.loop, &this.req, opened_fd.uv(), &onFileInitialStat).errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .fstat).toSystemError();
             this.onFinish();
@@ -756,7 +756,7 @@ pub const ReadFileUV = struct {
             const res = libuv.uv_fs_read(
                 this.loop,
                 &this.req,
-                bun.uvfdcast(this.opened_fd),
+                this.opened_fd.uv(),
                 &bufs,
                 bufs.len,
                 @as(i64, @intCast(this.offset + this.read_off)),

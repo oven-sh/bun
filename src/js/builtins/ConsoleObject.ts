@@ -15,7 +15,7 @@ export function asyncIterator(this: Console) {
 
   async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
-    var deferredError;
+    var deferredError: Error | undefined;
     try {
       if (i !== -1) {
         last = i + 1;
@@ -99,13 +99,14 @@ export function asyncIterator(this: Console) {
         actualChunk = undefined!;
       }
     } catch (e) {
-      deferredError = e;
+      deferredError = e as Error;
     } finally {
       reader.releaseLock();
+    }
 
-      if (deferredError) {
-        throw deferredError;
-      }
+    if (deferredError) {
+      // eslint-disable-next-line no-throw-literal
+      throw deferredError;
     }
   }
 
@@ -155,7 +156,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const StringPrototypeSplit = String.prototype.split;
   const NumberPrototypeToFixed = Number.prototype.toFixed;
   const StringPrototypeNormalize = String.prototype.normalize;
-  const StringPrototypeCodePointAt = String.prototype.codePointAt;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
   const ArrayPrototypePush = Array.prototype.push;

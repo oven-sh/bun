@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
@@ -111,6 +111,10 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
 pub fn etimedoutErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ETIMEDOUT);
+}
+
+pub fn enobufsErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ENOBUFS);
 }
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.

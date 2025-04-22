@@ -10,7 +10,7 @@ const Api = api.Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -80,9 +80,9 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
 }
 
 pub const ExternalModules = struct {
-    node_modules: std.BufSet = undefined,
-    abs_paths: std.BufSet = undefined,
-    patterns: []const WildcardPattern = undefined,
+    node_modules: std.BufSet,
+    abs_paths: std.BufSet,
+    patterns: []const WildcardPattern,
 
     pub const WildcardPattern = struct {
         prefix: string,
@@ -648,6 +648,14 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+
+    pub const Optional = enum(u8) {
+        none = 254,
+        _,
+        pub fn unwrap(opt: Optional) ?Loader {
+            return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+    };
 
     pub fn isCSS(this: Loader) bool {
         return this == .css;
@@ -1700,7 +1708,7 @@ pub const BundleOptions = struct {
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
     /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
-    external: ExternalModules = ExternalModules{},
+    external: ExternalModules,
     entry_points: []const string,
     entry_naming: []const u8 = "",
     asset_naming: []const u8 = "",
@@ -1708,6 +1716,9 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
+    /// This list applies to all extension resolution cases. The runtime uses
+    /// this for implementing `require.extensions`
+    extra_cjs_extensions: []const []const u8 = &.{},
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     defines_loaded: bool = false,
@@ -2021,7 +2032,7 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
-            opts.output_dir = try fs.getFdPath(bun.toFD(opts.output_dir_handle.?.fd));
+            opts.output_dir = try fs.getFdPath(.fromStdDir(opts.output_dir_handle.?));
         }
 
         opts.polyfill_node_globals = opts.target == .browser;
@@ -2339,12 +2350,6 @@ pub const RouteConfig = struct {
     // maybe like CBOR
     extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
-
-    static_dir: string = "",
-    static_dir_handle: ?std.fs.Dir = null,
-    static_dir_enabled: bool = false,
-    single_page_app_routing: bool = false,
-    single_page_app_fd: StoredFileDescriptorType = .zero,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{

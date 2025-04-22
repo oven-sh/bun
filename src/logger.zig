@@ -2,7 +2,7 @@ const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const js = bun.JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -394,7 +394,7 @@ pub const Data = struct {
     }
 };
 
-pub const BabyString = packed struct {
+pub const BabyString = packed struct(u32) {
     offset: u16,
     len: u16,
 

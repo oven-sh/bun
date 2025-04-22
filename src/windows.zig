@@ -1,6 +1,13 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
+const Output = bun.Output;
 const windows = std.os.windows;
 const win32 = windows;
+
+const c = bun.c;
+pub const ntdll = windows.ntdll;
+pub const kernel32 = windows.kernel32;
+pub const GetLastError = kernel32.GetLastError;
+
 pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
 pub const MAX_PATH = windows.MAX_PATH;
 pub const WORD = windows.WORD;
@@ -38,7 +45,6 @@ pub const FILETIME = windows.FILETIME;
 
 pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
-pub const kernel32 = windows.kernel32;
 pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
 pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
 pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
@@ -62,9 +68,6 @@ pub const FILE_WRITE_THROUGH = windows.FILE_WRITE_THROUGH;
 pub const FILE_SEQUENTIAL_ONLY = windows.FILE_SEQUENTIAL_ONLY;
 pub const FILE_SYNCHRONOUS_IO_NONALERT = windows.FILE_SYNCHRONOUS_IO_NONALERT;
 pub const FILE_OPEN_REPARSE_POINT = windows.FILE_OPEN_REPARSE_POINT;
-pub usingnamespace kernel32;
-pub const ntdll = windows.ntdll;
-pub usingnamespace ntdll;
 pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
 
@@ -107,7 +110,7 @@ pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
 
     const rc = function(hFile);
     if (comptime Environment.enable_logs)
-        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.toFD(hFile), rc });
+        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.FD.fromNative(hFile), rc });
     return rc;
 }
 
@@ -3064,14 +3067,14 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
-            bun.crash_handler.dumpCurrentStackTrace(null);
+            bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             break :brk .INVAL;
         } else .INVAL,
 
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
-                bun.crash_handler.dumpCurrentStackTrace(null);
+                bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             }
             return .UNKNOWN;
         },
@@ -3414,7 +3417,7 @@ pub fn GetFinalPathNameByHandle(
     });
 
     if (return_length == 0) {
-        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.windows.GetLastError() });
+        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, GetLastError() });
         return error.FileNotFound;
     }
 
@@ -3478,7 +3481,6 @@ pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
-const SetConsoleMode = kernel32.SetConsoleMode;
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
@@ -3667,3 +3669,188 @@ pub extern "kernel32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
 pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const u16, lpSecurityAttributes: ?*windows.SECURITY_ATTRIBUTES) callconv(.winapi) BOOL;
 pub extern "kernel32" fn SetEndOfFile(hFile: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *FILETIME, out_lpExitTime: *FILETIME, out_lpKernelTime: *FILETIME, out_lpUserTime: *FILETIME) callconv(.winapi) BOOL;
+
+/// Returns the original mode, or null on failure
+pub fn updateStdioModeFlags(i: bun.FD.Stdio, opts: struct { set: DWORD = 0, unset: DWORD = 0 }) !DWORD {
+    const fd = i.fd();
+    var original_mode: DWORD = 0;
+    if (c.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+        if (c.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
+            return getLastError();
+        }
+    } else return getLastError();
+    return original_mode;
+}
+
+const watcherChildEnv: [:0]const u16 = bun.strings.toUTF16Literal("_BUN_WATCHER_CHILD");
+
+// magic exit code to indicate to the watcher manager that the child process should be re-spawned
+// this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
+pub const watcher_reload_exit: DWORD = 3224497970;
+
+pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+
+pub fn isWatcherChild() bool {
+    var buf: [1]u16 = undefined;
+    return c.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
+}
+
+pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
+    // this process will be the parent of the child process that actually runs the script
+    var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+    bun.C.windows_enable_stdio_inheritance();
+    const job = CreateJobObjectA(null, null) orelse Output.panic(
+        "Could not create watcher Job Object: {s}",
+        .{@tagName(std.os.windows.kernel32.GetLastError())},
+    );
+    var jeli = std.mem.zeroes(c.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+    jeli.BasicLimitInformation.LimitFlags =
+        c.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+        c.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
+        c.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |
+        c.JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+    if (c.SetInformationJobObject(
+        job,
+        c.JobObjectExtendedLimitInformation,
+        &jeli,
+        @sizeOf(c.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+    ) == 0) {
+        Output.panic(
+            "Could not configure watcher Job Object: {s}",
+            .{@tagName(std.os.windows.kernel32.GetLastError())},
+        );
+    }
+
+    while (true) {
+        spawnWatcherChild(allocator, &procinfo, job) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            if (err == error.Win32Error) {
+                Output.panic("Failed to spawn process: {s}\n", .{@tagName(GetLastError())});
+            }
+            Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
+        };
+        windows.WaitForSingleObject(procinfo.hProcess, c.INFINITE) catch |err| {
+            Output.panic("Failed to wait for child process: {s}\n", .{@errorName(err)});
+        };
+        var exit_code: DWORD = 0;
+        if (c.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
+            const err = windows.GetLastError();
+            _ = c.NtClose(procinfo.hProcess);
+            Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
+        }
+        _ = c.NtClose(procinfo.hProcess);
+
+        // magic exit code to indicate that the child process should be re-spawned
+        if (exit_code == watcher_reload_exit) {
+            continue;
+        } else {
+            bun.Global.exit(exit_code);
+        }
+    }
+}
+
+pub fn spawnWatcherChild(
+    allocator: std.mem.Allocator,
+    procinfo: *std.os.windows.PROCESS_INFORMATION,
+    job: HANDLE,
+) !void {
+    // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
+    var attr_size: usize = undefined;
+    _ = InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
+    const p = try allocator.alloc(u8, attr_size);
+    defer allocator.free(p);
+    if (InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) == 0) {
+        return error.Win32Error;
+    }
+    if (UpdateProcThreadAttribute(
+        p.ptr,
+        0,
+        c.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+        @ptrCast(&job),
+        @sizeOf(HANDLE),
+        null,
+        null,
+    ) == 0) {
+        return error.Win32Error;
+    }
+
+    const flags: DWORD = c.CREATE_UNICODE_ENVIRONMENT | c.EXTENDED_STARTUPINFO_PRESENT;
+
+    const image_path = exePathW();
+    var wbuf: WPathBuffer = undefined;
+    @memcpy(wbuf[0..image_path.len], image_path);
+    wbuf[image_path.len] = 0;
+
+    const image_pathZ = wbuf[0..image_path.len :0];
+
+    const kernelenv = kernel32.GetEnvironmentStringsW();
+    defer if (kernelenv) |envptr| {
+        _ = kernel32.FreeEnvironmentStringsW(envptr);
+    };
+
+    var size: usize = 0;
+    if (kernelenv) |pointer| {
+        // check that env is non-empty
+        if (pointer[0] != 0 or pointer[1] != 0) {
+            // array is terminated by two nulls
+            while (pointer[size] != 0 or pointer[size + 1] != 0) size += 1;
+            size += 1;
+        }
+    }
+    // now pointer[size] is the first null
+
+    const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+    defer allocator.free(envbuf);
+    if (kernelenv) |pointer| {
+        @memcpy(envbuf[0..size], pointer);
+    }
+    @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
+    envbuf[size + watcherChildEnv.len] = '=';
+    envbuf[size + watcherChildEnv.len + 1] = '1';
+    envbuf[size + watcherChildEnv.len + 2] = 0;
+    envbuf[size + watcherChildEnv.len + 3] = 0;
+
+    var startupinfo = STARTUPINFOEXW{
+        .StartupInfo = .{
+            .cb = @sizeOf(STARTUPINFOEXW),
+            .lpReserved = null,
+            .lpDesktop = null,
+            .lpTitle = null,
+            .dwX = 0,
+            .dwY = 0,
+            .dwXSize = 0,
+            .dwYSize = 0,
+            .dwXCountChars = 0,
+            .dwYCountChars = 0,
+            .dwFillAttribute = 0,
+            .dwFlags = c.STARTF_USESTDHANDLES,
+            .wShowWindow = 0,
+            .cbReserved2 = 0,
+            .lpReserved2 = null,
+            .hStdInput = std.io.getStdIn().handle,
+            .hStdOutput = std.io.getStdOut().handle,
+            .hStdError = std.io.getStdErr().handle,
+        },
+        .lpAttributeList = p.ptr,
+    };
+    @memset(std.mem.asBytes(procinfo), 0);
+    const rc = kernel32.CreateProcessW(
+        image_pathZ.ptr,
+        c.GetCommandLineW(),
+        null,
+        null,
+        1,
+        flags,
+        envbuf.ptr,
+        null,
+        @ptrCast(&startupinfo),
+        procinfo,
+    );
+    if (rc == 0) {
+        return error.Win32Error;
+    }
+    var is_in_job: c.BOOL = 0;
+    _ = c.IsProcessInJob(procinfo.hProcess, job, &is_in_job);
+    bun.debugAssert(is_in_job != 0);
+    _ = c.NtClose(procinfo.hThread);
+}

@@ -6,10 +6,11 @@ const Fs = @import("../../fs.zig");
 const Mutex = bun.Mutex;
 const FSEvents = @import("./fs_events.zig");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Environment = bun.Environment;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const StoredFileDescriptorType = bun.FD;
+const FD = bun.FD;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
@@ -42,7 +43,7 @@ pub const PathWatcherManager = struct {
     has_pending_tasks: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     mutex: Mutex,
     const PathInfo = struct {
-        fd: StoredFileDescriptorType = .zero,
+        fd: FD = .invalid,
         is_file: bool = true,
         path: [:0]const u8,
         dirname: string,
@@ -437,7 +438,7 @@ pub const PathWatcherManager = struct {
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
-            var iter = fd.asDir().iterate();
+            var iter = fd.stdDir().iterate();
 
             // now we iterate over all files and directories
             while (iter.next() catch |err| {
@@ -491,7 +492,7 @@ pub const PathWatcherManager = struct {
                         child_path.path,
                         child_path.hash,
                         options.Loader.file,
-                        .zero,
+                        .invalid,
                         null,
                         false,
                     )) {
@@ -584,7 +585,7 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .zero, null, false).unwrap();
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .invalid, null, false).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
@@ -707,7 +708,7 @@ pub const PathWatcherManager = struct {
         var it = this.file_paths.iterator();
         while (it.next()) |*entry| {
             const path = entry.value_ptr.*;
-            _ = bun.sys.close(path.fd);
+            path.fd.close();
             bun.default_allocator.free(path.path);
         }
 

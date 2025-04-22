@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const strings = bun.strings;
@@ -355,6 +355,10 @@ pub const ZigString = extern struct {
             };
         }
 
+        pub fn byteLength(this: *const Slice) usize {
+            return this.len;
+        }
+
         pub fn toZigString(this: Slice) ZigString {
             if (this.isAllocated())
                 return ZigString.initUTF8(this.ptr[0..this.len]);
@@ -419,7 +423,7 @@ pub const ZigString = extern struct {
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
-        pub fn slice(this: Slice) []const u8 {
+        pub fn slice(this: *const Slice) []const u8 {
             return this.ptr[0..this.len];
         }
 
@@ -599,7 +603,7 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return ZigString__toExternalU16(ptr, len, global);
@@ -786,7 +790,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return ZigString__toExternalValue(this, global);
@@ -819,7 +823,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
 
@@ -839,7 +843,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
-        if (comptime @hasDecl(@import("root").bun, "bindgen")) {
+        if (comptime @hasDecl(@import("bun"), "bindgen")) {
             return undefined;
         }
 

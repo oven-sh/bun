@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = bun.logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -1410,7 +1410,7 @@ pub const Symbol = struct {
         }
 
         pub fn followAll(symbols: *Map) void {
-            const trace = bun.tracy.traceNamed(@src(), "Symbols.followAll");
+            const trace = bun.perf.trace("Symbols.followAll");
             defer trace.end();
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
@@ -1566,7 +1566,7 @@ pub const E = struct {
 
     pub const Boolean = struct {
         value: bool,
-        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef) JSC.C.JSValueRef {
+        pub fn toJS(this: @This(), ctx: *JSC.JSGlobalObject) JSC.C.JSValueRef {
             return JSC.C.JSValueMakeBoolean(ctx, this.value);
         }
     };

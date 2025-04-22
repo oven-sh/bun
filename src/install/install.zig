@@ -6,7 +6,7 @@
 const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
@@ -839,9 +839,7 @@ pub const Task = struct {
                     return;
                 };
 
-                this.data = .{
-                    .git_clone = bun.toFD(dir.fd),
-                };
+                this.data = .{ .git_clone = .fromStdDir(dir) };
                 this.status = Status.success;
             },
             .git_checkout => {
@@ -851,7 +849,7 @@ pub const Task = struct {
                     this.request.git_checkout.env,
                     manager.log,
                     manager.getCacheDirectory(),
-                    git_checkout.repo_dir.asDir(),
+                    git_checkout.repo_dir.stdDir(),
                     git_checkout.name.slice(),
                     git_checkout.url.slice(),
                     git_checkout.resolved.slice(),
@@ -1003,6 +1001,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
     const do_progress = kind != .patch;
     const ProgressT = if (do_progress) *Progress else struct {};
     return struct {
+        /// TODO: Change to bun.FD.Dir
         cache_dir: std.fs.Dir,
         cache_dir_subpath: stringZ = "",
         destination_dir_subpath: stringZ = "",
@@ -1132,11 +1131,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
 
             if (comptime bun.Environment.isPosix) {
-                _ = bun.sys.fstatat(bun.toFD(destination_dir.fd), patch_tag_path).unwrap() catch return false;
+                _ = bun.sys.fstatat(.fromStdDir(destination_dir), patch_tag_path).unwrap() catch return false;
             } else {
-                switch (bun.sys.openat(bun.toFD(destination_dir.fd), patch_tag_path, bun.O.RDONLY, 0)) {
+                switch (bun.sys.openat(.fromStdDir(destination_dir), patch_tag_path, bun.O.RDONLY, 0)) {
                     .err => return false,
-                    .result => |fd| _ = bun.sys.close(fd),
+                    .result => |fd| fd.close(),
                 }
             }
 
@@ -1405,7 +1404,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     while (try walker.next()) |entry| {
                         switch (entry.kind) {
                             .directory => {
-                                _ = bun.sys.mkdirat(bun.toFD(destination_dir_.fd), entry.path, 0o755);
+                                _ = bun.sys.mkdirat(.fromStdDir(destination_dir_), entry.path, 0o755);
                             },
                             .file => {
                                 bun.copy(u8, &stackpath, entry.path);
@@ -1514,7 +1513,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             state.cached_package_dir = (if (comptime Environment.isWindows)
                 if (method == .symlink)
-                    bun.openDirNoRenamingOrDeletingWindows(bun.toFD(this.cache_dir), this.cache_dir_subpath)
+                    bun.openDirNoRenamingOrDeletingWindows(.fromStdDir(this.cache_dir), this.cache_dir_subpath)
                 else
                     bun.openDir(this.cache_dir, this.cache_dir_subpath)
             else
@@ -1689,7 +1688,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
-                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
+                            bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
@@ -1800,10 +1799,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             pub fn deinit(task: *@This()) void {
                 bun.default_allocator.free(task.bytes);
-                task.destroy();
+                bun.destroy(task);
             }
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn run(task: *@This()) ?anyerror {
                 const src = task.src;
@@ -1973,7 +1972,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var buf2: bun.PathBuffer = undefined;
             var to_copy_buf2: []u8 = undefined;
             if (Environment.isPosix) {
-                const cache_dir_path = try bun.getFdPath(state.cached_package_dir.fd, &buf2);
+                const cache_dir_path = try bun.FD.fromStdDir(state.cached_package_dir).getFdPath(&buf2);
                 if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
                     buf2[cache_dir_path.len] = std.fs.path.sep;
                     to_copy_buf2 = buf2[cache_dir_path.len + 1 ..];
@@ -2111,7 +2110,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         pub fn uninstallBeforeInstall(this: *@This(), destination_dir: std.fs.Dir) void {
             var rand_path_buf: [48]u8 = undefined;
             const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
-            switch (bun.sys.renameat(bun.toFD(destination_dir), this.destination_dir_subpath, bun.toFD(destination_dir), temp_path)) {
+            switch (bun.sys.renameat(
+                .fromStdDir(destination_dir),
+                this.destination_dir_subpath,
+                .fromStdDir(destination_dir),
+                temp_path,
+            )) {
                 .err => {
                     // if it fails, that means the directory doesn't exist or was inaccessible
                 },
@@ -2140,8 +2144,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     //
 
                     const UninstallTask = struct {
+                        pub const new = bun.TrivialNew(@This());
+
                         absolute_path: []const u8,
                         task: JSC.WorkPoolTask = .{ .callback = &run },
+
                         pub fn run(task: *JSC.WorkPoolTask) void {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
@@ -2163,7 +2170,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 }
                                 return;
                             };
-                            defer _ = bun.sys.close(bun.toFD(dir.fd));
+                            defer bun.FD.fromStdDir(dir).close();
 
                             dir.deleteTree(basename) catch |err| {
                                 if (comptime Environment.isDebug) {
@@ -2179,10 +2186,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                         pub fn deinit(uninstall_task: *@This()) void {
                             bun.default_allocator.free(uninstall_task.absolute_path);
-                            uninstall_task.destroy();
+                            bun.destroy(uninstall_task);
                         }
-
-                        pub usingnamespace bun.New(@This());
                     };
                     var task = UninstallTask.new(.{
                         .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
@@ -2198,7 +2203,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
                     .err => return true,
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return false;
                     },
                 }
@@ -2208,7 +2213,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         return true;
                     },
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return false;
                     },
                 }
@@ -2216,7 +2221,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
                     .err => return true,
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return false;
                     },
                 }
@@ -2227,8 +2232,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
             const bin_path = bin_path: {
                 const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;
-                defer _ = bun.sys.close(fd);
-                const size = fd.asFile().readAll(temp_buffer) catch return true;
+                defer fd.close();
+                const size = fd.stdFile().readAll(temp_buffer) catch return true;
                 const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
                 bun.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
                 break :bin_path decoded.bin_path;
@@ -2236,7 +2241,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             {
                 const fd = bun.sys.openatWindows(node_mod_fd, bin_path, bun.O.RDONLY).unwrap() catch return true;
-                _ = bun.sys.close(fd);
+                fd.close();
             }
 
             return false;
@@ -2305,7 +2310,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     .err => |err_| brk: {
                         var err = err_;
                         if (err.getErrno() == .EXIST) {
-                            _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                            _ = bun.sys.rmdirat(.fromStdDir(destination_dir), this.destination_dir_subpath);
                             switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
                                 .err => |e| err = e,
                                 .result => break :brk,
@@ -2324,7 +2329,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     if (subdir != null) dest_dir.close();
                 }
 
-                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result.fail(err, .linking_dependency, @errorReturnTrace());
+                const dest_dir_path = bun.getFdPath(.fromStdDir(dest_dir), &dest_buf) catch |err| return Result.fail(err, .linking_dependency, @errorReturnTrace());
 
                 const target = Path.relative(dest_dir_path, to_path);
                 std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return Result.fail(err, .linking_dependency, null);
@@ -2361,9 +2366,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 defer buf[subpath_len] = 0;
                                 @memcpy(buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
                                 const subpath = buf[0 .. subpath_len + 1 + "package.json".len :0];
-                                break :package_json_exists Syscall.existsAt(bun.toFD(this.cache_dir.fd), subpath);
+                                break :package_json_exists Syscall.existsAt(.fromStdDir(this.cache_dir), subpath);
                             },
-                            else => Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false,
+                            else => Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), this.cache_dir_subpath).unwrap() catch false,
                         };
                         if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                         break :brk !exists;
@@ -2371,7 +2376,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     const cache_dir_subpath_without_patch_hash = this.cache_dir_subpath[0 .. std.mem.lastIndexOf(u8, this.cache_dir_subpath, "_patch_hash=") orelse @panic("Patched dependency cache dir subpath does not have the \"_patch_hash=HASH\" suffix. This is a bug, please file a GitHub issue.")];
                     @memcpy(bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len], cache_dir_subpath_without_patch_hash);
                     bun.path.join_buf[cache_dir_subpath_without_patch_hash.len] = 0;
-                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len :0]).unwrap() catch false;
+                    const exists = Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len :0]).unwrap() catch false;
                     if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                     break :brk !exists;
                 },
@@ -2388,24 +2393,36 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // @memcpy(bun.path.join_buf[this.cache_dir_subpath.len .. this.cache_dir_subpath.len + patch_hash_part.len], patch_hash_part);
             // bun.path.join_buf[this.cache_dir_subpath.len + patch_hash_part.len] = 0;
             // const patch_cache_dir_subpath = bun.path.join_buf[0 .. this.cache_dir_subpath.len + patch_hash_part.len :0];
-            const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+            const exists = Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), this.cache_dir_subpath).unwrap() catch false;
             if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
             return !exists;
         }
 
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
-            const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-            if (comptime kind == .regular) return result;
-            if (result == .fail) return result;
-            const fd = bun.toFD(destination_dir.fd);
-            const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
-            const tag_fd = switch (bun.sys.openat(fd, subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
-                .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
-                .result => |f| f,
-            };
-            defer _ = bun.sys.close(tag_fd);
+            switch (comptime kind) {
+                .regular => {
+                    const tracer = bun.perf.trace("PackageInstaller.install");
+                    defer tracer.end();
+                    return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+                },
+                .patch => {
+                    const tracer = bun.perf.trace("PackageInstaller.installPatch");
+                    defer tracer.end();
 
-            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
+                    const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+                    if (result == .fail) return result;
+                    const fd = bun.FD.fromStdDir(destination_dir);
+                    const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
+                    const tag_fd = switch (fd.openat(subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
+                        .result => |f| f,
+                        .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
+                    };
+                    defer tag_fd.close();
+                    if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e|
+                        return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
+                    return result;
+                },
+            }
         }
 
         pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
@@ -3371,7 +3388,7 @@ pub const PackageManager = struct {
             this.global_dir = global_dir;
             this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
             var buf: bun.PathBuffer = undefined;
-            const _path = try bun.getFdPath(this.global_link_dir.?.fd, &buf);
+            const _path = try bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
             break :brk this.global_link_dir.?;
         };
@@ -3570,7 +3587,7 @@ pub const PackageManager = struct {
         return this.temp_dir_ orelse brk: {
             this.temp_dir_ = this.ensureTemporaryDirectory();
             var pathbuf: bun.PathBuffer = undefined;
-            const temp_dir_path = bun.getFdPathZ(bun.toFD(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
+            const temp_dir_path = bun.getFdPathZ(.fromStdDir(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
             this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch bun.outOfMemory();
             break :brk this.temp_dir_.?;
         };
@@ -3683,7 +3700,7 @@ pub const PackageManager = struct {
             const elapsed = timer.read();
             if (elapsed > std.time.ns_per_ms * 100) {
                 var path_buf: bun.PathBuffer = undefined;
-                const cache_dir_path = bun.getFdPath(cache_directory.fd, &path_buf) catch "it";
+                const cache_dir_path = bun.getFdPath(.fromStdDir(cache_directory), &path_buf) catch "it";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                     .{cache_dir_path},
@@ -4027,7 +4044,7 @@ pub const PackageManager = struct {
     }
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
-        return bun.sys.directoryExistsAt(this.getCacheDirectory(), folder_path).unwrap() catch false;
+        return bun.sys.directoryExistsAt(.fromStdDir(this.getCacheDirectory()), folder_path).unwrap() catch false;
     }
 
     pub fn pathForCachedNPMPath(
@@ -4046,7 +4063,7 @@ pub const PackageManager = struct {
 
         cache_path_buf[package_name.len] = std.fs.path.sep;
 
-        const cache_dir = bun.toFD(this.getCacheDirectory());
+        const cache_dir: bun.FD = .fromStdDir(this.getCacheDirectory());
 
         if (comptime Environment.isWindows) {
             var path_buf: bun.PathBuffer = undefined;
@@ -4057,10 +4074,10 @@ pub const PackageManager = struct {
             };
         }
 
-        return bun.sys.readlinkat(cache_dir, cache_path, buf).unwrap() catch |err| {
+        return cache_dir.readlinkat(cache_path, buf).unwrap() catch |err| {
             // if we run into an error, delete the symlink
             // so that we don't repeatedly try to read it
-            _ = bun.sys.unlinkat(cache_dir, cache_path);
+            _ = cache_dir.unlinkat(cache_path);
             return err;
         };
     }
@@ -5505,7 +5522,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         this.env,
                         this.log,
-                        repo_fd.asDir(),
+                        repo_fd.stdDir(),
                         alias,
                         this.lockfile.str(&dep.committish),
                         clone_id,
@@ -6994,7 +7011,7 @@ pub const PackageManager = struct {
                             manager.allocator,
                             manager.env,
                             manager.log,
-                            task.data.git_clone.asDir(),
+                            task.data.git_clone.stdDir(),
                             dep_name,
                             committish,
                             task.id,
@@ -7127,7 +7144,7 @@ pub const PackageManager = struct {
         log_level: LogLevel = .default,
         global: bool = false,
 
-        global_bin_dir: std.fs.Dir = bun.invalid_fd.asDir(),
+        global_bin_dir: std.fs.Dir = bun.FD.invalid.stdDir(),
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
@@ -7716,7 +7733,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub const Do = packed struct {
+        pub const Do = packed struct(u16) {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
@@ -7729,9 +7746,10 @@ pub const PackageManager = struct {
             trust_dependencies_from_args: bool = false,
             update_to_latest: bool = false,
             analyze: bool = false,
+            _: u4 = 0,
         };
 
-        pub const Enable = packed struct {
+        pub const Enable = packed struct(u16) {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
@@ -7746,6 +7764,7 @@ pub const PackageManager = struct {
 
             exact_versions: bool = false,
             only_missing: bool = false,
+            _: u7 = 0,
         };
     };
 
@@ -8824,7 +8843,7 @@ pub const PackageManager = struct {
                         const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                         defer ctx.allocator.free(json_buf);
                         const json_len = try json_file.preadAll(json_buf, 0);
-                        const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
+                        const json_path = try bun.getFdPath(.fromStdFile(json_file), &package_json_cwd_buf);
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
                         const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
@@ -8889,7 +8908,7 @@ pub const PackageManager = struct {
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = 0;
         fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
-        package_json_cwd = try bun.getFdPath(root_package_json_file.handle, &package_json_cwd_buf);
+        package_json_cwd = try bun.getFdPath(.fromStdFile(root_package_json_file), &package_json_cwd_buf);
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
@@ -8943,7 +8962,7 @@ pub const PackageManager = struct {
         }
 
         if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            bun.spawn.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {
@@ -9406,8 +9425,8 @@ pub const PackageManager = struct {
                 var node_modules_path_buf: bun.PathBuffer = undefined;
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .node_modules = bun.toFD(node_modules.fd),
-                    .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
+                    .node_modules = .fromStdDir(node_modules),
+                    .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
                         if (manager.options.log_level != .silent) {
                             Output.err(err, "failed to link binary", .{});
                         }
@@ -9551,8 +9570,8 @@ pub const PackageManager = struct {
 
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .node_modules = bun.toFD(node_modules.fd),
-                    .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
+                    .node_modules = .fromStdDir(node_modules),
+                    .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
                         if (manager.options.log_level != .silent) {
                             Output.err(err, "failed to link binary", .{});
                         }
@@ -10998,7 +11017,7 @@ pub const PackageManager = struct {
             manager.update_requests = cloned;
         }
 
-        var buffer_writer = try JSPrinter.BufferWriter.init(manager.allocator);
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
@@ -11075,7 +11094,7 @@ pub const PackageManager = struct {
                     stuff.patch_key,
                     stuff.patchfile_path,
                 );
-                var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+                var buffer_writer2 = JSPrinter.BufferWriter.init(manager.allocator);
                 try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
                 buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
                 var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
@@ -11138,7 +11157,7 @@ pub const PackageManager = struct {
                     },
                 );
             }
-            var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
+            var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =
                 preserve_trailing_newline_at_eof_for_package_json;
@@ -11170,11 +11189,11 @@ pub const PackageManager = struct {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             const workspace_package_json_file = (try bun.sys.File.openat(
-                bun.invalid_fd,
+                .cwd(),
                 path,
                 bun.O.RDWR,
                 0,
-            ).unwrap()).handle.asFile();
+            ).unwrap()).handle.stdFile();
 
             try workspace_package_json_file.pwriteAll(source, 0);
             std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
@@ -11673,9 +11692,9 @@ pub const PackageManager = struct {
                         const entrypathZ = pathbuf[0..entrypath.len :0];
 
                         if (bun.sys.renameatConcurrently(
-                            bun.toFD(destination_dir_.fd),
+                            .fromStdDir(destination_dir_),
                             entrypathZ,
-                            bun.toFD(tmpdir_in_node_modules.fd),
+                            .fromStdDir(tmpdir_in_node_modules),
                             tmpname,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -11704,7 +11723,7 @@ pub const PackageManager = struct {
                         pathbuf[entry.path.len] = 0;
 
                         if (bun.sys.unlinkat(
-                            bun.toFD(destination_dir_.fd),
+                            .fromStdDir(destination_dir_),
                             pathbuf[0..entry.path.len :0],
                         ).asErr()) |e| {
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
@@ -11717,7 +11736,7 @@ pub const PackageManager = struct {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
+                        bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -11982,7 +12001,7 @@ pub const PackageManager = struct {
             var buf2: bun.PathBuffer = undefined;
             var buf3: bun.PathBuffer = undefined;
             const old_folder = old_folder: {
-                const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(cache_dir.fd), &buf2)) {
+                const cache_dir_path = switch (bun.sys.getFdPath(.fromStdDir(cache_dir), &buf2)) {
                     .result => |s| s,
                     .err => |e| {
                         Output.err(e, "failed to read from cache", .{});
@@ -12013,9 +12032,9 @@ pub const PackageManager = struct {
                 defer new_folder_handle.close();
 
                 if (bun.sys.renameatConcurrently(
-                    bun.toFD(new_folder_handle.fd),
+                    .fromStdDir(new_folder_handle),
                     "node_modules",
-                    bun.toFD(root_node_modules.fd),
+                    .fromStdDir(root_node_modules),
                     random_tempdir,
                     .{ .move_fallback = true },
                 ).asErr()) |_| break :has_nested_node_modules false;
@@ -12048,9 +12067,9 @@ pub const PackageManager = struct {
                 defer new_folder_handle.close();
 
                 if (bun.sys.renameatConcurrently(
-                    bun.toFD(new_folder_handle.fd),
+                    .fromStdDir(new_folder_handle),
                     patch_tag,
-                    bun.toFD(root_node_modules.fd),
+                    .fromStdDir(root_node_modules),
                     patch_tag_tmpname,
                     .{ .move_fallback = true },
                 ).asErr()) |e| {
@@ -12072,9 +12091,9 @@ pub const PackageManager = struct {
 
                     if (has_nested_node_modules) {
                         if (bun.sys.renameatConcurrently(
-                            bun.toFD(root_node_modules.fd),
+                            .fromStdDir(root_node_modules),
                             random_tempdir,
-                            bun.toFD(new_folder_handle.fd),
+                            .fromStdDir(new_folder_handle),
                             "node_modules",
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -12084,9 +12103,9 @@ pub const PackageManager = struct {
 
                     if (bun_patch_tag) |patch_tag| {
                         if (bun.sys.renameatConcurrently(
-                            bun.toFD(root_node_modules.fd),
+                            .fromStdDir(root_node_modules),
                             patch_tag_tmpname,
-                            bun.toFD(new_folder_handle.fd),
+                            .fromStdDir(new_folder_handle),
                             patch_tag,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -12186,7 +12205,7 @@ pub const PackageManager = struct {
         const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
         const tmpdir = manager.getTemporaryDirectory();
         const tmpfd = switch (bun.sys.openat(
-            bun.toFD(tmpdir.fd),
+            .fromStdDir(tmpdir),
             tempfile_name,
             bun.O.RDWR | bun.O.CREAT,
             0o666,
@@ -12197,7 +12216,7 @@ pub const PackageManager = struct {
                 Global.crash();
             },
         };
-        defer _ = bun.sys.close(tmpfd);
+        defer tmpfd.close();
 
         if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
             Output.err(e, "failed to write patch to temp file", .{});
@@ -12232,7 +12251,7 @@ pub const PackageManager = struct {
 
         // rename to patches dir
         if (bun.sys.renameatConcurrently(
-            bun.toFD(tmpdir.fd),
+            .fromStdDir(tmpdir),
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
@@ -12262,7 +12281,7 @@ pub const PackageManager = struct {
             .err => |e| return .{ .err = e },
         };
         defer {
-            _ = bun.sys.close(patch_tag_fd);
+            patch_tag_fd.close();
             // we actually need to delete this
             _ = bun.sys.unlink(patch_tag_path);
         }
@@ -12454,7 +12473,7 @@ pub const PackageManager = struct {
         noinline fn directoryExistsAtWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
-            return bun.sys.directoryExistsAt(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto)).unwrapOr(false);
+            return bun.sys.directoryExistsAt(.fromStdDir(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto)).unwrapOr(false);
         }
 
         pub fn directoryExistsAt(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
@@ -12462,19 +12481,16 @@ pub const PackageManager = struct {
                 return this.directoryExistsAtWithoutOpeningDirectories(root_node_modules_dir, file_path);
             }
 
-            const dir = this.openDir(root_node_modules_dir) catch return false;
-            defer {
-                _ = bun.sys.close(bun.toFD(dir));
-            }
-
-            return bun.sys.directoryExistsAt(bun.toFD(dir), file_path).unwrapOr(false);
+            const dir = FD.fromStdDir(this.openDir(root_node_modules_dir) catch return false);
+            defer dir.close();
+            return dir.directoryExistsAt(file_path).unwrapOr(false);
         }
 
         // Since the stack size of these functions are rather large, let's not let them be inlined.
         noinline fn openFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
-            return bun.sys.File.openat(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
+            return bun.sys.File.openat(.fromStdDir(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
         }
 
         pub fn readFile(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8, allocator: std.mem.Allocator) !bun.sys.File.ReadToEndResult {
@@ -12506,24 +12522,22 @@ pub const PackageManager = struct {
                 }
             }
 
-            const dir = try this.openDir(root_node_modules_dir);
-            defer {
-                _ = bun.sys.close(bun.toFD(dir));
-            }
+            const dir = bun.FD.fromStdDir(try this.openDir(root_node_modules_dir));
+            defer dir.close();
 
-            return try bun.sys.File.openat(bun.toFD(dir), file_path, bun.O.RDONLY, 0).unwrap();
+            return try bun.sys.File.openat(dir, file_path, bun.O.RDONLY, 0).unwrap();
         }
 
         pub fn openDir(this: *const NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
             if (comptime Environment.isPosix) {
-                return (try bun.sys.openat(bun.toFD(root), &try std.posix.toPosixPath(this.path.items), bun.O.DIRECTORY, 0).unwrap()).asDir();
+                return (try bun.sys.openat(.fromStdDir(root), &try std.posix.toPosixPath(this.path.items), bun.O.DIRECTORY, 0).unwrap()).stdDir();
             }
 
-            return (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+            return (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                 .can_rename_or_delete = false,
                 .create = false,
                 .read_only = false,
-            }).unwrap()).asDir();
+            }).unwrap()).stdDir();
         }
 
         pub fn makeAndOpenDir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
@@ -12534,11 +12548,11 @@ pub const PackageManager = struct {
 
                 // TODO: is this `makePath` necessary with `.create = true` below
                 try bun.MakePath.makePath(u8, root, this.path.items);
-                break :brk (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+                break :brk (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                     .can_rename_or_delete = false,
                     .create = true,
                     .read_only = false,
-                }).unwrap()).asDir();
+                }).unwrap()).stdDir();
             };
             return out;
         }
@@ -12698,7 +12712,7 @@ pub const PackageManager = struct {
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
                     .seen = &this.seen_bin_links,
                     .node_modules_path = this.node_modules.path.items,
-                    .node_modules = bun.toFD(destination_dir),
+                    .node_modules = .fromStdDir(destination_dir),
                     .abs_target_buf = link_target_buf,
                     .abs_dest_buf = link_dest_buf,
                     .rel_buf = link_rel_buf,
@@ -13640,7 +13654,7 @@ pub const PackageManager = struct {
                             };
                             if (!Singleton.node_modules_is_ok) {
                                 if (!Environment.isWindows) {
-                                    const stat = bun.sys.fstat(bun.toFD(lazy_package_dir.getDir() catch |err| {
+                                    const stat = bun.sys.fstat(.fromStdDir(lazy_package_dir.getDir() catch |err| {
                                         Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                             this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
                                         });
@@ -13689,7 +13703,7 @@ pub const PackageManager = struct {
                             );
                             if (Environment.isDebug) {
                                 var t = cause.debug_trace;
-                                bun.crash_handler.dumpStackTrace(t.trace());
+                                bun.crash_handler.dumpStackTrace(t.trace(), .{});
                             }
                             this.summary.fail += 1;
                         }
@@ -14087,10 +14101,10 @@ pub const PackageManager = struct {
         // we want to check lazily though
         // no need to download packages you've already installed!!
         var new_node_modules = false;
-        const cwd = std.fs.cwd();
+        const cwd = bun.FD.cwd();
         const node_modules_folder = brk: {
             // Attempt to open the existing node_modules folder
-            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
+            switch (bun.sys.openatOSPath(cwd, bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
                 .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
                 .err => {},
             }
@@ -14104,7 +14118,7 @@ pub const PackageManager = struct {
                     Global.crash();
                 }
             }
-            break :brk bun.openDir(cwd, "node_modules") catch |err| {
+            break :brk bun.openDir(cwd.stdDir(), "node_modules") catch |err| {
                 Output.err(err, "could not open the <b>\"node_modules\"<r> directory", .{});
                 Global.crash();
             };
@@ -14442,7 +14456,7 @@ pub const PackageManager = struct {
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: bun.PathBuffer = undefined;
-        const result = try bun.getFdPathZ(manager.options.global_bin_dir.fd, &out_buffer);
+        const result = try bun.getFdPathZ(.fromStdDir(manager.options.global_bin_dir), &out_buffer);
         const path = try FileSystem.instance.dirname_store.append([:0]u8, result);
         manager.options.bin_path = path.ptr[0..path.len :0];
     }
@@ -15696,7 +15710,7 @@ pub const bun_install_js_bindings = struct {
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
         const manager = globalObject.bunVM().transpiler.resolver.getPackageManager();
 
-        const load_result: Lockfile.LoadResult = lockfile.loadFromDir(bun.toFD(dir), manager, allocator, &log, true);
+        const load_result: Lockfile.LoadResult = lockfile.loadFromDir(.fromStdDir(dir), manager, allocator, &log, true);
 
         switch (load_result) {
             .err => |err| {

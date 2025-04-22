@@ -174,7 +174,7 @@ private:
 #endif
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
-            auto [err, returnedSocket] = httpResponseData->consumePostPadded(data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto [err, returnedSocket] = httpResponseData->consumePostPadded(httpContextData->requireHostHeader,data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);

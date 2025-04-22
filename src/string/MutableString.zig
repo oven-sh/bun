@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Allocator = std.mem.Allocator;
 const strings = bun.strings;
@@ -71,10 +71,13 @@ pub fn bufferedWriter(self: *MutableString) BufferedWriter {
 }
 
 pub fn init(allocator: Allocator, capacity: usize) Allocator.Error!MutableString {
-    return MutableString{ .allocator = allocator, .list = if (capacity > 0)
-        try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
-    else
-        std.ArrayListUnmanaged(u8){} };
+    return MutableString{
+        .allocator = allocator,
+        .list = if (capacity > 0)
+            try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
+        else
+            std.ArrayListUnmanaged(u8){},
+    };
 }
 
 pub fn initEmpty(allocator: Allocator) MutableString {

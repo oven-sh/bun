@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uws = @import("../uws.zig");
 
 const SocketContext = uws.SocketContext;
@@ -60,6 +60,10 @@ pub const Socket = opaque {
 
     pub fn localPort(this: *Socket, ssl: bool) i32 {
         return us_socket_local_port(@intFromBool(ssl), this);
+    }
+
+    pub fn remotePort(this: *Socket, ssl: bool) i32 {
+        return us_socket_remote_port(@intFromBool(ssl), this);
     }
 
     /// Returned slice is a view into `buf`.
@@ -125,8 +129,9 @@ pub const Socket = opaque {
     }
 
     pub fn write(this: *Socket, ssl: bool, data: []const u8, msg_more: bool) i32 {
-        debug("us_socket_write({d}, {d})", .{ @intFromPtr(this), data.len });
-        return us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        const rc = us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
+        return rc;
     }
 
     pub fn write2(this: *Socket, ssl: bool, first: []const u8, second: []const u8) i32 {
@@ -151,6 +156,7 @@ pub const Socket = opaque {
     extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 
     extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
+    extern fn us_socket_remote_port(ssl: i32, s: ?*Socket) i32;
     extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;

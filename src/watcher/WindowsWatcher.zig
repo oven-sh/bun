@@ -284,7 +284,7 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const log = Output.scoped(.watcher, false);

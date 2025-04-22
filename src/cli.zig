@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,7 +9,6 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
-const root = @import("root");
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -203,6 +202,8 @@ pub const Arguments = struct {
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--preserve-symlinks               Preserve symlinks when resolving files") catch unreachable,
+        clap.parseParam("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
@@ -243,7 +244,8 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -332,7 +334,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -662,6 +664,13 @@ pub const Arguments = struct {
         opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
+        if (args.flag("--preserve-symlinks")) {
+            opts.preserve_symlinks = true;
+        }
+        if (args.flag("--preserve-symlinks-main")) {
+            ctx.runtime_options.preserve_symlinks_main = true;
+        }
+
         ctx.passthrough = args.remaining();
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
@@ -695,6 +704,10 @@ pub const Arguments = struct {
 
             if (args.option("--origin")) |origin| {
                 opts.origin = origin;
+            }
+
+            if (args.flag("--redis-preconnect")) {
+                ctx.runtime_options.redis_preconnect = true;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1520,6 +1533,7 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
+        redis_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
@@ -1529,6 +1543,7 @@ pub const Command = struct {
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.
         expose_gc: bool = false,
+        preserve_symlinks_main: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -1611,9 +1626,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }

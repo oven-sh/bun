@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -41,11 +41,11 @@ pub const InitCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
+            bun.windows.updateStdioModeFlags(.std_in, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
-                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+                _ = bun.c.SetConsoleMode(bun.FD.stdin().native(), mode);
             }
         };
 
@@ -206,7 +206,7 @@ pub const InitCommand = struct {
 
         // Set raw mode to read single characters without echo
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.updateStdioModeFlags(0, .{
+            bun.windows.updateStdioModeFlags(.std_in, .{
                 // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
                 .set = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT | bun.windows.ENABLE_PROCESSED_INPUT,
                 // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
@@ -219,8 +219,8 @@ pub const InitCommand = struct {
         defer {
             if (comptime Environment.isWindows) {
                 if (original_mode) |mode| {
-                    _ = bun.windows.SetConsoleMode(
-                        bun.win32.STDIN_FD.cast(),
+                    _ = bun.c.SetConsoleMode(
+                        bun.FD.stdin().native(),
                         mode,
                     );
                 }
@@ -757,9 +757,9 @@ pub const InitCommand = struct {
         }
 
         write_package_json: {
-            var file = package_json_file orelse try std.fs.cwd().createFileZ("package.json", .{});
-            defer file.close();
-            var buffer_writer = try JSPrinter.BufferWriter.init(bun.default_allocator);
+            var fd = bun.FD.fromStdFile(package_json_file orelse try std.fs.cwd().createFileZ("package.json", .{}));
+            defer fd.close();
+            var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
             buffer_writer.append_newline = true;
             var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
@@ -774,7 +774,6 @@ pub const InitCommand = struct {
                 package_json_file = null;
                 break :write_package_json;
             };
-            const fd = bun.toFD(file);
             const written = package_json_writer.ctx.getWritten();
             bun.sys.File.writeAll(.{ .handle = fd }, written).unwrap() catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -999,6 +998,7 @@ const Template = enum {
             .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-app/bunfig.toml") },
             .{ .path = "package.json", .contents = @embedFile("../init/react-app/package.json") },
             .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-app/tsconfig.json") },
+            .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-app/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
             .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
@@ -1017,6 +1017,7 @@ const Template = enum {
             .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-tailwind/bunfig.toml") },
             .{ .path = "package.json", .contents = @embedFile("../init/react-tailwind/package.json") },
             .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-tailwind/tsconfig.json") },
+            .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-tailwind/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
             .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
@@ -1038,12 +1039,12 @@ const Template = enum {
             .{ .path = "package.json", .contents = @embedFile("../init/react-shadcn/package.json") },
             .{ .path = "components.json", .contents = @embedFile("../init/react-shadcn/components.json") },
             .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-shadcn/tsconfig.json") },
+            .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-shadcn/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
             .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
-            .{ .path = "src/types.d.ts", .contents = @embedFile("../init/react-shadcn/src/types.d.ts") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
             .{ .path = "src/components/ui/card.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/card.tsx") },
             .{ .path = "src/components/ui/label.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/label.tsx") },

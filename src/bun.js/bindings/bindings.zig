@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;
@@ -61,7 +61,7 @@ pub const WTF = @import("./WTF.zig").WTF;
 pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.zig").ScriptExecutionStatus;
 pub const DeferredError = @import("./DeferredError.zig").DeferredError;
 pub const Sizes = @import("./sizes.zig");
-
+pub const JSRef = @import("./JSRef.zig").JSRef;
 pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type, *JSGlobalObject, []const JSValue) anyerror!JSValue) type {
     return struct {
         pub fn callback(
@@ -313,8 +313,6 @@ pub fn untrackFunction(
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
-pub usingnamespace @import("./JSPropertyIterator.zig");
-
 // DOMCall Fields
 const Bun = JSC.API.Bun;
 pub const __DOMCall_ptr = Bun.FFIObject.dom_call;
@@ -342,28 +340,28 @@ pub fn initialize(eval_mode: bool) void {
     JSCInitialize(
         std.os.environ.ptr,
         std.os.environ.len,
-        struct {
-            pub fn callback(name: [*]const u8, len: usize) callconv(.C) void {
-                Output.prettyErrorln(
-                    \\<r><red>error<r><d>:<r> invalid JSC environment variable
-                    \\
-                    \\    <b>{s}<r>
-                    \\
-                    \\For a list of options, see this file:
-                    \\
-                    \\    https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h
-                    \\
-                    \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here.
-                    \\
-                    \\Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.
-                ,
-                    .{name[0..len]},
-                );
-                bun.Global.exit(1);
-            }
-        }.callback,
+        onJSCInvalidEnvVar,
         eval_mode,
     );
+}
+
+pub fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
+    Output.prettyErrorln(
+        \\<r><red>error<r><d>:<r> invalid JSC environment variable
+        \\
+        \\    <b>{s}<r>
+        \\
+        \\For a list of options, see this file:
+        \\
+        \\    https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h
+        \\
+        \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here.
+        \\
+        \\Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.
+    ,
+        .{name[0..len]},
+    );
+    bun.Global.exit(1);
 }
 
 /// Returns null on error. Use windows API to lookup the actual error.
@@ -373,7 +371,7 @@ pub fn initialize(eval_mode: bool) void {
 /// broke when I just used it. Not sure. ... but this works!
 fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
     if (comptime !bun.Environment.isWindows) {
-        unreachable;
+        @compileError(unreachable);
     }
 
     var buf: bun.WPathBuffer = undefined;
@@ -390,7 +388,7 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
     };
     buf[data.len] = 0;
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
-    return bun.windows.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+    return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
 
 comptime {

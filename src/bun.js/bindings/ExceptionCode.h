@@ -74,6 +74,7 @@ enum ExceptionCode {
 
     InvalidThisError,
     InvalidURLError,
+    CryptoOperationFailedError,
 };
 
 } // namespace WebCore
@@ -121,7 +122,8 @@ template<> struct EnumTraits<WebCore::ExceptionCode> {
         WebCore::ExceptionCode::StackOverflowError,
         WebCore::ExceptionCode::ExistingExceptionError,
         WebCore::ExceptionCode::InvalidThisError,
-        WebCore::ExceptionCode::InvalidURLError>;
+        WebCore::ExceptionCode::InvalidURLError,
+        WebCore::ExceptionCode::CryptoOperationFailedError>;
 };
 
 } // namespace WTF

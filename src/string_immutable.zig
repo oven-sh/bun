@@ -1571,7 +1571,7 @@ pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
 }
 
 // https://github.com/WebKit/WebKit/blob/443e796d1538654c34f2690e39600c70c8052b63/Source/WebCore/PAL/pal/text/TextCodecUTF8.cpp#L69
-pub fn nonASCIISequenceLength(first_byte: u8) u3 {
+pub fn nonASCIISequenceLength(first_byte: u8) u3_fast {
     return switch (first_byte) {
         0...193 => 0,
         194...223 => 2,
@@ -2524,7 +2524,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
 
 pub const UTF16Replacement = struct {
     code_point: u32 = unicode_replacement,
-    len: u3 = 0,
+    len: u3_fast = 0,
 
     /// Explicit fail boolean to distinguish between a Unicode Replacement Codepoint
     /// that was already in there
@@ -2534,7 +2534,7 @@ pub const UTF16Replacement = struct {
     can_buffer: bool = true,
     is_lead: bool = false,
 
-    pub inline fn utf8Width(replacement: UTF16Replacement) u3 {
+    pub inline fn utf8Width(replacement: UTF16Replacement) u3_fast {
         return switch (replacement.code_point) {
             0...0x7F => 1,
             (0x7F + 1)...0x7FF => 2,
@@ -2544,7 +2544,7 @@ pub const UTF16Replacement = struct {
     }
 };
 
-fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3, remaining_len: usize) UTF16Replacement {
+fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3_fast, remaining_len: usize) UTF16Replacement {
     if (comptime Environment.allow_assert) assert(sequence[0] > 127);
     switch (len) {
         2 => {
@@ -3802,7 +3802,7 @@ pub fn encodeUTF8Comptime(comptime cp: u32) []const u8 {
 
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
-pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
+pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3_fast {
     return @call(
         .always_inline,
         encodeWTF8RuneT,
@@ -3814,7 +3814,7 @@ pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
     );
 }
 
-pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3 {
+pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3_fast {
     switch (r) {
         0...0x7F => {
             p[0] = @as(u8, @intCast(r));
@@ -3870,33 +3870,33 @@ pub fn wtf8Sequence(code_point: u32) [4]u8 {
     };
 }
 
-pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
+pub inline fn wtf8ByteSequenceLength(first_byte: u8) u8 {
     return switch (first_byte) {
         0 => 0,
         1...0x80 - 1 => 1,
         else => if ((first_byte & 0xE0) == 0xC0)
-            @as(u3, 2)
+            2
         else if ((first_byte & 0xF0) == 0xE0)
-            @as(u3, 3)
+            3
         else if ((first_byte & 0xF8) == 0xF0)
-            @as(u3, 4)
+            4
         else
-            @as(u3, 1),
+            1,
     };
 }
 
 /// 0 == invalid
-pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
+pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u8 {
     return switch (first_byte) {
         0...0x80 - 1 => 1,
         else => if ((first_byte & 0xE0) == 0xC0)
-            @as(u3, 2)
+            2
         else if ((first_byte & 0xF0) == 0xE0)
-            @as(u3, 3)
+            3
         else if ((first_byte & 0xF8) == 0xF0)
-            @as(u3, 4)
+            4
         else
-            @as(u3, 1),
+            1,
     };
 }
 
@@ -3905,7 +3905,7 @@ pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
 /// This is a clone of esbuild's decodeWTF8Rune
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
-pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
+pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T: type, comptime zero: T) T {
     if (comptime Environment.allow_assert) assert(len > 1);
 
     const s1 = p[1];
@@ -4978,14 +4978,14 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// - Invalid codepoints are replaced with `zero` parameter
 /// - Null bytes return 0
-pub fn decodeWTF8RuneT(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
+pub fn decodeWTF8RuneT(p: *const [4]u8, len: u3_fast, comptime T: type, comptime zero: T) T {
     if (len == 0) return zero;
     if (len == 1) return p[0];
 
     return decodeWTF8RuneTMultibyte(p, len, T, zero);
 }
 
-pub fn codepointSize(comptime R: type, r: R) u3 {
+pub fn codepointSize(comptime R: type, r: R) u3_fast {
     return switch (r) {
         0b0000_0000...0b0111_1111 => 1,
         0b1100_0000...0b1101_1111 => 2,
@@ -4998,7 +4998,7 @@ pub fn codepointSize(comptime R: type, r: R) u3 {
 // /// Encode Type into UTF-8 bytes.
 // /// - Invalid unicode data becomes U+FFFD REPLACEMENT CHARACTER.
 // /// -
-// pub fn encodeUTF8RuneT(out: *[4]u8, comptime R: type, c: R) u3 {
+// pub fn encodeUTF8RuneT(out: *[4]u8, comptime R: type, c: R) u3_fast {
 //     switch (c) {
 //         0b0000_0000...0b0111_1111 => {
 //             out[0] = @intCast(u8, c);
@@ -5149,6 +5149,10 @@ pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
 const sort_asc = std.sort.asc(u8);
 const sort_desc = std.sort.desc(u8);
 
+/// Every time you read a non^2 sized integer, Zig masks off the extra bits.
+/// This is a meaningful performance difference, including in release builds.
+const u3_fast = u8;
+
 pub fn sortAsc(in: []string) void {
     // TODO: experiment with simd to see if it's faster
     std.sort.pdq([]const u8, in, {}, cmpStringsAsc);
@@ -5184,7 +5188,7 @@ pub fn toASCIIHexValue(character: u8) u8 {
     };
 }
 
-pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
+pub inline fn utf8ByteSequenceLength(first_byte: u8) u3_fast {
     return switch (first_byte) {
         0b0000_0000...0b0111_1111 => 1,
         0b1100_0000...0b1101_1111 => 2,
@@ -5197,7 +5201,7 @@ pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
 /// Same as `utf8ByteSequenceLength`, but assumes the byte is valid UTF-8.
 ///
 /// You should only use this function if you know the string you are getting the byte from is valid UTF-8.
-pub inline fn utf8ByteSequenceLengthUnsafe(first_byte: u8) u3 {
+pub inline fn utf8ByteSequenceLengthUnsafe(first_byte: u8) u3_fast {
     return switch (first_byte) {
         0b0000_0000...0b0111_1111 => 1,
         0b1100_0000...0b1101_1111 => 2,
@@ -5207,162 +5211,23 @@ pub inline fn utf8ByteSequenceLengthUnsafe(first_byte: u8) u3 {
     };
 }
 
-pub const PackedCodepointIterator = struct {
-    const Iterator = @This();
-    const CodePointType = u32;
-    const zeroValue = 0;
-
-    bytes: []const u8,
-    i: usize,
-    next_width: usize = 0,
-    width: u3 = 0,
-    c: CodePointType = zeroValue,
-
-    pub const ZeroValue = zeroValue;
-
-    pub const Cursor = packed struct(u64) {
-        i: u32 = 0,
-        c: u29 = zeroValue,
-        width: u3 = 0,
-        pub const CodePointType = u29;
-    };
-
-    pub fn init(str: string) Iterator {
-        return Iterator{ .bytes = str, .i = 0, .c = zeroValue };
-    }
-
-    pub fn initOffset(str: string, i: usize) Iterator {
-        return Iterator{ .bytes = str, .i = i, .c = zeroValue };
-    }
-
-    pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
-        const pos: u32 = @as(u32, cursor.width) + cursor.i;
-        if (pos >= it.bytes.len) {
-            return false;
-        }
-
-        const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
-        const error_char = comptime std.math.minInt(CodePointType);
-
-        const codepoint = @as(
-            CodePointType,
-            switch (cp_len) {
-                0 => return false,
-                1 => it.bytes[pos],
-                else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
-            },
-        );
-
-        {
-            @setRuntimeSafety(false);
-            cursor.* = Cursor{
-                .i = pos,
-                .c = if (error_char != codepoint)
-                    @truncate(codepoint)
-                else
-                    unicode_replacement,
-                .width = if (codepoint != error_char) cp_len else 1,
-            };
-        }
-
-        return true;
-    }
-
-    inline fn nextCodepointSlice(it: *Iterator) []const u8 {
-        const bytes = it.bytes;
-        const prev = it.i;
-        const next_ = prev + it.next_width;
-        if (bytes.len <= next_) return "";
-
-        const cp_len = utf8ByteSequenceLength(bytes[next_]);
-        it.next_width = cp_len;
-        it.i = @min(next_, bytes.len);
-
-        const slice = bytes[prev..][0..cp_len];
-        it.width = @as(u3, @intCast(slice.len));
-        return slice;
-    }
-
-    pub fn needsUTF8Decoding(slice: string) bool {
-        var it = Iterator{ .bytes = slice, .i = 0 };
-
-        while (true) {
-            const part = it.nextCodepointSlice();
-            @setRuntimeSafety(false);
-            switch (part.len) {
-                0 => return false,
-                1 => continue,
-                else => return true,
-            }
-        }
-    }
-
-    pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
-        while (iter.c > -1) {
-            if (!switch (iter.nextCodepoint()) {
-                quote => false,
-                '\\' => brk: {
-                    if (iter.nextCodepoint() == quote) {
-                        continue;
-                    }
-                    break :brk true;
-                },
-                else => true,
-            }) {
-                return iter.i + 1;
-            }
-        }
-
-        return iter.i;
-    }
-
-    pub fn nextCodepoint(it: *Iterator) CodePointType {
-        const slice = it.nextCodepointSlice();
-
-        it.c = switch (slice.len) {
-            0 => zeroValue,
-            1 => @as(CodePointType, @intCast(slice[0])),
-            2 => @as(CodePointType, @intCast(std.unicode.utf8Decode2(slice) catch unreachable)),
-            3 => @as(CodePointType, @intCast(std.unicode.utf8Decode3(slice) catch unreachable)),
-            4 => @as(CodePointType, @intCast(std.unicode.utf8Decode4(slice) catch unreachable)),
-            else => unreachable,
-        };
-
-        return it.c;
-    }
-
-    /// Look ahead at the next n codepoints without advancing the iterator.
-    /// If fewer than n codepoints are available, then return the remainder of the string.
-    pub fn peek(it: *Iterator, n: usize) []const u8 {
-        const original_i = it.i;
-        defer it.i = original_i;
-
-        var end_ix = original_i;
-        var found: usize = 0;
-        while (found < n) : (found += 1) {
-            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
-            end_ix += next_codepoint.len;
-        }
-
-        return it.bytes[original_i..end_ix];
-    }
-};
-
-pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: comptime_int) type {
+pub fn NewCodePointIterator(comptime CodePointType_: type, comptime zeroValue: comptime_int) type {
     return struct {
         const Iterator = @This();
         bytes: []const u8,
         i: usize,
         next_width: usize = 0,
-        width: u3 = 0,
+        width: u3_fast = 0,
         c: CodePointType = zeroValue,
+
+        pub const CodePointType = CodePointType_;
 
         pub const ZeroValue = zeroValue;
 
         pub const Cursor = struct {
             i: u32 = 0,
             c: CodePointType = zeroValue,
-            width: u3 = 0,
+            width: u3_fast = 0,
         };
 
         pub fn init(str: string) Iterator {
@@ -5414,7 +5279,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             it.i = @min(next_, bytes.len);
 
             const slice = bytes[prev..][0..cp_len];
-            it.width = @as(u3, @intCast(slice.len));
+            it.width = @as(u3_fast, @intCast(slice.len));
             return slice;
         }
 
@@ -6428,11 +6293,11 @@ pub fn isAmgiguousCodepointType(comptime T: type, cp: T) bool {
     };
 }
 
-pub fn visibleCodepointWidth(cp: u32, ambiguousAsWide: bool) u3 {
+pub fn visibleCodepointWidth(cp: u32, ambiguousAsWide: bool) u3_fast {
     return visibleCodepointWidthType(u32, cp, ambiguousAsWide);
 }
 
-pub fn visibleCodepointWidthMaybeEmoji(cp: u32, maybe_emoji: bool, ambiguousAsWide: bool) u3 {
+pub fn visibleCodepointWidthMaybeEmoji(cp: u32, maybe_emoji: bool, ambiguousAsWide: bool) u3_fast {
     // UCHAR_EMOJI=57,
     if (maybe_emoji and icu_hasBinaryProperty(cp, 57)) {
         return 2;
@@ -6440,7 +6305,7 @@ pub fn visibleCodepointWidthMaybeEmoji(cp: u32, maybe_emoji: bool, ambiguousAsWi
     return visibleCodepointWidth(cp, ambiguousAsWide);
 }
 
-pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool) u3 {
+pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool) u3_fast {
     if (isZeroWidthCodepointType(T, cp)) {
         return 0;
     }

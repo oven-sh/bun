@@ -39,6 +39,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
 
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 291 },
+
+  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
 };
 const words_keys = [...Object.keys(words)];
 

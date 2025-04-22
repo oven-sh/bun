@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 10
+# Version: 11
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -470,10 +470,8 @@ check_ulimit() {
 
 	print "Checking ulimits..."
 	systemd_conf="/etc/systemd/system.conf"
-	if [ -f "$systemd_conf" ]; then
-		limits_conf="/etc/security/limits.d/99-unlimited.conf"
-		create_file "$limits_conf"
-	fi
+	limits_conf="/etc/security/limits.d/99-unlimited.conf"
+	create_file "$limits_conf"
 
 	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
 	for limit in $limits; do
@@ -1326,6 +1324,31 @@ install_chromium() {
 	esac
 }
 
+configure_core_dumps() {
+	# we only have core dumps on Linux
+	case "$os" in
+	linux)
+		# set up a directory that the test runner will look in after running tests
+		cores_dir="/var/bun-cores"
+		sysctl_file="/etc/sysctl.d/local.conf"
+		create_directory "$cores_dir"
+		# ensure core_pattern will point there
+		# %e = executable filename
+		# %p = pid
+		append_file "$sysctl_file" "kernel.core_pattern = $cores_dir/%e-%p.core"
+
+		# load the new configuration
+		execute_sudo sysctl -p "$sysctl_file"
+
+		case "$distro" in
+		alpine)
+			# we need GNU tar (instead of busybox) so we can use its sparse file support
+			install_packages tar
+		esac
+		;;
+	esac
+}
+
 clean_system() {
 	if ! [ "$ci" = "1" ]; then
 		return
@@ -1351,6 +1374,7 @@ main() {
 	install_build_essentials
 	install_chromium
 	install_fuse_python
+	configure_core_dumps
 	clean_system
 }
 

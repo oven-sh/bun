@@ -36,7 +36,7 @@ const ArrayList = std.ArrayListUnmanaged;
 const ArrayListManaged = std.ArrayList;
 const BunString = bun.String;
 const C = @import("../c.zig");
-const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
+const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
 const Dirent = @import("../bun.js/node/types.zig").Dirent;
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
@@ -1422,43 +1422,10 @@ pub fn GlobWalker_(
             return filepath.len > 0 and filepath[0] == '.';
         }
 
+        const syntax_tokens = "*[{?!";
+
         fn checkSpecialSyntax(pattern: []const u8) bool {
-            if (pattern.len < 16) {
-                for (pattern[0..]) |c| {
-                    switch (c) {
-                        '*', '[', '{', '?', '!' => return true,
-                        else => {},
-                    }
-                }
-                return false;
-            }
-
-            const syntax_tokens = comptime [_]u8{ '*', '[', '{', '?', '!' };
-            const needles: [syntax_tokens.len]@Vector(16, u8) = comptime needles: {
-                var needles: [syntax_tokens.len]@Vector(16, u8) = undefined;
-                for (syntax_tokens, 0..) |tok, i| {
-                    needles[i] = @splat(tok);
-                }
-                break :needles needles;
-            };
-
-            var i: usize = 0;
-            while (i + 16 <= pattern.len) : (i += 16) {
-                const haystack: @Vector(16, u8) = pattern[i..][0..16].*;
-                inline for (needles) |needle| {
-                    if (std.simd.firstTrue(needle == haystack) != null) return true;
-                }
-            }
-
-            if (i < pattern.len) {
-                for (pattern[i..]) |c| {
-                    inline for (syntax_tokens) |tok| {
-                        if (c == tok) return true;
-                    }
-                }
-            }
-
-            return false;
+            return bun.strings.indexOfAny(pattern, syntax_tokens) != null;
         }
 
         fn makeComponent(

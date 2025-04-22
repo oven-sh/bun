@@ -922,7 +922,7 @@ pub const EventLoop = struct {
     pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, _: *JSC.VM) void {
         JSC.markBinding(@src());
 
-        JSC__JSGlobalObject__drainMicrotasks(globalObject);
+        globalObject.drainMicrotasks();
 
         this.virtual_machine.is_inside_deferred_task_queue = true;
         this.deferred_tasks.run();

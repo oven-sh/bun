@@ -3948,6 +3948,16 @@ void GlobalObject::drainMicrotasks()
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
         queue->drain(vm, this);
+#if BUN_DEBUG
+        // microtask queue draining may stop early when a
+        // termination exception is thrown within a microtask
+        if (!vm.hasPendingTerminationException()) {
+            vm.m_microtaskQueues.forEach([](JSC::MicrotaskQueue* queue) {
+                ASSERT(queue->isEmpty());
+            });
+        }
+#endif
+        return;
     }
 
     vm.drainMicrotasks();

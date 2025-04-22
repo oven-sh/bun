@@ -216,9 +216,12 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
     pub fn reload(this: *JSC.JSGlobalObject) void {
-        this.vm().drainMicrotasks();
+        this.drainMicrotasks();
         this.vm().collectAsync();
 
+        // NOTE(@DonIsaac): This triggers a synchronous GC every other reload.
+        // sync collections wait for pending async ones to complete. Maybe we
+        // should move the above collectAsync call into the reload function.
         JSC__JSGlobalObject__reload(this);
     }
 
@@ -383,6 +386,30 @@ pub const JSGlobalObject = opaque {
             if (args.len > 1) args[1] else .zero,
         );
     }
+
+    /// Drain the microtask queue and, if active, the nextTick queue.
+    ///
+    /// Prefer `EventLoop.drainMicrotasks` over this function, since that also
+    /// drains deferred tasks.
+    ///
+    /// The microtask queue will be drained for as long as there are microtasks
+    /// in it. This means that if a microtask queues more microtasks, those will
+    /// be drained as well.
+    ///
+    /// The `nextTick` queue only gets activated when a user calls
+    /// `process.nextTick`.  When active, `nextTick` tasks get drained _after_
+    /// microtasks.
+    ///
+    /// Draining will stop early if a microtask or nextTick task throws a
+    /// termination exception (e.g. a worker calls `process.exit()` within an
+    /// event listener run on next tick).
+    ///
+    /// ## Safety
+    /// - Caller thread must hold the JSC API lock
+    pub fn drainMicrotasks(this: *JSGlobalObject) void {
+        JSC__JSGlobalObject__drainMicrotasks(this);
+    }
+    extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
 
     extern fn Bun__Process__emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) void;
     pub fn emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) JSError!void {

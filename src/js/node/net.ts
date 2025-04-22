@@ -740,12 +740,12 @@ class SocketHandle {
   }
   ref() {
     $debug("SocketHandle.ref");
-    $assert(this.#socket != null);
+    if (this.#socket == null) return;
     return this.#socket.ref();
   }
   unref() {
     $debug("SocketHandle.unref");
-    $assert(this.#socket != null);
+    if (this.#socket == null) return;
     return this.#socket.unref();
   }
   //TLS

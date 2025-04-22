@@ -398,9 +398,44 @@ public:
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
     using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
 
-// #define DO_SOMETHING_WITH_EACH_MEMBER(visibility, T, name) ...
-// FOR_EACH_GLOBALOBJECT_GC_MEMBER(DO_SOMETHING_WITH_EACH_MEMBER)
-// #undef DO_SOMETHING_WITH_EACH_MEMBER
+    // Macro for doing something with each member of GlobalObject that has to be visited by the
+    // garbage collector. To use, define a macro taking three arguments (visibility, type, and
+    // name), pass it to FOR_EACH_GLOBALOBJECT_GC_MEMBER, and then undefine your macro:
+    //
+    // #define DO_SOMETHING_WITH_EACH_MEMBER(visibility, T, name) ...
+    // FOR_EACH_GLOBALOBJECT_GC_MEMBER(DO_SOMETHING_WITH_EACH_MEMBER)
+    // #undef DO_SOMETHING_WITH_EACH_MEMBER
+    //
+    // To add a new member, write e.g.
+    //
+    // /* comment */                            \
+    // V(private, WriteBarrier<Thing>, m_thing) \
+    //
+    // If you're adding a member in the middle of existing ones, make sure to put a backslash at the
+    // end of every line you add (even empty lines). This escapes the newline character, allowing
+    // the macro to span multiple lines. For comments you will need to use /* */ instead of //;
+    // otherwise, the backslash will be commented out. clang-format will automatically insert spaces
+    // so that all the backslashes are vertically aligned.
+    //
+    // The most common types for these properties are `LazyPropertyOfGlobalObject<T>`,
+    // `WriteBarrier<T>`, and `LazyClassStructure`. To use a new type, you'll need to:
+    //
+    // - Make sure the type can be written with no commas in its name. This is because a type with
+    //   commas will count as two macro parameters instead of one. You can add a `using` declaration
+    //   like above to create an alias for a complex template type without a comma.
+    // - Make sure `visitGlobalObjectMember` in `ZigGlobalObject.cpp` can handle your type.
+    //   Currently it has overloads to handle:
+    //
+    //     - any class with a `visit` method (this covers LazyProperty and LazyClassStructure)
+    //     - `WriteBarrier` of any type
+    //     - `std::unique_ptr` to any class with a `visit` method
+    //     - `std::array` of any number of `WriteBarrier`s of any type
+    //
+    //   Most members should be WriteBarriers. If your class is a container of GC-owned objects but
+    //   is not itself GC-owned, you can typically just add a `visit` method. This is what's done by
+    //   JSMockModule, for instance. But if you've done something very exotic you might need to add
+    //   a new overload of `visitGlobalObjectMember` so it understands your type.
+
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \

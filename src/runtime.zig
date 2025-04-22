@@ -8,7 +8,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");

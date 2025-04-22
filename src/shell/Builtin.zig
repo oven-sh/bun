@@ -227,7 +227,7 @@ pub const BuiltinIO = struct {
         pub const deref = RefCount.deref;
 
         ref_count: RefCount,
-        blob: bun.JSC.WebCore.Blob,
+        blob: bun.webcore.Blob,
 
         fn deinit(this: *Blob) void {
             this.blob.deinit();
@@ -505,7 +505,7 @@ pub inline fn parentCmdMut(this: *Builtin) *Cmd {
 
 pub fn done(this: *Builtin, exit_code: anytype) void {
     const code: ExitCode = switch (@TypeOf(exit_code)) {
-        bun.C.E => @intFromEnum(exit_code),
+        bun.sys.E => @intFromEnum(exit_code),
         u1, u8, u16 => exit_code,
         comptime_int => exit_code,
         else => @compileError("Invalid type: " ++ @typeName(@TypeOf(exit_code))),
@@ -592,7 +592,7 @@ pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []
         },
         .arraybuf => {
             if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
-                return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
+                return Maybe(usize).initErr(bun.sys.Error.fromCode(bun.sys.E.NOSPC, .write));
             }
 
             const len = buf.len;

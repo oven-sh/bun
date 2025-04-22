@@ -412,7 +412,7 @@ pub fn address(this: *SocketAddress) bun.String {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
-    const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
+    const presentation = bun.webcore.encoding.toBunStringComptime(formatted, .latin1);
     bun.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;

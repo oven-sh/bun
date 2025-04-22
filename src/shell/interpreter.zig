@@ -691,7 +691,7 @@ pub const Interpreter = struct {
     pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments_old(3);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
@@ -1147,7 +1147,7 @@ pub const Interpreter = struct {
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const buffer: JSC.Buffer = .{
+        const buffer: JSC.Node.Buffer = .{
             .allocator = bun.default_allocator,
             .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
         };

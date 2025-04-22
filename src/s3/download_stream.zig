@@ -13,7 +13,7 @@ pub const S3HttpDownloadStreamingTask = struct {
     http: bun.http.AsyncHTTP,
     vm: *JSC.VirtualMachine,
     sign_result: SignResult,
-    headers: JSC.WebCore.Headers,
+    headers: bun.http.Headers,
     callback_context: *anyopaque,
     // this transfers ownership from the chunk
     callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void,

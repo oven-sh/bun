@@ -34,10 +34,10 @@ ipc_data: ?IPC.IPCData,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
-abort_signal: ?*JSC.AbortSignal = null,
+abort_signal: ?*webcore.AbortSignal = null,
 
 event_loop_timer_refd: bool = false,
-event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+event_loop_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .SubprocessTimeout,
     .next = .{
         .sec = 0,
@@ -626,7 +626,7 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) JSC.API.Bun.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
     this.setEventLoopTimerRefd(false);
     if (this.event_loop_timer.state == .CANCELLED) return .disarm;
     if (this.hasExited()) {
@@ -819,7 +819,7 @@ pub fn getStdio(
 }
 
 pub const Source = union(enum) {
-    blob: JSC.WebCore.AnyBlob,
+    blob: JSC.WebCore.Blob.Any,
     array_buffer: JSC.ArrayBuffer.Strong,
     detached: void,
 
@@ -1423,7 +1423,7 @@ const Writable = union(enum) {
                     }
                     return pipe.toJSWithDestructor(
                         globalThis,
-                        JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                        JSC.WebCore.Sink.DestructorPtr.init(subprocess),
                     );
                 }
             },
@@ -2240,7 +2240,7 @@ pub fn spawnMaybeSync(
             else
                 "";
             var systemerror = bun.sys.Error.fromCode(if (err == error.EMFILE) .MFILE else .NFILE, .posix_spawn).withPath(display_path).toSystemError();
-            systemerror.errno = if (err == error.EMFILE) -bun.C.UV_EMFILE else -bun.C.UV_ENFILE;
+            systemerror.errno = if (err == error.EMFILE) -bun.sys.UV_E.MFILE else -bun.sys.UV_E.NFILE;
             return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
         },
         else => {
@@ -2258,7 +2258,7 @@ pub fn spawnMaybeSync(
                         "";
                     if (display_path.len > 0) {
                         var systemerror = err.withPath(display_path).toSystemError();
-                        if (errno == .NOENT) systemerror.errno = -bun.C.UV_ENOENT;
+                        if (errno == .NOENT) systemerror.errno = -bun.sys.UV_E.NOENT;
                         return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
                     }
                 },
@@ -2391,7 +2391,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdin == .pipe) {
-        subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+        subprocess.stdin.pipe.signal = JSC.WebCore.streams.Signal.init(&subprocess.stdin);
     }
 
     const out = if (comptime !is_sync)
@@ -2563,7 +2563,7 @@ fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bu
     const err = JSC.SystemError{
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
-        .errno = -bun.C.UV_ENOENT,
+        .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.createUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));
@@ -2654,6 +2654,7 @@ const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
+const webcore = bun.webcore;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const which = bun.which;

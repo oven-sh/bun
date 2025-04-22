@@ -346,11 +346,11 @@ pub const SendHandle = struct {
             var iter = self.callback.arrayIterator(global);
             while (iter.next()) |item| {
                 if (item.isFunction()) {
-                    JSC.Bun__Process__queueNextTick1(global, item, .null);
+                    item.callNextTick(global, .{.null});
                 }
             }
         } else if (self.callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, self.callback, .null);
+            self.callback.callNextTick(global, .{.null});
         }
         self.deinit();
     }
@@ -820,7 +820,7 @@ const NamedPipeIPCData = struct {
 
         const stream = this.writer.getStream() orelse {
             this.close(false);
-            return JSC.Maybe(void).errno(bun.C.E.PIPE, .pipe);
+            return JSC.Maybe(void).errno(bun.sys.E.PIPE, .pipe);
         };
 
         const readStartResult = stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead);
@@ -875,12 +875,12 @@ fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
 const FromEnum = enum { subprocess_exited, subprocess, process };
 fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
     if (callback.isFunction()) {
-        JSC.Bun__Process__queueNextTick1(globalObject, callback, ex);
+        callback.callNextTick(globalObject, .{ex});
         return .false;
     }
     if (from == .process) {
         const target = JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
-        JSC.Bun__Process__queueNextTick1(globalObject, target, ex);
+        target.callNextTick(globalObject, .{ex});
         return .false;
     }
     // Bun.spawn().send() should throw an error (unless callback is passed)
@@ -1290,7 +1290,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             return available.ptr[0..suggested_size];
         }
 
-        fn onReadError(this: *Context, err: bun.C.E) void {
+        fn onReadError(this: *Context, err: bun.sys.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             if (this.ipc()) |ipc_data| {
                 ipc_data.close(true);

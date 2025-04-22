@@ -19,7 +19,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
-  "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
+  "std.unicode": { reason: "Use bun.strings instead", limit: 33 },
 
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior", limit: 1 },
@@ -30,15 +30,19 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
-  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 19 },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1860 },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 241, regex: true },
+  "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
+  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1856 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
-  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 71 },
+  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 64 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
+
+  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 289 },
+
+  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
 };
 const words_keys = [...Object.keys(words)];
 

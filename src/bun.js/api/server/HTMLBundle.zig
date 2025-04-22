@@ -356,8 +356,8 @@ pub const Route = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
-                    var headers = JSC.WebCore.Headers{ .allocator = bun.default_allocator };
+                    const blob = JSC.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
+                    var headers = bun.http.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
                         bun.debugAssert(false); // should be populated by `output_file.toBlob`
                         break :brk output_file.loader.toMimeType(&.{}).value;

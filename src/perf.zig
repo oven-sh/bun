@@ -97,7 +97,7 @@ pub fn trace(comptime name: [:0]const u8) Ctx {
 }
 
 pub const Darwin = struct {
-    const OSLog = bun.C.OSLog;
+    const OSLog = bun.darwin.OSLog;
     interval: OSLog.Signpost.Interval,
 
     pub fn init(comptime name: i32) @This() {

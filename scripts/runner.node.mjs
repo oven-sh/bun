@@ -186,10 +186,10 @@ const skipAsanTests = new Set([
   "test/js/node/test/parallel/test-http2-compat-serverresponse-statusmessage.js",
   "test/js/node/test/parallel/test-common-gc.js",
   "test/js/node/fs/abort-signal-leak-read-write-file.test.ts",
-  "test/js/first_party/ws/ws.test.ts",
-  "test/js/node/test/parallel/test-zlib-invalid-input-memory.js",
-  "test/js/bun/resolve/load-same-js-file-a-lot.test.ts",
-  "test/js/node/test/parallel/test-http2-options-server-request.js",
+  "test/js/first_party/ws/ws.test.ts", // resuming an already-closed socket
+  "test/js/node/test/parallel/test-zlib-invalid-input-memory.js", // linux only & doesn't repro
+  "test/js/bun/resolve/load-same-js-file-a-lot.test.ts", // linux only?
+  "test/js/node/test/parallel/test-http2-options-server-request.js", // repros on linux
   "test/js/node/test/parallel/test-http2-compat-serverresponse-trailers.js",
   "test/js/node/test/parallel/test-http2-compat-serverresponse-headers.js",
   "test/integration/next-pages/test/next-build.test.ts",
@@ -221,7 +221,7 @@ const skipAsanTests = new Set([
   "test/bake/dev/html.test.ts",
   "test/bake/dev/ecosystem.test.ts",
   "test/bake/dev/ecosystem.test.ts",
-  "test/js/node/v8/capture-stack-trace.test.js",
+  "test/js/node/v8/capture-stack-trace.test.js", // repros on all
 ]);
 
 /**

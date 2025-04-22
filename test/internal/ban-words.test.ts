@@ -12,7 +12,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
-  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
+  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 2 },
   "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
   "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },

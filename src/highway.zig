@@ -4,11 +4,6 @@ const strings = bun.strings;
 const string = bun.string;
 const Environment = bun.Environment;
 
-/// Result structure for character finding operations
-pub const IndexResult = extern struct {
-    index: i32, // -1 if not found
-    count: i32,
-};
 
 extern "c" fn highway_char_frequency(
     text: [*]const u8,

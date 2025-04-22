@@ -60,9 +60,6 @@ var IPv4Reg;
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg;
 
-const DEFAULT_IPV4_ADDR = "0.0.0.0";
-const DEFAULT_IPV6_ADDR = "::";
-
 function isIPv4(s): boolean {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
 }
@@ -89,7 +86,6 @@ function isIP(s): 0 | 4 | 6 {
 }
 
 const bunTlsSymbol = Symbol.for("::buntls::");
-const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
@@ -131,10 +127,6 @@ function emitCloseNT(self, hasError) {
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
-}
-function finishSocket(hasError) {
-  detachSocket(this);
-  this.emit("close", hasError);
 }
 function destroyNT(self, err) {
   self.destroy(err);
@@ -322,7 +314,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketEmitEndNT = (self, err?) => {
+const SocketEmitEndNT = (self, _err?) => {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -879,8 +871,6 @@ function Socket(options?) {
   const {
     socket,
     signal,
-    write,
-    read,
     allowHalfOpen = false,
     onread = null,
     noDelay = false,
@@ -2470,7 +2460,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
         }
-      } else if (!Number.isSafeInteger(port) || port < 0) {
+      } else if (port === undefined) {
         port = 0;
       }
 
@@ -2552,7 +2542,7 @@ Server.prototype[kRealListen] = function (
   reusePort,
   tls,
   contexts,
-  onListen,
+  _onListen,
 ) {
   if (path) {
     this._handle = Bun.listen({

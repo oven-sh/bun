@@ -1,6 +1,5 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
 const {
@@ -24,7 +23,6 @@ var kEmptyObject = ObjectCreate(null);
 var signals = OsModule.constants.signals;
 
 var ArrayPrototypeJoin = Array.prototype.join;
-var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
@@ -36,9 +34,7 @@ const ArrayPrototypePush = Array.prototype.push;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
-
 var StringPrototypeIncludes = String.prototype.includes;
-var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
@@ -524,7 +520,6 @@ function spawnSync(file, args, options) {
     var {
       stdout = null,
       stderr = null,
-      success,
       exitCode,
       signalCode,
       exitedDueToTimeout,
@@ -721,7 +716,6 @@ function fork(modulePath, args = [], options) {
   modulePath = getValidatedPath(modulePath, "modulePath");
 
   // Get options and args arguments.
-  let execArgv;
 
   if (args == null) {
     args = [];
@@ -1464,7 +1458,7 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item: string, index: number): string | number | null {
+function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1735,7 +1729,6 @@ function toPathIfFileURL(fileURLOrPath) {
 //------------------------------------------------------------------------------
 var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;
-var RangeError = globalThis.RangeError;
 
 function genericNodeError(message, errorProperties) {
   // eslint-disable-next-line no-restricted-syntax

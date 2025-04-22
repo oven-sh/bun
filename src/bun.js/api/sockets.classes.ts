@@ -459,7 +459,7 @@ export default [
     finalize: true,
     estimatedSize: true,
     // customInspect: true,
-    structuredClone: { transferable: false, tag: 252 },
+    structuredClone: { transferable: false, tag: 251 },
     JSType: "0b11101110",
     klass: {
       isBlockList: {

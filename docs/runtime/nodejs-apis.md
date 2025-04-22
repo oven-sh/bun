@@ -106,8 +106,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟡 Missing `secureHeapUsed` `setEngine` `setFips`
 
-Some methods are not optimized yet.
-
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
 🟡 Missing `Domain` `active`

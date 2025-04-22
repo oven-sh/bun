@@ -1140,4 +1140,4 @@ Writable.prototype[SymbolAsyncDispose] = function () {
   );
 };
 
-export default Writable;
+export default Writable as unknown as typeof import("node:stream").Writable;

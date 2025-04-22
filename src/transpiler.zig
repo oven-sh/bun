@@ -1207,11 +1207,16 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    const bytecode_path = path_buf2[0 .. path.text.len + bun.bytecode_extension.len];
+                                    const dir_fd = dirname_fd.unwrapValid() orelse bun.FD.cwd();
+                                    const bytecode = bun.sys.File.toSourceAt(dir_fd, bytecode_path, bun.default_allocator).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }
-                                    break :brk if (already_bundled == .bytecode_cjs) .{ .bytecode_cjs = @constCast(bytecode.contents) } else .{ .bytecode = @constCast(bytecode.contents) };
+                                    break :brk if (already_bundled == .bytecode_cjs)
+                                        .{ .bytecode_cjs = @constCast(bytecode.contents) }
+                                    else
+                                        .{ .bytecode = @constCast(bytecode.contents) };
                                 }
                                 break :brk default_value;
                             },

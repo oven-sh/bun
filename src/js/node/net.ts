@@ -1141,6 +1141,7 @@ Socket.prototype.connect = function connect(...args) {
     }
     // start using existing connection
     if (connection) {
+      if (connectListener != null) this.once("secureConnect", connectListener);
       try {
         // reset the underlying writable object when establishing a new connection
         // this is a function on `Duplex`, originally defined on `Writable`
@@ -1155,6 +1156,7 @@ Socket.prototype.connect = function connect(...args) {
         if (upgradeDuplex) {
           this.connecting = true;
           this[kupgraded] = connection;
+          connection.connecting = true;
           const [result, events] = upgradeDuplexToTLS(connection, {
             data: { self: this, that: socket, req: { oncomplete: afterConnect } },
             tls,
@@ -1169,6 +1171,7 @@ Socket.prototype.connect = function connect(...args) {
           if (socket) {
             this.connecting = true;
             this[kupgraded] = connection;
+            connection.connecting = true;
             const result = socket.upgradeTLS({
               data: { self: this, that: socket, req: { oncomplete: afterConnect } },
               tls,
@@ -1177,10 +1180,10 @@ Socket.prototype.connect = function connect(...args) {
             if (result) {
               const [raw, tls] = result;
               // replace socket
-              connection._handle = raw;
+              connection._handle = SocketHandle[kAttach](raw, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
-              this._handle = tls;
+              this._handle = SocketHandle[kAttach](tls, this);
             } else {
               this._handle = null;
               throw new Error("Invalid socket");
@@ -1196,6 +1199,7 @@ Socket.prototype.connect = function connect(...args) {
               if (upgradeDuplex) {
                 this.connecting = true;
                 this[kupgraded] = connection;
+                connection.connecting = true;
                 const [result, events] = upgradeDuplexToTLS(connection, {
                   data: { self: this, that: socket, req: { oncomplete: afterConnect } },
                   tls,
@@ -1209,6 +1213,7 @@ Socket.prototype.connect = function connect(...args) {
               } else {
                 this.connecting = true;
                 this[kupgraded] = connection;
+                connection.connecting = true;
                 const result = socket.upgradeTLS({
                   data: { self: this, that: socket, req: { oncomplete: afterConnect } },
                   tls,
@@ -1217,10 +1222,10 @@ Socket.prototype.connect = function connect(...args) {
                 if (result) {
                   const [raw, tls] = result;
                   // replace socket
-                  connection._handle = raw;
+                  connection._handle = SocketHandle[kAttach](raw, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
-                  this._handle = tls;
+                  this._handle = SocketHandle[kAttach](tls, this);
                 } else {
                   this._handle = null;
                   throw new Error("Invalid socket");
@@ -2032,11 +2037,13 @@ function internalConnectMultiple(context, canceled?) {
   if (localPort) {
     if (addressType === 4) {
       localAddress = DEFAULT_IPV4_ADDR;
-      err = self._handle.bind(localAddress, localPort);
+      // TODO:
+      // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
       localAddress = DEFAULT_IPV6_ADDR;
-      err = self._handle.bind6(localAddress, localPort, flags);
+      // TODO:
+      // err = self._handle.bind6(localAddress, localPort, flags);
     }
 
     $debug(

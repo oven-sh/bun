@@ -4,7 +4,6 @@ const strings = bun.strings;
 const string = bun.string;
 const Environment = bun.Environment;
 
-
 extern "c" fn highway_char_frequency(
     text: [*]const u8,
     text_len: usize,

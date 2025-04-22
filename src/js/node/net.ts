@@ -1156,7 +1156,7 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
-          this._handle = result;
+          this._handle = SocketHandle[kAttach](result, this);
         } else {
           if (socket) {
             this.connecting = true;
@@ -1199,7 +1199,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
-                this._handle = result;
+                this._handle = SocketHandle[kAttach](result, this);
               } else {
                 this.connecting = true;
                 this[kupgraded] = connection;

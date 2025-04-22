@@ -84,7 +84,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     if (good) {
         if (callback.isFunction()) {
-            callback.callNextTick(globalObject, .{.undefined});
+            callback.callNextTick(globalObject, .{.null});
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});

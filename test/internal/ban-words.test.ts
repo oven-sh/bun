@@ -34,7 +34,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
-  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 70 },
+  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 64 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
 

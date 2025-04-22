@@ -400,3 +400,7 @@ comptime {
         @export(&@"windows process.dlopen", .{ .name = "Bun__LoadLibraryBunString" });
     }
 }
+
+comptime {
+    _ = @import("../../analyze_transpiled_module.zig");
+}

@@ -469,6 +469,9 @@ async function runTests() {
       const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
       let coresDir = "/var/bun-cores";
       if (sysctl.ok) {
+        if (coresDir.startsWith("|")) {
+          throw new Error("cores are being piped not saved");
+        }
         coresDir = dirname(sysctl.stdout);
       } else {
         console.warn(`Failed to check core_pattern, defaulting to ${coresDir}`);
@@ -494,7 +497,7 @@ async function runTests() {
         if (!zipAndEncrypt.ok) {
           throw new Error(zipAndEncrypt.error);
         }
-        console.log(`saved core dumps to ${outfile}`);
+        console.log(`saved core dumps to ${outfile} (${statSync(outfile).size} bytes)`);
         await uploadArtifact(outfile);
       }
     } catch (err) {

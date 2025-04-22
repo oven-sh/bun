@@ -238,20 +238,20 @@ pub const ShellTouchTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
-        var node_fs = JSC.Node.NodeFS{};
+        var node_fs = JSC.Node.fs.NodeFS{};
         const milliseconds: f64 = @floatFromInt(std.time.milliTimestamp());
         const atime: JSC.Node.TimeLike = if (bun.Environment.isWindows) milliseconds / 1000.0 else JSC.Node.TimeLike{
             .sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
             .nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
         };
         const mtime = atime;
-        const args = JSC.Node.Arguments.Utimes{
+        const args = JSC.Node.fs.Arguments.Utimes{
             .atime = atime,
             .mtime = mtime,
             .path = .{ .string = bun.PathString.init(filepath) },
         };
         if (node_fs.utimes(args, .sync).asErr()) |err| out: {
-            if (err.getErrno() == bun.C.E.NOENT) {
+            if (err.getErrno() == .NOENT) {
                 const perm = 0o664;
                 switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
                     .result => |fd| {

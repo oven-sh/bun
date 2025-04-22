@@ -24,7 +24,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const G = js_ast.G;
 const Define = @import("./defines.zig").Define;
 const DefineData = @import("./defines.zig").DefineData;
@@ -7450,10 +7450,11 @@ fn NewParser_(
                     .bin_rem => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                const fmod = @extern(*const fn (f64, f64) callconv(.C) f64, .{ .name = "fmod" });
                                 return p.newExpr(
                                     // Use libc fmod here to be consistent with what JavaScriptCore does
                                     // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                    E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
+                                    E.Number{ .value = if (comptime Environment.isNative) fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
                                     v.loc,
                                 );
                             }

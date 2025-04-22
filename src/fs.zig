@@ -11,7 +11,6 @@ const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const sync = @import("sync.zig");
 const Mutex = bun.Mutex;
 const Semaphore = sync.Semaphore;
@@ -694,7 +693,7 @@ pub const FileSystem = struct {
                 bun.assert(this.fd != bun.invalid_fd);
                 bun.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
+                try bun.sys.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -1330,7 +1329,7 @@ pub const FileSystem = struct {
         ) !Entry.Cache {
             var outpath: bun.PathBuffer = undefined;
 
-            const stat = try C.lstat_absolute(absolute_path);
+            const stat = try bun.sys.lstat_absolute(absolute_path);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
             var cache = Entry.Cache{
@@ -1439,7 +1438,7 @@ pub const FileSystem = struct {
                 return cache;
             }
 
-            const stat = try C.lstat_absolute(absolute_path_c);
+            const stat = try bun.sys.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
             var file_kind = stat.kind;
 

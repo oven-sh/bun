@@ -6,7 +6,6 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 const AddressableSize = u49;
 

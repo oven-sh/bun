@@ -355,7 +355,7 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .utf8 => {
-                return strings.elementLengthLatin1IntoUTF8([]const u8, input[0..len]);
+                return strings.elementLengthLatin1IntoUTF8(input[0..len]);
             },
 
             .latin1, .ascii, .buffer => {
@@ -395,7 +395,7 @@ pub const Encoder = struct {
             },
             .latin1, .ascii, .buffer => {
                 const out = @min(len, to_len);
-                strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..out]);
+                strings.copyU16IntoU8(to[0..to_len], input[0..out]);
                 return out;
             },
             // string is already encoded, just need to copy the data
@@ -404,7 +404,7 @@ pub const Encoder = struct {
                     const bytes_input_len = len * 2;
                     const written = @min(bytes_input_len, to_len);
                     const input_u8 = @as([*]const u8, @ptrCast(input));
-                    strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..written]);
+                    bun.memmove(to[0..written], input_u8[0..written]);
                     return written;
                 } else {
                     const bytes_input_len = len * 2;
@@ -413,7 +413,7 @@ pub const Encoder = struct {
 
                     const fixed_len = (written / 2) * 2;
                     const input_u8 = @as([*]const u8, @ptrCast(input));
-                    strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
+                    bun.memmove(to[0..written], input_u8[0..fixed_len]);
                     return fixed_len;
                 }
             },
@@ -503,7 +503,7 @@ pub const Encoder = struct {
             },
             .latin1, .buffer, .ascii => {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
-                strings.copyU16IntoU8(to[0..len], []const u16, input[0..len]);
+                strings.copyU16IntoU8(to[0..len], input[0..len]);
                 return to;
             },
             // string is already encoded, just need to copy the data

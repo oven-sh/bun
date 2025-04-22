@@ -2057,6 +2057,10 @@ pub const PostgresSQLConnection = struct {
         this.updateHasPendingActivity();
         return .undefined;
     }
+    pub fn doFlush(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        this.flushData();
+        return .undefined;
+    }
 
     pub fn deref(this: *@This()) void {
         const ref_count = this.ref_count;

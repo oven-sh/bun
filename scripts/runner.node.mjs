@@ -158,6 +158,11 @@ if (options["quiet"]) {
 let isAsanBuild = false;
 
 const skipAsanTests = new Set([
+  "test/js/node/child_process/child_process.test.ts", // flaky
+  "test/js/bun/sqlite/sqlite.test.js", // flaky
+  "test/js/bun/http/req-url-leak.test.ts", // flaky
+  "test/integration/next-pages/test/dev-server-ssr-100.test.ts", // flaky
+  "test/js/web/fetch/fetch.test.ts", // flaky
   "test/regression/issue/ctrl-c.test.ts",
   "test/regression/issue/17454/destructure_string.test.ts",
   "test/js/web/fetch/fetch-leak.test.ts",

@@ -886,7 +886,6 @@ pub const VirtualMachine = struct {
 
     module_loader: ModuleLoader = .{},
 
-    gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
     ipc: ?IPCInstanceUnion = null,
 
@@ -1367,7 +1366,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
+    pub inline fn eventLoop(this: *const VirtualMachine) *EventLoop {
         return this.event_loop;
     }
 

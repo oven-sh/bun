@@ -478,7 +478,9 @@ async function runTests() {
       }
 
       if (readdirSync(coresDir).length > 0) {
-        const outfile = join(mkdtempSync(join(tmpdir(), "cores-upload")), "bun-cores.tar.gz.age");
+        const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
+        const outfileName = "bun-cores.tar.gz.age";
+        const outfileAbs = join(outdir, outfileName);
 
         const zipAndEncrypt = await spawnSafe({
           command: "sh",
@@ -489,7 +491,7 @@ async function runTests() {
             // $0
             join(import.meta.dirname, "age-encrypt.mjs"),
             // $1
-            outfile,
+            outfileAbs,
           ],
           cwd: coresDir,
           stdout: () => {},
@@ -497,8 +499,8 @@ async function runTests() {
         if (!zipAndEncrypt.ok) {
           throw new Error(zipAndEncrypt.error);
         }
-        console.log(`saved core dumps to ${outfile} (${statSync(outfile).size} bytes)`);
-        await uploadArtifact(outfile);
+        console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes)`);
+        await uploadArtifact(outfileName, outdir);
       }
     } catch (err) {
       console.error("Error collecting and uploading core dumps:", err);

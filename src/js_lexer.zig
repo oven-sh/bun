@@ -452,7 +452,8 @@ fn NewLexer_(
                             'x' => {
                                 var value: CodePoint = 0;
                                 var c3: CodePoint = 0;
-                                var width3: u3 = 0;
+                                const u3_fast = u8;
+                                var width3: u3_fast = 0;
 
                                 _ = iterator.next(&iter) or return lexer.syntaxError();
                                 c3 = iter.c;
@@ -646,10 +647,10 @@ fn NewLexer_(
             }
         }
 
-        pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_decode: bool };
+        pub const InnerStringLiteral = packed struct { suffix_len: u8, needs_decode: bool };
 
         fn parseStringLiteralInner(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
-            var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
+            var suffix_len: u8 = if (comptime quote == 0) 0 else 1;
             var needs_decode = false;
             stringLiteral: while (true) {
                 switch (lexer.code_point) {

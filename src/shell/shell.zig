@@ -14,7 +14,7 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
+const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
@@ -3350,9 +3350,9 @@ const SrcUnicode = struct {
     cursor: CodepointIterator.Cursor,
     next_cursor: CodepointIterator.Cursor,
 
-    const IndexValue = packed struct(u32) {
-        char: u29,
-        width: u3 = 0,
+    const IndexValue = struct {
+        char: u32,
+        width: u8,
     };
 
     fn nextCursor(iter: *const CodepointIterator, cursor: *CodepointIterator.Cursor) void {

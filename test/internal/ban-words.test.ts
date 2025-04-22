@@ -18,7 +18,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
-  "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
+  "std.unicode": { reason: "Use bun.strings instead", limit: 33 },
 
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior", limit: 1 },

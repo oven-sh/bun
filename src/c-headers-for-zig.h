@@ -65,3 +65,7 @@
 #include <windows.h>
 #include <winternl.h>
 #endif
+
+#undef lstat
+#undef fstat
+#undef stat

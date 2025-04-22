@@ -814,8 +814,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
             // aarch64 linux doesn't implement a "stat" syscall. It's all fstatat.
             linux.fstatat(std.posix.AT.FDCWD, path, &stat_, 0)
         else
-            // TODO(@paperclover): resolve us not being able to use c definitions here
-            syscall_or_c.stat(path, @ptrCast(&stat_));
+            workaround_symbols.stat(path, &stat_);
 
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
@@ -865,8 +864,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 
     var stat_ = mem.zeroes(bun.Stat);
 
-    // TODO(@paperclover): resolve us not being able to use c definitions here
-    const rc = syscall_or_c.fstat(fd.cast(), @ptrCast(&stat_));
+    const rc = workaround_symbols.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });

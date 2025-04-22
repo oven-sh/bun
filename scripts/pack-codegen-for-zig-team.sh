@@ -5,7 +5,7 @@ if ! test -d build/debug/codegen; then
 fi
 
 out="codegen-for-zig-team.tar.gz"
-tar -cf "$out" \
+tar -zcf "$out" \
   build/debug/codegen \
   src/bun.js/bindings/GeneratedBindings.zig \
   src/bun.js/bindings/GeneratedJS2Native.zig

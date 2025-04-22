@@ -918,7 +918,6 @@ pub const EventLoop = struct {
         }
     }
 
-    extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, _: *JSC.VM) void {
         JSC.markBinding(@src());
 

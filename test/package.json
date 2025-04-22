@@ -27,6 +27,7 @@
     "@swc/core": "1.3.38",
     "@testing-library/jest-dom": "6.6.3",
     "@testing-library/react": "16.1.0",
+    "age-encryption": "0.2.1",
     "astro": "5.5.5",
     "aws-cdk-lib": "2.148.0",
     "axios": "1.6.8",

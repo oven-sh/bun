@@ -42,6 +42,7 @@ import {
   isBuildkite,
   isCI,
   isGithubAction,
+  isLinux,
   isMacOS,
   isWindows,
   isX64,
@@ -50,6 +51,7 @@ import {
   startGroup,
   tmpdir,
   unzip,
+  uploadArtifact,
 } from "./utils.mjs";
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
@@ -136,6 +138,10 @@ const { values: options, positionals: filters } = parseArgs({
     ["junit-upload"]: {
       type: "boolean",
       default: isBuildkite,
+    },
+    ["coredump-upload"]: {
+      type: "boolean",
+      default: isBuildkite && isLinux,
     },
   },
 });
@@ -455,6 +461,44 @@ async function runTests() {
       } catch (err) {
         console.error(`Error checking for remaining JUnit reports:`, err);
       }
+    }
+  }
+
+  if (options["coredump-upload"]) {
+    try {
+      const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+      let coresDir = "/var/bun-cores";
+      if (sysctl.ok) {
+        coresDir = dirname(sysctl.stdout);
+      } else {
+        console.warn(`Failed to check core_pattern, defaulting to ${coresDir}`);
+      }
+
+      if (readdirSync(coresDir).length > 0) {
+        const outfile = join(mkdtempSync(join(tmpdir(), "cores-upload")), "bun-cores.tar.gz.age");
+
+        const zipAndEncrypt = await spawnSafe({
+          command: "sh",
+          args: [
+            "-c",
+            // tar -S: handle sparse files efficiently
+            'set -euo pipefail && tar -Sc *.core | gzip -6 | node "$0" > "$1"',
+            // $0
+            join(import.meta.dirname, "age-encrypt.mjs"),
+            // $1
+            outfile,
+          ],
+          cwd: coresDir,
+          stdout: () => {},
+        });
+        if (!zipAndEncrypt.ok) {
+          throw new Error(zipAndEncrypt.error);
+        }
+        console.log(`saved core dumps to ${outfile}`);
+        await uploadArtifact(outfile);
+      }
+    } catch (err) {
+      console.error("Error collecting and uploading core dumps:", err);
     }
   }
 

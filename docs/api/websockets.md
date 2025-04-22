@@ -118,6 +118,7 @@ type WebSocketData = {
 Bun.serve<WebSocketData>({
   fetch(req, server) {
     const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
+
     server.upgrade(req, {
       // this object must conform to WebSocketData
       data: {

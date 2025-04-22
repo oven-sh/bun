@@ -731,80 +731,17 @@ pub const Mask = struct {
         const mask = mask_buf.*;
 
         const skip_mask = @as(u32, @bitCast(mask)) == 0;
-        if (!skip_mask) {
-            fillWithSkipMask(mask, output_, input_, false);
-        } else {
-            fillWithSkipMask(mask, output_, input_, true);
-        }
+        fillWithSkipMask(mask, output_, input_, skip_mask);
     }
 
-    fn fillWithSkipMask(mask: [4]u8, output_: []u8, input_: []const u8, comptime skip_mask: bool) void {
-        var input = input_;
-        var output = output_;
-
-        if (comptime Environment.enableSIMD) {
-            if (input.len >= strings.ascii_vector_size) {
-                const vec: strings.AsciiVector = brk: {
-                    var in: [strings.ascii_vector_size]u8 = undefined;
-                    comptime var i: usize = 0;
-                    inline while (i < strings.ascii_vector_size) : (i += 4) {
-                        in[i..][0..4].* = mask;
-                    }
-                    break :brk @as(strings.AsciiVector, in);
-                };
-                const end_ptr_wrapped_to_last_16 = input.ptr + input.len - (input.len % strings.ascii_vector_size);
-
-                if (comptime skip_mask) {
-                    while (input.ptr != end_ptr_wrapped_to_last_16) {
-                        const input_vec: strings.AsciiVector = @as(strings.AsciiVector, input[0..strings.ascii_vector_size].*);
-                        output.ptr[0..strings.ascii_vector_size].* = input_vec;
-                        output = output[strings.ascii_vector_size..];
-                        input = input[strings.ascii_vector_size..];
-                    }
-                } else {
-                    while (input.ptr != end_ptr_wrapped_to_last_16) {
-                        const input_vec: strings.AsciiVector = @as(strings.AsciiVector, input[0..strings.ascii_vector_size].*);
-                        output.ptr[0..strings.ascii_vector_size].* = input_vec ^ vec;
-                        output = output[strings.ascii_vector_size..];
-                        input = input[strings.ascii_vector_size..];
-                    }
-                }
-            }
-
-            // hint to the compiler not to vectorize the next loop
-            bun.assert(input.len < strings.ascii_vector_size);
+    fn fillWithSkipMask(mask: [4]u8, output_: []u8, input_: []const u8, skip_mask: bool) void {
+        const input = input_;
+        const output = output_;
+        if (input.len == 0) {
+            @branchHint(.unlikely);
+            return;
         }
-
-        if (comptime !skip_mask) {
-            while (input.len >= 4) {
-                const input_vec: [4]u8 = input[0..4].*;
-                output.ptr[0..4].* = [4]u8{
-                    input_vec[0] ^ mask[0],
-                    input_vec[1] ^ mask[1],
-                    input_vec[2] ^ mask[2],
-                    input_vec[3] ^ mask[3],
-                };
-                output = output[4..];
-                input = input[4..];
-            }
-        } else {
-            while (input.len >= 4) {
-                const input_vec: [4]u8 = input[0..4].*;
-                output.ptr[0..4].* = input_vec;
-                output = output[4..];
-                input = input[4..];
-            }
-        }
-
-        if (comptime !skip_mask) {
-            for (input, 0..) |c, i| {
-                output[i] = c ^ mask[i % 4];
-            }
-        } else {
-            for (input, 0..) |c, i| {
-                output[i] = c;
-            }
-        }
+        return bun.highway.fillWithSkipMask(mask, output, input, skip_mask);
     }
 };
 
@@ -902,7 +839,7 @@ const Copy = union(enum) {
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .latin1 => {
-                byte_len.* = strings.elementLengthLatin1IntoUTF8([]const u8, this.latin1);
+                byte_len.* = strings.elementLengthLatin1IntoUTF8(this.latin1);
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .bytes => {

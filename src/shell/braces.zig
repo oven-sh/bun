@@ -95,60 +95,6 @@ fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeType) t
     };
 }
 
-/// This may have false positives but it is fast
-fn fastDetect(src: []const u8) bool {
-    var has_open = false;
-    var has_close = false;
-    if (src.len < 16) {
-        for (src) |char| {
-            switch (char) {
-                '{' => {
-                    has_open = true;
-                },
-                '}' => {
-                    has_close = true;
-                },
-            }
-            if (has_close and has_close) return true;
-        }
-        return false;
-    }
-
-    const needles = comptime [2]@Vector(16, u8){
-        @splat('{'),
-        @splat('}'),
-        @splat('"'),
-    };
-
-    const i: usize = 0;
-    while (i + 16 <= src.len) {
-        const haystack = src[i .. i + 16].*;
-        if (std.simd.firstTrue(needles[0] == haystack)) {
-            has_open = true;
-        }
-        if (std.simd.firstTrue(needles[1] == haystack)) {
-            has_close = true;
-        }
-        if (has_open and has_close) return true;
-    }
-
-    if (i < src.len) {
-        for (src) |char| {
-            switch (char) {
-                '{' => {
-                    has_open = true;
-                },
-                '}' => {
-                    has_close = true;
-                },
-            }
-            if (has_close and has_open) return true;
-        }
-        return false;
-    }
-    return false;
-}
-
 const ExpandError = StackError || ParserError;
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`

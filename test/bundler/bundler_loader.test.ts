@@ -174,4 +174,135 @@ describe("bundler", async () => {
       },
     });
   }
+
+  describe("handles empty files", () => {
+    const emptyFilePath = "/empty-file";
+    const emptyFileContent = "";
+
+    itBundled("bun/loader-empty-text-file", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import empty from './empty-file' with {type: "text"};
+          console.write(JSON.stringify(empty));
+        `,
+        [emptyFilePath]: emptyFileContent,
+      },
+      run: { stdout: '""' },
+    });
+
+    // itBundled("bun/loader-empty-file-loader", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import empty from './empty-file' with {type: "file"};
+    //       console.write(JSON.stringify(empty));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: JSON.stringify(emptyFilePath) },
+    // });
+
+    // itBundled("bun/loader-empty-css-file", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import empty from './empty-file' with {type: "css"};
+    //       console.write(JSON.stringify(empty));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: JSON.stringify(emptyFilePath) },
+    // });
+
+    // itBundled("bun/loader-empty-html-file", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import empty from './empty-file' with {type: "html"};
+    //       console.write(JSON.stringify(empty.index));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: JSON.stringify(emptyFilePath) },
+    // });
+
+    // itBundled("bun/loader-empty-js-like-file", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import empty from './empty-file' with {type: "js"};
+    //       console.write(JSON.stringify({ ...empty, default: empty.default }));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: JSON.stringify({ default: undefined }) },
+    // });
+
+    // itBundled("bun/loader-empty-json-file-throws", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       try {
+    //         import('./empty-file', { with: { type: "json" } })
+    //           .then(() => console.write("should not succeed"))
+    //           .catch(e => console.write(e.message));
+    //       } catch (e) {
+    //         console.write(e.message);
+    //       }
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: {
+    //     // Accept either error message variant
+    //     stdout: /JSON Parse error: Unexpected EOF|Unexpected end of JSON input/i,
+    //   },
+    // });
+
+    // itBundled("bun/loader-empty-jsonc-toml-file", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import emptyJsonc from './empty-file' with {type: "jsonc"};
+    //       import emptyToml from './empty-file' with {type: "toml"};
+    //       console.write(JSON.stringify([emptyJsonc.default, emptyToml.default]));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: "[{},{}]" },
+    // });
+
+    // itBundled("bun/loader-empty-other-types", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import emptyWasm from './empty-file' with {type: "wasm"};
+    //       import emptyBase64 from './empty-file' with {type: "base64"};
+    //       import emptyDataurl from './empty-file' with {type: "dataurl"};
+    //       console.write(JSON.stringify([emptyWasm, emptyBase64, emptyDataurl]));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: JSON.stringify([emptyFilePath, emptyFilePath, emptyFilePath]) },
+    // });
+
+    // itBundled("bun/loader-empty-sqlite-files", {
+    //   target: "bun",
+    //   files: {
+    //     "/entry.ts": /* js */ `
+    //       import { Database } from "bun:sqlite";
+    //       import emptySqlite from './empty-file' with {type: "sqlite"};
+    //       import emptySqliteEmbedded from './empty-file' with {type: "sqlite_embedded"};
+    //       console.write([
+    //         emptySqlite.default instanceof Database,
+    //         emptySqlite.db instanceof Database,
+    //         emptySqliteEmbedded.default instanceof Database,
+    //         emptySqliteEmbedded.db instanceof Database
+    //       ].join(","));
+    //     `,
+    //     [emptyFilePath]: emptyFileContent,
+    //   },
+    //   run: { stdout: "true,true,true,true" },
+    // });
+  });
 });

@@ -43,7 +43,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     vm.jsc = vm.global.vm();
     vm.event_loop.ensureWaker();
     const b = &vm.transpiler;
-    vm.preload = ctx.preloads;
+    vm.preload = ctx.preloads.items;
     vm.argv = ctx.passthrough;
     vm.arena = &arena;
     vm.allocator = arena.allocator();

@@ -86,6 +86,7 @@ const Lock = bun.Mutex;
 const Async = bun.Async;
 
 const Ordinal = bun.Ordinal;
+const Preload = bun.CLI.Command.ContextData.Preload;
 
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
@@ -776,7 +777,7 @@ pub const VirtualMachine = struct {
     timer: Bun.Timer.All,
     event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
-    preload: []const string = &[_][]const u8{},
+    preload: []const Preload = &[_]Preload{},
     unhandled_pending_rejection_to_capture: ?*JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
     smol: bool = false,
@@ -2973,8 +2974,9 @@ pub const VirtualMachine = struct {
 
         for (this.preload) |preload| {
             var result = switch (this.transpiler.resolver.resolveAndAutoInstall(
-                this.transpiler.fs.top_level_dir,
-                normalizeSource(preload),
+                // FIXME: should be defaulting to cwd
+                preload.root_dir orelse this.transpiler.fs.top_level_dir,
+                normalizeSource(preload.target),
                 .stmt,
                 if (this.standalone_module_graph == null) .read_only else .disable,
             )) {
@@ -2987,7 +2989,8 @@ pub const VirtualMachine = struct {
                         "{s} resolving preload {}",
                         .{
                             @errorName(e),
-                            bun.fmt.formatJSONStringLatin1(preload),
+                            // FIXME: we cannot assume latin1. Windows uses UTF-16 for paths.
+                            bun.fmt.formatJSONStringLatin1(preload.target),
                         },
                     ) catch unreachable;
                     return e;
@@ -2999,7 +3002,8 @@ pub const VirtualMachine = struct {
                         this.allocator,
                         "preload not found {}",
                         .{
-                            bun.fmt.formatJSONStringLatin1(preload),
+                            // FIXME: we cannot assume latin1. Windows uses UTF-16 for paths.
+                            bun.fmt.formatJSONStringLatin1(preload.target),
                         },
                     ) catch unreachable;
                     return error.ModuleNotFound;

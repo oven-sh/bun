@@ -117,7 +117,6 @@ type WebSocketData = {
 // TypeScript: specify the type of `data`
 Bun.serve<WebSocketData>({
   fetch(req, server) {
-    // use a library to parse cookies
     const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
     server.upgrade(req, {
       // this object must conform to WebSocketData

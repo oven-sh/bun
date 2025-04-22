@@ -6,8 +6,6 @@ const {
   NodeHTTPHeaderState,
   kAbortController,
   fakeSocketSymbol,
-  validateHeaderName,
-  validateHeaderValue,
   headersSymbol,
   kBodyChunks,
   kEmitState,
@@ -22,6 +20,8 @@ const {
   Headers,
   getRawKeys,
 } = require("internal/http");
+
+const { validateHeaderName, validateHeaderValue } = require("node:_http_common");
 
 const { FakeSocket } = require("internal/http/FakeSocket");
 

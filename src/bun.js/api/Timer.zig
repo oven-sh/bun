@@ -1359,7 +1359,7 @@ pub const EventLoopTimer = struct {
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {
-                    container.onTestTimeout(now, vm);
+                    container.onTestTimeout(now);
                     return .disarm;
                 }
 

@@ -1059,6 +1059,7 @@ pub const TestCommand = struct {
                 .bail = ctx.test_options.bail,
                 .filter_regex = ctx.test_options.test_filter_regex,
                 .filter_buffer = bun.MutableString.init(ctx.allocator, 0) catch unreachable,
+                .test_options = &ctx.test_options,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -1068,17 +1069,15 @@ pub const TestCommand = struct {
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
             },
-            .callback = undefined,
+            .callback = TestRunner.Callback{
+                .onUpdateCount = CommandLineReporter.handleUpdateCount,
+                .onTestStart = CommandLineReporter.handleTestStart,
+                .onTestPass = CommandLineReporter.handleTestPass,
+                .onTestFail = CommandLineReporter.handleTestFail,
+                .onTestSkip = CommandLineReporter.handleTestSkip,
+                .onTestTodo = CommandLineReporter.handleTestTodo,
+            },
         };
-        reporter.callback = TestRunner.Callback{
-            .onUpdateCount = CommandLineReporter.handleUpdateCount,
-            .onTestStart = CommandLineReporter.handleTestStart,
-            .onTestPass = CommandLineReporter.handleTestPass,
-            .onTestFail = CommandLineReporter.handleTestFail,
-            .onTestSkip = CommandLineReporter.handleTestSkip,
-            .onTestTodo = CommandLineReporter.handleTestTodo,
-        };
-        reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;

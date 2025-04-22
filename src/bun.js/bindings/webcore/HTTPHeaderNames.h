@@ -29,6 +29,7 @@
 #pragma once
 
 #include <wtf/Forward.h>
+#include "config.h"
 
 namespace WebCore {
 

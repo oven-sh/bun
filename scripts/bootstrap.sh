@@ -1344,6 +1344,7 @@ configure_core_dumps() {
 		alpine)
 			# we need GNU tar (instead of busybox) so we can use its sparse file support
 			install_packages tar
+			;;
 		esac
 		;;
 	esac

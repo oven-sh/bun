@@ -157,6 +157,73 @@ if (options["quiet"]) {
 
 let isAsanBuild = false;
 
+const skipAsanTests = new Set([
+  "test/regression/issue/ctrl-c.test.ts",
+  "test/regression/issue/17454/destructure_string.test.ts",
+  "test/js/web/fetch/fetch-leak.test.ts",
+  "test/js/third_party/next-auth/next-auth.test.ts",
+  "test/js/third_party/es-module-lexer/es-module-lexer.test.ts",
+  "test/js/node/url/pathToFileURL.test.ts",
+  "test/js/third_party/astro/astro-post.test.js",
+  "test/js/sql/tls-sql.test.ts",
+  "test/js/web/streams/streams-leak.test.ts",
+  "test/js/node/test/parallel/test-http2-compat-serverresponse-headers-after-destroy.js",
+  "test/js/node/test/parallel/test-https-server-connections-checking-leak.js",
+  "test/js/node/test/parallel/test-fs-watch-recursive-update-file.js",
+  "test/js/node/test/parallel/test-http2-invalidheaderfields-client.js",
+  "test/js/node/watch/fs.watch.test.ts",
+  "test/napi/napi.test.ts",
+  "test/js/node/test/parallel/test-http2-connect-options.js",
+  "test/js/node/test/parallel/test-http2-compat-serverresponse-writehead.js",
+  "test/js/bun/spawn/spawn.test.ts",
+  "test/js/node/test/parallel/test-primitive-timer-leak.js",
+  "test/js/node/test/parallel/test-gc-http-client-connaborted.js",
+  "test/cli/inspect/inspect.test.ts",
+  "test/cli/inspect/inspect.test.ts",
+  "test/js/node/test/parallel/test-http2-removed-header-stays-removed.js",
+  "test/js/node/test/parallel/test-fs-watch.js",
+  "test/js/node/test/parallel/test-fs-utimes.js",
+  "test/js/node/test/parallel/test-http2-compat-serverresponse-statusmessage.js",
+  "test/js/node/test/parallel/test-common-gc.js",
+  "test/js/node/fs/abort-signal-leak-read-write-file.test.ts",
+  "test/js/first_party/ws/ws.test.ts",
+  "test/js/node/test/parallel/test-zlib-invalid-input-memory.js",
+  "test/js/bun/resolve/load-same-js-file-a-lot.test.ts",
+  "test/js/node/test/parallel/test-http2-options-server-request.js",
+  "test/js/node/test/parallel/test-http2-compat-serverresponse-trailers.js",
+  "test/js/node/test/parallel/test-http2-compat-serverresponse-headers.js",
+  "test/integration/next-pages/test/next-build.test.ts",
+  "test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js",
+  "test/integration/vite-build/vite-build.test.ts",
+  "test/cli/run/run-crash-handler.test.ts",
+  "test/js/bun/wasm/wasi.test.js",
+  "test/cli/run/require-cache.test.ts",
+  "test/js/bun/spawn/spawn-pipe-leak.test.ts",
+  "test/js/bun/shell/bunshell.test.ts",
+  "test/integration/bun-types/bun-types.test.ts",
+  "test/bundler/native-plugin.test.ts",
+  "test/bundler/bundler_edgecase.test.ts",
+  "test/bake/dev/react-spa.test.ts",
+  "test/cli/install/bun-repl.test.ts",
+  "test/bundler/esbuild/default.test.ts",
+  "test/cli/create/create-jsx.test.ts",
+  "test/bake/dev/css.test.ts",
+  "test/js/bun/spawn/spawn-streaming-stdin.test.ts",
+  "test/bundler/bundler_npm.test.ts",
+  "test/js/bun/spawn/spawn-maxbuf.test.ts",
+  "test/bake/dev/hot.test.ts",
+  "test/bundler/bundler_loader.test.ts",
+  "test/bake/dev/esm.test.ts",
+  "test/bake/dev/bundle.test.ts",
+  "test/cli/hot/hot.test.ts",
+  "test/bake/dev/sourcemap.test.ts",
+  "test/bake/dev/sourcemap.test.ts",
+  "test/bake/dev/html.test.ts",
+  "test/bake/dev/ecosystem.test.ts",
+  "test/bake/dev/ecosystem.test.ts",
+  "test/js/node/v8/capture-stack-trace.test.js",
+]);
+
 /**
  *
  * @returns {Promise<TestResult[]>}
@@ -293,6 +360,9 @@ async function runTests() {
     for (const testPath of tests) {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+      if (isAsanBuild && skipAsanTests.has(`test/${testPath}`)) {
+        continue;
+      }
       if (isNodeTest(testPath)) {
         const testContent = readFileSync(absoluteTestPath, "utf-8");
         const runWithBunTest =

@@ -1,7 +1,7 @@
 const Output = bun.Output;
 const Global = bun.Global;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Allocator = std.mem.Allocator;
 const List = std.ArrayListUnmanaged;
@@ -85,7 +85,7 @@ pub const PatchFile = struct {
                             abs_patch_dir,
                             todir,
                         }, .auto);
-                        var nodefs = bun.JSC.Node.NodeFS{};
+                        var nodefs = bun.api.node.fs.NodeFS{};
                         if (nodefs.mkdirRecursive(.{
                             .path = .{ .string = bun.PathString.init(path_to_make) },
                             .recursive = true,
@@ -102,7 +102,7 @@ pub const PatchFile = struct {
                     const filedir = bun.path.dirname(filepath.slice(), .auto);
                     const mode = part.file_creation.mode;
 
-                    var nodefs = bun.JSC.Node.NodeFS{};
+                    var nodefs = bun.api.node.fs.NodeFS{};
                     if (filedir.len > 0) {
                         if (nodefs.mkdirRecursive(.{
                             .path = .{ .string = bun.PathString.init(filedir) },
@@ -120,7 +120,7 @@ pub const PatchFile = struct {
                         .result => |fd| fd,
                         .err => |e| return e.withoutPath(),
                     };
-                    defer _ = bun.sys.close(newfile_fd);
+                    defer newfile_fd.close();
 
                     const hunk = part.file_creation.hunk orelse {
                         continue;
@@ -192,7 +192,7 @@ pub const PatchFile = struct {
                             .err => |e| return e.withoutPath(),
                             .result => |f| f,
                         };
-                        defer _ = bun.sys.close(fd);
+                        defer fd.close();
                         if (bun.sys.fchmod(fd, newmode.toBunMode()).asErr()) |e| {
                             return e.withoutPath();
                         }
@@ -242,7 +242,7 @@ pub const PatchFile = struct {
         // to use the arena
         const use_arena: bool = stat.size <= PAGE_SIZE;
         const file_alloc = if (use_arena) arena.allocator() else bun.default_allocator;
-        const filebuf = patch_dir.asDir().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch return .{ .err = bun.sys.Error.fromCode(.INVAL, .read).withPath(file_path) };
+        const filebuf = patch_dir.stdDir().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch return .{ .err = bun.sys.Error.fromCode(.INVAL, .read).withPath(file_path) };
         defer file_alloc.free(filebuf);
 
         var file_line_count: usize = 0;
@@ -323,9 +323,7 @@ pub const PatchFile = struct {
             .err => |e| return .{ .err = e.withPath(file_path) },
             .result => |fd| fd,
         };
-        defer {
-            _ = bun.sys.close(file_fd);
-        }
+        defer file_fd.close();
 
         const contents = std.mem.join(bun.default_allocator, "\n", lines.items) catch bun.outOfMemory();
         defer bun.default_allocator.free(contents);
@@ -1080,7 +1078,7 @@ const PatchLinesParser = struct {
 pub const TestingAPIs = struct {
     pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
@@ -1121,8 +1119,9 @@ pub const TestingAPIs = struct {
         pub fn deinit(this: *ApplyArgs) void {
             this.patchfile_txt.deinit();
             this.patchfile.deinit(bun.default_allocator);
-            if (bun.FileDescriptor.cwd().eq(this.dirfd)) {
-                _ = bun.sys.close(this.dirfd);
+            // TODO: HAVE @zackradisic REVIEW THIS DIFF
+            if (bun.FileDescriptor.cwd() != this.dirfd) {
+                this.dirfd.close();
             }
         }
     };
@@ -1142,7 +1141,7 @@ pub const TestingAPIs = struct {
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
             return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
@@ -1166,7 +1165,7 @@ pub const TestingAPIs = struct {
 
     pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {
             globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};
@@ -1193,8 +1192,9 @@ pub const TestingAPIs = struct {
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
         const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
-            if (bun.FileDescriptor.cwd().eq(dir_fd)) {
-                _ = bun.sys.close(dir_fd);
+            // TODO: HAVE @zackradisic REVIEW THIS DIFF
+            if (bun.FileDescriptor.cwd() != dir_fd) {
+                dir_fd.close();
             }
 
             patchfile_src.deinit();
@@ -1381,26 +1381,27 @@ pub fn gitDiffInternal(
     try map.put("USERPROFILE", "");
 
     child_proc.env_map = &map;
-    var stdout = std.ArrayList(u8).init(allocator);
-    var stderr = std.ArrayList(u8).init(allocator);
+    var stdout: std.ArrayListUnmanaged(u8) = .empty;
+    var stderr: std.ArrayListUnmanaged(u8) = .empty;
     var deinit_stdout = true;
     var deinit_stderr = true;
     defer {
-        if (deinit_stdout) stdout.deinit();
-        if (deinit_stderr) stderr.deinit();
+        if (deinit_stdout) stdout.deinit(allocator);
+        if (deinit_stderr) stderr.deinit(allocator);
     }
     try child_proc.spawn();
-    try child_proc.collectOutput(&stdout, &stderr, 1024 * 1024 * 4);
+    try child_proc.collectOutput(allocator, &stdout, &stderr, 1024 * 1024 * 4);
     _ = try child_proc.wait();
     if (stderr.items.len > 0) {
         deinit_stderr = false;
-        return .{ .err = stderr };
+        return .{ .err = stderr.toManaged(allocator) };
     }
 
     debug("Before postprocess: {s}\n", .{stdout.items});
-    try gitDiffPostprocess(&stdout, old_folder, new_folder);
+    var stdout_managed = stdout.toManaged(allocator);
+    try gitDiffPostprocess(&stdout_managed, old_folder, new_folder);
     deinit_stdout = false;
-    return .{ .result = stdout };
+    return .{ .result = stdout_managed };
 }
 
 /// Now we need to do the equivalent of these regex subtitutions.
@@ -1535,9 +1536,9 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
 fn shouldSkipLine(line: []const u8) bool {
     return line.len == 0 or
         (switch (line[0]) {
-        ' ', '-', '+' => true,
-        else => false,
-    } and
-        // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
-        (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
+            ' ', '-', '+' => true,
+            else => false,
+        } and
+            // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
+            (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }

@@ -28,7 +28,7 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 
 - [ ] I checked the lifetime of memory allocated to verify it's (1) freed and (2) only freed when it should be
 - [ ] I included a test for the new code, or an existing test covers it
-- [ ] JSValue used outside outside of the stack is either wrapped in a JSC.Strong or is JSValueProtect'ed
+- [ ] JSValue used outside of the stack is either wrapped in a JSC.Strong or is JSValueProtect'ed
 - [ ] I wrote TypeScript/JavaScript tests and they pass locally (`bun-debug test test-file-name.test`)
 -->
 

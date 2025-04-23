@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
@@ -45,6 +45,45 @@ pub fn needsDeepclone(comptime V: type) bool {
     };
 }
 
+const Tag_ = enum(u8) {
+    /// A literal value.
+    value = 1,
+    /// A literal number.
+    number = 2,
+    /// A sum of two calc expressions.
+    sum = 4,
+    /// A product of a number and another calc expression.
+    product = 8,
+    /// A math function, such as `calc()`, `min()`, or `max()`.
+    function = 16,
+};
+
+const CalcUnit = enum {
+    abs,
+    acos,
+    asin,
+    atan,
+    atan2,
+    calc,
+    clamp,
+    cos,
+    exp,
+    hypot,
+    log,
+    max,
+    min,
+    mod,
+    pow,
+    rem,
+    round,
+    sign,
+    sin,
+    sqrt,
+    tan,
+
+    pub const Map = bun.ComptimeEnumMap(CalcUnit);
+};
+
 /// A mathematical expression used within the `calc()` function.
 ///
 /// This type supports generic value types. Values such as `Length`, `Percentage`,
@@ -61,29 +100,18 @@ pub fn Calc(comptime V: type) type {
         number: CSSNumber,
         /// A sum of two calc expressions.
         sum: struct {
-            left: *Calc(V),
-            right: *Calc(V),
+            left: *This,
+            right: *This,
         },
         /// A product of a number and another calc expression.
         product: struct {
             number: CSSNumber,
-            expression: *Calc(V),
+            expression: *This,
         },
         /// A math function, such as `calc()`, `min()`, or `max()`.
         function: *MathFunction(V),
 
-        const Tag = enum(u8) {
-            /// A literal value.
-            value = 1,
-            /// A literal number.
-            number = 2,
-            /// A sum of two calc expressions.
-            sum = 4,
-            /// A product of a number and another calc expression.
-            product = 8,
-            /// A math function, such as `calc()`, `min()`, or `max()`.
-            function = 16,
-        };
+        const Tag = Tag_;
 
         const This = @This();
 
@@ -217,7 +245,7 @@ pub fn Calc(comptime V: type) type {
             }
         }
 
-        pub fn intoCalc(val: V, allocator: std.mem.Allocator) Calc(V) {
+        pub fn intoCalc(val: V, allocator: std.mem.Allocator) This {
             return switch (V) {
                 f32 => .{ .value = bun.create(allocator, f32, val) },
                 else => val.intoCalc(allocator),
@@ -267,32 +295,6 @@ pub fn Calc(comptime V: type) type {
             return parseWith(input, {}, Fn.parseWithFn);
         }
 
-        const CalcUnit = enum {
-            abs,
-            acos,
-            asin,
-            atan,
-            atan2,
-            calc,
-            clamp,
-            cos,
-            exp,
-            hypot,
-            log,
-            max,
-            min,
-            mod,
-            pow,
-            rem,
-            round,
-            sign,
-            sin,
-            sqrt,
-            tan,
-
-            pub const Map = bun.ComptimeEnumMap(CalcUnit);
-        };
-
         pub fn parseWith(
             input: *css.Parser,
             ctx: anytype,
@@ -318,7 +320,7 @@ pub fn Calc(comptime V: type) type {
                         .err => |e| return .{ .err = e },
                     };
                     if (calc == .value or calc == .number) return .{ .result = calc };
-                    return .{ .result = Calc(V){
+                    return .{ .result = This{
                         .function = bun.create(
                             input.allocator(),
                             MathFunction(V),
@@ -801,7 +803,7 @@ pub fn Calc(comptime V: type) type {
                     };
 
                     return .{
-                        .result = Calc(V){
+                        .result = This{
                             .number = switch (op) {
                                 .sqrt => std.math.sqrt(v),
                                 .exp => std.math.exp(v),
@@ -869,7 +871,7 @@ pub fn Calc(comptime V: type) type {
                         .err => |e| return .{ .err = e },
                     };
                     if (next_tok.* == .delim and next_tok.delim == '+') {
-                        const next = switch (Calc(V).parseProduct(input, ctx, parse_ident)) {
+                        const next = switch (This.parseProduct(input, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
@@ -1426,7 +1428,7 @@ pub fn Calc(comptime V: type) type {
             var reduced = ArrayList(This){};
 
             for (args.items) |*arg| {
-                var found: ??*Calc(V) = null;
+                var found: ??*This = null;
                 switch (arg.*) {
                     .value => |val| {
                         for (reduced.items) |*b| {
@@ -1438,7 +1440,7 @@ pub fn Calc(comptime V: type) type {
                                             found = b;
                                             break;
                                         } else {
-                                            found = @as(?*Calc(V), null);
+                                            found = @as(?*This, null);
                                             break;
                                         }
                                     }
@@ -1490,60 +1492,62 @@ pub fn Calc(comptime V: type) type {
 pub fn MathFunction(comptime V: type) type {
     return union(enum) {
         /// The `calc()` function.
-        calc: Calc(V),
+        calc: ThisCalc,
         /// The `min()` function.
-        min: ArrayList(Calc(V)),
+        min: ArrayList(ThisCalc),
         /// The `max()` function.
-        max: ArrayList(Calc(V)),
+        max: ArrayList(ThisCalc),
         /// The `clamp()` function.
         clamp: struct {
-            min: Calc(V),
-            center: Calc(V),
-            max: Calc(V),
+            min: ThisCalc,
+            center: ThisCalc,
+            max: ThisCalc,
         },
         /// The `round()` function.
         round: struct {
             strategy: RoundingStrategy,
-            value: Calc(V),
-            interval: Calc(V),
+            value: ThisCalc,
+            interval: ThisCalc,
         },
         /// The `rem()` function.
         rem: struct {
-            dividend: Calc(V),
-            divisor: Calc(V),
+            dividend: ThisCalc,
+            divisor: ThisCalc,
         },
         /// The `mod()` function.
         mod_: struct {
-            dividend: Calc(V),
-            divisor: Calc(V),
+            dividend: ThisCalc,
+            divisor: ThisCalc,
         },
         /// The `abs()` function.
-        abs: Calc(V),
+        abs: ThisCalc,
         /// The `sign()` function.
-        sign: Calc(V),
+        sign: ThisCalc,
         /// The `hypot()` function.
-        hypot: ArrayList(Calc(V)),
+        hypot: ArrayList(ThisCalc),
+
+        const ThisCalc = Calc(V);
 
         pub fn eql(this: *const @This(), other: *const @This()) bool {
             return switch (this.*) {
                 .calc => |a| return other.* == .calc and a.eql(&other.calc),
-                .min => |*a| return other.* == .min and css.generic.eqlList(Calc(V), a, &other.min),
-                .max => |*a| return other.* == .max and css.generic.eqlList(Calc(V), a, &other.max),
+                .min => |*a| return other.* == .min and css.generic.eqlList(ThisCalc, a, &other.min),
+                .max => |*a| return other.* == .max and css.generic.eqlList(ThisCalc, a, &other.max),
                 .clamp => |*a| return other.* == .clamp and a.min.eql(&other.clamp.min) and a.center.eql(&other.clamp.center) and a.max.eql(&other.clamp.max),
                 .round => |*a| return other.* == .round and a.strategy == other.round.strategy and a.value.eql(&other.round.value) and a.interval.eql(&other.round.interval),
                 .rem => |*a| return other.* == .rem and a.dividend.eql(&other.rem.dividend) and a.divisor.eql(&other.rem.divisor),
                 .mod_ => |*a| return other.* == .mod_ and a.dividend.eql(&other.mod_.dividend) and a.divisor.eql(&other.mod_.divisor),
                 .abs => |*a| return other.* == .abs and a.eql(&other.abs),
                 .sign => |*a| return other.* == .sign and a.eql(&other.sign),
-                .hypot => |*a| return other.* == .hypot and css.generic.eqlList(Calc(V), a, &other.hypot),
+                .hypot => |*a| return other.* == .hypot and css.generic.eqlList(ThisCalc, a, &other.hypot),
             };
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
             return switch (this.*) {
                 .calc => |*calc| .{ .calc = calc.deepClone(allocator) },
-                .min => |*min| .{ .min = css.deepClone(Calc(V), allocator, min) },
-                .max => |*max| .{ .max = css.deepClone(Calc(V), allocator, max) },
+                .min => |*min| .{ .min = css.deepClone(ThisCalc, allocator, min) },
+                .max => |*max| .{ .max = css.deepClone(ThisCalc, allocator, max) },
                 .clamp => |*clamp| .{
                     .clamp = .{
                         .min = clamp.min.deepClone(allocator),
@@ -1567,7 +1571,7 @@ pub fn MathFunction(comptime V: type) type {
                 .abs => |*abs| .{ .abs = abs.deepClone(allocator) },
                 .sign => |*sign| .{ .sign = sign.deepClone(allocator) },
                 .hypot => |*hyp| .{
-                    .hypot = css.deepClone(Calc(V), allocator, hyp),
+                    .hypot = css.deepClone(ThisCalc, allocator, hyp),
                 },
             };
         }
@@ -1575,8 +1579,8 @@ pub fn MathFunction(comptime V: type) type {
         pub fn deinit(this: *@This(), allocator: Allocator) void {
             switch (this.*) {
                 .calc => |*calc| calc.deinit(allocator),
-                .min => |*min| css.deepDeinit(Calc(V), allocator, min),
-                .max => |*max| css.deepDeinit(Calc(V), allocator, max),
+                .min => |*min| css.deepDeinit(ThisCalc, allocator, min),
+                .max => |*max| css.deepDeinit(ThisCalc, allocator, max),
                 .clamp => |*clamp| {
                     clamp.min.deinit(allocator);
                     clamp.center.deinit(allocator);
@@ -1601,7 +1605,7 @@ pub fn MathFunction(comptime V: type) type {
                     sign.deinit(allocator);
                 },
                 .hypot => |*hyp| {
-                    css.deepDeinit(Calc(V), allocator, hyp);
+                    css.deepDeinit(ThisCalc, allocator, hyp);
                 },
             }
         }

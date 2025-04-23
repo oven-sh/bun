@@ -50,6 +50,33 @@ const join =
     ? (...strings: string[]): string => __join(...strings.map(s => s.replaceAll("\\", "/"))).replaceAll("\\", "/")
     : __join;
 
+// Recurse through a nested object, and return a copy where for any object where the only two
+// properties are a numeric `capacity` and an array `items`, the capacity has been deleted. Meant to
+// be used on serialized Zig structs that contain ArrayLists, because the allocation strategy of
+// ArrayList can change and result in a different `capacity` without changing the interpretation of
+// the ArrayList's value.
+function removeCapacity(patch: any): any {
+  if (Array.isArray(patch)) {
+    return patch.map(removeCapacity);
+  } else if (patch !== null && typeof patch == "object") {
+    const keys = Object.keys(patch);
+    keys.sort();
+    if (keys.length == 2 && keys[0] == "capacity" && keys[1] == "items") {
+      if (typeof patch.capacity == "number" && Array.isArray(patch.items)) {
+        // this looks like an ArrayList, so delete the capacity because it is unstable
+        return { items: patch.items.map(removeCapacity) };
+      }
+    }
+    // ordinary object, so just apply to all the children
+    const result = {};
+    for (const k of keys) {
+      result[k] = removeCapacity(patch[k]);
+    }
+    return result;
+  }
+  return patch;
+}
+
 describe("apply", () => {
   test("edgecase", async () => {
     const newcontents = "module.exports = x => x % 420 === 0;";
@@ -451,7 +478,7 @@ describe("apply", () => {
 
 describe("parse", () => {
   test("works for a simple case", () => {
-    expect(JSON.parse(parse(patch))).toEqual({
+    expect(removeCapacity(JSON.parse(parse(patch)))).toEqual({
       "parts": {
         "items": [
           {
@@ -465,37 +492,34 @@ describe("parse", () => {
                       "items": [
                         {
                           "type": "context",
-                          "lines": { "items": ["this", "is", ""], "capacity": 8 },
+                          "lines": { "items": ["this", "is", ""] },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "deletion",
-                          "lines": { "items": ["a"], "capacity": 8 },
+                          "lines": { "items": ["a"] },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "insertion",
-                          "lines": { "items": [""], "capacity": 8 },
+                          "lines": { "items": [""] },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "context",
-                          "lines": { "items": ["file"], "capacity": 8 },
+                          "lines": { "items": ["file"] },
                           "no_newline_at_end_of_file": false,
                         },
                       ],
-                      "capacity": 8,
                     },
                   },
                 ],
-                "capacity": 8,
               },
               "before_hash": "2de83dd",
               "after_hash": "842652c",
             },
           },
         ],
-        "capacity": 8,
       },
     });
   });
@@ -513,7 +537,7 @@ describe("parse", () => {
   });
 
   test(`can handle files with CRLF line breaks`, () => {
-    expect(JSON.parse(parse(crlfLineBreaks))).toEqual({
+    expect(removeCapacity(JSON.parse(parse(crlfLineBreaks)))).toEqual({
       "parts": {
         "items": [
           {
@@ -526,24 +550,22 @@ describe("parse", () => {
                   "items": [
                     {
                       "type": "insertion",
-                      "lines": { "items": ["this is a new file\r"], "capacity": 8 },
+                      "lines": { "items": ["this is a new file\r"] },
                       "no_newline_at_end_of_file": false,
                     },
                   ],
-                  "capacity": 8,
                 },
               },
               "hash": "3e1267f",
             },
           },
         ],
-        "capacity": 8,
       },
     });
   });
 
   test("works", () => {
-    expect(JSON.parse(parse(modeChangeAndModifyAndRename))).toEqual({
+    expect(removeCapacity(JSON.parse(parse(modeChangeAndModifyAndRename)))).toEqual({
       "parts": {
         "items": [
           { "file_rename": { "from_path": "numbers.txt", "to_path": "banana.txt" } },
@@ -559,38 +581,35 @@ describe("parse", () => {
                       "items": [
                         {
                           "type": "deletion",
-                          "lines": { "items": ["one"], "capacity": 8 },
+                          "lines": { "items": ["one"] },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "insertion",
-                          "lines": { "items": ["ne"], "capacity": 8 },
+                          "lines": { "items": ["ne"] },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "context",
-                          "lines": { "items": ["", "two", ""], "capacity": 8 },
+                          "lines": { "items": ["", "two", ""] },
                           "no_newline_at_end_of_file": false,
                         },
                       ],
-                      "capacity": 8,
                     },
                   },
                 ],
-                "capacity": 8,
               },
               "before_hash": "fbf1785",
               "after_hash": "92d2c5f",
             },
           },
         ],
-        "capacity": 8,
       },
     });
   });
 
   test("parses old-style patches", () => {
-    expect(JSON.parse(parse(oldStylePatch))).toEqual({
+    expect(removeCapacity(JSON.parse(parse(oldStylePatch)))).toEqual({
       "parts": {
         "items": [
           {
@@ -610,7 +629,6 @@ describe("parse", () => {
                               "function isValidNameError(name, node) {",
                               "  !(typeof name === 'string') ? (0, _invariant2.default)(0, 'Expected string') : void 0;",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
@@ -622,7 +640,6 @@ describe("parse", () => {
                               "    return new _GraphQLError.GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  }",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
@@ -634,7 +651,6 @@ describe("parse", () => {
                               "  //   return new _GraphQLError.GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  // }",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
@@ -646,26 +662,23 @@ describe("parse", () => {
                               "    return new _GraphQLError.GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"' + name + '\" does not.', node);",
                               "  }",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "insertion",
-                          "lines": { "items": [""], "capacity": 8 },
+                          "lines": { "items": [""] },
                           "no_newline_at_end_of_file": false,
                         },
                         {
                           "type": "context",
-                          "lines": { "items": ["}"], "capacity": 8 },
+                          "lines": { "items": ["}"] },
                           "no_newline_at_end_of_file": true,
                         },
                       ],
-                      "capacity": 8,
                     },
                   },
                 ],
-                "capacity": 8,
               },
               "before_hash": null,
               "after_hash": null,
@@ -688,7 +701,6 @@ describe("parse", () => {
                               "export function isValidNameError(name, node) {",
                               "  !(typeof name === 'string') ? invariant(0, 'Expected string') : void 0;",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
@@ -700,7 +712,6 @@ describe("parse", () => {
                               "    return new GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  }",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
@@ -712,7 +723,6 @@ describe("parse", () => {
                               "  //   return new GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  // }",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
@@ -724,23 +734,19 @@ describe("parse", () => {
                               "    return new GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"' + name + '\" does not.', node);",
                               "  }",
                             ],
-                            "capacity": 8,
                           },
                           "no_newline_at_end_of_file": false,
                         },
                       ],
-                      "capacity": 8,
                     },
                   },
                 ],
-                "capacity": 8,
               },
               "before_hash": null,
               "after_hash": null,
             },
           },
         ],
-        "capacity": 8,
       },
     });
   });

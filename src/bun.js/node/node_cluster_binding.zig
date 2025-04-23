@@ -4,7 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -71,7 +71,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
         ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
-        Bun__Process__queueNextTick1(globalThis, fnvalue, ex);
+        fnvalue.callNextTick(globalThis, .{ex});
         return .false;
     }
 
@@ -260,8 +260,6 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 //
 //
 
-extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
-
 pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).ptr;
 
@@ -273,6 +271,34 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
 
     const enabled = arguments[0].toBoolean();
-    Bun__setChannelRef(globalObject, enabled);
+    const vm = globalObject.bunVM();
+    vm.channel_ref_overridden = true;
+    if (enabled) {
+        vm.channel_ref.ref(vm);
+    } else {
+        vm.channel_ref.unref(vm);
+    }
     return .undefined;
+}
+
+export fn Bun__refChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.ref(vm);
+    }
+}
+export fn Bun__unrefChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.unref(vm);
+    }
+}
+pub fn channelIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalObject.bunVM();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    return .false;
+}
+export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject) bool {
+    const vm = globalObject.bunVM();
+    return vm.channel_ref_should_ignore_one_disconnect_event_listener;
 }

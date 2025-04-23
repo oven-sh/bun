@@ -5,6 +5,12 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();
+pub const js = JSC.Codegen.JSSocketAddress;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
+pub const new = bun.TrivialNew(SocketAddress);
 
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.
 // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -36,13 +42,13 @@ pub const Options = struct {
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a| addr: {
             if (!a.isString()) return global.throwInvalidArgumentTypeValue("options.address", "string", a);
-            break :addr try bun.String.fromJS2(a, global);
+            break :addr try bun.String.fromJS(a, global);
         } else null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             // "ipv4" or "ipv6", ignoring case
             if (fam.isString()) {
-                const fam_str = try bun.String.fromJS2(fam, global);
+                const fam_str = try bun.String.fromJS(fam, global);
                 defer fam_str.deref();
                 if (fam_str.length() != 4)
                     return throwBadFamilyIP(global, fam);
@@ -109,14 +115,11 @@ pub const Options = struct {
     }
     inline fn throwBadPort(global: *JSC.JSGlobalObject, port_: JSC.JSValue) bun.JSError {
         const ty = global.determineSpecificType(port_) catch {
-            return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number.", .{}).throw();
+            return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number.", .{}).throw();
         };
-        return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
+        return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
     }
 };
-
-pub usingnamespace JSC.Codegen.JSSocketAddress;
-pub usingnamespace bun.New(SocketAddress);
 
 // =============================================================================
 // ============================== STATIC METHODS ===============================
@@ -129,15 +132,21 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     const input = blk: {
         const input_arg = callframe.argument(0);
         if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
-        break :blk try bun.String.fromJS2(input_arg, global);
+        break :blk try bun.String.fromJS(input_arg, global);
     };
-    var stackfb = std.heap.stackFallback(256, bun.default_allocator);
-    const alloc = stackfb.get();
+    defer input.deref();
 
-    const url_str = bun.String.createFromConcat(
-        alloc,
-        &[_]bun.String{ bun.String.static("http://"), input },
-    ) catch return global.throwOutOfMemory();
+    const prefix = "http://";
+    const url_str = switch (input.is8Bit()) {
+        inline else => |is_8_bit| with_prefix: {
+            const enc: bun.String.WTFEncoding = if (is_8_bit) .latin1 else .utf16;
+            const from_chars = if (is_8_bit) input.latin1() else input.utf16();
+            const str, const to_chars = bun.String.createUninitialized(enc, from_chars.len + prefix.len);
+            @memcpy(to_chars[0..prefix.len], bun.strings.literal(enc.Byte(), prefix));
+            @memcpy(to_chars[prefix.len..], from_chars);
+            break :with_prefix str;
+        },
+    };
     defer url_str.deref();
 
     const url = JSC.URL.fromString(url_str) orelse return JSValue.jsUndefined();
@@ -191,7 +200,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
         ._addr = sockaddr.@"127.0.0.1",
         ._presentation = .empty,
         // ._presentation = WellKnownAddress.@"127.0.0.1"(),
-        // ._presentation = bun.String.fromJS2(global.commonStrings().@"127.0.0.1"()) catch unreachable,
+        // ._presentation = bun.String.fromJS(global.commonStrings().@"127.0.0.1"()) catch unreachable,
     });
     options_obj.ensureStillAlive();
 
@@ -311,15 +320,15 @@ pub fn initIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAd
 // ================================ DESTRUCTORS ================================
 // =============================================================================
 
-pub fn deinit(this: *SocketAddress) void {
+fn deinit(this: *SocketAddress) void {
     // .deref() on dead strings is a no-op.
     this._presentation.deref();
+    bun.destroy(this);
 }
 
 pub fn finalize(this: *SocketAddress) void {
     JSC.markBinding(@src());
     this.deinit();
-    this.destroy();
 }
 
 // =============================================================================
@@ -403,7 +412,7 @@ pub fn address(this: *SocketAddress) bun.String {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
-    const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
+    const presentation = bun.webcore.encoding.toBunStringComptime(formatted, .latin1);
     bun.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;
@@ -607,7 +616,7 @@ comptime {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;

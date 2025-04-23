@@ -11,10 +11,9 @@ class GlobalObject;
 }
 
 namespace Bun {
+using namespace JSC;
 
 extern "C" int getRSS(size_t* rss);
-
-using namespace JSC;
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
@@ -49,9 +48,12 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
-    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args);
-    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue);
-    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue, JSValue);
+    void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
+    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue);
+    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue, JSValue);
+
+    template<size_t NumArgs>
+    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);
 
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
@@ -107,5 +109,6 @@ public:
 };
 
 bool isSignalName(WTF::String input);
+JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
 } // namespace Bun

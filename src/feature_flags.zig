@@ -1,5 +1,5 @@
 const env = @import("env.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
@@ -109,8 +109,6 @@ pub const unwrap_commonjs_to_esm = true;
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
 /// https://github.com/source-map/source-map-rfc/pull/20
 pub const source_map_debug_id = true;
-
-pub const alignment_tweak = false;
 
 pub const export_star_redirect = false;
 

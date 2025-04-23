@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const CachedBytecode = opaque {
     extern fn generateCachedModuleByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize, cached_bytecode: *?*CachedBytecode) bool;
@@ -43,31 +43,24 @@ pub const CachedBytecode = opaque {
 
     pub const VTable = &std.mem.Allocator.VTable{
         .alloc = struct {
-            pub fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
-                _ = ctx; // autofix
-                _ = len; // autofix
-                _ = ptr_align; // autofix
-                _ = ret_addr; // autofix
+            pub fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+                _ = ctx;
+                _ = len;
+                _ = alignment;
+                _ = ret_addr;
                 @panic("Unexpectedly called CachedBytecode.alloc");
             }
         }.alloc,
-        .resize = struct {
-            pub fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-                _ = ctx; // autofix
-                _ = buf; // autofix
-                _ = buf_align; // autofix
-                _ = new_len; // autofix
-                _ = ret_addr; // autofix
-                return false;
-            }
-        }.resize,
         .free = struct {
-            pub fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, _: usize) void {
-                _ = buf; // autofix
-                _ = buf_align; // autofix
+            pub fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+                _ = buf;
+                _ = alignment;
+                _ = ret_addr;
                 CachedBytecode__deref(@ptrCast(ctx));
             }
         }.free,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
     };
 
     pub fn allocator(this: *CachedBytecode) std.mem.Allocator {

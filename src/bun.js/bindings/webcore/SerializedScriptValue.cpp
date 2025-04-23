@@ -62,7 +62,6 @@
 // #include "JSWebCodecsEncodedVideoChunk.h"
 // #include "JSWebCodecsVideoFrame.h"
 #include "ScriptExecutionContext.h"
-#include "SharedBuffer.h"
 // #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/APICast.h>
@@ -109,6 +108,11 @@
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
+#include "JSKeyObject.h"
+#include "JSSecretKeyObject.h"
+#include "JSPublicKeyObject.h"
+#include "JSPrivateKeyObject.h"
+#include "CryptoKeyType.h"
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -132,6 +136,7 @@
 namespace WebCore {
 
 using namespace JSC;
+using namespace Bun;
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 
@@ -237,6 +242,7 @@ enum SerializationTag {
     Bun__BlobTag = 254,
     // bun types start at 254 and decrease with each addition
     Bun__X509CertificateTag = 253,
+    Bun__KeyObjectTag = 252,
 
     ErrorTag = 255
 };
@@ -1826,9 +1832,18 @@ private:
                     serializedKey, SerializationContext::Default, dummySharedBuffers, m_forStorage);
                 rawKeySerializer.write(key);
                 Vector<uint8_t> wrappedKey;
-                if (!wrapCryptoKey(m_lexicalGlobalObject, serializedKey, wrappedKey))
-                    return false;
-                write(wrappedKey);
+
+                // Wrapping isn't required
+                // https://github.com/WebKit/WebKit/blob/c0902fc4dd3abf5d2d5e008eb0b008aeae837953/Source/WebCore/crypto/SerializedCryptoKeyWrap.h#L35-L40
+                //
+                // and doesn't do anything currently, so we skip it.
+                // https://github.com/WebKit/WebKit/blob/c0902fc4dd3abf5d2d5e008eb0b008aeae837953/Source/WebCore/crypto/gcrypt/SerializedCryptoKeyWrapGCrypt.cpp#L49
+                // https://github.com/WebKit/WebKit/blob/c0902fc4dd3abf5d2d5e008eb0b008aeae837953/Source/WebCore/crypto/openssl/SerializedCryptoKeyWrapOpenSSL.cpp#L51
+                //
+                // if (!wrapCryptoKey(m_lexicalGlobalObject, serializedKey, wrappedKey))
+                //     return false;
+
+                write(serializedKey);
                 return true;
             }
 #endif
@@ -1958,6 +1973,57 @@ private:
                 write(der);
 
                 return true;
+            }
+
+            if (auto* keyObject = jsDynamicCast<Bun::JSKeyObject*>(obj)) {
+                write(Bun__KeyObjectTag);
+
+                auto& handle = keyObject->handle();
+
+                write(static_cast<uint8_t>(handle.type()));
+
+                switch (handle.type()) {
+                case CryptoKeyType::Secret: {
+                    write(handle.symmetricKey());
+                    return true;
+                }
+                case CryptoKeyType::Public: {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    auto* pkey = handle.asymmetricKey().get();
+
+                    BIO* bio = BIO_new(BIO_s_mem());
+
+                    PEM_write_bio_PUBKEY(bio, pkey);
+
+                    const uint8_t* pemData = nullptr;
+                    uint64_t pemSize = 0;
+                    BIO_mem_contents(bio, &pemData, reinterpret_cast<size_t*>(&pemSize));
+
+                    write(pemSize);
+                    write(pemData, pemSize);
+                    BIO_free(bio);
+
+                    return true;
+                }
+                case CryptoKeyType::Private: {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    auto* pkey = handle.asymmetricKey().get();
+
+                    BIO* bio = BIO_new(BIO_s_mem());
+
+                    PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+
+                    const uint8_t* pemData = nullptr;
+                    uint64_t pemSize = 0;
+                    BIO_mem_contents(bio, &pemData, reinterpret_cast<size_t*>(&pemSize));
+
+                    write(pemSize);
+                    write(pemData, pemSize);
+                    BIO_free(bio);
+
+                    return true;
+                }
+                }
             }
 
             return false;
@@ -3821,6 +3887,29 @@ private:
         return true;
     }
 
+    bool read(CryptoKeyType& result)
+    {
+        uint8_t type;
+        if (!read(type))
+            return false;
+        if (type > cryptoKeyTypeMaximumValue) {
+            return false;
+        }
+        result = static_cast<CryptoKeyType>(type);
+        return true;
+    }
+
+    bool read(BIO** bio, uint64_t length)
+    {
+        if (m_ptr + length > m_end)
+            return false;
+        *bio = BIO_new_mem_buf(m_ptr, length);
+        if (!*bio)
+            return false;
+        m_ptr += length;
+        return true;
+    }
+
     bool readHMACKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
     {
         Vector<uint8_t> keyData;
@@ -4435,6 +4524,66 @@ private:
         return cert_obj;
     }
 
+    JSValue readKeyObject()
+    {
+        VM& vm = m_globalObject->vm();
+        auto* globalObject = defaultGlobalObject(m_globalObject);
+
+        CryptoKeyType keyType;
+        if (!read(keyType)) {
+            fail();
+            return JSValue();
+        }
+
+        switch (keyType) {
+        case CryptoKeyType::Secret: {
+            Vector<uint8_t> keyData;
+            if (!read(keyData)) {
+                fail();
+                return JSValue();
+            }
+
+            KeyObject keyObject = KeyObject::create(WTFMove(keyData));
+            Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(m_globalObject);
+            return JSSecretKeyObject::create(vm, structure, m_globalObject, WTFMove(keyObject));
+        }
+        case CryptoKeyType::Public:
+        case CryptoKeyType::Private: {
+            uint64_t pemSize = 0;
+            if (!read(pemSize)) {
+                fail();
+                return JSValue();
+            }
+
+            BIO* bio = nullptr;
+            if (!read(&bio, pemSize)) {
+                fail();
+                return JSValue();
+            }
+
+            if (keyType == CryptoKeyType::Public) {
+                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+                if (!pkey) {
+                    fail();
+                    return JSValue();
+                }
+                auto keyObject = KeyObject::create(CryptoKeyType::Public, ncrypto::EVPKeyPointer(pkey));
+                Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(m_globalObject);
+                return JSPublicKeyObject::create(vm, structure, m_globalObject, WTFMove(keyObject));
+            }
+
+            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+            if (!pkey) {
+                fail();
+                return JSValue();
+            }
+            auto keyObject = KeyObject::create(CryptoKeyType::Private, ncrypto::EVPKeyPointer(pkey));
+            Structure* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(m_globalObject);
+            return JSPrivateKeyObject::create(vm, structure, m_globalObject, WTFMove(keyObject));
+        }
+        }
+    }
+
     JSValue readDOMException()
     {
         CachedStringRef message;
@@ -4928,16 +5077,19 @@ private:
         }
 #if ENABLE(WEB_CRYPTO)
         case CryptoKeyTag: {
-            Vector<uint8_t> wrappedKey;
-            if (!read(wrappedKey)) {
-                fail();
-                return JSValue();
-            }
             Vector<uint8_t> serializedKey;
-            if (!unwrapCryptoKey(m_lexicalGlobalObject, wrappedKey, serializedKey)) {
+            if (!read(serializedKey)) {
                 fail();
                 return JSValue();
             }
+
+            // See CryptoKey serialization for why we don't wrap
+            //
+            // Vector<uint8_t> serializedKey;
+            // if (!unwrapCryptoKey(m_lexicalGlobalObject, wrappedKey, serializedKey)) {
+            //     fail();
+            //     return JSValue();
+            // }
             JSValue cryptoKey;
             // Vector<RefPtr<MessagePort>> dummyMessagePorts;
             // CloneDeserializer rawKeyDeserializer(m_lexicalGlobalObject, m_globalObject, dummyMessagePorts, nullptr, {}, serializedKey);
@@ -4993,6 +5145,9 @@ private:
         case Bun__X509CertificateTag:
             return readX509Certificate();
 
+        case Bun__KeyObjectTag:
+            return readKeyObject();
+
         default:
             m_ptr--; // Push the tag back
             return JSValue();
@@ -5022,8 +5177,8 @@ private:
     Vector<String> m_blobURLs;
     Vector<String> m_blobFilePaths;
     ArrayBufferContentsArray* m_sharedBuffers;
-    // Vector<std::optional<ImageBitmapBacking>> m_backingStores;
-    // Vector<RefPtr<ImageBitmap>> m_imageBitmaps;
+// Vector<std::optional<ImageBitmapBacking>> m_backingStores;
+// Vector<RefPtr<ImageBitmap>> m_imageBitmaps;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> m_detachedOffscreenCanvases;
     Vector<RefPtr<OffscreenCanvas>> m_offscreenCanvases;
@@ -5104,6 +5259,10 @@ DeserializationResult CloneDeserializer::deserialize()
 
             if (JSValue terminal = readTerminal()) {
                 putProperty(outputObjectStack.last(), index, terminal);
+                if (UNLIKELY(scope.exception())) {
+                    fail();
+                    goto error;
+                }
                 goto arrayStartVisitMember;
             }
             if (m_failed)
@@ -5115,6 +5274,10 @@ DeserializationResult CloneDeserializer::deserialize()
         case ArrayEndVisitMember: {
             JSObject* outArray = outputObjectStack.last();
             putProperty(outArray, indexStack.last(), outValue);
+            if (UNLIKELY(scope.exception())) {
+                fail();
+                goto error;
+            }
             indexStack.removeLast();
             goto arrayStartVisitMember;
         }
@@ -5143,6 +5306,10 @@ DeserializationResult CloneDeserializer::deserialize()
 
             if (JSValue terminal = readTerminal()) {
                 putProperty(outputObjectStack.last(), cachedString->identifier(vm), terminal);
+                if (UNLIKELY(scope.exception())) {
+                    fail();
+                    goto error;
+                }
                 goto objectStartVisitMember;
             }
             stateStack.append(ObjectEndVisitMember);
@@ -5179,6 +5346,10 @@ DeserializationResult CloneDeserializer::deserialize()
         }
         case MapDataEndVisitValue: {
             mapStack.last()->set(m_lexicalGlobalObject, mapKeyStack.last(), outValue);
+            if (UNLIKELY(scope.exception())) {
+                fail();
+                goto error;
+            }
             mapKeyStack.removeLast();
             goto mapDataStartVisitEntry;
         }
@@ -5204,6 +5375,10 @@ DeserializationResult CloneDeserializer::deserialize()
         case SetDataEndVisitKey: {
             JSSet* set = setStack.last();
             set->add(m_lexicalGlobalObject, outValue);
+            if (UNLIKELY(scope.exception())) {
+                fail();
+                goto error;
+            }
             goto setDataStartVisitEntry;
         }
 
@@ -5559,7 +5734,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         }
         if (auto port = JSMessagePort::toWrapped(vm, transferable.get())) {
             if (port->isDetached())
-                return Exception { DataCloneError, "MessagePort is detached"_s };
+                return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
             messagePorts.append(WTFMove(port));
             continue;
         }
@@ -5637,7 +5812,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     //         wasmMemoryHandles,
     // #endif
     //         blobHandles, buffer, context, *sharedBuffers, forStorage);
-
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         offscreenCanvases,
@@ -5655,17 +5830,23 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         buffer, context, *sharedBuffers, forStorage);
 
-    if (throwExceptions == SerializationErrorMode::Throwing)
+    // Serialize may throw an exception. This code looks weird, but we'll rethrow it
+    // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
+    // different errors), and then re-check if we have an exception after the call.
+    // If so, we'll throw it again.
+    if (UNLIKELY(scope.exception()) || throwExceptions == SerializationErrorMode::Throwing)
         maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, code);
 
-    if (code != SerializationReturnCode::SuccessfullyCompleted)
+    // If we rethrew an exception just now, or we failed with a status code other than success,
+    // we should exit right now.
+    if (UNLIKELY(scope.exception()) || code != SerializationReturnCode::SuccessfullyCompleted)
         return exceptionForSerializationFailure(code);
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
     if (arrayBufferContentsArray.hasException())
         return arrayBufferContentsArray.releaseException();
 
-        // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
+    // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedCanvases;
@@ -5845,6 +6026,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 
 JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
 {
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
@@ -5867,8 +6050,14 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     );
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
-    if (throwExceptions == SerializationErrorMode::Throwing)
+    // Deserialize may throw an exception. Similar to serialize (~L6240, SerializedScriptValue::create),
+    // we'll catch and rethrow.
+    if (UNLIKELY(scope.exception()) || throwExceptions == SerializationErrorMode::Throwing)
         maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
+
+    // Rethrow is a bit simpler here since we don't deal with return codes.
+    RETURN_IF_EXCEPTION(scope, jsNull());
+
     return result.first ? result.first : jsNull();
 }
 // JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)

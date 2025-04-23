@@ -8,7 +8,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const enable_allocation = false;
 pub const enable_callstack = false;
@@ -534,14 +534,14 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
             const RLTD: std.c.RTLD = if (bun.Environment.isMac) @bitCast(@as(i32, -2)) else if (bun.Environment.isLinux) .{} else {};
 
             if (bun.getenvZ("BUN_TRACY_PATH")) |path| {
-                const handle = bun.C.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);
+                const handle = bun.sys.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break :get;
                 }
             }
             inline for (comptime paths_to_try) |path| {
-                const handle = bun.C.dlopen(path, RLTD);
+                const handle = bun.sys.dlopen(path, RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break;

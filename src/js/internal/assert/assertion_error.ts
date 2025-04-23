@@ -3,6 +3,7 @@
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
+const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 const ObjectAssign = Object.assign;
@@ -33,8 +34,6 @@ declare namespace Internal {
   function printMyersDiff(...args: any[]): any;
   function printSimpleMyersDiff(...args: any[]): any;
 }
-
-const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const kReadableOperator = {
   deepStrictEqual: "Expected values to be strictly deep-equal:",
@@ -242,6 +241,11 @@ function addEllipsis(string) {
 }
 
 class AssertionError extends Error {
+  generatedMessage;
+  actual;
+  expected;
+  operator;
+
   constructor(options) {
     validateObject(options, "options");
     const {
@@ -361,9 +365,6 @@ class AssertionError extends Error {
     });
     this.code = "ERR_ASSERTION";
     if (details) {
-      this.actual = undefined;
-      this.expected = undefined;
-      this.operator = undefined;
       for (let i = 0; i < details.length; i++) {
         this["message " + i] = details[i].message;
         this["actual " + i] = details[i].actual;

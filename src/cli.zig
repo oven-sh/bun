@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -8,8 +8,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
-const root = @import("root");
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -203,6 +202,8 @@ pub const Arguments = struct {
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--preserve-symlinks               Preserve symlinks when resolving files") catch unreachable,
+        clap.parseParam("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
@@ -221,6 +222,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
+        clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
         clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
@@ -242,7 +244,8 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -331,7 +334,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -399,10 +402,10 @@ pub const Arguments = struct {
         if (config_path_.len == 0 and (user_config_path_ != null or
             Command.Tag.always_loads_config.get(cmd) or
             (cmd == .AutoCommand and
-            // "bun"
-            (ctx.positionals.len == 0 or
-            // "bun file.js"
-            ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
+                // "bun"
+                (ctx.positionals.len == 0 or
+                    // "bun file.js"
+                    ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
         {
             config_path_ = "bunfig.toml";
             auto_loaded = true;
@@ -636,7 +639,12 @@ pub const Arguments = struct {
 
         opts.drop = args.options("--drop");
 
-        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        // Node added a `--loader` flag (that's kinda like `--register`). It's
+        // completely different from ours.
+        const loader_tuple = if (cmd != .RunAsNodeCommand)
+            try LoaderColonList.resolve(allocator, args.options("--loader"))
+        else
+            .{ .keys = &[_]u8{}, .values = &[_]Api.Loader{} };
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -656,6 +664,13 @@ pub const Arguments = struct {
         opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
+        if (args.flag("--preserve-symlinks")) {
+            opts.preserve_symlinks = true;
+        }
+        if (args.flag("--preserve-symlinks-main")) {
+            ctx.runtime_options.preserve_symlinks_main = true;
+        }
+
         ctx.passthrough = args.remaining();
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
@@ -667,6 +682,7 @@ pub const Arguments = struct {
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
+            const preloads2 = args.options("--require");
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
@@ -688,6 +704,10 @@ pub const Arguments = struct {
 
             if (args.option("--origin")) |origin| {
                 opts.origin = origin;
+            }
+
+            if (args.flag("--redis-preconnect")) {
+                ctx.runtime_options.redis_preconnect = true;
             }
 
             if (args.option("--port")) |port_str| {
@@ -746,13 +766,23 @@ pub const Arguments = struct {
                 }
             }
 
-            if (ctx.preloads.len > 0 and preloads.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
+            if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
                 all.appendSliceAssumeCapacity(ctx.preloads);
                 all.appendSliceAssumeCapacity(preloads);
+                all.appendSliceAssumeCapacity(preloads2);
                 ctx.preloads = all.items;
             } else if (preloads.len > 0) {
-                ctx.preloads = preloads;
+                if (preloads2.len > 0) {
+                    var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
+                    all.appendSliceAssumeCapacity(preloads);
+                    all.appendSliceAssumeCapacity(preloads2);
+                    ctx.preloads = all.items;
+                } else {
+                    ctx.preloads = preloads;
+                }
+            } else if (preloads2.len > 0) {
+                ctx.preloads = preloads2;
             }
 
             if (args.option("--print")) |script| {
@@ -1503,6 +1533,7 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
+        redis_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
@@ -1512,6 +1543,7 @@ pub const Command = struct {
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.
         expose_gc: bool = false,
+        preserve_symlinks_main: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -1594,9 +1626,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }
@@ -2129,7 +2161,7 @@ pub const Command = struct {
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@')) and
+                        strings.startsWithChar(template_name, '@')) and
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {

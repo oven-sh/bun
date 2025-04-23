@@ -69,11 +69,12 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "CommonJSModuleRecord.h"
+#include "JSCommonJSModule.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "AsyncContextFrame.h"
 
 using namespace JSC;
 using namespace Zig;
@@ -766,14 +767,12 @@ node_api_create_external_string_latin1(napi_env env,
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        if (finalize_callback) {
-            NAPI_LOG("latin1 string finalizer");
-            finalize_callback(env, str, hint);
-        }
+        NAPI_LOG("latin1 string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -802,15 +801,14 @@ node_api_create_external_string_utf16(napi_env env,
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
+
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        if (finalize_callback) {
-            NAPI_LOG("utf16 string finalizer");
-            finalize_callback(env, str, hint);
-        }
+        NAPI_LOG("utf16 string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -2062,7 +2060,7 @@ extern "C" napi_status napi_create_double(napi_env env, double value,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
-    *result = toNapi(jsDoubleNumber(value), toJS(env));
+    *result = toNapi(jsNumber(value), toJS(env));
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2134,8 +2132,25 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
     NAPI_RETURN_SUCCESS(env);
 }
 
-template<typename BufferElement, WebCore::BufferEncodingType EncodeTo>
-napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, BufferElement* buf, size_t bufsize, size_t* writtenPtr)
+// must match src/bun.js/node/types.zig#Encoding, which matches WebCore::BufferEncodingType
+enum class NapiStringEncoding : uint8_t {
+    utf8 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf8),
+    utf16le = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
+    latin1 = static_cast<uint8_t>(WebCore::BufferEncodingType::latin1),
+};
+
+template<NapiStringEncoding...>
+struct BufferElement {
+    using Type = char;
+};
+
+template<>
+struct BufferElement<NapiStringEncoding::utf16le> {
+    using Type = char16_t;
+};
+
+template<NapiStringEncoding EncodeTo>
+napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, typename BufferElement<EncodeTo>::Type* buf, size_t bufsize, size_t* writtenPtr)
 {
     NAPI_CHECK_ARG(env, napiValue);
     JSValue jsValue = toJS(napiValue);
@@ -2148,10 +2163,22 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
     if (buf == nullptr) {
         // they just want to know the length
         NAPI_CHECK_ARG(env, writtenPtr);
-        if (view.is8Bit()) {
-            *writtenPtr = Bun__encoding__byteLengthLatin1(view.span8().data(), length, static_cast<uint8_t>(EncodeTo));
-        } else {
-            *writtenPtr = Bun__encoding__byteLengthUTF16(view.span16().data(), length, static_cast<uint8_t>(EncodeTo));
+        switch (EncodeTo) {
+        case NapiStringEncoding::utf8:
+            if (view.is8Bit()) {
+                *writtenPtr = Bun__encoding__byteLengthLatin1AsUTF8(view.span8().data(), length);
+            } else {
+                *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view.span16().data(), length);
+            }
+            break;
+        case NapiStringEncoding::utf16le:
+            [[fallthrough]];
+        case NapiStringEncoding::latin1:
+            // if the string's encoding is the same as the destination encoding, this is trivially correct
+            // if we are converting UTF-16 to Latin-1, then we do so by truncating each code unit, so the length is the same
+            // if we are converting Latin-1 to UTF-16, then we do so by extending each code unit, so the length is also the same
+            *writtenPtr = length;
+            break;
         }
         return napi_set_last_error(env, napi_ok);
     }
@@ -2168,10 +2195,30 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
     }
 
     size_t written;
+    std::span<unsigned char> writable_byte_slice(reinterpret_cast<unsigned char*>(buf),
+        EncodeTo == NapiStringEncoding::utf16le
+            // don't write encoded text to the last element of the destination buffer
+            // since we need to put a null terminator there
+            ? 2 * (bufsize - 1)
+            : bufsize - 1);
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(EncodeTo));
+        if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+            // pass subslice to work around Bun__encoding__writeLatin1 asserting that the output has room
+            written = Bun__encoding__writeLatin1(view.span8().data(),
+                std::min(static_cast<size_t>(view.span8().size()), bufsize),
+                writable_byte_slice.data(),
+                writable_byte_slice.size(),
+                static_cast<uint8_t>(EncodeTo));
+        } else {
+            written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+        }
     } else {
-        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(EncodeTo));
+        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+    }
+
+    // convert bytes to code units
+    if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+        written /= 2;
     }
 
     if (writtenPtr != nullptr) {
@@ -2193,7 +2240,7 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<char, WebCore::BufferEncodingType::utf8>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::utf8>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_string_latin1(napi_env env, napi_value napiValue, char* buf, size_t bufsize, size_t* writtenPtr)
@@ -2201,7 +2248,7 @@ extern "C" napi_status napi_get_value_string_latin1(napi_env env, napi_value nap
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<char, WebCore::BufferEncodingType::latin1>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::latin1>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napiValue, char16_t* buf, size_t bufsize, size_t* writtenPtr)
@@ -2209,7 +2256,7 @@ extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napi
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<char16_t, WebCore::BufferEncodingType::latin1>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::utf16le>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
@@ -2689,17 +2736,24 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
     return napi_set_last_error(env, napi_ok);
 }
 
-extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
-    napi_value func_napi, size_t argc,
+extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
+    napi_value func, size_t argc,
     const napi_value* argv,
-    napi_value* result_ptr)
+    napi_value* result)
 {
     NAPI_PREAMBLE(env);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
-    JSValue funcValue = toJS(func_napi);
-    NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isObject(), napi_function_expected);
-    JSC::CallData callData = getCallData(funcValue);
-    NAPI_RETURN_EARLY_IF_FALSE(env, callData.type != JSC::CallData::Type::None, napi_function_expected);
+    NAPI_CHECK_ARG(env, func);
+    JSValue funcValue = toJS(func);
+    // Ideally, funcValue is never of type AsyncContextFrame, as that type
+    // should never be exposed to user-code. To preserve async local storage
+    // contexts across napi_threadsafe_callback, AsyncContextFrame is created.
+    // An alternative here would be to unwrap the frame in napi.zig
+    // ThreadSafeCallback.call, but doing the work assigning and restoring the
+    // global state is not trivial since there are no Zig bindings for that.
+    // Most, if not all, threadsafe callbacks will not pass the callback to JS,
+    // they will just call it with this function.
+    NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isCallable() || jsDynamicCast<AsyncContextFrame*>(funcValue), napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2709,17 +2763,18 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
         gcSafeMemcpy<JSValue>(buffer, reinterpret_cast<const JSValue*>(argv), sizeof(JSValue) * argc);
     });
 
-    JSValue thisValue = toJS(recv_napi);
+    JSValue thisValue = toJS(recv);
     if (thisValue.isEmpty()) {
         thisValue = JSC::jsUndefined();
     }
-    JSValue result = call(globalObject, funcValue, callData, thisValue, args);
 
-    if (result_ptr) {
-        if (result.isEmpty()) {
-            *result_ptr = toNapi(JSC::jsUndefined(), globalObject);
+    JSValue res = AsyncContextFrame::call(globalObject, funcValue, thisValue, args);
+
+    if (result) {
+        if (res.isEmpty()) {
+            *result = toNapi(JSC::jsUndefined(), globalObject);
         } else {
-            *result_ptr = toNapi(result, globalObject);
+            *result = toNapi(res, globalObject);
         }
     }
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);

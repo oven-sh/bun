@@ -1,5 +1,5 @@
 // This file is the old linker, used by Bun.Transpiler.
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,7 +9,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FileDescriptorType = bun.FileDescriptor;
-const C = bun.C;
+
 const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
@@ -101,7 +101,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| _fd.asFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -186,14 +186,13 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                            if (replacement.tag == .builtin and import_record.kind.isCommonJS())
+                                continue;
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
                             import_record.is_external_without_side_effects = true;
-                            if (replacement.tag != .none) {
-                                externals.append(@intCast(record_index)) catch unreachable;
-                                continue;
-                            }
+                            continue;
                         }
                         if (strings.startsWith(import_record.path.text, "node:")) {
                             // if a module is not found here, it is not found at all

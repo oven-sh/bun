@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -127,13 +127,4 @@ pub const DOMFormData = opaque {
         JSC.markBinding(@src());
         DOMFormData__forEach(this, ctx, Wrap.forEachWrapper);
     }
-
-    pub const Extern = [_][]const u8{
-        "create",
-        "fromJS",
-        "append",
-        "appendBlob",
-        "count",
-        "createFromURLQuery",
-    };
 };

@@ -1,6 +1,6 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, imageFixtures, reactRefreshStub } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 import assert from "node:assert";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -97,9 +97,8 @@ devTest("css file with initial syntax error gets recovered", {
 });
 devTest("add new css import later", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
       body: `hello world`,
     }),
     "index.ts": `
@@ -107,6 +106,7 @@ devTest("add new css import later", {
       export default function () {
         return "hello world";
       }
+      import.meta.hot.accept();
     `,
     "styles.css": `
       body {
@@ -477,10 +477,8 @@ devTest("css import before create project relative", {
       },
     );
     await c.expectNoWebSocketActivity(async () => {
-      await dev.write("assets/bun.png", imageFixtures.bun, {
-        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
-      });
-      await dev.delete("assets/bun.png", { wait: false });
+      await dev.write("assets/bun.png", imageFixtures.bun, { errors: null });
+      await dev.delete("assets/bun.png", { errors: null });
     });
     await dev.fetch("/").expect.not.toContain("HELLO");
     await dev.write(

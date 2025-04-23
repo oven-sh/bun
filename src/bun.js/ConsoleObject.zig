@@ -1,9 +1,8 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;
 const ConsoleObject = @This();
-const Shimmer = @import("./bindings/shimmer.zig").Shimmer;
 const String = bun.String;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
@@ -20,11 +19,6 @@ const default_allocator = bun.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
-pub const shim = Shimmer("Bun", "ConsoleObject", @This());
-pub const Type = *anyopaque;
-pub const name = "Bun::ConsoleObject";
-pub const include = "\"ConsoleObject.h\"";
-pub const namespace = shim.namespace;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
@@ -79,8 +73,7 @@ threadlocal var stdout_lock_count: u16 = 0;
 
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
-    //console_: ConsoleObject.Type,
-    ctype: ConsoleObject.Type,
+    ctype: *ConsoleObject,
     message_type: MessageType,
     //message_level: u32,
     level: MessageLevel,
@@ -94,8 +87,8 @@ pub fn messageWithTypeAndLevel(
     };
 }
 fn messageWithTypeAndLevel_(
-    //console_: ConsoleObject.Type,
-    _: ConsoleObject.Type,
+    //console_: *ConsoleObject,
+    _: *ConsoleObject,
     message_type: MessageType,
     //message_level: u32,
     level: MessageLevel,
@@ -367,7 +360,7 @@ pub const TablePrinter = struct {
             return;
         }
 
-        if (row_value.isObject()) {
+        if (row_value.getObject()) |obj| {
             // object ->
             //  - if "properties" arg was provided: iterate the already-created columns (except for the 0-th which is the index)
             //  - otherwise: iterate the object properties, and create the columns on-demand
@@ -381,7 +374,7 @@ pub const TablePrinter = struct {
                 var cols_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(this.globalObject, row_value);
+                }).init(this.globalObject, obj);
                 defer cols_iter.deinit();
 
                 while (try cols_iter.next()) |col_key| {
@@ -561,10 +554,11 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
+                const tabular_obj = try this.tabular_data.toObject(globalObject);
                 var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data);
+                }).init(globalObject, tabular_obj);
                 defer rows_iter.deinit();
 
                 while (try rows_iter.next()) |row_key| {
@@ -634,10 +628,13 @@ pub const TablePrinter = struct {
                 }.callback);
                 if (ctx_.err) return error.JSError;
             } else {
+                const cell = this.tabular_data.toCell() orelse {
+                    return globalObject.throwTypeError("tabular_data must be an object or array", .{});
+                };
                 var rows_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data);
+                }).init(globalObject, cell.toObject(globalObject));
                 defer rows_iter.deinit();
 
                 while (try rows_iter.next()) |row_key| {
@@ -1006,6 +1003,9 @@ pub const Formatter = struct {
     stack_check: bun.StackCheck = .{ .cached_stack_end = std.math.maxInt(usize) },
     can_throw_stack_overflow: bool = false,
     error_display_level: FormatOptions.ErrorDisplayLevel = .full,
+    /// If ArrayBuffer-like objects contain ascii text, the buffer is printed as a string.
+    /// Set true in the error printer so that ShellError prints a more readable message.
+    format_buffer_as_text: bool = false,
 
     pub fn deinit(this: *Formatter) void {
         if (bun.take(&this.map_node)) |node| {
@@ -1238,7 +1238,7 @@ pub const Formatter = struct {
             if (js_type.canGet() and js_type != .ProxyObject and !opts.disable_inspect_custom) {
                 // Attempt to get custom formatter
                 if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
-                    if (callback_value.isCallable(globalThis.vm())) {
+                    if (callback_value.isCallable()) {
                         return .{
                             .tag = .{
                                 .CustomFormattedObject = .{
@@ -1262,7 +1262,7 @@ pub const Formatter = struct {
 
             // If we check an Object has a method table and it does not
             // it will crash
-            if (js_type != .Object and js_type != .ProxyObject and value.isCallable(globalThis.vm())) {
+            if (js_type != .Object and js_type != .ProxyObject and value.isCallable()) {
                 if (value.isClass(globalThis)) {
                     return .{
                         .tag = .Class,
@@ -1759,7 +1759,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             count: usize = 0,
-            pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (this.formatter.failed) return;
                 if (single_line and this.count > 0) {
@@ -1833,7 +1833,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             is_first: bool = true,
-            pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (this.formatter.failed) return;
                 if (single_line) {
@@ -2107,7 +2107,7 @@ pub const Formatter = struct {
             },
             .String => {
                 // This is called from the '%s' formatter, so it can actually be any value
-                const str: bun.String = try bun.String.fromJS2(value, this.globalThis);
+                const str: bun.String = try bun.String.fromJS(value, this.globalThis);
                 defer str.deref();
                 this.addForNewLine(str.length());
 
@@ -2571,7 +2571,7 @@ pub const Formatter = struct {
                 } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
                     s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.FetchHeaders) != null) {
+                } else if (value.as(bun.webcore.FetchHeaders) != null) {
                     if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);
                         writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
@@ -2608,9 +2608,9 @@ pub const Formatter = struct {
 
                     // this case should never happen
                     return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
-                } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
+                } else if (value.as(bun.api.Timer.TimeoutObject)) |timer| {
                     this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
-                    if (timer.internals.kind == .setInterval) {
+                    if (timer.internals.flags.kind == .setInterval) {
                         this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                             timer.internals.id,
@@ -2622,23 +2622,23 @@ pub const Formatter = struct {
                     }
 
                     return;
-                } else if (value.as(JSC.API.Bun.Timer.ImmediateObject)) |immediate| {
+                } else if (value.as(bun.api.Timer.ImmediateObject)) |immediate| {
                     this.addForNewLine("Immediate(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(immediate.internals.id, 0)))));
                     writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
                         immediate.internals.id,
                     });
 
                     return;
-                } else if (value.as(JSC.BuildMessage)) |build_log| {
+                } else if (value.as(bun.api.BuildMessage)) |build_log| {
                     build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
+                } else if (value.as(bun.api.ResolveMessage)) |resolve_log| {
                     resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
-                    if (value.isCallable(this.globalThis.vm())) {
+                    if (value.isCallable()) {
                         return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
@@ -2904,7 +2904,7 @@ pub const Formatter = struct {
                     break :brk JSValue.undefined;
                 };
 
-                const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
@@ -3038,7 +3038,7 @@ pub const Formatter = struct {
                     if (_tag.type == .Symbol) {} else if (_tag.type.isStringLike()) {
                         try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
-                    } else if (_tag.type.isObject() or type_value.isCallable(this.globalThis.vm())) {
+                    } else if (_tag.type.isObject() or type_value.isCallable()) {
                         type_value.getNameProperty(this.globalThis, &tag_name_str);
                         if (tag_name_str.len == 0) {
                             tag_name_str = ZigString.init("NoName");
@@ -3084,14 +3084,15 @@ pub const Formatter = struct {
 
                 if (value.get_unsafe(this.globalThis, "props")) |props| {
                     const prev_quote_strings = this.quote_strings;
-                    this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
+                    this.quote_strings = true;
 
+                    // SAFETY: JSX props are always objects
+                    const props_obj = props.getObject().?;
                     var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = true,
-
                         .include_value = true,
-                    }).init(this.globalThis, props);
+                    }).init(this.globalThis, props_obj);
                     defer props_iter.deinit();
 
                     const children_prop = props.get_unsafe(this.globalThis, "children");
@@ -3136,15 +3137,15 @@ pub const Formatter = struct {
                                 }
 
                                 if (!this.single_line and (
-                                // count_without_children is necessary to prevent printing an extra newline
-                                // if there are children and one prop and the child prop is the last prop
+                                    // count_without_children is necessary to prevent printing an extra newline
+                                    // if there are children and one prop and the child prop is the last prop
                                     props_iter.i + 1 < count_without_children and
-                                    // 3 is arbitrary but basically
-                                    //  <input type="text" value="foo" />
-                                    //  ^ should be one line
-                                    // <input type="text" value="foo" bar="true" baz={false} />
-                                    //  ^ should be multiple lines
-                                    props_iter.i > 3))
+                                        // 3 is arbitrary but basically
+                                        //  <input type="text" value="foo" />
+                                        //  ^ should be one line
+                                        // <input type="text" value="foo" bar="true" baz={false} />
+                                        //  ^ should be multiple lines
+                                        props_iter.i > 3))
                                 {
                                     writer.writeAll("\n");
                                     this.writeIndent(Writer, writer_) catch unreachable;
@@ -3316,7 +3317,7 @@ pub const Formatter = struct {
                 if (iter.i == 0) {
                     if (value.isClass(this.globalThis))
                         try this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
-                    else if (value.isCallable(this.globalThis.vm()))
+                    else if (value.isCallable())
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
                         if (getObjectName(this.globalThis, value)) |name_str| {
@@ -3344,6 +3345,17 @@ pub const Formatter = struct {
                 const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
                 const slice = arrayBuffer.byteSlice();
 
+                if (this.format_buffer_as_text and jsType == .Uint8Array and bun.strings.isValidUTF8(slice)) {
+                    if (comptime enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r><green>", true));
+                    }
+                    JSPrinter.writeJSONString(slice, Writer, writer_, .utf8) catch {};
+                    if (comptime enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r>", true));
+                    }
+                    return;
+                }
+
                 writer.writeAll(
                     if (arrayBuffer.typed_array_type == .Uint8Array and
                         arrayBuffer.value.isBuffer(this.globalThis))
@@ -3355,6 +3367,7 @@ pub const Formatter = struct {
                     writer.print("({d}) []", .{arrayBuffer.len});
                     return;
                 }
+
                 writer.print("({d}) [ ", .{arrayBuffer.len});
 
                 switch (jsType) {
@@ -3506,7 +3519,7 @@ pub const Formatter = struct {
 
 pub fn count(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     globalThis: *JSGlobalObject,
     // chars
@@ -3532,7 +3545,7 @@ pub fn count(
 }
 pub fn countReset(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     globalThis: *JSGlobalObject,
     // chars
@@ -3554,7 +3567,7 @@ threadlocal var pending_time_logs_loaded = false;
 
 pub fn time(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     chars: [*]const u8,
@@ -3574,7 +3587,7 @@ pub fn time(
 }
 pub fn timeEnd(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     chars: [*]const u8,
@@ -3600,7 +3613,7 @@ pub fn timeEnd(
 
 pub fn timeLog(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     global: *JSGlobalObject,
     // chars
@@ -3652,7 +3665,7 @@ pub fn timeLog(
 }
 pub fn profile(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     // chars
@@ -3662,7 +3675,7 @@ pub fn profile(
 ) callconv(JSC.conv) void {}
 pub fn profileEnd(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     // chars
@@ -3672,7 +3685,7 @@ pub fn profileEnd(
 ) callconv(JSC.conv) void {}
 pub fn takeHeapSnapshot(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     globalThis: *JSGlobalObject,
     // chars
@@ -3686,7 +3699,7 @@ pub fn takeHeapSnapshot(
 }
 pub fn timeStamp(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     // args
@@ -3694,7 +3707,7 @@ pub fn timeStamp(
 ) callconv(JSC.conv) void {}
 pub fn record(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     // args
@@ -3702,7 +3715,7 @@ pub fn record(
 ) callconv(JSC.conv) void {}
 pub fn recordEnd(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     // args
@@ -3710,7 +3723,7 @@ pub fn recordEnd(
 ) callconv(JSC.conv) void {}
 pub fn screenshot(
     // console
-    _: ConsoleObject.Type,
+    _: *ConsoleObject,
     // global
     _: *JSGlobalObject,
     // args
@@ -3718,17 +3731,17 @@ pub fn screenshot(
 ) callconv(JSC.conv) void {}
 
 comptime {
-    @export(&messageWithTypeAndLevel, .{ .name = shim.symbolName("messageWithTypeAndLevel") });
-    @export(&count, .{ .name = shim.symbolName("count") });
-    @export(&countReset, .{ .name = shim.symbolName("countReset") });
-    @export(&time, .{ .name = shim.symbolName("time") });
-    @export(&timeLog, .{ .name = shim.symbolName("timeLog") });
-    @export(&timeEnd, .{ .name = shim.symbolName("timeEnd") });
-    @export(&profile, .{ .name = shim.symbolName("profile") });
-    @export(&profileEnd, .{ .name = shim.symbolName("profileEnd") });
-    @export(&takeHeapSnapshot, .{ .name = shim.symbolName("takeHeapSnapshot") });
-    @export(&timeStamp, .{ .name = shim.symbolName("timeStamp") });
-    @export(&record, .{ .name = shim.symbolName("record") });
-    @export(&recordEnd, .{ .name = shim.symbolName("recordEnd") });
-    @export(&screenshot, .{ .name = shim.symbolName("screenshot") });
+    @export(&messageWithTypeAndLevel, .{ .name = "Bun__ConsoleObject__messageWithTypeAndLevel" });
+    @export(&count, .{ .name = "Bun__ConsoleObject__count" });
+    @export(&countReset, .{ .name = "Bun__ConsoleObject__countReset" });
+    @export(&time, .{ .name = "Bun__ConsoleObject__time" });
+    @export(&timeLog, .{ .name = "Bun__ConsoleObject__timeLog" });
+    @export(&timeEnd, .{ .name = "Bun__ConsoleObject__timeEnd" });
+    @export(&profile, .{ .name = "Bun__ConsoleObject__profile" });
+    @export(&profileEnd, .{ .name = "Bun__ConsoleObject__profileEnd" });
+    @export(&takeHeapSnapshot, .{ .name = "Bun__ConsoleObject__takeHeapSnapshot" });
+    @export(&timeStamp, .{ .name = "Bun__ConsoleObject__timeStamp" });
+    @export(&record, .{ .name = "Bun__ConsoleObject__record" });
+    @export(&recordEnd, .{ .name = "Bun__ConsoleObject__recordEnd" });
+    @export(&screenshot, .{ .name = "Bun__ConsoleObject__screenshot" });
 }

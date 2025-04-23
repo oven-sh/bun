@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -82,6 +82,8 @@ pub const TransformList = struct {
                 base_writer,
                 css.PrinterOptions.defaultWithMinify(true),
                 dest.import_info,
+                dest.local_names,
+                dest.symbols,
             );
             defer p.deinit();
 
@@ -862,7 +864,12 @@ pub fn Matrix3d(comptime T: type) type {
 pub const TransformStyle = enum {
     flat,
     @"preserve-3d",
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [transform-box](https://drafts.csswg.org/css-transforms-1/#transform-box) property.
@@ -878,7 +885,12 @@ pub const TransformBox = enum {
     /// Uses the nearest SVG viewport as reference box.
     @"view-box",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [backface-visibility](https://drafts.csswg.org/css-transforms-2/#backface-visibility-property) property.
@@ -886,7 +898,12 @@ pub const BackfaceVisibility = enum {
     visible,
     hidden,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the perspective property.
@@ -896,8 +913,8 @@ pub const Perspective = union(enum) {
     /// Distance to the center of projection.
     length: Length,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
         return css.implementEql(@This(), this, other);
@@ -1228,14 +1245,14 @@ pub const TransformHandler = struct {
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
                 if (this.transform) |current| {
-                    if (!current[0].eql(&transform_val) and !current[1].contains(vp)) {
+                    if (!current[0].eql(&transform_val) and !bun.bits.contains(css.VendorPrefix, current[1], vp)) {
                         this.flush(allocator, dest, context);
                     }
                 }
 
                 // Otherwise, update the value and add the prefix.
                 if (this.transform) |*transform| {
-                    transform.* = .{ transform_val.deepClone(allocator), transform.*[1].bitwiseOr(vp) };
+                    transform.* = .{ transform_val.deepClone(allocator), bun.bits.@"or"(css.VendorPrefix, transform.*[1], vp) };
                 } else {
                     this.transform = .{ transform_val.deepClone(allocator), vp };
                     this.has_any = true;

@@ -1,6 +1,6 @@
 const c = @import("std").c;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
@@ -1685,7 +1685,7 @@ pub const Error = enum(i32) {
         hostname: ?bun.String,
         promise: JSC.JSPromise.Strong,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn init(errno: Error, syscall: []const u8, hostname: ?bun.String, promise: JSC.JSPromise.Strong) *Deferred {
             return Deferred.new(.{
@@ -1734,7 +1734,7 @@ pub const Error = enum(i32) {
                 hostname.deref();
             }
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -1999,7 +1999,7 @@ pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
 comptime {
-    const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
+    const Bun__canonicalizeIP = JSC.toJSHostFn(Bun__canonicalizeIP_);
     @export(&Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
 }
 pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -2014,10 +2014,11 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
     const script_ctx = globalThis.bunVM();
-    var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
+    var args = JSC.CallFrame.ArgumentsSlice.init(script_ctx, arguments.slice());
     const addr_arg = args.nextEat().?;
 
-    if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
+    const addr = try bun.String.fromJS(addr_arg, globalThis);
+    {
         defer addr.deref();
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
@@ -2046,10 +2047,6 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
-    } else {
-        if (!globalThis.hasException())
-            return globalThis.throwInvalidArguments("address must be a string", .{});
-        return error.JSError;
     }
 }
 

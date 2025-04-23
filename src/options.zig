@@ -10,7 +10,7 @@ const Api = api.Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -20,13 +20,14 @@ const MutableString = bun.MutableString;
 const FileDescriptorType = bun.FileDescriptor;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
@@ -79,9 +80,9 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
 }
 
 pub const ExternalModules = struct {
-    node_modules: std.BufSet = undefined,
-    abs_paths: std.BufSet = undefined,
-    patterns: []const WildcardPattern = undefined,
+    node_modules: std.BufSet,
+    abs_paths: std.BufSet,
+    patterns: []const WildcardPattern,
 
     pub const WildcardPattern = struct {
         prefix: string,
@@ -89,7 +90,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.JSC.HardcodedModule.Aliases.has(str, .node);
+        return bun.JSC.ModuleLoader.HardcodedModule.Alias.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -221,6 +222,7 @@ pub const ExternalModules = struct {
         "stream",
         "string_decoder",
         "sys",
+        "test",
         "timers",
         "tls",
         "trace_events",
@@ -581,12 +583,12 @@ pub const Format = enum {
     /// Bake uses a special module format for Hot-module-reloading. It includes a
     /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
     ///
-    /// ((input_graph, config) => {
+    /// ((unloadedModuleRegistry, config) => {
     ///   ... runtime code ...
     /// })({
-    ///   "module1.ts"(module) { ... },
-    ///   "module2.ts"(module) { ... },
-    /// }, { metadata });
+    ///   "module1.ts": ...,
+    ///   "module2.ts": ...,
+    /// }, { ...metadata... });
     internal_bake_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
@@ -617,7 +619,7 @@ pub const Format = enum {
             return global.throwInvalidArguments("format must be a string", .{});
         }
 
-        return Map.fromJS(global, format) orelse {
+        return try Map.fromJS(global, format) orelse {
             return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }
@@ -646,6 +648,25 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+
+    pub const Optional = enum(u8) {
+        none = 254,
+        _,
+        pub fn unwrap(opt: Optional) ?Loader {
+            return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+    };
+
+    pub fn isCSS(this: Loader) bool {
+        return this == .css;
+    }
+
+    pub fn isJSLike(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
 
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
@@ -966,7 +987,11 @@ const LoaderResult = struct {
     path: Fs.Path,
     is_main: bool,
     specifier: string,
+    /// NOTE: This is always `null` for non-js-like loaders since it's not
+    /// needed for them.
+    package_json: ?*const PackageJSON,
 };
+
 pub fn getLoaderAndVirtualSource(
     specifier_str: string,
     jsc_vm: *JSC.VirtualMachine,
@@ -1031,12 +1056,25 @@ pub fn getLoaderAndVirtualSource(
 
     const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
 
+    const dir = path.name.dir;
+    // NOTE: we cannot trust `path.isFile()` since it's not always correct
+    // NOTE: assume we may need a package.json when no loader is specified
+    const is_js_like = if (loader) |l| l.isJSLike() else true;
+    const package_json: ?*const PackageJSON = if (is_js_like and std.fs.path.isAbsolute(dir))
+        if (jsc_vm.transpiler.resolver.readDirInfo(dir) catch null) |dir_info|
+            dir_info.package_json orelse dir_info.enclosing_package_json
+        else
+            null
+    else
+        null;
+
     return .{
         .loader = loader,
         .virtual_source = virtual_source,
         .path = path,
         .is_main = is_main,
         .specifier = specifier,
+        .package_json = package_json,
     };
 }
 
@@ -1670,7 +1708,7 @@ pub const BundleOptions = struct {
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
     /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
-    external: ExternalModules = ExternalModules{},
+    external: ExternalModules,
     entry_points: []const string,
     entry_naming: []const u8 = "",
     asset_naming: []const u8 = "",
@@ -1678,6 +1716,9 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
+    /// This list applies to all extension resolution cases. The runtime uses
+    /// this for implementing `require.extensions`
+    extra_cjs_extensions: []const []const u8 = &.{},
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     defines_loaded: bool = false,
@@ -1991,7 +2032,7 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
-            opts.output_dir = try fs.getFdPath(bun.toFD(opts.output_dir_handle.?.fd));
+            opts.output_dir = try fs.getFdPath(.fromStdDir(opts.output_dir_handle.?));
         }
 
         opts.polyfill_node_globals = opts.target == .browser;
@@ -2309,12 +2350,6 @@ pub const RouteConfig = struct {
     // maybe like CBOR
     extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
-
-    static_dir: string = "",
-    static_dir_handle: ?std.fs.Dir = null,
-    static_dir_enabled: bool = false,
-    single_page_app_routing: bool = false,
-    single_page_app_fd: StoredFileDescriptorType = .zero,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{

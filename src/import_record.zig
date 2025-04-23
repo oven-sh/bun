@@ -1,5 +1,5 @@
 const fs = bun.fs;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
@@ -25,8 +25,10 @@ pub const ImportKind = enum(u8) {
     at_conditional = 7,
     /// A CSS "url(...)" token
     url = 8,
+    /// A CSS "composes" property
+    composes = 9,
 
-    internal = 9,
+    internal = 10,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
@@ -42,6 +44,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.require_resolve, "require-resolve");
         labels.set(ImportKind.at, "import-rule");
         labels.set(ImportKind.url, "url-token");
+        labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.internal, "internal");
         break :brk labels;
     };
@@ -53,10 +56,11 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.stmt, "import");
         labels.set(ImportKind.require, "require()");
         labels.set(ImportKind.dynamic, "import()");
-        labels.set(ImportKind.require_resolve, "require.resolve");
+        labels.set(ImportKind.require_resolve, "require.resolve()");
         labels.set(ImportKind.at, "@import");
         labels.set(ImportKind.url, "url()");
         labels.set(ImportKind.internal, "<bun internal>");
+        labels.set(ImportKind.composes, "composes");
         break :brk labels;
     };
 
@@ -80,7 +84,7 @@ pub const ImportKind = enum(u8) {
     }
 
     pub fn isFromCSS(k: ImportKind) bool {
-        return k == .at_conditional or k == .at or k == .url;
+        return k == .at_conditional or k == .at or k == .url or k == .composes;
     }
 
     pub fn toAPI(k: ImportKind) Api.ImportKind {

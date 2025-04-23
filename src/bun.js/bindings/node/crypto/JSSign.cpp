@@ -8,16 +8,15 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JSBufferEncodingType.h"
-#include "KeyObject.h"
 #include "JSCryptoKey.h"
-#include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSBuffer.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunString.h"
 #include "JSVerify.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyRSA.h"
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -44,21 +43,32 @@ static const JSC::HashTableValue JSSignPrototypeTableValues[] = {
 
 // JSSign implementation
 const JSC::ClassInfo JSSign::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSign) };
+const JSC::ClassInfo JSSignPrototype::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignPrototype) };
+const JSC::ClassInfo JSSignConstructor::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignConstructor) };
+
+void JSSign::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSSign*>(cell)->~JSSign();
+}
+
+JSSign::~JSSign()
+{
+}
 
 JSSign::JSSign(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
 {
 }
 
-void JSSign::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+void JSSign::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 }
 
-JSSign* JSSign::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
+JSSign* JSSign::create(JSC::VM& vm, JSC::Structure* structure)
 {
     JSSign* sign = new (NotNull, JSC::allocateCell<JSSign>(vm)) JSSign(vm, structure);
-    sign->finishCreation(vm, globalObject);
+    sign->finishCreation(vm);
     return sign;
 }
 
@@ -72,7 +82,7 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<CellType, WebCore::UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<JSSign, WebCore::UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForJSSign.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSign = std::forward<decltype(space)>(space); },
@@ -81,7 +91,6 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
 }
 
 // JSSignPrototype implementation
-const JSC::ClassInfo JSSignPrototype::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignPrototype) };
 
 JSSignPrototype::JSSignPrototype(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -110,7 +119,6 @@ JSC::Structure* JSSignPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObjec
 }
 
 // JSSignConstructor implementation
-const JSC::ClassInfo JSSignConstructor::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignConstructor) };
 
 JSSignConstructor::JSSignConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, callSign, constructSign)
@@ -228,21 +236,23 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         return JSValue::encode({});
     }
 
+    JSValue wrappedSign = callFrame->argument(0);
+
     // Check that we have at least 1 argument (the data)
-    if (callFrame->argumentCount() < 1) {
+    if (callFrame->argumentCount() < 2) {
         throwVMError(globalObject, scope, "Sign.prototype.update requires at least 1 argument"_s);
         return JSValue::encode({});
     }
 
     // Get the data argument
-    JSC::JSValue data = callFrame->argument(0);
+    JSC::JSValue data = callFrame->argument(1);
 
     // if it's a string, using encoding for decode. if it's a buffer, just use the buffer
     if (data.isString()) {
         JSString* dataString = data.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        JSValue encodingValue = callFrame->argument(1);
+        JSValue encodingValue = callFrame->argument(2);
         auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -250,7 +260,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
         }
 
-        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataString, encoding));
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
@@ -258,7 +271,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         updateWithBufferView(globalObject, thisObject, view);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        return JSValue::encode(callFrame->thisValue());
+        return JSValue::encode(wrappedSign);
     }
 
     if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
@@ -271,13 +284,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         updateWithBufferView(globalObject, thisObject, view);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        return JSValue::encode(callFrame->thisValue());
+        return JSValue::encode(wrappedSign);
     }
 
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
 }
 
-JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* thisObject, const ncrypto::EVPKeyPointer& pkey, NodeCryptoKeys::DSASigEnc dsa_sig_enc, int padding, std::optional<int> salt_len)
+JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* thisObject, const ncrypto::EVPKeyPointer& pkey, DSASigEnc dsa_sig_enc, int padding, std::optional<int> salt_len)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -344,7 +357,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     }
 
     // Convert to P1363 format if requested for EC keys
-    if (dsa_sig_enc == NodeCryptoKeys::DSASigEnc::P1363 && pkey.isSigVariant()) {
+    if (dsa_sig_enc == DSASigEnc::P1363 && pkey.isSigVariant()) {
         auto p1363Size = pkey.getBytesOfRS().value_or(0) * 2;
         if (p1363Size > 0) {
             auto p1363Buffer = JSC::ArrayBuffer::tryCreate(p1363Size, 1);
@@ -370,256 +383,6 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     // Create and return JSUint8Array
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     return JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, sigBuf.len);
-}
-
-std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier)
-{
-    ncrypto::ClearErrorOnReturn clearError;
-
-    VM& vm = lexicalGlobalObject->vm();
-
-    if (!maybeKey.isCell()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
-        return std::nullopt;
-    }
-
-    auto optionsCell = maybeKey.asCell();
-    auto optionsType = optionsCell->type();
-
-    if (optionsCell->inherits<WebCore::JSCryptoKey>()) {
-        auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(optionsCell);
-
-        // convert it to a key object, then to EVPKeyPointer
-        auto& key = cryptoKey->wrapped();
-
-        if (algorithmIdentifier) {
-            switch (key.keyClass()) {
-            case CryptoKeyClass::RSA: {
-                const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
-                CryptoAlgorithmIdentifier restrictHash;
-                bool isRestricted = rsa.isRestrictedToHash(restrictHash);
-                if (isRestricted && algorithmIdentifier.value() != restrictHash) {
-                    JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
-                    return std::nullopt;
-                }
-            }
-            default:
-                break;
-            }
-        }
-
-        AsymmetricKeyValue keyValue(key);
-        if (keyValue.key) {
-            EVP_PKEY_up_ref(keyValue.key);
-            ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-            return keyPtr;
-        }
-
-        throwCryptoOperationFailed(lexicalGlobalObject, scope);
-        return std::nullopt;
-    } else if (maybeKey.isObject()) {
-        JSObject* optionsObj = optionsCell->getObject();
-        const auto& names = WebCore::builtinNames(vm);
-
-        if (auto val = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
-            if (val.isCell() && val.inherits<WebCore::JSCryptoKey>()) {
-                auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(val.asCell());
-
-                auto& key = cryptoKey->wrapped();
-
-                if (algorithmIdentifier) {
-                    switch (key.keyClass()) {
-                    case CryptoKeyClass::RSA: {
-                        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
-                        CryptoAlgorithmIdentifier restrictHash;
-                        bool isRestricted = rsa.isRestrictedToHash(restrictHash);
-                        if (isRestricted && algorithmIdentifier.value() != restrictHash) {
-                            JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
-                            return std::nullopt;
-                        }
-                    }
-                    default:
-                        break;
-                    }
-                }
-
-                AsymmetricKeyValue keyValue(key);
-                if (keyValue.key) {
-                    EVP_PKEY_up_ref(keyValue.key);
-                    ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-                    return keyPtr;
-                }
-                throwCryptoOperationFailed(lexicalGlobalObject, scope);
-                return std::nullopt;
-            }
-        } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
-            auto dataBuf = KeyObject__GetBuffer(maybeKey);
-            if (dataBuf.hasException()) {
-                return std::nullopt;
-            }
-
-            ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-            config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-            auto buffer = dataBuf.releaseReturnValue();
-            ncrypto::Buffer<const unsigned char> ncryptoBuf {
-                .data = buffer.data(),
-                .len = buffer.size(),
-            };
-
-            auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-            if (res) {
-                ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
-                return keyPtr;
-            }
-
-            if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-                Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-                return std::nullopt;
-            }
-
-            throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-            return std::nullopt;
-        }
-
-        JSValue key = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "key"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue encodingValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue passphrase = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "passphrase"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue formatValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        WTF::StringView formatStr = WTF::nullStringView();
-        if (formatValue.isString()) {
-            auto str = formatValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            formatStr = str->view(lexicalGlobalObject);
-        }
-
-        if (!key.isCell()) {
-            if (formatStr == "jwk"_s) {
-                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "object"_s, key);
-            } else {
-                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);
-            }
-            return std::nullopt;
-        }
-
-        String encodingString = encodingValue.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        auto keyCell = key.asCell();
-        auto keyCellType = keyCell->type();
-        if (keyCell->inherits<WebCore::JSCryptoKey>()) {
-            auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyCell);
-            auto& key = cryptoKey->wrapped();
-
-            if (algorithmIdentifier) {
-                switch (key.keyClass()) {
-                case CryptoKeyClass::RSA: {
-                    const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
-                    CryptoAlgorithmIdentifier restrictHash;
-                    bool isRestricted = rsa.isRestrictedToHash(restrictHash);
-                    if (isRestricted && algorithmIdentifier.value() != restrictHash) {
-                        JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
-                        return std::nullopt;
-                    }
-                }
-                default:
-                    break;
-                }
-            }
-
-            AsymmetricKeyValue keyValue(key);
-            if (keyValue.key) {
-                EVP_PKEY_up_ref(keyValue.key);
-                ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-                return keyPtr;
-            }
-            throwCryptoOperationFailed(lexicalGlobalObject, scope);
-            return std::nullopt;
-        } else if (key.isObject()) {
-            JSObject* keyObj = key.getObject();
-            if (auto keyVal = keyObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
-                if (keyVal.isCell() && keyVal.inherits<WebCore::JSCryptoKey>()) {
-                    auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyVal.asCell());
-
-                    auto& key = cryptoKey->wrapped();
-                    AsymmetricKeyValue keyValue(key);
-                    if (keyValue.key) {
-                        EVP_PKEY_up_ref(keyValue.key);
-                        ncrypto::EVPKeyPointer keyPtr(WTFMove(keyValue.key));
-                        return keyPtr;
-                    }
-                    throwCryptoOperationFailed(lexicalGlobalObject, scope);
-                    return std::nullopt;
-                }
-            } else if (keyCellType >= Int8ArrayType && keyCellType <= DataViewType) {
-                auto dataBuf = KeyObject__GetBuffer(key);
-                if (dataBuf.hasException()) {
-                    return std::nullopt;
-                }
-
-                ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-                config.format = parseKeyFormat(lexicalGlobalObject, formatValue, "options.format"_s, ncrypto::EVPKeyPointer::PKFormatType::PEM);
-
-                config.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphrase);
-                RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-                // Get the type value from options
-                JSValue typeValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
-                RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-                // Parse key type for private key
-                auto keyType = parseKeyType(lexicalGlobalObject, typeValue, config.format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::nullStringView(), false, "options.type"_s);
-                RETURN_IF_EXCEPTION(scope, std::nullopt);
-                config.type = keyType.value_or(ncrypto::EVPKeyPointer::PKEncodingType::PKCS1);
-
-                auto buffer = dataBuf.releaseReturnValue();
-                ncrypto::Buffer<const unsigned char> ncryptoBuf {
-                    .data = buffer.data(),
-                    .len = buffer.size(),
-                };
-
-                auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-                if (!res) {
-                    if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-                        Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-                        return std::nullopt;
-                    }
-
-                    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-                    return std::nullopt;
-                }
-
-                ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
-                return keyPtr;
-            } else if (formatStr == "jwk"_s) {
-                bool isPublic = false;
-                return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
-            }
-        } else if (formatStr == "jwk"_s) {
-            bool isPublic = false;
-            return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
-        } else if (key.isString()) {
-            WTF::String keyStr = key.toWTFString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-            return keyFromString(lexicalGlobalObject, scope, keyStr, passphrase);
-        }
-
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);
-        return std::nullopt;
-    } else if (maybeKey.isString()) {
-        WTF::String keyStr = maybeKey.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-        return keyFromString(lexicalGlobalObject, scope, keyStr, jsUndefined());
-    }
-
-    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
-    return std::nullopt;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -656,23 +419,36 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(lexicalGlobalObject, options, {});
+    int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, options);
+    std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get DSA signature encoding format
-    NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, options);
+    DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    // Get key argument
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options, std::nullopt);
-    ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
-    if (!maybeKeyPtr) {
-        return {};
+    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    KeyObject keyObject;
+    if (prepareResult.keyData) {
+        keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(*prepareResult.keyData));
+    } else {
+        keyObject = KeyObject::getPublicOrPrivateKey(
+            lexicalGlobalObject,
+            scope,
+            prepareResult.keyDataView,
+            CryptoKeyType::Private,
+            prepareResult.formatType,
+            prepareResult.encodingType,
+            prepareResult.cipher,
+            WTFMove(prepareResult.passphrase));
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
+
+    const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);
@@ -682,7 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // If output encoding is not buffer, convert the signature to the requested encoding
     if (outputEncoding != BufferEncodingType::buffer) {
-        EncodedJSValue encodedSignature = jsBufferToString(vm, lexicalGlobalObject, signature, 0, signature->byteLength(), outputEncoding);
+        EncodedJSValue encodedSignature = jsBufferToString(lexicalGlobalObject, scope, signature, 0, signature->byteLength(), outputEncoding);
         RETURN_IF_EXCEPTION(scope, {});
         return encodedSignature;
     }
@@ -720,183 +496,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSC::JSValue::encode(JSSign::create(vm, structure, globalObject));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    ncrypto::ClearErrorOnReturn clearError;
-
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto argCount = callFrame->argumentCount();
-
-    // Validate algorithm if provided
-    JSValue algorithmValue = callFrame->argument(0);
-    std::optional<WebCore::CryptoAlgorithmIdentifier> hash = std::nullopt;
-    const EVP_MD* digest = nullptr;
-    if (!algorithmValue.isUndefinedOrNull()) {
-        Bun::V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        WTF::String algorithmName = algorithmValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        hash = WebCore::CryptoAlgorithmRegistry::singleton().identifier(algorithmName);
-
-        digest = ncrypto::getDigestByName(algorithmName);
-        if (!digest) {
-            return Bun::ERR::CRYPTO_INVALID_DIGEST(scope, globalObject, algorithmName);
-        }
-    }
-
-    // Get data argument
-    JSValue dataValue = callFrame->argument(1);
-    JSC::JSArrayBufferView* dataView = getArrayBufferOrView(globalObject, scope, dataValue, "data"_s, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!dataView) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "data must be a Buffer, TypedArray, or DataView"_s);
-        return {};
-    }
-
-    // Get key argument
-    JSValue keyValue = callFrame->argument(2);
-
-    std::optional<int> saltLen = getSaltLength(globalObject, keyValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Get DSA signature encoding format
-    NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, keyValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Prepare the private key
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(globalObject, scope, keyValue, hash);
-    ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
-    if (!maybeKeyPtr) {
-        return {};
-    }
-    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
-
-    // Get callback if provided
-    JSValue callbackValue;
-    bool hasCallback = false;
-    if (argCount > 3) {
-        callbackValue = callFrame->argument(3);
-        if (!callbackValue.isUndefined()) {
-            Bun::V::validateFunction(scope, globalObject, callbackValue, "callback"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            hasCallback = true;
-        }
-    }
-
-    // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(globalObject, keyValue, keyPtr);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Create data buffer
-    ncrypto::Buffer<const unsigned char> dataBuf {
-        .data = reinterpret_cast<const unsigned char*>(dataView->vector()),
-        .len = dataView->byteLength()
-    };
-
-    // Create a new EVP_MD_CTX for signing
-    auto mdCtx = ncrypto::EVPMDCtxPointer::New();
-    if (!mdCtx) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to create message digest context"_s);
-        return {};
-    }
-
-    // Initialize the context for signing with the key and digest
-    auto ctx = mdCtx.signInit(keyPtr, digest);
-    if (!ctx.has_value()) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to initialize signing context"_s);
-        return {};
-    }
-
-    // Apply RSA options if needed
-    if (keyPtr.isRsaVariant()) {
-        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(ctx.value(), padding, saltLen)) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set RSA padding"_s);
-            return {};
-        }
-    }
-
-    RefPtr<JSC::ArrayBuffer> sigBuffer = nullptr;
-    if (keyPtr.isOneShotVariant()) {
-        auto data = mdCtx.signOneShot(dataBuf);
-        if (!data) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
-            return {};
-        }
-
-        sigBuffer = JSC::ArrayBuffer::tryCreate(data.size(), 1);
-        if (!sigBuffer) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate signature buffer"_s);
-            return {};
-        }
-
-        memcpy(sigBuffer->data(), data.get(), data.size());
-
-    } else {
-        auto signatureData = mdCtx.sign(dataBuf);
-        if (!signatureData) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
-            return {};
-        }
-
-        // Convert to P1363 format if requested for EC keys
-        if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant() && keyPtr.getBytesOfRS().value_or(0) * 2 > 0) {
-            auto p1363Size = keyPtr.getBytesOfRS().value_or(0) * 2;
-            sigBuffer = JSC::ArrayBuffer::tryCreate(p1363Size, 1);
-            if (!sigBuffer) {
-                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate P1363 buffer"_s);
-                return {};
-            }
-
-            ncrypto::Buffer<const unsigned char> derSig {
-                .data = reinterpret_cast<const unsigned char*>(signatureData.get()),
-                .len = signatureData.size()
-            };
-
-            if (!ncrypto::extractP1363(derSig, static_cast<unsigned char*>(sigBuffer->data()), p1363Size / 2)) {
-                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert signature format"_s);
-                return {};
-            }
-        } else {
-            sigBuffer = JSC::ArrayBuffer::tryCreate(signatureData.size(), 1);
-            if (!sigBuffer) {
-                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate signature buffer"_s);
-                return {};
-            }
-
-            memcpy(sigBuffer->data(), signatureData.get(), signatureData.size());
-        }
-    }
-    ASSERT(sigBuffer);
-
-    // Create JSUint8Array from the signature buffer
-    auto* globalObj = defaultGlobalObject(globalObject);
-    auto* signature = JSC::JSUint8Array::create(globalObject, globalObj->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, sigBuffer->byteLength());
-
-    // If we have a callback, call it with the signature
-    if (hasCallback) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(jsNull());
-        args.append(signature);
-        ASSERT(!args.hasOverflowed());
-
-        NakedPtr<JSC::Exception> returnedException = nullptr;
-        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, callbackValue, JSC::getCallData(callbackValue), JSC::jsUndefined(), args, returnedException);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (returnedException) {
-            scope.throwException(globalObject, returnedException.get());
-        }
-
-        return JSValue::encode(jsUndefined());
-    }
-
-    // Otherwise, return the signature directly
-    return JSValue::encode(signature);
+    return JSC::JSValue::encode(JSSign::create(vm, structure));
 }
 
 void setupJSSignClassStructure(LazyClassStructure::Initializer& init)

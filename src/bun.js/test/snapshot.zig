@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const default_allocator = bun.default_allocator;
 const string = bun.string;
 const MutableString = bun.MutableString;
@@ -253,7 +253,7 @@ pub const Snapshots = struct {
             };
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 
@@ -521,7 +521,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 

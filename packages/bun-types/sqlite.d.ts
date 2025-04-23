@@ -6,58 +6,62 @@
  * ```ts
  * import { Database } from 'bun:sqlite';
  *
- * var db = new Database('app.db');
+ * const db = new Database('app.db');
  * db.query('SELECT * FROM users WHERE name = ?').all('John');
  * // => [{ id: 1, name: 'John' }]
  * ```
  *
  * The following types can be used when binding parameters:
  *
- * | JavaScript type | SQLite type |
- * | -------------- | ----------- |
- * | `string` | `TEXT` |
- * | `number` | `INTEGER` or `DECIMAL` |
- * | `boolean` | `INTEGER` (1 or 0) |
- * | `Uint8Array` | `BLOB` |
- * | `Buffer` | `BLOB` |
- * | `bigint` | `INTEGER` |
- * | `null` | `NULL` |
+ * | JavaScript type | SQLite type            |
+ * | --------------- | ---------------------- |
+ * | `string`        | `TEXT`                 |
+ * | `number`        | `INTEGER` or `DECIMAL` |
+ * | `boolean`       | `INTEGER` (1 or 0)     |
+ * | `Uint8Array`    | `BLOB`                 |
+ * | `Buffer`        | `BLOB`                 |
+ * | `bigint`        | `INTEGER`              |
+ * | `null`          | `NULL`                 |
  */
 declare module "bun:sqlite" {
+  /**
+   * A SQLite3 database
+   *
+   * @example
+   * ```ts
+   * const db = new Database("mydb.sqlite");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open an in-memory database
+   *
+   * ```ts
+   * const db = new Database(":memory:");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open read-only
+   *
+   * ```ts
+   * const db = new Database("mydb.sqlite", {readonly: true});
+   * ```
+   *
+   * @category Database
+   */
   export class Database implements Disposable {
     /**
      * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
-     *
-     * @example
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open an in-memory database
-     *
-     * ```ts
-     * const db = new Database(":memory:");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open read-only
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite", {readonly: true});
-     * ```
      */
     constructor(
       filename?: string,
@@ -155,6 +159,20 @@ declare module "bun:sqlite" {
      *
      * This does not cache the query, so if you want to run a query multiple times, you should use {@link prepare} instead.
      *
+     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
+     *
+     * The following types can be used when binding parameters:
+     *
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
+     *
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
@@ -180,30 +198,15 @@ declare module "bun:sqlite" {
      * - `CREATE TEMPORARY TABLE`
      *
      * @param sql The SQL query to run
-     *
      * @param bindings Optional bindings for the query
      *
      * @returns `Database` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
-     *
-     *  * The following types can be used when binding parameters:
-     *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
     /**
-        This is an alias of {@link Database.prototype.run}
+     * This is an alias of {@link Database.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -211,6 +214,8 @@ declare module "bun:sqlite" {
      *
      * This **does not execute** the query, but instead prepares it for later
      * execution and caches the compiled query if possible.
+     *
+     * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -224,20 +229,18 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     *
      * @returns `Statment` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
      */
     query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
-      sqlQuery: string,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+      sql: string,
+    ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
      *
      * This does not cache the compiled query and does not execute the query.
+     *
+     * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -250,15 +253,12 @@ declare module "bun:sqlite" {
      * @param sql The SQL query to compile
      * @param params Optional bindings for the query
      *
-     * @returns `Statment` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
+     * @returns A {@link Statement} instance
      */
     prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
-      sqlQuery: string,
+      sql: string,
       params?: ParamsType,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Is the database in a transaction?
@@ -478,6 +478,79 @@ declare module "bun:sqlite" {
     static deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, isReadOnly?: boolean): Database;
 
     /**
+     * Load a serialized SQLite3 database. This version enables you to specify
+     * additional options such as `strict` to put the database into strict mode.
+     *
+     * Internally, this calls `sqlite3_deserialize`.
+     *
+     * @param serialized Data to load
+     * @returns `Database` instance
+     *
+     * @example
+     * ```ts
+     * test("supports serialize/deserialize", () => {
+     *     const db = Database.open(":memory:");
+     *     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+     *     db.exec('INSERT INTO test (name) VALUES ("Hello")');
+     *     db.exec('INSERT INTO test (name) VALUES ("World")');
+     *
+     *     const input = db.serialize();
+     *     const db2 = Database.deserialize(input, { strict: true });
+     *
+     *     const stmt = db2.prepare("SELECT * FROM test");
+     *     expect(JSON.stringify(stmt.get())).toBe(
+     *       JSON.stringify({
+     *         id: 1,
+     *         name: "Hello",
+     *       }),
+     *     );
+     *
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *       ]),
+     *     );
+     *     db2.exec("insert into test (name) values ($foo)", { foo: "baz" });
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *         {
+     *           id: 3,
+     *           name: "baz",
+     *         },
+     *       ]),
+     *     );
+     *
+     *     const db3 = Database.deserialize(input, { readonly: true, strict: true });
+     *     try {
+     *       db3.exec("insert into test (name) values ($foo)", { foo: "baz" });
+     *       throw new Error("Expected error");
+     *     } catch (e) {
+     *       expect(e.message).toBe("attempt to write a readonly database");
+     *     }
+     * });
+     * ```
+     */
+    static deserialize(
+      serialized: NodeJS.TypedArray | ArrayBufferLike,
+      options?: { readonly?: boolean; strict?: boolean; safeIntegers?: boolean },
+    ): Database;
+
+    /**
      * See `sqlite3_file_control` for more information.
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
@@ -493,6 +566,8 @@ declare module "bun:sqlite" {
    * A prepared statement.
    *
    * This is returned by {@link Database.prepare} and {@link Database.query}.
+   *
+   * @category Database
    *
    * @example
    * ```ts
@@ -567,15 +642,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     get(...params: ParamsType): ReturnType | null;
 
@@ -608,15 +683,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     run(...params: ParamsType): Changes;
 
@@ -648,15 +723,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | ---------------|-------------|
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 

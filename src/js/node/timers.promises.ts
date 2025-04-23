@@ -217,7 +217,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
         return Promise.resolve({});
       },
     });
-  } catch (error) {
+  } catch {
     return asyncIterator({
       next: function () {
         clearInterval(interval);

@@ -1,5 +1,5 @@
-const uws = @import("../deps/uws.zig");
-const bun = @import("root").bun;
+const uws = bun.uws;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
@@ -50,7 +50,7 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
-};
+} || bun.OOM;
 
 pub const IPCSerializationError = error{
     /// Value could not be serialized.
@@ -181,8 +181,8 @@ const advanced = struct {
 };
 
 const json = struct {
-    fn jsonIPCDataStringFreeCB(context: *anyopaque, _: *anyopaque, _: u32) callconv(.C) void {
-        @as(*bool, @ptrCast(context)).* = true;
+    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.C) void {
+        context.* = true;
     }
 
     pub fn getVersionPacket() []const u8 {
@@ -195,6 +195,7 @@ const json = struct {
     // 2 is internal
 
     pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
+        // <tag>{ "foo": "bar"} // tag is 1 or 2
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
             var kind = data[0];
             var json_data = data[0..idx];
@@ -210,7 +211,9 @@ const json = struct {
                 },
             }
 
-            if (json_data.len == 0) return IPCDecodeError.NotEnoughBytes;
+            // no point in attempting to JSON.parse an empty string
+            // TODO: should we return NotEnoughBytes?
+            if (json_data.len == 0) return error.InvalidFormat;
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
@@ -218,10 +221,16 @@ const json = struct {
             // Use ExternalString to avoid copying data if possible.
             // This is only possible for ascii data, as that fits into latin1
             // otherwise we have to convert it utf-8 into utf16-le.
-            var str = if (is_ascii)
-                bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
-            else
-                bun.String.fromUTF8(json_data);
+            var str = if (is_ascii) ascii: {
+
+                // .dead if `json_data` exceeds max length
+                const s = bun.String.createExternal(*bool, json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB);
+                if (s.tag == .Dead) {
+                    @branchHint(.unlikely);
+                    return IPCDecodeError.OutOfMemory;
+                }
+                break :ascii s;
+            } else bun.String.fromUTF8(json_data);
 
             defer {
                 str.deref();
@@ -230,8 +239,13 @@ const json = struct {
                 }
             }
 
-            const deserialized = str.toJSByParseJSON(globalThis);
-            if (deserialized == .zero) return error.InvalidFormat;
+            const deserialized = str.toJSByParseJSON(globalThis) catch |e| switch (e) {
+                error.JSError => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
+                error.OutOfMemory => return bun.outOfMemory(),
+            };
 
             return switch (kind) {
                 1 => .{
@@ -335,7 +349,10 @@ const SocketIPCData = struct {
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
     is_server: bool = false,
-    pub fn writeVersionPacket(this: *SocketIPCData) void {
+    keep_alive: bun.Async.KeepAlive = .{},
+    close_next_tick: ?JSC.Task = null,
+
+    pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
         }
@@ -344,6 +361,8 @@ const SocketIPCData = struct {
             const n = this.socket.write(bytes, false);
             if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
                 this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
+                // more remaining; need to ref event loop
+                this.keep_alive.ref(global.bunVM());
             }
         }
         if (Environment.allow_assert) {
@@ -370,6 +389,8 @@ const SocketIPCData = struct {
                 ipc_data.outgoing.reset();
             } else if (n > 0) {
                 ipc_data.outgoing.cursor = @intCast(n);
+                // more remaining; need to ref event loop
+                ipc_data.keep_alive.ref(global.bunVM());
             }
         }
 
@@ -395,6 +416,8 @@ const SocketIPCData = struct {
                 ipc_data.outgoing.reset();
             } else if (n > 0) {
                 ipc_data.outgoing.cursor = @intCast(n);
+                // more remaining; need to ref event loop
+                ipc_data.keep_alive.ref(global.bunVM());
             }
         }
 
@@ -406,7 +429,9 @@ const SocketIPCData = struct {
         if (this.disconnected) return;
         this.disconnected = true;
         if (nextTick) {
-            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(SocketIPCData, closeTask).init(this));
+            if (this.close_next_tick != null) return;
+            this.close_next_tick = JSC.ManagedTask.New(SocketIPCData, closeTask).init(this);
+            JSC.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
         } else {
             this.closeTask();
         }
@@ -414,9 +439,9 @@ const SocketIPCData = struct {
 
     pub fn closeTask(this: *SocketIPCData) void {
         log("SocketIPCData#closeTask", .{});
-        if (this.disconnected) {
-            this.socket.close(.normal);
-        }
+        this.close_next_tick = null;
+        bun.assert(this.disconnected);
+        this.socket.close(.normal);
     }
 };
 
@@ -427,7 +452,12 @@ const NamedPipeIPCData = struct {
     mode: Mode,
 
     // we will use writer pipe as Duplex
-    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(@This(), .{
+        .onWrite = onWrite,
+        .onError = onError,
+        .onWritable = null,
+        .onClose = onPipeClose,
+    }) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     disconnected: bool = false,
@@ -496,7 +526,7 @@ const NamedPipeIPCData = struct {
         }
     }
 
-    pub fn writeVersionPacket(this: *NamedPipeIPCData) void {
+    pub fn writeVersionPacket(this: *NamedPipeIPCData, _: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
         }
@@ -604,7 +634,7 @@ const NamedPipeIPCData = struct {
 
         const stream = this.writer.getStream() orelse {
             this.close(false);
-            return JSC.Maybe(void).errno(bun.C.E.PIPE, .pipe);
+            return JSC.Maybe(void).errno(bun.sys.E.PIPE, .pipe);
         };
 
         const readStartResult = stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead);
@@ -666,6 +696,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: *anyopaque,
             _: Socket,
         ) void {
+            log("onOpen", .{});
             // it is NOT safe to use the first argument here because it has not been initialized yet.
             // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
             // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
@@ -681,8 +712,21 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: c_int,
             _: ?*anyopaque,
         ) void {
+            log("onClose", .{});
+            const ipc = this.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("NewSocketIPCHandler#onClose\n", .{});
+
+            if (ipc.close_next_tick) |close_next_tick_task| {
+                const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
+                managed.cancel();
+                ipc.close_next_tick = null;
+            }
+            // after onClose(), socketIPCData.close should never be called again because socketIPCData may be freed. just in case, set disconnected to true.
+            ipc.disconnected = true;
+
             this.handleIPCClose();
         }
 
@@ -721,7 +765,11 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             return;
                         },
                         error.InvalidFormat => {
-                            Output.printErrorln("InvalidFormatError during IPC message handling", .{});
+                            socket.close(.failure);
+                            return;
+                        },
+                        error.OutOfMemory => {
+                            Output.printErrorln("IPC message is too long.", .{});
                             this.handleIPCClose();
                             socket.close(.failure);
                             return;
@@ -751,7 +799,11 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
+                        socket.close(.failure);
+                        return;
+                    },
+                    error.OutOfMemory => {
+                        Output.printErrorln("IPC message is too long.", .{});
                         this.handleIPCClose();
                         socket.close(.failure);
                         return;
@@ -774,42 +826,61 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             context: *Context,
             socket: Socket,
         ) void {
+            log("onWritable", .{});
             const ipc = context.ipc() orelse return;
             const to_write = ipc.outgoing.slice();
             if (to_write.len == 0) {
                 ipc.outgoing.reset();
+                // done sending message; unref event loop
+                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
                 return;
             }
             const n = socket.write(to_write, false);
             if (n == to_write.len) {
                 ipc.outgoing.reset();
+                // almost done sending message; unref event loop
+                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
             } else if (n > 0) {
                 ipc.outgoing.cursor += @intCast(n);
             }
         }
 
         pub fn onTimeout(
-            _: *Context,
+            context: *Context,
             _: Socket,
-        ) void {}
+        ) void {
+            log("onTimeout", .{});
+            const ipc = context.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+        }
 
         pub fn onLongTimeout(
-            _: *Context,
+            context: *Context,
             _: Socket,
-        ) void {}
+        ) void {
+            log("onLongTimeout", .{});
+            const ipc = context.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+        }
 
         pub fn onConnectError(
             _: *anyopaque,
             _: Socket,
             _: c_int,
         ) void {
+            log("onConnectError", .{});
             // context has not been initialized
         }
 
         pub fn onEnd(
             _: *Context,
-            _: Socket,
-        ) void {}
+            s: Socket,
+        ) void {
+            log("onEnd", .{});
+            s.close(.failure);
+        }
     };
 }
 
@@ -827,7 +898,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             return available.ptr[0..suggested_size];
         }
 
-        fn onReadError(this: *Context, err: bun.C.E) void {
+        fn onReadError(this: *Context, err: bun.sys.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             if (this.ipc()) |ipc_data| {
                 ipc_data.close(true);
@@ -865,7 +936,11 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
+                        ipc.close(false);
+                        return;
+                    },
+                    error.OutOfMemory => {
+                        Output.printErrorln("IPC message is too long.", .{});
                         ipc.close(false);
                         return;
                     },

@@ -193,7 +193,7 @@ describe("route precedence", () => {
     expect(await res.text()).toBe("api catchall");
   });
 
-  it.todo("matches root wildcard as last resort", async () => {
+  it("matches root wildcard as last resort", async () => {
     const res = await fetch(`${server.url}unknown`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("root catchall");
@@ -540,4 +540,13 @@ it("throws a validation error when routes object is undefined and fetch is not s
 
     Learn more at https://bun.sh/docs/api/http"
   `);
+});
+
+it("don't crash on server.fetch()", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/test": () => new Response("test") },
+  });
+
+  expect(server.fetch("/test")).rejects.toThrow("fetch() requires the server to have a fetch handler");
 });

@@ -286,7 +286,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             file.dest_path,
             file.entry_point_index,
         });
-        if (file.loader == .css) {
+        if (file.loader.isCSS()) {
             if (css_chunks_count == 0) css_chunks_first = i;
             css_chunks_count += 1;
         }
@@ -375,7 +375,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         const server_render_func = brk: {
             const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
                 break :brk null;
-            if (!raw.isCallable(vm.jsc)) {
+            if (!raw.isCallable()) {
                 break :brk null;
             }
             break :brk raw;
@@ -391,7 +391,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             brk: {
                 const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
                     break :brk null;
-                if (!raw.isCallable(vm.jsc)) {
+                if (!raw.isCallable()) {
                     break :brk null;
                 }
                 break :brk raw;
@@ -417,7 +417,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
-        bun.assert(output_file.loader == .css);
+        bun.assert(output_file.loader.isCSS());
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 
@@ -626,14 +626,14 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
-export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
+pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
 
     const specifier = specifier_str.toUTF8(alloc);
     defer specifier.deinit();
 
-    if (JSC.HardcodedModule.Aliases.get(specifier.slice(), .bun)) |alias| {
+    if (JSC.ModuleLoader.HardcodedModule.Alias.get(specifier.slice(), .bun)) |alias| {
         return bun.String.static(alias.path);
     }
 
@@ -836,7 +836,7 @@ pub const PerThread = struct {
 };
 
 /// Given a key, returns the source code to load.
-export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
+pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     var sfa = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = sfa.get();
     const utf8 = key.toUTF8(allocator);
@@ -854,7 +854,7 @@ const TypeAndFlags = packed struct(i32) {
 
 const std = @import("std");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const OutputFile = bun.options.OutputFile;
@@ -866,3 +866,8 @@ const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
+
+fn @"export"() void {
+    _ = BakeProdResolve;
+    _ = BakeProdLoad;
+}

@@ -23,7 +23,8 @@
     "**/*.tsx",
     "**/*.mts",
     "**/*.cts",
-    "../src/js/internal-for-testing.ts"
+    "../src/js/internal-for-testing.ts",
+    "bake/exit-code-map.mjs"
   ],
   "exclude": [
     "fixtures",

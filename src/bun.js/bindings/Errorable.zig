@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
 const ErrorCode = @import("ErrorCode.zig").ErrorCode;
@@ -8,7 +8,6 @@ pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
         success: bool,
-        pub const name = "Errorable" ++ typeBaseName(@typeName(Type));
 
         pub const Result = extern union {
             value: Type,
@@ -31,7 +30,6 @@ pub fn Errorable(comptime Type: type) type {
             return @This(){ .result = .{ .value = val }, .success = true };
         }
 
-        threadlocal var err_buf: [4096]u8 = undefined;
         pub fn err(code: anyerror, ptr: *anyopaque) @This() {
             return @This(){
                 .result = .{

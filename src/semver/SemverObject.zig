@@ -4,7 +4,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     object.put(
         globalThis,
         JSC.ZigString.static("satisfies"),
-        JSC.NewFunction(
+        JSC.host_fn.NewFunction(
             globalThis,
             JSC.ZigString.static("satisfies"),
             2,
@@ -16,7 +16,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     object.put(
         globalThis,
         JSC.ZigString.static("order"),
-        JSC.NewFunction(
+        JSC.host_fn.NewFunction(
             globalThis,
             JSC.ZigString.static("order"),
             2,
@@ -127,7 +127,7 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -136,7 +136,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const OOM = bun.OOM;

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 
 const string = bun.string;
@@ -141,7 +141,7 @@ pub const PatchTask = struct {
     pub fn runFromMainThread(
         this: *PatchTask,
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         defer {
@@ -165,7 +165,7 @@ pub const PatchTask = struct {
     fn runFromMainThreadCalcHash(
         this: *PatchTask,
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
+        log_level: PackageManager.Options.LogLevel,
     ) !void {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
@@ -173,7 +173,7 @@ pub const PatchTask = struct {
         const hash = calc_hash.result orelse {
             const fmt = "\n\nErrors occured while calculating hash for <b>{s}<r>:\n\n";
             const args = .{this.callback.calc_hash.patchfile_path};
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
             } else {
                 Output.prettyErrorln(
@@ -350,7 +350,7 @@ pub const PatchTask = struct {
 
         {
             const patch_pkg_dir = switch (bun.sys.openat(
-                bun.toFD(system_tmpdir.fd),
+                .fromStdDir(system_tmpdir),
                 tempdir_name,
                 bun.O.RDONLY | bun.O.DIRECTORY,
                 0,
@@ -363,7 +363,7 @@ pub const PatchTask = struct {
                     .{resolution_label},
                 ),
             };
-            defer _ = bun.sys.close(patch_pkg_dir);
+            defer patch_pkg_dir.close();
 
             // 4. apply patch
             if (patchfile.apply(this.manager.allocator, patch_pkg_dir)) |e| {
@@ -397,7 +397,7 @@ pub const PatchTask = struct {
                     );
                 },
             };
-            _ = bun.sys.close(buntagfd);
+            buntagfd.close();
         }
 
         // 6. rename to cache dir
@@ -412,9 +412,9 @@ pub const PatchTask = struct {
         );
 
         if (bun.sys.renameatConcurrently(
-            bun.toFD(system_tmpdir.fd),
+            .fromStdDir(system_tmpdir),
             path_in_tmpdir,
-            bun.toFD(this.callback.apply.cache_dir.fd),
+            .fromStdDir(this.callback.apply.cache_dir),
             this.callback.apply.cache_dir_subpath,
             .{ .move_fallback = true },
         ).asErr()) |e| return try log.addErrorFmtOpts(
@@ -445,7 +445,7 @@ pub const PatchTask = struct {
 
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
-                if (e.getErrno() == bun.C.E.NOENT) {
+                if (e.getErrno() == .NOENT) {
                     const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
                     const args = .{
                         this.callback.calc_hash.patchfile_path,
@@ -490,7 +490,7 @@ pub const PatchTask = struct {
             },
             .result => |fd| fd,
         };
-        defer _ = bun.sys.close(fd);
+        defer fd.close();
 
         var hasher = bun.Wyhash11.init(0);
 

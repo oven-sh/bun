@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const ScriptExecutionStatus = enum(i32) {
     running = 0,

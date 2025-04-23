@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
 const Fs = bun.fs;
@@ -12,12 +12,15 @@ const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 
 pub const BuildMessage = struct {
+    pub const js = JSC.Codegen.JSBuildMessage;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     msg: logger.Msg,
     // resolve_result: Resolver.Result,
     allocator: std.mem.Allocator,
     logged: bool = false,
-
-    pub usingnamespace JSC.Codegen.JSBuildMessage;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*BuildMessage {
         return globalThis.throw("BuildMessage is not constructable", .{});

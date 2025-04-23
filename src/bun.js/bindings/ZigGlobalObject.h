@@ -56,6 +56,13 @@ class GlobalInternals;
 #include <js_native_api.h>
 #include <node_api.h>
 
+namespace Bun {
+class JSCommonJSExtensions;
+class InternalModuleRegistry;
+class JSMockModule;
+class JSMockFunction;
+}
+
 namespace WebCore {
 class WorkerGlobalScope;
 class SubtleCrypto;
@@ -64,6 +71,8 @@ class EventTarget;
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
+
+extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
 #if OS(WINDOWS)
 #include <uv.h>
@@ -85,6 +94,11 @@ class GlobalObject : public Bun::GlobalScope {
 public:
     // Move this to the front for better cache locality.
     void* m_bunVM;
+
+    bool isShuttingDown() const
+    {
+        return Bun__VirtualMachine__isShuttingDown(m_bunVM);
+    }
 
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
@@ -190,6 +204,10 @@ public:
     JSC::JSValue FileSinkPrototype() const { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() const { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* KeyObjectStructure() const { return m_JSKeyObjectClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* KeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue KeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferStructure() const { return m_JSBufferClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferConstructor() const { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
@@ -255,6 +273,9 @@ public:
     JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
+    Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
+    JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
     Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
@@ -339,6 +360,8 @@ public:
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__NodeHTTPRequest__onResolve,
+        Bun__NodeHTTPRequest__onReject,
         Bun__FetchTasklet__onRejectRequestStream,
         Bun__FetchTasklet__onResolveRequestStream,
         Bun__S3UploadStream__onRejectRequestStream,
@@ -346,7 +369,7 @@ public:
         Bun__FileStreamWrapper__onRejectRequestStream,
         Bun__FileStreamWrapper__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 32;
+    static constexpr size_t promiseFunctionsSize = 34;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -389,9 +412,15 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
     LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
+    LazyProperty<JSGlobalObject, JSCell> m_moduleRunMainFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_modulePrototypeUnderscoreCompileFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_commonJSRequireESMFromHijackedExtensionFunction;
     LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
+
+    WTF::String m_moduleWrapperStart;
+    WTF::String m_moduleWrapperEnd;
 
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
@@ -481,6 +510,8 @@ public:
 
     JSC::LazyClassStructure m_JSStatsClassStructure;
     JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
+    JSC::LazyClassStructure m_JSStatFSClassStructure;
+    JSC::LazyClassStructure m_JSStatFSBigIntClassStructure;
     JSC::LazyClassStructure m_JSDirentClassStructure;
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
@@ -535,6 +566,16 @@ public:
     LazyClassStructure m_JSX509CertificateClassStructure;
     LazyClassStructure m_JSSignClassStructure;
     LazyClassStructure m_JSVerifyClassStructure;
+    LazyClassStructure m_JSDiffieHellmanClassStructure;
+    LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
+    LazyClassStructure m_JSHmacClassStructure;
+    LazyClassStructure m_JSHashClassStructure;
+    LazyClassStructure m_JSECDHClassStructure;
+    LazyClassStructure m_JSCipherClassStructure;
+    LazyClassStructure m_JSKeyObjectClassStructure;
+    LazyClassStructure m_JSSecretKeyObjectClassStructure;
+    LazyClassStructure m_JSPublicKeyObjectClassStructure;
+    LazyClassStructure m_JSPrivateKeyObjectClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -567,6 +608,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSResizableOrGrowableSharedBufferSubclassStructure;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
+    LazyProperty<JSGlobalObject, Bun::JSCommonJSExtensions> m_lazyRequireExtensionsObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
@@ -604,12 +646,18 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
 
+    LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatValues;
     LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
     LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
 
-    bool hasOverridenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module")._resolveFilename` is written to
+    bool hasOverriddenModuleResolveFilenameFunction = false;
+    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
+    bool hasOverriddenModuleWrapper = false;
+    // De-optimization once `require("module").runMain` is written to
+    bool hasOverriddenModuleRunMain = false;
 
     WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);

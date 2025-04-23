@@ -30,7 +30,7 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType) {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
 
   let stream;
@@ -174,7 +174,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     $debug("internalRead();");
     try {
       $assert(reader);
-      const { done, value } = await reader.read();
+      const { value } = await reader.read();
 
       if (value) {
         stream.push(value);
@@ -203,7 +203,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     }
   }
 
-  function triggerRead(size) {
+  function triggerRead(_size) {
     $debug("_read();", reader);
 
     if (reader && !shouldUnref) {
@@ -308,7 +308,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     setup = undefined;
   };
 
-  function nextTick(cb, args) {
+  function nextTick(cb, ...args) {
     validateFunction(cb, "callback");
     if (setup) {
       setup();
@@ -318,7 +318,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
     queue.push({
       callback: cb,
-      args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined,
+      // We want to avoid materializing the args if there are none because it's
+      // a waste of memory and Array.prototype.slice shows up in profiling.
+      args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
     });
     $putInternalField(nextTickQueue, 0, 1);

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const stringZ = bun.stringZ;
 const strings = bun.strings;
@@ -94,10 +94,6 @@ pub const Stringifier = struct {
         var found_patched_dependencies: std.AutoHashMapUnmanaged(u64, struct { string, String }) = .{};
         defer found_patched_dependencies.deinit(allocator);
         try found_patched_dependencies.ensureTotalCapacity(allocator, @truncate(lockfile.patched_dependencies.count()));
-
-        var found_overrides: std.AutoHashMapUnmanaged(u64, struct { String, Dependency.Version }) = .{};
-        defer found_overrides.deinit(allocator);
-        try found_overrides.ensureTotalCapacity(allocator, @truncate(lockfile.overrides.map.count()));
 
         var optional_peers_buf = std.ArrayList(String).init(allocator);
         defer optional_peers_buf.deinit();
@@ -279,12 +275,6 @@ pub const Stringifier = struct {
                             try found_trusted_dependencies.put(allocator, dep.name_hash, dep.name);
                         }
                     }
-
-                    if (lockfile.overrides.map.count() > 0) {
-                        if (lockfile.overrides.get(dep.name_hash)) |version| {
-                            try found_overrides.put(allocator, dep.name_hash, .{ dep.name, version });
-                        }
-                    }
                 }
             }
 
@@ -344,28 +334,43 @@ pub const Stringifier = struct {
                 );
             }
 
-            if (found_overrides.count() > 0) {
+            if (lockfile.overrides.map.count() > 0) {
+                var overrides_buf: std.ArrayListUnmanaged(Dependency) = try .initCapacity(allocator, lockfile.overrides.map.count());
+                defer overrides_buf.deinit(allocator);
+
+                try overrides_buf.appendSlice(allocator, lockfile.overrides.map.values());
+
+                const OverridesSortCtx = struct {
+                    buf: string,
+
+                    pub fn lessThan(this: *@This(), l_dep: Dependency, r_dep: Dependency) bool {
+                        return l_dep.name.order(&r_dep.name, this.buf, this.buf) == .lt;
+                    }
+                };
+
+                var sort_ctx: OverridesSortCtx = .{
+                    .buf = buf,
+                };
+
+                std.sort.pdq(Dependency, overrides_buf.items, &sort_ctx, OverridesSortCtx.lessThan);
+
+                // lockfile.overrides.sort(lockfile);
                 try writeIndent(writer, indent);
                 try writer.writeAll(
                     \\"overrides": {
                     \\
                 );
                 indent.* += 1;
-                var values_iter = found_overrides.valueIterator();
-                while (values_iter.next()) |value| {
-                    const name, const version = value.*;
+                for (lockfile.overrides.map.values()) |override_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
                         \\{}: {},
                         \\
-                    , .{ name.fmtJson(buf, .{}), version.literal.fmtJson(buf, .{}) });
+                    , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
-                try writer.writeAll(
-                    \\},
-                    \\
-                );
+                try writer.writeAll("},\n");
             }
 
             var tree_deps_sort_buf: std.ArrayListUnmanaged(DependencyID) = .{};

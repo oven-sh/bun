@@ -4,7 +4,8 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
-const { throwNotImplemented, warnNotImplementedOnce } = require("../internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { validateObject, validateBoolean } = require("internal/validators");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
@@ -13,6 +14,10 @@ const isMainThread = Bun.isMainThread;
 const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
+
+// Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
+// after their Worker exits
+let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -127,7 +132,7 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return postMessage(...args);
+      return postMessage.$apply(null, args);
     },
   });
 
@@ -205,6 +210,7 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
+  #isRunning = false;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -217,6 +223,8 @@ class Worker extends EventEmitter {
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
       if (options[builtinsGeneratorHatesEval]) {
+        // TODO: consider doing this step in native code and letting the Blob be cleaned up by the
+        // C++ Worker object's destructor
         const blob = new Blob([filename], { type: "" });
         this.#urlToRevoke = filename = URL.createObjectURL(blob);
       } else {
@@ -224,7 +232,6 @@ class Worker extends EventEmitter {
         // we convert the code to a blob, it will succeed.
         this.#urlToRevoke = filename;
       }
-      delete options[builtinsGeneratorHatesEval];
     }
     try {
       this.#worker = new WebWorker(filename, options);
@@ -241,10 +248,12 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
 
     if (this.#urlToRevoke) {
-      const url = this.#urlToRevoke;
-      new FinalizationRegistry(url => {
-        URL.revokeObjectURL(url);
-      }).register(this.#worker, url);
+      if (!urlRevokeRegistry) {
+        urlRevokeRegistry = new FinalizationRegistry<string>(url => {
+          URL.revokeObjectURL(url);
+        });
+      }
+      urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
   }
 
@@ -288,7 +297,17 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate() {
+  terminate(callback: unknown) {
+    this.#isRunning = false;
+    if (typeof callback === "function") {
+      process.emitWarning(
+        "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
+        "DeprecationWarning",
+        "DEP0132",
+      );
+      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+    }
+
     const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
@@ -308,15 +327,17 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
-    return this.#worker.postMessage(...args);
+    return this.#worker.postMessage.$apply(this.#worker, args);
   }
 
   #onClose(e) {
+    this.#isRunning = false;
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
+    this.#isRunning = false;
     let error = event?.error;
     if (!error) {
       error = new Error(event.message, { cause: event });
@@ -339,10 +360,22 @@ class Worker extends EventEmitter {
   }
 
   #onOpen() {
+    this.#isRunning = true;
     this.emit("online");
   }
 
-  async getHeapSnapshot() {
+  getHeapSnapshot(options: any) {
+    if (options !== undefined) {
+      // These errors must be thrown synchronously.
+      validateObject(options, "options");
+      validateBoolean(options.exposeInternals, "options.exposeInternals");
+      validateBoolean(options.exposeNumericValues, "options.exposeNumericValues");
+    }
+    if (!this.#isRunning) {
+      const err = new Error("Worker instance not running");
+      err.code = "ERR_WORKER_NOT_RUNNING";
+      return Promise.$reject(err);
+    }
     throwNotImplemented("worker_threads.Worker.getHeapSnapshot");
   }
 }

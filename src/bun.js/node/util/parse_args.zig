@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
 const String = bun.String;
@@ -9,13 +9,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
 
 const validators = @import("./validators.zig");
-const validateArray = validators.validateArray;
-const validateBoolean = validators.validateBoolean;
-const validateBooleanArray = validators.validateBooleanArray;
-const validateObject = validators.validateObject;
-const validateString = validators.validateString;
-const validateStringArray = validators.validateStringArray;
-const validateStringEnum = validators.validateStringEnum;
 
 const utils = @import("./parse_args_utils.zig");
 const OptionValueType = utils.OptionValueType;
@@ -162,7 +155,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
     // Work out where to slice process.argv for user supplied arguments
 
     // Check options for scenarios where user CLI args follow executable
-    const argv: JSValue = JSC.Node.Process.getArgv(globalThis);
+    const argv: JSValue = bun.api.node.process.getArgv(globalThis);
 
     //var found = false;
     //var iter = argv.arrayIterator(globalThis);
@@ -190,19 +183,17 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSE
         // Only show short example if user used short option.
         var err: JSValue = undefined;
         if (token.raw.asBunString(globalThis).hasPrefixComptime("--")) {
-            err = JSC.toTypeError(
-                .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+            err = globalThis.toTypeError(
+                .PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '{}=-XYZ'.",
                 .{ raw_name, raw_name, raw_name },
-                globalThis,
             );
         } else {
             const token_name = token.name.asBunString(globalThis);
-            err = JSC.toTypeError(
-                .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+            err = globalThis.toTypeError(
+                .PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '--{}=-XYZ' or '{}-XYZ'.",
                 .{ raw_name, raw_name, token_name, raw_name },
-                globalThis,
             );
         }
         return globalThis.throwValue(err);
@@ -215,8 +206,8 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
         const option = options[option_idx];
         switch (option.type) {
             .string => if (token.value == .jsvalue and !token.value.jsvalue.isString()) {
-                const err = JSC.toTypeError(
-                    .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                const err = globalThis.toTypeError(
+                    .PARSE_ARGS_INVALID_OPTION_VALUE,
                     "Option '{s}{s}{s}--{s} <value>' argument missing",
                     .{
                         if (!option.short_name.isEmpty()) "-" else "",
@@ -224,13 +215,12 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                         if (!option.short_name.isEmpty()) ", " else "",
                         token.name.asBunString(globalThis),
                     },
-                    globalThis,
                 );
                 return globalThis.throwValue(err);
             },
             .boolean => if (token.value != .jsvalue or !token.value.jsvalue.isUndefined()) {
-                const err = JSC.toTypeError(
-                    .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                const err = globalThis.toTypeError(
+                    .PARSE_ARGS_INVALID_OPTION_VALUE,
                     "Option '{s}{s}{s}--{s}' does not take an argument",
                     .{
                         if (!option.short_name.isEmpty()) "-" else "",
@@ -238,7 +228,6 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                         if (!option.short_name.isEmpty()) ", " else "",
                         token.name.asBunString(globalThis),
                     },
-                    globalThis,
                 );
                 return globalThis.throwValue(err);
             },
@@ -246,16 +235,14 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
     } else {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
-        const err = if (allow_positionals) (JSC.toTypeError(
-            .ERR_PARSE_ARGS_UNKNOWN_OPTION,
+        const err = if (allow_positionals) (globalThis.toTypeError(
+            .PARSE_ARGS_UNKNOWN_OPTION,
             "Unknown option '{}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{}\"",
             .{ raw_name, raw_name },
-            globalThis,
-        )) else (JSC.toTypeError(
-            .ERR_PARSE_ARGS_UNKNOWN_OPTION,
+        )) else (globalThis.toTypeError(
+            .PARSE_ARGS_UNKNOWN_OPTION,
             "Unknown option '{}'",
             .{raw_name},
-            globalThis,
         ));
         return globalThis.throwValue(err);
     }
@@ -298,12 +285,13 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
 }
 
 fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
-    try validateObject(globalThis, options_obj, "options", .{}, .{});
+    try validators.validateObject(globalThis, options_obj, "options", .{}, .{});
 
-    var iter = try JSC.JSPropertyIterator(.{
-        .skip_empty_name = false,
-        .include_value = true,
-    }).init(globalThis, options_obj);
+    var iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(
+        globalThis,
+        // SAFETY: validateObject ensures it's an object
+        options_obj.getObject().?,
+    );
     defer iter.deinit();
 
     while (try iter.next()) |long_option| {
@@ -312,17 +300,17 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
         };
 
         const obj: JSValue = iter.value;
-        try validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
+        try validators.validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
 
         // type field is required
         const option_type = obj.getOwn(globalThis, "type") orelse JSValue.undefined;
-        option.type = try validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
+        option.type = try validators.validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
 
         if (obj.getOwn(globalThis, "short")) |short_option| {
-            try validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
+            try validators.validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
             var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
+                const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name});
                 return globalThis.throwValue(err);
             }
             option.short_name = short_option_str;
@@ -330,7 +318,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 
         if (obj.getOwn(globalThis, "multiple")) |multiple_value| {
             if (!multiple_value.isUndefined()) {
-                option.multiple = try validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
+                option.multiple = try validators.validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
             }
         }
 
@@ -339,16 +327,16 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
                 switch (option.type) {
                     .string => {
                         if (option.multiple) {
-                            _ = try validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         } else {
-                            try validateString(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            try validators.validateString(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         }
                     },
                     .boolean => {
                         if (option.multiple) {
-                            _ = try validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         } else {
-                            _ = try validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         }
                     },
                 }
@@ -584,11 +572,10 @@ const ParseArgsState = struct {
             },
             .positional => |token| {
                 if (!this.allow_positionals) {
-                    const err = JSC.toTypeError(
-                        .ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
+                    const err = globalThis.toTypeError(
+                        .PARSE_ARGS_UNEXPECTED_POSITIONAL,
                         "Unexpected argument '{s}'. This command does not take positional arguments",
                         .{token.value.asBunString(globalThis)},
-                        globalThis,
                     );
                     return globalThis.throwValue(err);
                 }
@@ -651,7 +638,7 @@ pub fn parseArgs(
 }
 
 comptime {
-    const parseArgsFn = JSC.toJSHostFunction(parseArgs);
+    const parseArgsFn = JSC.toJSHostFn(parseArgs);
     @export(&parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
@@ -662,14 +649,14 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
 
     const config = if (config_obj.isUndefinedOrNull()) null else config_obj;
     if (config) |c| {
-        try validateObject(globalThis, c, "config", .{}, .{});
+        try validators.validateObject(globalThis, c, "config", .{}, .{});
     }
 
     // Phase 0.A: Get and validate type of input args
     var args: ArgsSlice = undefined;
     const config_args_or_null: ?JSValue = if (config) |c| c.getOwn(globalThis, "args") else null;
     if (config_args_or_null) |config_args| {
-        try validateArray(globalThis, config_args, "args", .{}, null);
+        try validators.validateArray(globalThis, config_args, "args", .{}, null);
         args = .{
             .array = config_args,
             .start = 0,
@@ -686,14 +673,14 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
     const config_return_tokens: JSValue = (if (config) |c| c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
     const config_options_obj: ?JSValue = if (config) |c| c.getOwn(globalThis, "options") else null;
 
-    const strict = try validateBoolean(globalThis, config_strict, "strict", .{});
+    const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
     var allow_positionals = !strict;
     if (config_allow_positionals) |config_allow_positionals_value| {
-        allow_positionals = try validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
+        allow_positionals = try validators.validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
     }
 
-    const return_tokens = try validateBoolean(globalThis, config_return_tokens, "tokens", .{});
+    const return_tokens = try validators.validateBoolean(globalThis, config_return_tokens, "tokens", .{});
 
     // Phase 0.C: Parse the options definitions
 

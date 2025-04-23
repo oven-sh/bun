@@ -1,5 +1,4 @@
-const { hideFromStack } = require("internal/shared");
-const defineProperties = Object.defineProperties;
+import type * as BunTypes from "bun";
 
 const enum QueryStatus {
   active = 1 << 1,
@@ -18,6 +17,9 @@ const enum SSLMode {
   verify_ca = 3,
   verify_full = 4,
 }
+
+const { hideFromStack } = require("internal/shared");
+const defineProperties = Object.defineProperties;
 
 function connectionClosedError() {
   return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
@@ -66,12 +68,7 @@ const _results = Symbol("results");
 const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
-const {
-  createConnection: _createConnection,
-  createQuery,
-  PostgresSQLConnection,
-  init,
-} = $zig("postgres.zig", "createBinding");
+const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
 function normalizeSSLMode(value: string): SSLMode {
   if (!value) {
@@ -490,6 +487,8 @@ class Query extends PublicPromise {
     if (!handle) return this;
 
     if (async) {
+      // Ensure it's actually async
+      // eslint-disable-next-line
       await 1;
     }
 
@@ -624,7 +623,7 @@ init(
         }
         try {
           query.resolve(query[_results]);
-        } catch (e) {}
+        } catch {}
         return;
       }
       $assert(result instanceof SQLResultArray, "Invalid result array");
@@ -674,7 +673,7 @@ init(
     }
     try {
       query.resolve(result);
-    } catch (e) {}
+    } catch {}
   },
   function onRejectPostgresQuery(query, reject, queries) {
     if (queries) {
@@ -686,7 +685,7 @@ init(
 
     try {
       query.reject(reject);
-    } catch (e) {}
+    } catch {}
   },
 );
 
@@ -711,7 +710,7 @@ enum PooledConnectionFlags {
 
 class PooledConnection {
   pool: ConnectionPool;
-  connection: ReturnType<typeof createConnection> | null = null;
+  connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
@@ -781,11 +780,11 @@ class PooledConnection {
     this.#startConnection();
   }
   async #startConnection() {
-    this.connection = await createConnection(
+    this.connection = (await createConnection(
       this.connectionInfo,
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
-    );
+    )) as $ZigGeneratedClasses.PostgresSQLConnection;
   }
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
@@ -1251,7 +1250,9 @@ async function createConnection(options, onConnected, onClose) {
     connectionTimeout = 30 * 1000,
     maxLifetime = 0,
     prepare = true,
+    path,
   } = options;
+
   let password = options.password;
   try {
     if (typeof password === "function") {
@@ -1273,13 +1274,14 @@ async function createConnection(options, onConnected, onClose) {
       sslMode || SSLMode.disable,
       tls || null,
       query || "",
+      path || "",
       onConnected,
       onClose,
       idleTimeout,
       connectionTimeout,
       maxLifetime,
       !prepare,
-    );
+    ) as $ZigGeneratedClasses.PostgresSQLConnection;
   } catch (e) {
     onClose(e);
   }
@@ -1353,7 +1355,8 @@ function loadOptions(o) {
     onconnect,
     onclose,
     max,
-    bigint;
+    bigint,
+    path;
   let prepare = true;
   const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
@@ -1390,6 +1393,8 @@ function loadOptions(o) {
     url = new URL(o);
   }
   o ||= {};
+  query = "";
+
   if (url) {
     ({ hostname, port, username, password, adapter } = o);
     // object overrides url
@@ -1404,22 +1409,42 @@ function loadOptions(o) {
     }
 
     const queryObject = url.searchParams.toJSON();
-    query = "";
     for (const key in queryObject) {
       if (key.toLowerCase() === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
+      } else if (key.toLowerCase() === "path") {
+        path = queryObject[key];
       } else {
-        query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+        // this is valid for postgres for other databases it might not be valid
+        // check adapter then implement for other databases
+        // encode string with \0 as finalizer
+        // must be key\0value\0
+        query += `${key}\0${queryObject[key]}\0`;
       }
     }
     query = query.trim();
   }
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
+
   port ||= Number(o.port || env.PGPORT || 5432);
+
+  path ||= o.path || "";
+  // add /.s.PGSQL.${port} if it doesn't exist
+  if (path && path?.indexOf("/.s.PGSQL.") === -1) {
+    path = `${path}/.s.PGSQL.${port}`;
+  }
+
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
   database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
-
+  const connection = o.connection;
+  if (connection && $isObject(connection)) {
+    for (const key in connection) {
+      if (connection[key] !== undefined) {
+        query += `${key}\0${connection[key]}\0`;
+      }
+    }
+  }
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
   max = o.max;
@@ -1496,12 +1521,12 @@ function loadOptions(o) {
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
-    } else if (!!tls) {
+    } else if (tls) {
       tls = true;
     }
   }
 
-  if (!!tls && sslMode === SSLMode.disable) {
+  if (tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
   port = Number(port);
@@ -1695,7 +1720,7 @@ function SQL(o, e = {}) {
   }
 
   function onReserveConnected(err, pooledConnection) {
-    const { promise, resolve, reject } = this;
+    const { resolve, reject } = this;
     if (err) {
       return reject(err);
     }
@@ -1720,7 +1745,7 @@ function SQL(o, e = {}) {
       }
       if ($isArray(strings)) {
         // detect if is tagged template
-        if (!$isArray(strings.raw)) {
+        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
           return new SQLArrayParameter(strings, values);
         }
       } else if (
@@ -2053,7 +2078,7 @@ function SQL(o, e = {}) {
       }
       if ($isArray(strings)) {
         // detect if is tagged template
-        if (!$isArray(strings.raw)) {
+        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
           return new SQLArrayParameter(strings, values);
         }
       } else if (
@@ -2220,7 +2245,7 @@ function SQL(o, e = {}) {
       }
     }
     if (distributed) {
-      transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
+      transaction_sql.savepoint = async (_fn: TransactionCallback, _name?: string): Promise<any> => {
         throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call savepoint inside a distributed transaction");
       };
     } else {
@@ -2287,7 +2312,7 @@ function SQL(o, e = {}) {
   function sql(strings, ...values) {
     if ($isArray(strings)) {
       // detect if is tagged template
-      if (!$isArray(strings.raw)) {
+      if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
         return new SQLArrayParameter(strings, values);
       }
     } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLArrayParameter)) {
@@ -2433,7 +2458,7 @@ function SQL(o, e = {}) {
   return sql;
 }
 
-var lazyDefaultSQL;
+var lazyDefaultSQL: InstanceType<typeof BunTypes.SQL>;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;
@@ -2448,8 +2473,7 @@ function ensureDefaultSQL() {
   }
 }
 
-var initialDefaultSQL;
-var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
+var defaultSQLObject: InstanceType<typeof BunTypes.SQL> = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
@@ -2457,7 +2481,7 @@ var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
     resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
-});
+} as typeof BunTypes.SQL;
 
 defaultSQLObject.reserve = (...args) => {
   ensureDefaultSQL();
@@ -2486,21 +2510,21 @@ defaultSQLObject.unsafe = (...args) => {
   return lazyDefaultSQL.unsafe(...args);
 };
 
-defaultSQLObject.file = async (...args) => {
+defaultSQLObject.file = (filename: string, ...args) => {
   ensureDefaultSQL();
-  return lazyDefaultSQL.file(...args);
+  return lazyDefaultSQL.file(filename, ...args);
 };
 
-defaultSQLObject.transaction = defaultSQLObject.begin = (...args) => {
+defaultSQLObject.transaction = defaultSQLObject.begin = function (...args: Parameters<typeof lazyDefaultSQL.begin>) {
   ensureDefaultSQL();
   return lazyDefaultSQL.begin(...args);
-};
+} as (typeof BunTypes.SQL)["begin"];
 
-defaultSQLObject.end = defaultSQLObject.close = (...args) => {
+defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazyDefaultSQL.close>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.close(...args);
 };
-defaultSQLObject.flush = (...args) => {
+defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
 };

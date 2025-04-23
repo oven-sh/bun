@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 test("load the same file 10,000 times", async () => {
   const meta = {
@@ -24,7 +25,7 @@ test("load the same file 10,000 times", async () => {
   }
   Bun.gc(true);
   Bun.unsafe.gcAggressionLevel(prev);
-});
+}, isDebug ? 20_000 : 5000);
 
 test("load the same empty JS file 10,000 times", async () => {
   const prev = Bun.unsafe.gcAggressionLevel();

@@ -43,10 +43,10 @@ private:
     HttpContext() = delete;
 
     /* Maximum delay allowed until an HTTP connection is terminated due to outstanding request or rejected data (slow loris protection) */
-    static const int HTTP_IDLE_TIMEOUT_S = 10;
+    static constexpr int HTTP_IDLE_TIMEOUT_S = 10;
 
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
-    static const int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
+    static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
     us_socket_context_t *getSocketContext() {
         return (us_socket_context_t *) this;
@@ -115,9 +115,8 @@ private:
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
             ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
-
             /* Get socket ext */
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+            auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
@@ -126,10 +125,13 @@ private:
             }
 
             /* Signal broken HTTP request only if we have a pending request */
-            if (httpResponseData->onAborted) {
+            if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 
+            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            }
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -171,8 +173,8 @@ private:
             proxyParser = &httpResponseData->proxyParser;
 #endif
 
-            /* The return value is entirely up to us to interpret. The HttpParser only care for whether the returned value is DIFFERENT or not from passed user */
-            auto [err, returnedSocket] = httpResponseData->consumePostPadded(data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
+            auto [err, returnedSocket] = httpResponseData->consumePostPadded(httpContextData->requireHostHeader,data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -182,7 +184,7 @@ private:
                 httpResponseData->offset = 0;
 
                 /* Are we not ready for another request yet? Terminate the connection.
-                 * Important for denying async pipelining until, if ever, we want to suppot it.
+                 * Important for denying async pipelining until, if ever, we want to support it.
                  * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
                     us_socket_close(SSL, (us_socket_t *) s, 0, nullptr);
@@ -196,6 +198,8 @@ private:
                 if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 }
+
+                httpResponseData->fromAncientRequest = httpRequest->isAncient();
 
                 /* Select the router based on SNI (only possible for SSL) */
                 auto *selectedRouter = &httpContextData->router;
@@ -231,7 +235,7 @@ private:
                 }
 
                 /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
-                if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted) {
+                if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted && !httpResponseData->socketData) {
                     /* Throw exception here? */
                     std::cerr << "Error: Returning from a request handler without responding or attaching an abort handler is forbidden!" << std::endl;
                     std::terminate();
@@ -358,18 +362,38 @@ private:
 
         /* Handle HTTP write out (note: SSL_read may trigger this spuriously, the app need to handle spurious calls) */
         us_socket_context_on_writable(SSL, getSocketContext(), [](us_socket_t *s) {
+            auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+            auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
-
+            /* Attempt to drain the socket buffer before triggering onWritable callback */
+            size_t bufferedAmount = asyncSocket->getBufferedAmount();
+            if (bufferedAmount > 0) {
+                /* Try to flush pending data from the socket's buffer to the network */
+                bufferedAmount -= asyncSocket->flush();
+                
+                /* Check if there's still data waiting to be sent after flush attempt */
+                if (bufferedAmount > 0) {
+                    /* Socket buffer is not completely empty yet
+                    * - Reset the timeout to prevent premature connection closure
+                    * - This allows time for another writable event or new request
+                    * - Return the socket to indicate we're still processing
+                    */
+                    reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+                    return s;
+                }
+                /* If bufferedAmount is now 0, we've successfully flushed everything
+                * and will fall through to the next section of code
+                */
+            }
+            
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
                 us_socket_timeout(SSL, s, 0);
-
+                
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
-                bool success = httpResponseData->callOnWritable((HttpResponse<SSL> *)asyncSocket, httpResponseData->offset);
+                bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
 
                 /* The developer indicated that their onWritable failed. */
                 if (!success) {
@@ -381,7 +405,7 @@ private:
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
-            /*auto [written, failed] = */asyncSocket->write(nullptr, 0, true, 0);
+            asyncSocket->flush();
 
             /* Should we close this connection after a response - and is this response really done? */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
@@ -396,28 +420,26 @@ private:
             }
 
             /* Expect another writable event, or another request within the timeout */
-            ((HttpResponse<SSL> *) s)->resetTimeout();
+            reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
 
             return s;
         });
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
-            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
-
+            auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+            asyncSocket->uncorkWithoutSending();
             /* We do not care for half closed sockets */
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
             return asyncSocket->close();
-
         });
 
         /* Handle socket timeouts, simply close them so to not confuse client with FIN */
         us_socket_context_on_timeout(SSL, getSocketContext(), [](us_socket_t *s) {
 
             /* Force close rather than gracefully shutdown and risk confusing the client with a complete download */
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
-            // Node.js by default sclose the connection but they emit the timeout event before that
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
+            AsyncSocket<SSL> *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+            // Node.js by default closes the connection but they emit the timeout event before that
+            HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
             if (httpResponseData->onTimeout) {
                 httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
@@ -493,16 +515,20 @@ public:
             }
         }
 
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets)](auto *r) mutable {
+        const bool &customContinue = httpContextData->usingCustomExpectHandler;
+
+        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), &customContinue](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
             user.httpRequest->setParameterOffsets(&parameterOffsets);
 
-            /* Middleware? Automatically respond to expectations */
-            std::string_view expect = user.httpRequest->getHeader("expect");
-            if (expect.length() && expect == "100-continue") {
-                user.httpResponse->writeContinue();
+            if (!customContinue) {
+                /* Middleware? Automatically respond to expectations */
+                std::string_view expect = user.httpRequest->getHeader("expect");
+                if (expect.length() && expect == "100-continue") {
+                    user.httpResponse->writeContinue();
+                }
             }
 
             handler(user.httpResponse, user.httpRequest);

@@ -1,6 +1,6 @@
 const std = @import("std");
 const logger = bun.logger;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -10,7 +10,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const CodePoint = bun.CodePoint;
-const C = bun.C;
+
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
@@ -92,27 +92,7 @@ pub const Loader = struct {
     }
 
     pub fn loadTracy(this: *const Loader) void {
-        tracy: {
-            if (this.get("BUN_TRACY") != null) {
-                if (!bun.tracy.init()) {
-                    Output.prettyErrorln("Failed to load Tracy. Is it installed in your include path?", .{});
-                    Output.flush();
-                    break :tracy;
-                }
-
-                bun.tracy.start();
-
-                if (!bun.tracy.isConnected()) {
-                    std.time.sleep(std.time.ns_per_ms * 10);
-                }
-
-                if (!bun.tracy.isConnected()) {
-                    Output.prettyErrorln("Tracy is not connected. Is Tracy running on your computer?", .{});
-                    Output.flush();
-                    break :tracy;
-                }
-            }
-        }
+        _ = this; // autofix
     }
 
     pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
@@ -159,6 +139,7 @@ pub const Loader = struct {
             session_token = token;
         }
         this.aws_credentials = .{
+            .ref_count = .init(),
             .accessKeyId = accessKeyId,
             .secretAccessKey = secretAccessKey,
             .region = region,

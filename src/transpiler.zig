@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -704,7 +704,7 @@ pub const Transpiler = struct {
                         );
                 }
 
-                const buffer_writer = try js_printer.BufferWriter.init(transpiler.allocator);
+                const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (transpiler.options.target) {
@@ -745,21 +745,43 @@ pub const Transpiler = struct {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                     return null;
                 };
-                var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
+                var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = file_path.text.len > css_module_suffix.len and
+                    strings.eqlComptime(file_path.text[file_path.text.len - css_module_suffix.len ..], css_module_suffix);
+                if (enable_css_modules) {
+                    opts.filename = bun.path.basename(file_path.text);
+                    opts.css_modules = bun.css.CssModuleConfig{};
+                }
+                var sheet, var extra = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
+                    alloc,
+                    entry.contents,
+                    opts,
+                    null,
+                    // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.ZIG file??
+                    bun.bundle_v2.Index.invalid,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                         return null;
                     },
                 };
-                if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                     return null;
                 }
-                const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
-                    .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
-                    .minify = transpiler.options.minify_whitespace,
-                }, null)) {
+                const symbols = bun.JSAst.Symbol.Map{};
+                const result = switch (sheet.toCss(
+                    alloc,
+                    bun.css.PrinterOptions{
+                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                        .minify = transpiler.options.minify_whitespace,
+                    },
+                    null,
+                    null,
+                    &symbols,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
@@ -774,12 +796,14 @@ pub const Transpiler = struct {
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (transpiler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
                         .pathname = pathname,
-                        .dir = dir,
+                        .dir = if (transpiler.options.output_dir_handle) |output_handle|
+                            .fromStdDir(output_handle)
+                        else
+                            .invalid,
                         .is_outdir = true,
                     },
                 };
@@ -800,7 +824,10 @@ pub const Transpiler = struct {
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
     ) !usize {
-        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
+        const tracer = if (enable_source_map)
+            bun.perf.trace("JSPrinter.printWithSourceMap")
+        else
+            bun.perf.trace("JSPrinter.print");
         defer tracer.end();
 
         const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
@@ -825,6 +852,7 @@ pub const Transpiler = struct {
                     .transform_only = transpiler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .hmr_ref = ast.wrapper_ref,
                 },
                 enable_source_map,
             ),
@@ -849,6 +877,8 @@ pub const Transpiler = struct {
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .hmr_ref = ast.wrapper_ref,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -883,6 +913,8 @@ pub const Transpiler = struct {
                         .runtime_transpiler_cache = runtime_transpiler_cache,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                        .hmr_ref = ast.wrapper_ref,
+                        .mangled_props = null,
                     },
                     enable_source_map,
                 ),
@@ -965,6 +997,12 @@ pub const Transpiler = struct {
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
+        /// `"type"` from `package.json`. Used to make sure the parser defaults
+        /// to CommonJS or ESM based on what the package.json says, when it
+        /// doesn't otherwise know from reading the source code.
+        ///
+        /// See: https://nodejs.org/api/packages.html#type
+        module_type: options.ModuleType = .unknown,
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
@@ -1106,6 +1144,7 @@ pub const Transpiler = struct {
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.module_type = this_parse.module_type;
 
                 opts.tree_shaking = transpiler.options.tree_shaking;
                 opts.features.inlining = transpiler.options.inlining;
@@ -1143,21 +1182,21 @@ pub const Transpiler = struct {
                     transpiler.log,
                     &source,
                 ) catch null) orelse return null) {
-                    .ast => |value| ParseResult{
+                    .ast => |value| .{
                         .ast = value,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                     },
-                    .cached => ParseResult{
+                    .cached => .{
                         .ast = undefined,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
-                    .already_bundled => |already_bundled| ParseResult{
+                    .already_bundled => |already_bundled| .{
                         .ast = undefined,
                         .already_bundled = switch (already_bundled) {
                             .bun => .source_code,
@@ -1168,7 +1207,7 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd.unwrapValid() orelse bun.FD.cwd(), path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }
@@ -1267,6 +1306,7 @@ pub const Transpiler = struct {
                                 js_ast.S.ExportClause,
                                 js_ast.S.ExportClause{
                                     .items = export_clauses[0..count],
+                                    .is_single_line = false,
                                 },
                                 logger.Loc{
                                     .start = 0,

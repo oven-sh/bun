@@ -8,6 +8,7 @@ const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+
 const encoder = new TextEncoder();
 const eventIds = {
   open: 1,
@@ -944,7 +945,7 @@ class BunWebSocketMocked extends EventEmitter {
    *     not to skip UTF-8 validation for text and close messages
    * @private
    */
-  setSocket(socket, head, options) {
+  setSocket(_socket, _head, _options) {
     throw new Error("Not implemented");
   }
 
@@ -998,7 +999,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   // TODO: implement this more proper
-  addEventListener(type, listener, options) {
+  addEventListener(type, listener, _options) {
     if (type === "message") {
       const l = data => listener({ data });
       l.listener = listener;
@@ -1230,7 +1231,10 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [{ [kBunInternals]: server }, response, req] = socket[kBunInternals];
+    const response = socket._httpMessage;
+    const server = socket.server[kBunInternals];
+    const req = socket[kBunInternals];
+
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";
@@ -1252,7 +1256,6 @@ class WebSocketServer extends EventEmitter {
         data: ws[kBunInternals],
       })
     ) {
-      response._reply(undefined);
       if (this.clients) {
         this.clients.add(ws);
         ws.on("close", () => {
@@ -1280,7 +1283,7 @@ class WebSocketServer extends EventEmitter {
    */
   handleUpgrade(req, socket, head, cb) {
     // socket is actually fake so we use internal http_res
-    const [_, response] = socket[kBunInternals];
+    const response = socket._httpMessage;
 
     // socket.on("error", socketOnError);
 
@@ -1322,7 +1325,7 @@ class WebSocketServer extends EventEmitter {
     if (secWebSocketProtocol !== undefined) {
       try {
         protocols = subprotocolParse(secWebSocketProtocol);
-      } catch (err) {
+      } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
         abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
         return;
@@ -1452,7 +1455,7 @@ class Receiver {
   }
 }
 
-var createWebSocketStream = ws => {
+var createWebSocketStream = _ws => {
   throw new Error("Not supported yet in Bun");
 };
 

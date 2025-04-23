@@ -42,7 +42,7 @@
 //     make mimalloc-debug
 //
 const Transpiler = bun.Transpiler;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -53,7 +53,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = @import("../js_lexer.zig");
 const Logger = @import("../logger.zig");
@@ -67,7 +67,7 @@ const linker = @import("../linker.zig");
 const sourcemap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
-const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
 const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
@@ -134,10 +134,7 @@ const DataURL = @import("../resolver/resolver.zig").DataURL;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
-fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
-    return bun.tracy.traceNamed(src, "Transpiler." ++ name);
-}
-
+pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
 pub const ThreadPool = struct {
     /// macOS holds an IORWLock on every file open.
     /// This causes massive contention after about 4 threads as of macOS 15.2
@@ -266,9 +263,6 @@ pub const ThreadPool = struct {
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
-        const trace = tracer(@src(), "getWorker");
-        defer trace.end();
-
         var worker: *Worker = undefined;
         {
             this.workers_assignments_lock.lock();
@@ -342,7 +336,7 @@ pub const ThreadPool = struct {
             worker.ast_memory_allocator.push();
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                worker.heap.gc(true);
+                worker.heap.helpCatchMemoryIssues();
             }
 
             return worker;
@@ -350,7 +344,7 @@ pub const ThreadPool = struct {
 
         pub fn unget(this: *Worker) void {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.heap.gc(true);
+                this.heap.helpCatchMemoryIssues();
             }
 
             this.ast_memory_allocator.pop();
@@ -368,7 +362,7 @@ pub const ThreadPool = struct {
         }
 
         fn create(this: *Worker, ctx: *BundleV2) void {
-            const trace = tracer(@src(), "Worker.create");
+            const trace = bun.perf.trace("Bundler.Worker.create");
             defer trace.end();
 
             this.has_created = true;
@@ -414,7 +408,7 @@ pub const ThreadPool = struct {
     };
 };
 
-const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
+const Watcher = bun.JSC.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
@@ -424,7 +418,7 @@ fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_l
     const is_node = bun.strings.eqlComptime(path.namespace, "node");
     if (is_node and
         (bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path) or
-        !std.fs.path.isAbsolute(path.text)))
+            !std.fs.path.isAbsolute(path.text)))
     {
         return path;
     }
@@ -616,7 +610,7 @@ pub const BundleV2 = struct {
             }
 
             const is_js = v.all_loaders[source_index.get()].isJavaScriptLike();
-            const is_css = v.all_loaders[source_index.get()] == .css;
+            const is_css = v.all_loaders[source_index.get()].isCSS();
 
             const import_record_list_id = source_index;
             // when there are no import records, v index will be invalid
@@ -676,7 +670,7 @@ pub const BundleV2 = struct {
     };
 
     pub fn findReachableFiles(this: *BundleV2) ![]Index {
-        const trace = tracer(@src(), "findReachableFiles");
+        const trace = bun.perf.trace("Bundler.findReachableFiles");
         defer trace.end();
 
         // Create a quick index for server-component boundaries.
@@ -1043,8 +1037,9 @@ pub const BundleV2 = struct {
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
         const loader = brk: {
-            const default = path.loader(&this.transpiler.options.loaders) orelse .file;
-            break :brk default;
+            const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
+            if (target != .browser) break :brk loader.disableHTML();
+            break :brk loader;
         };
 
         path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
@@ -1330,7 +1325,7 @@ pub const BundleV2 = struct {
     }
 
     fn cloneAST(this: *BundleV2) !void {
-        const trace = tracer(@src(), "cloneAST");
+        const trace = bun.perf.trace("Bundler.cloneAST");
         defer trace.end();
         this.linker.allocator = this.transpiler.allocator;
         this.linker.graph.allocator = this.transpiler.allocator;
@@ -1342,8 +1337,7 @@ pub const BundleV2 = struct {
             }
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
-                bun.Mimalloc.mi_collect(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
 
             module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
@@ -1383,7 +1377,7 @@ pub const BundleV2 = struct {
             scbs.items(.ssr_source_index),
         ) |use, source_id, ssr_index| {
             if (use == .client) {
-                // TODO(@paperdave/bake): this file is being generated far too
+                // TODO(@paperclover/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
                 // are live. Tree-shaking figures that out. However,
                 // tree-shaking happens after import binding, which would
@@ -1641,10 +1635,9 @@ pub const BundleV2 = struct {
                     const path = record.path.text;
                     // External dependency
                     if (path.len > 0 and
-
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Aliases.has(path, .node) and
+                        !JSC.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -1857,7 +1850,8 @@ pub const BundleV2 = struct {
         event_loop: *bun.JSC.EventLoop,
         _: std.mem.Allocator,
     ) OOM!*JSBundleCompletionTask {
-        const completion = JSBundleCompletionTask.new(.{
+        const completion = bun.new(JSBundleCompletionTask, .{
+            .ref_count = .init(),
             .config = config,
             .jsc_event_loop = event_loop,
             .globalThis = globalThis,
@@ -1924,6 +1918,11 @@ pub const BundleV2 = struct {
     };
 
     pub const JSBundleCompletionTask = struct {
+        pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit, .{});
+        // pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
         config: bun.JSC.API.JSBundler.Config,
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
@@ -1941,10 +1940,7 @@ pub const BundleV2 = struct {
         next: ?*JSBundleCompletionTask = null,
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
-
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -2025,7 +2021,7 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        fn _deinit(this: *JSBundleCompletionTask) void {
+        fn deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
             this.log.deinit();
             this.poll_ref.disable();
@@ -2034,7 +2030,7 @@ pub const BundleV2 = struct {
             }
             this.config.deinit(bun.default_allocator);
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -2192,7 +2188,7 @@ pub const BundleV2 = struct {
         defer load.deinit();
         defer {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
         }
         const log = this.transpiler.log;
@@ -2310,7 +2306,7 @@ pub const BundleV2 = struct {
 
         defer {
             if (comptime FeatureFlags.help_catch_memory_issues) {
-                this.graph.heap.gc(true);
+                this.graph.heap.helpCatchMemoryIssues();
             }
         }
 
@@ -2753,7 +2749,7 @@ pub const BundleV2 = struct {
             },
             .content = .{
                 .javascript = .{
-                    // TODO(@paperdave): remove this ptrCast when Source Index is fixed
+                    // TODO(@paperclover): remove this ptrCast when Source Index is fixed
                     .files_in_chunk_order = @ptrCast(js_reachable_files),
                     .parts_in_chunk_in_order = js_part_ranges,
                 },
@@ -3003,8 +2999,15 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
-                    import_record.path.text = replacement.path;
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
+                    // When bundling node builtins, remove the "node:" prefix.
+                    // This supports special use cases where the bundle is put
+                    // into a non-node module resolver that doesn't support
+                    // node's prefix. https://github.com/oven-sh/bun/issues/18545
+                    import_record.path.text = if (replacement.node_builtin and !replacement.node_only_prefix)
+                        replacement.path[5..]
+                    else
+                        replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;
@@ -3057,44 +3060,41 @@ pub const BundleV2 = struct {
             }
 
             const transpiler, const bake_graph: bake.Graph, const target =
-                if (import_record.tag == .bake_resolve_to_ssr_graph)
-            brk: {
-                // TODO: consider moving this error into js_parser so it is caught more reliably
-                // Then we can assert(this.framework != null)
-                if (this.framework == null) {
-                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
+                if (import_record.tag == .bake_resolve_to_ssr_graph) brk: {
+                    if (this.framework == null) {
+                        this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
+                            source,
+                            import_record.range.loc,
+                            this.graph.allocator,
+                            "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
+                            .{},
+                        ) catch @panic("unexpected log error");
+                        continue;
+                    }
 
-                const is_supported = this.framework.?.server_components != null and
-                    this.framework.?.server_components.?.separate_ssr_graph;
-                if (!is_supported) {
-                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "Framework does not have a separate SSR graph to put this import into",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
+                    const is_supported = this.framework.?.server_components != null and
+                        this.framework.?.server_components.?.separate_ssr_graph;
+                    if (!is_supported) {
+                        this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
+                            source,
+                            import_record.range.loc,
+                            this.graph.allocator,
+                            "Framework does not have a separate SSR graph to put this import into",
+                            .{},
+                        ) catch @panic("unexpected log error");
+                        continue;
+                    }
 
-                break :brk .{
-                    this.ssr_transpiler,
-                    .ssr,
-                    .bake_server_components_ssr,
+                    break :brk .{
+                        this.ssr_transpiler,
+                        .ssr,
+                        .bake_server_components_ssr,
+                    };
+                } else .{
+                    this.transpilerForTarget(ast.target),
+                    ast.target.bakeGraph(),
+                    ast.target,
                 };
-            } else .{
-                this.transpilerForTarget(ast.target),
-                ast.target.bakeGraph(),
-                ast.target,
-            };
 
             var had_busted_dir_cache = false;
             var resolve_result = inner: while (true) break transpiler.resolver.resolveWithFramework(
@@ -3149,8 +3149,49 @@ pub const BundleV2 = struct {
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
-                                        "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{ import_record.kind.errorLabel(), import_record.path.text },
+                                        "Browser build cannot {s} Node.js builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                            else
+                                                "",
+                                        },
+                                        import_record.kind,
+                                    ) catch bun.outOfMemory();
+                                } else if (!ast.target.isBun() and strings.eqlComptime(import_record.path.text, "bun")) {
+                                    addError(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Browser build cannot {s} Bun builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". When bundling for Bun, set target to 'bun'"
+                                            else
+                                                "",
+                                        },
+                                        import_record.kind,
+                                    ) catch bun.outOfMemory();
+                                } else if (!ast.target.isBun() and strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                                    addError(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Browser build cannot {s} Bun builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". When bundling for Bun, set target to 'bun'"
+                                            else
+                                                "",
+                                        },
                                         import_record.kind,
                                     ) catch bun.outOfMemory();
                                 } else {
@@ -3165,16 +3206,22 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
+                                const buf = bun.PathBufferPool.get();
+                                defer bun.PathBufferPool.put(buf);
+                                const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
+                                    const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
+                                    if (Environment.isWindows) {
+                                        break :brk bun.path.pathToPosixBuf(u8, specifier_to_use, buf);
+                                    }
+                                    break :brk specifier_to_use;
+                                } else import_record.path.text;
                                 addError(
                                     log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir))
-                                        import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..]
-                                    else
-                                        import_record.path.text},
+                                    .{specifier_to_use},
                                     import_record.kind,
                                 ) catch bun.outOfMemory();
                             }
@@ -3206,6 +3253,22 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
+                if (path.loader(&this.transpiler.options.loaders) == .html and (import_record.loader == null or import_record.loader.? == .html)) {
+                    // This use case is currently not supported. This error
+                    // blocks an assertion failure because the DevServer
+                    // reserves the HTML file's spot in IncrementalGraph for the
+                    // route definition.
+                    const log = this.logForResolutionFailures(source.path.text, bake_graph);
+                    log.addRangeErrorFmt(
+                        source,
+                        import_record.range,
+                        this.graph.allocator,
+                        "Browser builds cannot import HTML files.",
+                        .{},
+                    ) catch bun.outOfMemory();
+                    continue;
+                }
+
                 if (loader == .css) {
                     // Do not use cached files for CSS.
                     break :brk;
@@ -3331,7 +3394,7 @@ pub const BundleV2 = struct {
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
-        const trace = tracer(@src(), "onParseTaskComplete");
+        const trace = bun.perf.trace("Bundler.onParseTaskComplete");
         defer trace.end();
         if (parse_result.external.function != null) {
             const source = switch (parse_result.value) {
@@ -3371,7 +3434,7 @@ pub const BundleV2 = struct {
 
         // To minimize contention, watchers are appended by the transpiler thread.
         if (this.bun_watcher) |watcher| {
-            if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
+            if (parse_result.watcher_data.fd != bun.invalid_fd) {
                 const source = switch (parse_result.value) {
                     inline .empty, .err => |data| graph.input_files.items(.source)[data.source_index.get()],
                     .success => |val| val.source,
@@ -3511,12 +3574,12 @@ pub const BundleV2 = struct {
                 const input_file_loaders = this.graph.input_files.items(.loader);
                 const save_import_record_source_index = this.transpiler.options.dev_server == null or
                     result.loader == .html or
-                    result.loader == .css;
+                    result.loader.isCSS();
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
                         if (save_import_record_source_index or
-                            input_file_loaders[to_assign.to_source_index.get()] == .css)
+                            input_file_loaders[to_assign.to_source_index.get()].isCSS())
                         {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
                         }
@@ -4179,10 +4242,11 @@ pub const ParseTask = struct {
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: *FileLoaderHash,
+        has_any_css_locals: *std.atomic.Value(u32),
     ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
-                const trace = tracer(@src(), "ParseJS");
+                const trace = bun.perf.trace("Bundler.ParseJS");
                 defer trace.end();
                 return if (try resolver.caches.js.parse(
                     transpiler.allocator,
@@ -4204,13 +4268,13 @@ pub const ParseTask = struct {
                 };
             },
             .json, .jsonc => |v| {
-                const trace = tracer(@src(), "ParseJSON");
+                const trace = bun.perf.trace("Bundler.ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
-                const trace = tracer(@src(), "ParseTOML");
+                const trace = bun.perf.trace("Bundler.ParseTOML");
                 defer trace.end();
                 var temp_log = bun.logger.Log.init(allocator);
                 defer {
@@ -4380,6 +4444,7 @@ pub const ParseTask = struct {
                 return JSAst.init(ast);
             },
             .css => {
+                // make css ast
                 var import_records = BabyList(ImportRecord){};
                 const source_code = source.contents;
                 var temp_log = bun.logger.Log.init(allocator);
@@ -4387,11 +4452,22 @@ pub const ParseTask = struct {
                     temp_log.appendToMaybeRecycled(log, &source) catch bun.outOfMemory();
                 }
 
-                var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = source.path.pretty.len > css_module_suffix.len and
+                    strings.eqlComptime(source.path.pretty[source.path.pretty.len - css_module_suffix.len ..], css_module_suffix);
+                const parser_options = if (enable_css_modules) init: {
+                    var parseropts = bun.css.ParserOptions.default(allocator, &temp_log);
+                    parseropts.filename = bun.path.basename(source.path.pretty);
+                    parseropts.css_modules = bun.css.CssModuleConfig{};
+                    break :init parseropts;
+                } else bun.css.ParserOptions.default(allocator, &temp_log);
+
+                var css_ast, var extra = switch (bun.css.BundlerStyleSheet.parseBundler(
                     allocator,
                     source_code,
-                    bun.css.ParserOptions.default(allocator, &temp_log),
+                    parser_options,
                     &import_records,
+                    source.index,
                 )) {
                     .result => |v| v,
                     .err => |e| {
@@ -4399,16 +4475,29 @@ pub const ParseTask = struct {
                         return error.SyntaxError;
                     },
                 };
+                // Make sure the css modules local refs have a valid tag
+                if (comptime bun.Environment.isDebug) {
+                    if (css_ast.local_scope.count() > 0) {
+                        for (css_ast.local_scope.values()) |entry| {
+                            const ref = entry.ref;
+                            bun.assert(ref.innerIndex() < extra.symbols.len);
+                        }
+                    }
+                }
                 if (css_ast.minify(allocator, bun.css.MinifyOptions{
                     .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                     .unused_symbols = .{},
-                }).asErr()) |e| {
+                }, &extra).asErr()) |e| {
                     try e.addToLogger(&temp_log, &source, allocator);
                     return error.MinifyError;
                 }
+                if (css_ast.local_scope.count() > 0) {
+                    _ = has_any_css_locals.fetchAdd(1, .monotonic);
+                }
+                // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
                 const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                 const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+                var ast = JSAst.init((try js_parser.newLazyExportASTImpl(allocator, transpiler.options.define, opts, &temp_log, root, &source, "", extra.symbols)).?);
                 ast.css = css_ast_heap;
                 ast.import_records = import_records;
                 return ast;
@@ -4468,7 +4557,7 @@ pub const ParseTask = struct {
     ) !CacheEntry {
         return switch (task.contents_or_fd) {
             .fd => |contents| brk: {
-                const trace = tracer(@src(), "readFile");
+                const trace = bun.perf.trace("Bundler.readFile");
                 defer trace.end();
 
                 if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
@@ -4501,10 +4590,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (contents.file != bun.invalid_fd and contents.file != .zero)
-                        contents.file
-                    else
-                        null,
+                    contents.file.unwrapValid(),
                 ) catch |err| {
                     const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
@@ -4962,7 +5048,8 @@ pub const ParseTask = struct {
         }
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
-            entry.fd.isValid() and !entry.fd.isStdio() and
+            entry.fd.isValid() and
+            entry.fd.stdioTag() == null and
             this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
@@ -4996,7 +5083,7 @@ pub const ParseTask = struct {
             this.ctx.framework.?.server_components.?.separate_ssr_graph) or
             // set the target to the client when bundling client-side files
             ((transpiler.options.server_components or transpiler.options.dev_server != null) and
-            task.known_target == .browser))
+                task.known_target == .browser))
         {
             transpiler = this.ctx.client_transpiler;
             resolver = &transpiler.resolver;
@@ -5012,9 +5099,9 @@ pub const ParseTask = struct {
 
         const target = (if (task.source_index.get() == 1) targetFromHashbang(entry.contents) else null) orelse
             if (task.known_target == .bake_server_components_ssr and transpiler.options.framework.?.server_components.?.separate_ssr_graph)
-            .bake_server_components_ssr
-        else
-            transpiler.options.target;
+                .bake_server_components_ssr
+            else
+                transpiler.options.target;
 
         const output_format = transpiler.options.output_format;
 
@@ -5062,7 +5149,7 @@ pub const ParseTask = struct {
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
         if (transpiler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
-            opts.import_meta_main_value = task.is_entry_point;
+            opts.import_meta_main_value = task.is_entry_point and transpiler.options.dev_server == null;
         } else if (target == .node) {
             opts.lower_import_meta_main_for_node_js = true;
         }
@@ -5077,9 +5164,9 @@ pub const ParseTask = struct {
             .content_hash = 0,
         };
         var ast: JSAst = if (!is_empty)
-            try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
+            try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
                 log,
                 transpiler,
                 opts,
@@ -5574,7 +5661,7 @@ pub const JSMeta = struct {
 
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         /// This is true if this file is affected by top-level await, either by having
         /// a top-level await inside this file or by having an import/export statement
         /// that transitively imports such a file. It is forbidden to call "require()"
@@ -6256,9 +6343,14 @@ pub const LinkerContext = struct {
     /// to know whether or not we can free it safely.
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
+    ///
+    has_any_css_locals: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
     /// Used by Bake to extract []CompileResult before it is joined
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
+
+    mangled_props: MangledProps = .{},
 
     fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
         return genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
@@ -6409,7 +6501,7 @@ pub const LinkerContext = struct {
         server_component_boundaries: ServerComponentBoundary.List,
         reachable: []Index,
     ) !void {
-        const trace = tracer(@src(), "CloneLinkerGraph");
+        const trace = bun.perf.trace("Bundler.CloneLinkerGraph");
         defer trace.end();
         this.parse_graph = &bundle.graph;
 
@@ -6568,7 +6660,7 @@ pub const LinkerContext = struct {
     fn checkForMemoryCorruption(this: *LinkerContext) void {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        this.parse_graph.heap.gc(true);
+        this.parse_graph.heap.helpCatchMemoryIssues();
     }
 
     const JSChunkKeyFormatter = struct {
@@ -6584,7 +6676,7 @@ pub const LinkerContext = struct {
         this: *LinkerContext,
         unique_key: u64,
     ) ![]Chunk {
-        const trace = tracer(@src(), "computeChunks");
+        const trace = bun.perf.trace("Bundler.computeChunks");
         defer trace.end();
 
         bun.assert(this.dev_server == null); // use
@@ -6921,7 +7013,7 @@ pub const LinkerContext = struct {
                 };
                 defer dir.close();
 
-                break :dir try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf);
+                break :dir try bun.FD.fromStdDir(dir).getFdPath(&real_path_buf);
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
@@ -6931,7 +7023,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
-        const trace = tracer(@src(), "findAllImportedPartsInJSOrder");
+        const trace = bun.perf.trace("Bundler.findAllImportedPartsInJSOrder");
         defer trace.end();
 
         var part_ranges_shared = std.ArrayList(PartRange).init(temp_allocator);
@@ -7021,7 +7113,7 @@ pub const LinkerContext = struct {
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = if (comptime with_code_splitting)
+                var is_file_in_chunk = if (with_code_splitting and v.c.graph.ast.items(.css)[source_index] == null)
                     // when code splitting, include the file in the chunk if ALL of the entry points overlap
                     v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index])
                 else
@@ -7177,6 +7269,10 @@ pub const LinkerContext = struct {
                 wrapping_conditions: *BabyList(bun.css.ImportConditions),
                 wrapping_import_records: *BabyList(ImportRecord),
             ) void {
+                debug(
+                    "Visit file: {d}={s}",
+                    .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                );
                 // The CSS specification strangely does not describe what to do when there
                 // is a cycle. So we are left with reverse-engineering the behavior from a
                 // real browser. Here's what the WebKit code base has to say about this:
@@ -7188,6 +7284,10 @@ pub const LinkerContext = struct {
                 // WebKit for more information.
                 for (visitor.visited.slice()) |visitedSourceIndex| {
                     if (visitedSourceIndex.get() == source_index.get()) {
+                        debug(
+                            "Skip file: {d}={s}",
+                            .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                        );
                         return;
                     }
                 }
@@ -7212,7 +7312,7 @@ pub const LinkerContext = struct {
                 // }
 
                 defer {
-                    _ = visitor.visited.popOrNull();
+                    _ = visitor.visited.pop();
                 }
 
                 // Iterate over the top-level "@import" rules
@@ -7273,24 +7373,29 @@ pub const LinkerContext = struct {
                                     },
                                 ) catch bun.outOfMemory();
                             }
+                            debug(
+                                "Push external: {d}={s}",
+                                .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                            );
                             visitor.has_external_import = true;
                         }
                     }
                 }
 
-                // TODO: composes from css modules
+                // Iterate over the "composes" directives. Note that the order doesn't
+                // matter for these because the output order is explicitly undfened
+                // in the specification.
+                for (visitor.all_import_records[source_index.get()].sliceConst()) |*record| {
+                    if (record.kind == .composes and record.source_index.isValid()) {
+                        visitor.visit(record.source_index, wrapping_conditions, wrapping_import_records);
+                    }
+                }
 
                 if (comptime bun.Environment.isDebug) {
                     debug(
-                        "Looking at file: {d}={s}",
+                        "Push file: {d}={s}",
                         .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
                     );
-                    for (visitor.visited.slice()) |idx| {
-                        debug(
-                            "Visit: {d}",
-                            .{idx.get()},
-                        );
-                    }
                 }
                 // Accumulate imports in depth-first postorder
                 visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
@@ -7320,6 +7425,8 @@ pub const LinkerContext = struct {
         var wip_order = BabyList(Chunk.CssImportOrder).initCapacity(temp_allocator, order.len) catch bun.outOfMemory();
 
         const css_asts: []const ?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+
+        debugCssOrder(this, &order, .BEFORE_HOISTING);
 
         // CSS syntax unfortunately only allows "@import" rules at the top of the
         // file. This means we must hoist all external "@import" rules to the top of
@@ -7620,6 +7727,7 @@ pub const LinkerContext = struct {
     }
 
     const CssOrderDebugStep = enum {
+        BEFORE_HOISTING,
         AFTER_HOISTING,
         AFTER_REMOVING_DUPLICATES,
         WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES,
@@ -7648,6 +7756,7 @@ pub const LinkerContext = struct {
                     const writer = arrlist.writer(arena.allocator());
                     const W = @TypeOf(writer);
                     arrlist.appendSlice(arena.allocator(), "[") catch unreachable;
+                    var symbols = Symbol.Map{};
                     for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
                         const condition: *const bun.css.ImportConditions = condition_;
                         const scratchbuf = std.ArrayList(u8).init(arena.allocator());
@@ -7661,6 +7770,8 @@ pub const LinkerContext = struct {
                                 .ast_urls_for_css = this.parse_graph.ast.items(.url_for_css),
                                 .ast_unique_key_for_additional_file = this.parse_graph.input_files.items(.unique_key_for_additional_file),
                             },
+                            &this.mangled_props,
+                            &symbols,
                         );
 
                         condition.toCss(W, &printer) catch unreachable;
@@ -7795,11 +7906,13 @@ pub const LinkerContext = struct {
 
         const all_import_records = this.graph.ast.items(.import_records);
         const all_loaders = this.parse_graph.input_files.items(.loader);
+        const all_parts = this.graph.ast.items(.parts);
 
         const visit = struct {
             fn visit(
                 c: *LinkerContext,
                 import_records: []const BabyList(ImportRecord),
+                parts: []const Part.List,
                 loaders: []const Loader,
                 temp: std.mem.Allocator,
                 visits: *BitSet,
@@ -7811,25 +7924,31 @@ pub const LinkerContext = struct {
                 visits.set(source_index.get());
 
                 const records: []ImportRecord = import_records[source_index.get()].slice();
+                const p = &parts[source_index.get()];
 
-                for (records) |record| {
-                    if (record.source_index.isValid()) {
-                        // Traverse any files imported by this part. Note that CommonJS calls
-                        // to "require()" count as imports too, sort of as if the part has an
-                        // ESM "import" statement in it. This may seem weird because ESM imports
-                        // are a compile-time concept while CommonJS imports are a run-time
-                        // concept. But we don't want to manipulate <style> tags at run-time so
-                        // this is the only way to do it.
-                        visit(
-                            c,
-                            import_records,
-                            loaders,
-                            temp,
-                            visits,
-                            o,
-                            record.source_index,
-                            loaders[record.source_index.get()] == .css,
-                        );
+                // Iterate over each part in the file in order
+                for (p.sliceConst()) |part| {
+                    // Traverse any files imported by this part. Note that CommonJS calls
+                    // to "require()" count as imports too, sort of as if the part has an
+                    // ESM "import" statement in it. This may seem weird because ESM imports
+                    // are a compile-time concept while CommonJS imports are a run-time
+                    // concept. But we don't want to manipulate <style> tags at run-time so
+                    // this is the only way to do it.
+                    for (part.import_record_indices.sliceConst()) |import_record_index| {
+                        const record = &records[import_record_index];
+                        if (record.source_index.isValid()) {
+                            visit(
+                                c,
+                                import_records,
+                                parts,
+                                loaders,
+                                temp,
+                                visits,
+                                o,
+                                record.source_index,
+                                loaders[record.source_index.get()].isCSS(),
+                            );
+                        }
                     }
                 }
 
@@ -7843,6 +7962,7 @@ pub const LinkerContext = struct {
         visit(
             this,
             all_import_records,
+            all_parts,
             all_loaders,
             temp_allocator,
             &visited,
@@ -7885,6 +8005,9 @@ pub const LinkerContext = struct {
 
     fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) !void {
         const exports_kind = this.graph.ast.items(.exports_kind)[source_index];
+        const all_sources = this.parse_graph.input_files.items(.source);
+        const all_css_asts = this.graph.ast.items(.css);
+        const maybe_css_ast: ?*bun.css.BundlerStyleSheet = all_css_asts[source_index];
         var parts = &this.graph.ast.items(.parts)[source_index];
 
         if (parts.len < 1) {
@@ -7897,6 +8020,252 @@ pub const LinkerContext = struct {
             @panic("Internal error: expected at least one statement in the lazy export");
         }
 
+        const module_ref = this.graph.ast.items(.module_ref)[source_index];
+
+        // Handle css modules
+        //
+        // --- original comment from esbuild ---
+        // If this JavaScript file is a stub from a CSS file, populate the exports of
+        // this JavaScript stub with the local names from that CSS file. This is done
+        // now instead of earlier because we need the whole bundle to be present.
+        if (maybe_css_ast) |css_ast| {
+            const stmt: Stmt = part.stmts[0];
+            if (stmt.data != .s_lazy_export) {
+                @panic("Internal error: expected top-level lazy export statement");
+            }
+            if (css_ast.local_scope.count() > 0) out: {
+                var exports = E.Object{};
+
+                const symbols: *const Symbol.List = &this.graph.ast.items(.symbols)[source_index];
+                const all_import_records: []const BabyList(bun.css.ImportRecord) = this.graph.ast.items(.import_records);
+
+                const values = css_ast.local_scope.values();
+                if (values.len == 0) break :out;
+                const size = size: {
+                    var size: u32 = 0;
+                    for (values) |entry| {
+                        size = @max(size, entry.ref.inner_index);
+                    }
+                    break :size size + 1;
+                };
+
+                var inner_visited = try BitSet.initEmpty(this.allocator, size);
+                defer inner_visited.deinit(this.allocator);
+                var composes_visited = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(this.allocator);
+                defer composes_visited.deinit();
+
+                const Visitor = struct {
+                    inner_visited: *BitSet,
+                    composes_visited: *std.AutoArrayHashMap(bun.bundle_v2.Ref, void),
+                    parts: *std.ArrayList(E.TemplatePart),
+                    all_import_records: []const BabyList(bun.css.ImportRecord),
+                    all_css_asts: []?*bun.css.BundlerStyleSheet,
+                    all_sources: []const Logger.Source,
+                    all_symbols: []const Symbol.List,
+                    source_index: Index.Int,
+                    log: *Logger.Log,
+                    loc: Loc,
+                    allocator: std.mem.Allocator,
+
+                    fn clearAll(visitor: *@This()) void {
+                        visitor.inner_visited.setAll(false);
+                        visitor.composes_visited.clearRetainingCapacity();
+                    }
+
+                    fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: bun.css.CssRef, idx: Index.Int) void {
+                        bun.assert(ref.canBeComposed());
+                        const from_this_file = ref.sourceIndex(idx) == visitor.source_index;
+                        if ((from_this_file and visitor.inner_visited.isSet(ref.innerIndex())) or
+                            (!from_this_file and visitor.composes_visited.contains(ref.toRealRef(idx))))
+                        {
+                            return;
+                        }
+
+                        visitor.visitComposes(ast, ref, idx);
+                        visitor.parts.append(E.TemplatePart{
+                            .value = Expr.init(
+                                E.NameOfSymbol,
+                                E.NameOfSymbol{
+                                    .ref = ref.toRealRef(idx),
+                                },
+                                visitor.loc,
+                            ),
+                            .tail = .{
+                                .cooked = E.String.init(" "),
+                            },
+                            .tail_loc = visitor.loc,
+                        }) catch bun.outOfMemory();
+
+                        if (from_this_file) {
+                            visitor.inner_visited.set(ref.innerIndex());
+                        } else {
+                            visitor.composes_visited.put(ref.toRealRef(idx), {}) catch unreachable;
+                        }
+                    }
+
+                    fn warnNonSingleClassComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int, compose_loc: Loc) void {
+                        const ref = css_ref.toRealRef(idx);
+                        _ = ref;
+                        const syms: *const Symbol.List = &visitor.all_symbols[css_ref.sourceIndex(idx)];
+                        const name = syms.at(css_ref.innerIndex()).original_name;
+                        const loc = ast.local_scope.get(name).?.loc;
+
+                        visitor.log.addRangeErrorFmtWithNote(
+                            &visitor.all_sources[idx],
+                            .{ .loc = compose_loc },
+                            visitor.allocator,
+                            "The composes property cannot be used with {}, because it is not a single class name.",
+                            .{
+                                bun.fmt.quote(name),
+                            },
+                            "The definition of {} is here.",
+                            .{
+                                bun.fmt.quote(name),
+                            },
+
+                            .{
+                                .loc = loc,
+                            },
+                        ) catch bun.outOfMemory();
+                    }
+
+                    fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int) void {
+                        const ref = css_ref.toRealRef(idx);
+                        if (ast.composes.count() > 0) {
+                            const composes = ast.composes.getPtr(ref) orelse return;
+                            // while parsing we check that we only allow `composes` on single class selectors
+                            bun.assert(css_ref.tag.class);
+
+                            for (composes.composes.slice()) |*compose| {
+                                // it is imported
+                                if (compose.from != null) {
+                                    if (compose.from.? == .import_record_index) {
+                                        const import_record_idx = compose.from.?.import_record_index;
+                                        const import_records: *const BabyList(bun.css.ImportRecord) = &visitor.all_import_records[idx];
+                                        const import_record = import_records.at(import_record_idx);
+                                        if (import_record.source_index.isValid()) {
+                                            const other_file = visitor.all_css_asts[import_record.source_index.get()] orelse {
+                                                visitor.log.addErrorFmt(
+                                                    &visitor.all_sources[idx],
+                                                    compose.loc,
+                                                    visitor.allocator,
+                                                    "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
+                                                    .{bun.fmt.quote(visitor.all_sources[import_record.source_index.get()].path.pretty)},
+                                                ) catch bun.outOfMemory();
+                                                continue;
+                                            };
+                                            for (compose.names.slice()) |name| {
+                                                const other_name_entry = other_file.local_scope.get(name.v) orelse continue;
+                                                const other_name_ref = other_name_entry.ref;
+                                                if (!other_name_ref.canBeComposed()) {
+                                                    visitor.warnNonSingleClassComposes(other_file, other_name_ref, import_record.source_index.get(), compose.loc);
+                                                } else {
+                                                    visitor.visitName(other_file, other_name_ref, import_record.source_index.get());
+                                                }
+                                            }
+                                        }
+                                    } else if (compose.from.? == .global) {
+                                        // E.g.: `composes: foo from global`
+                                        //
+                                        // In this example `foo` is global and won't be rewritten to a locally scoped
+                                        // name, so we can just add it as a string.
+                                        for (compose.names.slice()) |name| {
+                                            visitor.parts.append(
+                                                E.TemplatePart{
+                                                    .value = Expr.init(
+                                                        E.String,
+                                                        E.String.init(name.v),
+                                                        visitor.loc,
+                                                    ),
+                                                    .tail = .{
+                                                        .cooked = E.String.init(" "),
+                                                    },
+                                                    .tail_loc = visitor.loc,
+                                                },
+                                            ) catch bun.outOfMemory();
+                                        }
+                                    }
+                                } else {
+                                    // it is from the current file
+                                    for (compose.names.slice()) |name| {
+                                        const name_entry = ast.local_scope.get(name.v) orelse {
+                                            visitor.log.addErrorFmt(
+                                                &visitor.all_sources[idx],
+                                                compose.loc,
+                                                visitor.allocator,
+                                                "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                                .{
+                                                    bun.fmt.quote(name.v),
+                                                    bun.fmt.quote(visitor.all_sources[idx].path.pretty),
+                                                },
+                                            ) catch bun.outOfMemory();
+                                            continue;
+                                        };
+                                        const name_ref = name_entry.ref;
+                                        if (!name_ref.canBeComposed()) {
+                                            visitor.warnNonSingleClassComposes(ast, name_ref, idx, compose.loc);
+                                        } else {
+                                            visitor.visitName(ast, name_ref, idx);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                var visitor = Visitor{
+                    .inner_visited = &inner_visited,
+                    .composes_visited = &composes_visited,
+                    .source_index = source_index,
+                    .parts = undefined,
+                    .all_import_records = all_import_records,
+                    .all_css_asts = all_css_asts,
+                    .loc = stmt.loc,
+                    .log = this.log,
+                    .all_sources = all_sources,
+                    .allocator = this.allocator,
+                    .all_symbols = this.graph.ast.items(.symbols),
+                };
+
+                for (values) |entry| {
+                    const ref = entry.ref;
+                    bun.assert(ref.inner_index < symbols.len);
+
+                    var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator);
+                    var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef(source_index) }, stmt.loc);
+
+                    visitor.parts = &template_parts;
+                    visitor.clearAll();
+                    visitor.inner_visited.set(ref.innerIndex());
+                    if (ref.tag.class) visitor.visitComposes(css_ast, ref, source_index);
+
+                    if (template_parts.items.len > 0) {
+                        template_parts.append(E.TemplatePart{
+                            .value = value,
+                            .tail_loc = stmt.loc,
+                            .tail = .{ .cooked = E.String.init("") },
+                        }) catch bun.outOfMemory();
+                        value = Expr.init(
+                            E.Template,
+                            E.Template{
+                                .parts = template_parts.items,
+                                .head = .{
+                                    .cooked = E.String.init(""),
+                                },
+                            },
+                            stmt.loc,
+                        );
+                    }
+
+                    const key = symbols.at(ref.innerIndex()).original_name;
+                    try exports.put(this.allocator, key, value);
+                }
+
+                part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, exports, stmt.loc).data;
+            }
+        }
+
         const stmt: Stmt = part.stmts[0];
         if (stmt.data != .s_lazy_export) {
             @panic("Internal error: expected top-level lazy export statement");
@@ -7906,7 +8275,6 @@ pub const LinkerContext = struct {
             .data = stmt.data.s_lazy_export.*,
             .loc = stmt.loc,
         };
-        const module_ref = this.graph.ast.items(.module_ref)[source_index];
 
         switch (exports_kind) {
             .cjs => {
@@ -8027,7 +8395,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
-        const outer_trace = tracer(@src(), "scanImportsAndExports");
+        const outer_trace = bun.perf.trace("Bundler.scanImportsAndExports");
         defer outer_trace.end();
         const reachable = this.graph.reachable_files;
         const output_format = this.options.output_format;
@@ -8057,7 +8425,7 @@ pub const LinkerContext = struct {
 
             // Step 1: Figure out what modules must be CommonJS
             for (reachable) |source_index_| {
-                const trace = tracer(@src(), "FigureOutCommonJS");
+                const trace = bun.perf.trace("Bundler.FigureOutCommonJS");
                 defer trace.end();
                 const id = source_index_.get();
 
@@ -8068,6 +8436,7 @@ pub const LinkerContext = struct {
 
                 // Is it CSS?
                 if (css_asts[id] != null) {
+                    const css_ast = css_asts[id].?;
                     // Inline URLs for non-CSS files into the CSS file
                     _ = this.scanCSSImports(
                         id,
@@ -8077,8 +8446,33 @@ pub const LinkerContext = struct {
                         loaders,
                         this.log,
                     );
-                    // TODO:
+
                     // Validate cross-file "composes: ... from" named imports
+                    for (css_ast.composes.values()) |*composes| {
+                        for (composes.composes.slice()) |*compose| {
+                            if (compose.from == null or compose.from.? != .import_record_index) continue;
+                            const import_record_idx = compose.from.?.import_record_index;
+                            const record = &import_records[import_record_idx];
+                            if (!record.source_index.isValid()) continue;
+                            const other_css_ast = css_asts[record.source_index.get()] orelse continue;
+                            for (compose.names.slice()) |name| {
+                                if (!other_css_ast.local_scope.contains(name.v)) {
+                                    try this.log.addErrorFmt(
+                                        &input_files[record.source_index.get()],
+                                        compose.loc,
+                                        this.allocator,
+                                        "The name \"{s}\" never appears in \"{s}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                        .{
+                                            name.v,
+                                            input_files[record.source_index.get()].path.pretty,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    this.validateComposesFromProperties(id, css_ast, import_records_list, css_asts);
+
                     continue;
                 }
 
@@ -8200,7 +8594,7 @@ pub const LinkerContext = struct {
             // bundle time.
 
             {
-                const trace = tracer(@src(), "WrapDependencies");
+                const trace = bun.perf.trace("Bundler.WrapDependencies");
                 defer trace.end();
                 var dependency_wrapper = DependencyWrapper{
                     .linker = this,
@@ -8251,7 +8645,7 @@ pub const LinkerContext = struct {
             // are ignored for those modules.
             {
                 var export_star_ctx: ?ExportStarContext = null;
-                const trace = tracer(@src(), "ResolveExportStarStatements");
+                const trace = bun.perf.trace("Bundler.ResolveExportStarStatements");
                 defer trace.end();
                 defer {
                     if (export_star_ctx) |*export_ctx| {
@@ -8312,7 +8706,7 @@ pub const LinkerContext = struct {
             // export stars because imports can bind to export star re-exports.
             {
                 this.cycle_detector.clearRetainingCapacity();
-                const trace = tracer(@src(), "MatchImportsWithExports");
+                const trace = bun.perf.trace("Bundler.MatchImportsWithExports");
                 defer trace.end();
                 const wrapper_part_indices = this.graph.meta.items(.wrapper_part_index);
                 const imports_to_bind = this.graph.meta.items(.imports_to_bind);
@@ -8383,7 +8777,7 @@ pub const LinkerContext = struct {
         // parts that declare the export to all parts that use the import. Also
         // generate wrapper parts for wrapped files.
         {
-            const trace = tracer(@src(), "BindImportsToExports");
+            const trace = bun.perf.trace("Bundler.BindImportsToExports");
             defer trace.end();
             // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
 
@@ -8692,9 +9086,9 @@ pub const LinkerContext = struct {
                                     //
                                     if (kind != .require and
                                         (kind != .stmt or
-                                        record.contains_import_star or
-                                        record.contains_default_alias or
-                                        record.contains_es_module_alias))
+                                            record.contains_import_star or
+                                            record.contains_default_alias or
+                                            record.contains_es_module_alias))
                                     {
                                         record.wrap_with_to_esm = true;
                                         to_esm_uses += 1;
@@ -8857,6 +9251,185 @@ pub const LinkerContext = struct {
                     }
                 }
             }
+        }
+    }
+
+    /// CSS modules spec says that the following is undefined behavior:
+    ///
+    /// ```css
+    /// .foo {
+    ///     composes: bar;
+    ///     color: red;
+    /// }
+    ///
+    /// .bar {
+    ///     color: blue;
+    /// }
+    /// ```
+    ///
+    /// Specfically, composing two classes that both define the same property is undefined behavior.
+    ///
+    /// We check this by recording, at parse time, properties that classes use in the `PropertyUsage` struct.
+    /// Then here, we compare the properties of the two classes to ensure that there are no conflicts.
+    ///
+    /// There is one case we skip, which is checking the properties of composing from the global scope (`composes: X from global`).
+    ///
+    /// The reason we skip this is because it would require tracking _every_ property of _every_ class (not just CSS module local classes).
+    /// This sucks because:
+    /// 1. It introduces a performance hit even if the user did not use CSS modules
+    /// 2. Composing from the global scope is pretty rare
+    ///
+    /// We should find a way to do this without incurring performance penalties to the common cases.
+    fn validateComposesFromProperties(
+        this: *LinkerContext,
+        index: Index.Int,
+        root_css_ast: *bun.css.BundlerStyleSheet,
+        import_records_list: []ImportRecord.List,
+        all_css_asts: []const ?*bun.css.BundlerStyleSheet,
+    ) void {
+        const PropertyInFile = struct {
+            source_index: Index.Int,
+            range: bun.logger.Range,
+        };
+        const Visitor = struct {
+            visited: std.AutoArrayHashMap(Ref, void),
+            properties: bun.StringArrayHashMap(PropertyInFile),
+            all_import_records: []const ImportRecord.List,
+            all_css_asts: []const ?*bun.css.BundlerStyleSheet,
+            all_symbols: *const Symbol.Map,
+            all_sources: []const Logger.Source,
+            temp_allocator: std.mem.Allocator,
+            allocator: std.mem.Allocator,
+            log: *Logger.Log,
+
+            pub fn deinit(v: *@This()) void {
+                v.visited.deinit();
+                v.properties.deinit();
+            }
+
+            fn addPropertyOrWarn(v: *@This(), local: Ref, property_name: []const u8, source_index: Index.Int, range: bun.logger.Range) void {
+                const entry = v.properties.getOrPut(property_name) catch bun.outOfMemory();
+
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = .{
+                        .source_index = source_index,
+                        .range = range,
+                    };
+                    return;
+                }
+
+                if (entry.value_ptr.source_index == source_index or entry.value_ptr.source_index == Index.invalid.get()) {
+                    return;
+                }
+
+                const local_original_name = v.all_symbols.get(local).?.original_name;
+
+                v.log.addMsg(.{
+                    .kind = .err,
+                    .data = Logger.rangeData(
+                        &v.all_sources[source_index],
+                        range,
+                        Logger.Log.allocPrint(
+                            v.allocator,
+                            "<r>The value of <b>{s}<r> in the class <b>{s}<r> is undefined.",
+                            .{ property_name, local_original_name },
+                        ) catch bun.outOfMemory(),
+                    ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch bun.outOfMemory(),
+                    .notes = v.allocator.dupe(
+                        Logger.Data,
+                        &.{
+                            bun.logger.rangeData(
+                                &v.all_sources[entry.value_ptr.source_index],
+                                entry.value_ptr.range,
+                                Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name}) catch bun.outOfMemory(),
+                            ),
+                            .{ .text = std.fmt.allocPrint(
+                                v.allocator,
+                                "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
+                                    "The value of the {} property for {} may change unpredictably as the code is edited. " ++
+                                    "Make sure that all definitions of {} for {} are in a single file.",
+                                .{ bun.fmt.quote(property_name), bun.fmt.quote(local_original_name), bun.fmt.quote(property_name), bun.fmt.quote(local_original_name) },
+                            ) catch bun.outOfMemory() },
+                        },
+                    ) catch bun.outOfMemory(),
+                }) catch bun.outOfMemory();
+
+                // Don't warn more than once
+                entry.value_ptr.source_index = Index.invalid.get();
+            }
+
+            fn clearRetainingCapacity(v: *@This()) void {
+                v.visited.clearRetainingCapacity();
+                v.properties.clearRetainingCapacity();
+            }
+
+            fn visit(v: *@This(), idx: Index.Int, ast: *bun.css.BundlerStyleSheet, ref: Ref) void {
+                if (v.visited.contains(ref)) return;
+                v.visited.put(ref, {}) catch unreachable;
+
+                // This local name was in a style rule that
+                if (ast.composes.getPtr(ref)) |composes| {
+                    for (composes.composes.sliceConst()) |*compose| {
+                        // is an import
+                        if (compose.from != null) {
+                            if (compose.from.? == .import_record_index) {
+                                const import_record_idx = compose.from.?.import_record_index;
+                                const record = v.all_import_records[idx].at(import_record_idx);
+                                if (record.source_index.isInvalid()) continue;
+                                const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;
+                                for (compose.names.slice()) |name| {
+                                    const other_name = other_ast.local_scope.get(name.v) orelse continue;
+                                    const other_name_ref = other_name.ref.toRealRef(record.source_index.get());
+                                    v.visit(record.source_index.get(), other_ast, other_name_ref);
+                                }
+                            } else {
+                                bun.assert(compose.from.? == .global);
+                                // Otherwise it is composed from the global scope.
+                                //
+                                // See comment above for why we are skipping checking this for now.
+                            }
+                        } else {
+                            // inside this file
+                            for (compose.names.slice()) |name| {
+                                const name_entry = ast.local_scope.get(name.v) orelse continue;
+                                v.visit(idx, ast, name_entry.ref.toRealRef(idx));
+                            }
+                        }
+                    }
+                }
+
+                const property_usage = ast.local_properties.getPtr(ref) orelse return;
+                // Warn about cross-file composition with the same CSS properties
+                var iter = property_usage.bitset.iterator(.{});
+                while (iter.next()) |property_tag| {
+                    const property_id_tag: bun.css.PropertyIdTag = @enumFromInt(@as(u16, @intCast(property_tag)));
+                    bun.assert(property_id_tag != .custom);
+                    bun.assert(property_id_tag != .unparsed);
+                    v.addPropertyOrWarn(ref, @tagName(property_id_tag), idx, property_usage.range);
+                }
+
+                for (property_usage.custom_properties) |property| {
+                    v.addPropertyOrWarn(ref, property, idx, property_usage.range);
+                }
+            }
+        };
+        var sfb = std.heap.stackFallback(1024, this.graph.allocator);
+        const temp_allocator = sfb.get();
+        var visitor = Visitor{
+            .visited = std.AutoArrayHashMap(Ref, void).init(temp_allocator),
+            .properties = bun.StringArrayHashMap(PropertyInFile).init(temp_allocator),
+            .all_import_records = import_records_list,
+            .all_css_asts = all_css_asts,
+            .all_symbols = &this.graph.symbols,
+            .all_sources = this.parse_graph.input_files.items(.source),
+            .temp_allocator = temp_allocator,
+            .allocator = this.graph.allocator,
+            .log = this.log,
+        };
+        defer visitor.deinit();
+        for (root_css_ast.local_scope.values()) |local| {
+            visitor.clearRetainingCapacity();
+            visitor.visit(index, root_css_ast, local.ref.toRealRef(index));
         }
     }
 
@@ -9027,7 +9600,7 @@ pub const LinkerContext = struct {
         const exports_ref = c.graph.ast.items(.exports_ref)[id];
         const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) +
             @as(usize, @intFromBool(properties.items.len > 0) +
-            @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
+                @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer bun.assert(remaining_stmts.len == 0); // all must be used
@@ -9162,7 +9735,7 @@ pub const LinkerContext = struct {
     /// imported using an import star statement.
     pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
         const source_index = source_index_.get();
-        const trace = tracer(@src(), "CreateNamespaceExports");
+        const trace = bun.perf.trace("Bundler.CreateNamespaceExports");
         defer trace.end();
 
         const id = source_index;
@@ -9404,7 +9977,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
-        const trace = tracer(@src(), "treeShakingAndCodeSplitting");
+        const trace = bun.perf.trace("Bundler.treeShakingAndCodeSplitting");
         defer trace.end();
 
         const parts = c.graph.ast.items(.parts);
@@ -9416,7 +9989,7 @@ pub const LinkerContext = struct {
         const distances = c.graph.files.items(.distance_from_entry_point);
 
         {
-            const trace2 = tracer(@src(), "markFileLiveForTreeShaking");
+            const trace2 = bun.perf.trace("Bundler.markFileLiveForTreeShaking");
             defer trace2.end();
 
             // Tree shaking: Each entry point marks all files reachable from itself
@@ -9433,7 +10006,7 @@ pub const LinkerContext = struct {
         }
 
         {
-            const trace2 = tracer(@src(), "markFileReachableForCodeSplitting");
+            const trace2 = bun.perf.trace("Bundler.markFileReachableForCodeSplitting");
             defer trace2.end();
 
             const file_entry_bits: []AutoBitSet = c.graph.files.items(.entry_bits);
@@ -9773,7 +10346,6 @@ pub const LinkerContext = struct {
                         }
                     },
                     else => {},
-                    // else => bun.unreachablePanic("Unexpected output format", .{}),
                 }
             }
         }
@@ -9920,7 +10492,7 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
         files_in_order: []const u32,
     ) !renamer.Renamer {
-        const trace = tracer(@src(), "renameSymbolsInChunk");
+        const trace = bun.perf.trace("Bundler.renameSymbolsInChunk");
         defer trace.end();
         const all_module_scopes = c.graph.ast.items(.module_scope);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
@@ -10159,7 +10731,7 @@ pub const LinkerContext = struct {
                 for (part.scopes) |scope| {
                     r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
                 }
-                r.number_scope_pool.hive.available = @TypeOf(r.number_scope_pool.hive.available).initFull();
+                r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
             }
         }
 
@@ -10217,15 +10789,17 @@ pub const LinkerContext = struct {
     }
 
     fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, imports_in_chunk_index: u32) CompileResult {
-        const trace = tracer(@src(), "generateCodeForFileInChunkCss");
+        const trace = bun.perf.trace("Bundler.generateCodeForFileInChunkCss");
         defer trace.end();
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator);
         defer _ = arena.reset(.retain_capacity);
 
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
         const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
+        // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
+        const symbols = &c.graph.symbols;
 
         switch (css_import.kind) {
             .layers => {
@@ -10243,6 +10817,9 @@ pub const LinkerContext = struct {
                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                     },
+                    &c.mangled_props,
+                    // layer does not need symbols i think
+                    symbols,
                 )) {
                     .result => {},
                     .err => {
@@ -10277,6 +10854,9 @@ pub const LinkerContext = struct {
                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                     },
+                    &c.mangled_props,
+                    // external_path does not need symbols i think
+                    symbols,
                 )) {
                     .result => {},
                     .err => {
@@ -10311,6 +10891,8 @@ pub const LinkerContext = struct {
                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                     },
+                    &c.mangled_props,
+                    symbols,
                 )) {
                     .result => {},
                     .err => {
@@ -10360,7 +10942,7 @@ pub const LinkerContext = struct {
     }
 
     fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, part_range: PartRange) CompileResult {
-        const trace = tracer(@src(), "generateCodeForFileInChunkJS");
+        const trace = bun.perf.trace("Bundler.generateCodeForFileInChunkJS");
         defer trace.end();
 
         // Client bundles for Bake must be globally allocated,
@@ -10374,7 +10956,7 @@ pub const LinkerContext = struct {
             default_allocator;
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(allocator) catch bun.outOfMemory();
+        var buffer_writer = js_printer.BufferWriter.init(allocator);
         defer _ = arena.reset(.retain_capacity);
         worker.stmt_list.reset();
 
@@ -10450,6 +11032,7 @@ pub const LinkerContext = struct {
                             .source_map_urls = .{},
                             .license_comments = .{},
                             .options = bun.css.ParserOptions.default(allocator, null),
+                            .composes = .{},
                         };
                         wrapRulesWithConditions(&ast, allocator, &entry.conditions);
                         chunk.content.css.asts[i] = ast;
@@ -10493,6 +11076,7 @@ pub const LinkerContext = struct {
                                         }) catch bun.outOfMemory();
                                         break :rules rules;
                                     },
+                                    .composes = .{},
                                 };
 
                                 const printer_options = bun.css.PrinterOptions{
@@ -10509,6 +11093,8 @@ pub const LinkerContext = struct {
                                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                                     },
+                                    &c.mangled_props,
+                                    &c.graph.symbols,
                                 )) {
                                     .result => |v| v,
                                     .err => |e| {
@@ -10543,6 +11129,7 @@ pub const LinkerContext = struct {
                             .source_map_urls = .{},
                             .license_comments = .{},
                             .options = bun.css.ParserOptions.default(allocator, null),
+                            .composes = .{},
                         };
                     },
                     .source_index => |source_index| {
@@ -10745,7 +11332,7 @@ pub const LinkerContext = struct {
                 if (this.linker.dev_server != null) {
                     if (unique_key_for_additional_files.len > 0) {
                         element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
-                    } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader == .css) {
+                    } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader.isCSS()) {
                         element.remove();
                     } else {
                         element.setAttribute(url_attribute, import_record.path.pretty) catch bun.outOfMemory();
@@ -10758,7 +11345,7 @@ pub const LinkerContext = struct {
                     return;
                 }
 
-                if (loader.isJavaScriptLike() or loader == .css) {
+                if (loader.isJavaScriptLike() or loader.isCSS()) {
                     // Remove the original non-external tags
                     element.remove();
                     return;
@@ -11052,7 +11639,7 @@ pub const LinkerContext = struct {
 
     // This runs after we've already populated the compile results
     fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
-        const trace = tracer(@src(), "postProcessJSChunk");
+        const trace = bun.perf.trace("Bundler.postProcessJSChunk");
         defer trace.end();
 
         _ = chunk_index;
@@ -11090,6 +11677,7 @@ pub const LinkerContext = struct {
                 .minify_syntax = c.options.minify_syntax,
                 .target = c.options.target,
                 .print_dce_annotations = c.options.emit_dce_annotations,
+                .mangled_props = &c.mangled_props,
                 // .const_values = c.graph.const_values,
             };
 
@@ -11477,7 +12065,7 @@ pub const LinkerContext = struct {
         chunk_abs_dir: string,
         can_have_shifts: bool,
     ) !sourcemap.SourceMapPieces {
-        const trace = tracer(@src(), "generateSourceMapForChunk");
+        const trace = bun.perf.trace("Bundler.generateSourceMapForChunk");
         defer trace.end();
 
         var j = StringJoiner{ .allocator = worker.allocator };
@@ -11622,7 +12210,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn generateIsolatedHash(c: *LinkerContext, chunk: *const Chunk) u64 {
-        const trace = tracer(@src(), "generateIsolatedHash");
+        const trace = bun.perf.trace("Bundler.generateIsolatedHash");
         defer trace.end();
 
         var hasher = ContentHasher{};
@@ -12061,6 +12649,7 @@ pub const LinkerContext = struct {
                                     S.ExportClause,
                                     .{
                                         .items = items.items,
+                                        .is_single_line = false,
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -12229,6 +12818,7 @@ pub const LinkerContext = struct {
             .minify_whitespace = c.options.minify_whitespace,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .minify_syntax = c.options.minify_syntax,
+            .mangled_props = &c.mangled_props,
             // .const_values = c.graph.const_values,
         };
 
@@ -12988,125 +13578,85 @@ pub const LinkerContext = struct {
     }
 
     /// The conversion logic is completely different for format .internal_bake_dev
-    fn convertStmtsForChunkForBake(
+    /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
+    ///
+    /// For ESM, this function populates all three lists:
+    /// 1. outside_wrapper_prefix: all import statements, unmodified.
+    /// 2. inside_wrapper_prefix: a var decl line and a call to `module.retrieve`
+    /// 3. inside_wrapper_suffix: all non-import statements
+    ///
+    /// The imports are rewritten at print time to fit the packed array format
+    /// that the HMR runtime can decode. This encoding is low on JS objects and
+    /// indentation.
+    ///
+    /// 1 ┃ "module/esm": [ [
+    ///   ┃   'module_1', 1, "add",
+    ///   ┃   'module_2', 2, "mul", "div",
+    ///   ┃   'module_3', 0, // bare or import star
+    ///     ], [ "default" ], [], (hmr) => {
+    /// 2 ┃   var [module_1, module_2, module_3] = hmr.imports;
+    ///   ┃   hmr.onUpdate = [
+    ///   ┃     (module) => (module_1 = module),
+    ///   ┃     (module) => (module_2 = module),
+    ///   ┃     (module) => (module_3 = module),
+    ///   ┃   ];
+    ///
+    /// 3 ┃   console.log("my module", module_1.add(1, module_2.mul(2, 3));
+    ///   ┃   module.exports = {
+    ///   ┃     default: module_3.something(module_2.div),
+    ///   ┃   };
+    ///     }, false ],
+    ///        ----- "is the module async?"
+    fn convertStmtsForChunkForDevServer(
         c: *LinkerContext,
-        source_index: u32,
         stmts: *StmtList,
         part_stmts: []const js_ast.Stmt,
         allocator: std.mem.Allocator,
         ast: *JSAst,
     ) !void {
-        _ = source_index; // may be used
+        const hmr_api_ref = ast.wrapper_ref;
+        const hmr_api_id = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty);
+        var esm_decls: std.ArrayListUnmanaged(B.Array.Item) = .empty;
+        var esm_callbacks: std.ArrayListUnmanaged(Expr) = .empty;
 
-        const receiver_args = try allocator.dupe(G.Arg, &.{
-            .{ .binding = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, Logger.Loc.Empty) },
-        });
-        const module_id = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty);
+        for (ast.import_records.slice()) |*record| {
+            if (record.path.is_disabled) continue;
+            if (record.source_index.isValid() and c.parse_graph.input_files.items(.loader)[record.source_index.get()] == .css) {
+                record.path.is_disabled = true;
+                continue;
+            }
+            // Make sure the printer gets the resolved path
+            if (record.source_index.isValid()) {
+                record.path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
+            }
+        }
 
-        for (part_stmts) |stmt| {
-            switch (stmt.data) {
-                else => {
-                    try stmts.inside_wrapper_suffix.append(stmt);
-                },
-                .s_import => |st| {
-                    // hmr-runtime.ts defines `module.dynamicImport` to be the
-                    // ESM `import`. this is different from `require` in that
-                    // esm <-> cjs is handled by the runtime instead of via
-                    // transpiler-added annotations like '__commonJS'. These
-                    // annotations couldn't be added since the bundled file
-                    // must not have any reference to it's imports. That way
-                    // changing a module's type does not re-bundle its
-                    // incremental dependencies.
-                    //
-                    // This cannot be done in the parse step because the final
-                    // pretty path is not yet known. the other statement types
-                    // are not handled here because some of those generate
-                    // new local variables (it is too late to do that here).
-                    const record = ast.import_records.at(st.import_record_index);
+        // Modules which do not have side effects
+        for (part_stmts) |stmt| switch (stmt.data) {
+            else => try stmts.inside_wrapper_suffix.append(stmt),
 
-                    const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
+            .s_import => |st| {
+                const record = ast.import_records.mut(st.import_record_index);
+                if (record.path.is_disabled) continue;
 
-                    // CSS files and `is_disabled` records should not generate an import statement
-                    const is_enabled = !record.path.is_disabled and if (record.source_index.isValid())
-                        c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
-                    else
-                        true;
+                const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
+                const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                    // module.importSync('path', (module) => ns = module, ['dep', 'etc'])
-                    const call = if (is_enabled) if (record.tag == .runtime)
-                        Expr.init(E.Call, .{
+                if (is_builtin) {
+                    if (!is_bare_import) {
+                        // hmr.importBuiltin('...') or hmr.require('bun:wrap')
+                        const call = Expr.init(E.Call, .{
                             .target = Expr.init(E.Dot, .{
-                                .target = module_id,
-                                .name = "require",
+                                .target = hmr_api_id,
+                                .name = if (record.tag == .runtime) "require" else "builtin",
                                 .name_loc = stmt.loc,
                             }, stmt.loc),
-                            .args = .init(
-                                try allocator.dupe(Expr, &.{Expr.init(E.String, .{ .data = "bun:wrap" }, .Empty)}),
-                            ),
-                        }, .Empty)
-                    else call: {
-                        const path = if (record.source_index.isValid())
-                            c.parse_graph.input_files.items(.source)[record.source_index.get()].path
-                        else
-                            record.path;
-
-                        const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
-
-                        const key_expr = Expr.init(E.String, .{
-                            .data = path.pretty,
+                            .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
+                                .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
+                            }, record.range.loc)})),
                         }, stmt.loc);
 
-                        const items = try allocator.alloc(Expr, st.items.len);
-                        for (st.items, items) |item, *str| {
-                            str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
-                        }
-
-                        const expr = Expr.init(E.Call, .{
-                            .target = Expr.init(E.Dot, .{
-                                .target = module_id,
-                                .name = if (is_builtin)
-                                    "importBuiltin"
-                                else
-                                    "importStmt",
-                                .name_loc = stmt.loc,
-                            }, stmt.loc),
-                            .args = js_ast.ExprNodeList.init(
-                                try allocator.dupe(Expr, if (is_bare_import or is_builtin)
-                                    &.{key_expr}
-                                else
-                                    &.{
-                                        key_expr,
-                                        Expr.init(E.Arrow, .{
-                                            .args = receiver_args,
-                                            .body = .{
-                                                .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
-                                                    .value = Expr.assign(
-                                                        Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
-                                                        module_id,
-                                                    ),
-                                                }, stmt.loc)}),
-                                                .loc = stmt.loc,
-                                            },
-                                            .prefer_expr = true,
-                                        }, stmt.loc),
-                                        Expr.init(E.Array, .{
-                                            .items = BabyList(Expr).init(items),
-                                            .is_single_line = true,
-                                        }, stmt.loc),
-                                    }),
-                            ),
-                        }, stmt.loc);
-                        break :call if (is_builtin)
-                            expr
-                        else
-                            Expr.init(E.Await, .{ .value = expr }, stmt.loc);
-                    } else Expr.init(E.Object, .{}, stmt.loc);
-
-                    if (is_bare_import) {
-                        // the import value is never read
-                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
-                    } else {
-                        // 'var namespace = module.importSync(...)'
+                        // var namespace = ...;
                         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
                             .kind = .k_var, // remove a tdz
                             .decls = try G.Decl.List.fromSlice(allocator, &.{.{
@@ -13119,10 +13669,65 @@ pub const LinkerContext = struct {
                             }}),
                         }, stmt.loc));
                     }
+                } else {
+                    const loc = st.star_name_loc orelse stmt.loc;
+                    if (is_bare_import) {
+                        try esm_decls.append(allocator, .{ .binding = .{ .data = .b_missing, .loc = .Empty } });
+                        try esm_callbacks.append(allocator, Expr.init(E.Arrow, .noop_return_undefined, .Empty));
+                    } else {
+                        const binding = Binding.alloc(allocator, B.Identifier{ .ref = st.namespace_ref }, loc);
+                        try esm_decls.append(allocator, .{ .binding = binding });
+                        try esm_callbacks.append(allocator, Expr.init(E.Arrow, .{
+                            .args = try allocator.dupe(G.Arg, &.{.{
+                                .binding = Binding.alloc(allocator, B.Identifier{
+                                    .ref = ast.module_ref,
+                                }, .Empty),
+                            }}),
+                            .prefer_expr = true,
+                            .body = try .initReturnExpr(allocator, Expr.init(E.Binary, .{
+                                .op = .bin_assign,
+                                .left = Expr.initIdentifier(st.namespace_ref, .Empty),
+                                .right = Expr.initIdentifier(ast.module_ref, .Empty),
+                            }, .Empty)),
+                        }, .Empty));
+                    }
 
-                    continue;
-                },
-            }
+                    try stmts.outside_wrapper_prefix.append(stmt);
+                }
+            },
+        };
+
+        if (esm_decls.items.len > 0) {
+            // var ...;
+            try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                .kind = .k_var, // remove a tdz
+                .decls = try .fromSlice(allocator, &.{.{
+                    .binding = Binding.alloc(allocator, B.Array{
+                        .items = esm_decls.items,
+                        .is_single_line = true,
+                    }, .Empty),
+                    .value = Expr.init(E.Dot, .{
+                        .target = hmr_api_id,
+                        .name = "imports",
+                        .name_loc = .Empty,
+                    }, .Empty),
+                }}),
+            }, .Empty));
+            // hmr.onUpdate = [ ... ];
+            try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
+                .value = Expr.init(E.Binary, .{
+                    .op = .bin_assign,
+                    .left = Expr.init(E.Dot, .{
+                        .target = hmr_api_id,
+                        .name = "updateImport",
+                        .name_loc = .Empty,
+                    }, .Empty),
+                    .right = Expr.init(E.Array, .{
+                        .items = .fromList(esm_callbacks),
+                        .is_single_line = esm_callbacks.items.len <= 2,
+                    }, .Empty),
+                }, .Empty),
+            }, .Empty));
         }
     }
 
@@ -13156,8 +13761,8 @@ pub const LinkerContext = struct {
 
         // For HMR, part generation is entirely special cased.
         // - export wrapping is already done.
-        // - import wrapping needs to know resolved paths
-        // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
+        // - imports are split from the main code.
+        // - one part range per file
         if (c.options.output_format == .internal_bake_dev) brk: {
             if (part_range.source_index.isRuntime()) {
                 @branchHint(.cold);
@@ -13165,72 +13770,78 @@ pub const LinkerContext = struct {
                 break :brk; // this is from `bun build --format=internal_bake_dev`
             }
 
-            // add a marker for the client runtime to tell that this is an ES module
-            if (ast.exports_kind == .esm) {
-                stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
-                    .value = Expr.assign(
-                        Expr.init(E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Loc.Empty),
-                            .name = "_esm",
-                            .name_loc = Loc.Empty,
-                        }, Loc.Empty),
-                        Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),
-                    ),
-                }, Loc.Empty)) catch bun.outOfMemory();
-                ast.top_level_await_keyword = .{ .loc = .{ .start = 0 }, .len = 1 };
-            }
+            const hmr_api_ref = ast.wrapper_ref;
 
             for (parts) |part| {
-                c.convertStmtsForChunkForBake(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
+                c.convertStmtsForChunkForDevServer(stmts, part.stmts, allocator, &ast) catch |err|
                     return .{ .err = err };
             }
 
-            stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch bun.outOfMemory();
+            const main_stmts_len = stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len;
+            const all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.items.len + 1;
+
+            stmts.all_stmts.ensureUnusedCapacity(all_stmts_len) catch bun.outOfMemory();
             stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
             stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
 
-            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
+            const inner = stmts.all_stmts.items[0..main_stmts_len];
+
+            var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
                 .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
-                    .ref = ast.module_ref,
+                    .ref = hmr_api_ref,
                 }, Logger.Loc.Empty) },
             }) catch unreachable; // is within bounds
 
-            if (ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
+            if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
+                clousure_args.appendSliceAssumeCapacity(&.{
+                    .{
+                        .binding = Binding.alloc(temp_allocator, B.Identifier{
+                            .ref = ast.module_ref,
+                        }, Logger.Loc.Empty),
+                    },
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.exports_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
+                });
             }
 
-            var single_stmt = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
+            stmts.all_stmts.appendAssumeCapacity(Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
                 .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
                 .body = .{
-                    .stmts = stmts.all_stmts.items,
+                    .stmts = inner,
                     .loc = Logger.Loc.Empty,
                 },
-            } }, Logger.Loc.Empty));
+            } }, Logger.Loc.Empty)));
+            stmts.all_stmts.appendSliceAssumeCapacity(stmts.outside_wrapper_prefix.items);
 
             ast.flags.uses_module_ref = true;
+
+            // TODO: there is a weird edge case where the pretty path is not computed
+            // it does not reproduce when debugging.
+            var source = c.getSource(part_range.source_index.get()).*;
+            if (source.path.text.ptr == source.path.pretty.ptr) {
+                source.path = genericPathWithPrettyInitialized(
+                    source.path,
+                    c.options.target,
+                    c.resolver.fs.top_level_dir,
+                    allocator,
+                ) catch bun.outOfMemory();
+            }
 
             return c.printCodeForFileInChunkJS(
                 r,
                 allocator,
                 writer,
-                (&single_stmt)[0..1],
+                stmts.all_stmts.items[main_stmts_len..],
                 &ast,
                 flags,
                 .None,
                 .None,
                 null,
                 part_range.source_index,
+                &source,
             );
         }
 
@@ -13746,6 +14357,7 @@ pub const LinkerContext = struct {
             toCommonJSRef,
             runtimeRequireRef,
             part_range.source_index,
+            c.getSource(part_range.source_index.get()),
         );
     }
 
@@ -13761,6 +14373,7 @@ pub const LinkerContext = struct {
         to_commonjs_ref: Ref,
         runtime_require_ref: ?Ref,
         source_index: Index,
+        source: *const bun.logger.Source,
     ) js_printer.PrintResult {
         const parts_to_print = &[_]Part{
             .{ .stmts = out_stmts },
@@ -13808,10 +14421,16 @@ pub const LinkerContext = struct {
             .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
             .target = c.options.target,
 
+            .hmr_ref = if (c.options.output_format == .internal_bake_dev)
+                ast.wrapper_ref
+            else
+                .None,
+
             .input_files_for_dev_server = if (c.options.output_format == .internal_bake_dev)
                 c.parse_graph.input_files.items(.source)
             else
                 null,
+            .mangled_props = &c.mangled_props,
         };
 
         writer.buffer.reset();
@@ -13825,7 +14444,7 @@ pub const LinkerContext = struct {
                     &printer,
                     ast.target,
                     ast.toAST(),
-                    c.getSource(source_index.get()),
+                    source,
                     print_options,
                     ast.import_records.slice(),
                     parts_to_print,
@@ -13866,9 +14485,63 @@ pub const LinkerContext = struct {
         shifts: []sourcemap.SourceMapShifts,
     };
 
+    fn mangleLocalCss(c: *LinkerContext) void {
+        if (c.has_any_css_locals.load(.monotonic) == 0) return;
+
+        const all_css_asts: []?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
+        const all_symbols: []Symbol.List = c.graph.ast.items(.symbols);
+        const all_sources: []Logger.Source = c.parse_graph.input_files.items(.source);
+
+        // Collect all local css names
+        var sfb = std.heap.stackFallback(512, c.allocator);
+        const allocator = sfb.get();
+        var local_css_names = std.AutoHashMap(bun.bundle_v2.Ref, void).init(allocator);
+        defer local_css_names.deinit();
+
+        for (all_css_asts, 0..) |maybe_css_ast, source_index| {
+            if (maybe_css_ast) |css_ast| {
+                if (css_ast.local_scope.count() == 0) continue;
+                const symbols = all_symbols[source_index];
+                for (symbols.sliceConst(), 0..) |*symbol_, inner_index| {
+                    var symbol = symbol_;
+                    if (symbol.kind == .local_css) {
+                        const ref = ref: {
+                            var ref = Ref.init(@intCast(inner_index), @intCast(source_index), false);
+                            ref.tag = .symbol;
+                            while (symbol.hasLink()) {
+                                ref = symbol.link;
+                                symbol = all_symbols[ref.source_index].at(ref.inner_index);
+                            }
+                            break :ref ref;
+                        };
+
+                        const entry = local_css_names.getOrPut(ref) catch bun.outOfMemory();
+                        if (entry.found_existing) continue;
+
+                        const source = all_sources[ref.source_index];
+
+                        const original_name = symbol.original_name;
+                        const path_hash = bun.css.css_modules.hash(
+                            allocator,
+                            "{s}",
+                            // use path relative to cwd for determinism
+                            .{source.path.pretty},
+                            false,
+                        );
+
+                        const final_generated_name = std.fmt.allocPrint(c.graph.allocator, "{s}_{s}", .{ original_name, path_hash }) catch bun.outOfMemory();
+                        c.mangled_props.put(c.allocator, ref, final_generated_name) catch bun.outOfMemory();
+                    }
+                }
+            }
+        }
+    }
+
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
-        const trace = tracer(@src(), "generateChunksInParallel");
+        const trace = bun.perf.trace("Bundler.generateChunksInParallel");
         defer trace.end();
+
+        c.mangleLocalCss();
 
         var has_js_chunk = false;
         var has_css_chunk = false;
@@ -13876,7 +14549,7 @@ pub const LinkerContext = struct {
         bun.assert(chunks.len > 0);
 
         {
-            // TODO(@paperdave/bake): instead of running a renamer per chunk, run it per file
+            // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
             debug(" START {d} renamers", .{chunks.len});
             defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
@@ -14478,7 +15151,7 @@ pub const LinkerContext = struct {
         chunks: []Chunk,
         output_files: *std.ArrayList(options.OutputFile),
     ) !void {
-        const trace = tracer(@src(), "writeOutputFilesToDisk");
+        const trace = bun.perf.trace("Bundler.writeOutputFilesToDisk");
         defer trace.end();
         var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
             if (err == error.NotDir) {
@@ -14515,7 +15188,7 @@ pub const LinkerContext = struct {
         var pathbuf: bun.PathBuffer = undefined;
 
         for (chunks) |*chunk| {
-            const trace2 = tracer(@src(), "writeChunkToDisk");
+            const trace2 = bun.perf.trace("Bundler.writeChunkToDisk");
             defer trace2.end();
             defer max_heap_allocator.reset();
 
@@ -14579,11 +15252,11 @@ pub const LinkerContext = struct {
                         code_result.buffer = buf.items;
                     }
 
-                    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                    switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,
-                        JSC.Node.Arguments.WriteFile{
+                        .{
                             .data = JSC.Node.StringOrBuffer{
-                                .buffer = JSC.Buffer{
+                                .buffer = bun.api.node.Buffer{
                                     .buffer = .{
                                         .ptr = @constCast(output_source_map.ptr),
                                         // TODO: handle > 4 GB files
@@ -14593,10 +15266,10 @@ pub const LinkerContext = struct {
                                 },
                             },
                             .encoding = .buffer,
-                            .dirfd = bun.toFD(root_dir.fd),
+                            .dirfd = .fromStdDir(root_dir),
                             .file = .{
-                                .path = JSC.Node.PathLike{
-                                    .string = JSC.PathString.init(source_map_final_rel_path),
+                                .path = .{
+                                    .string = bun.PathString.init(source_map_final_rel_path),
                                 },
                             },
                         },
@@ -14670,11 +15343,11 @@ pub const LinkerContext = struct {
                             @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
                             defer cached_bytecode.deref();
-                            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                                 &pathbuf,
-                                JSC.Node.Arguments.WriteFile{
-                                    .data = JSC.Node.StringOrBuffer{
-                                        .buffer = JSC.Buffer{
+                                .{
+                                    .data = .{
+                                        .buffer = .{
                                             .buffer = .{
                                                 .ptr = @constCast(bytecode.ptr),
                                                 .len = @as(u32, @truncate(bytecode.len)),
@@ -14685,10 +15358,10 @@ pub const LinkerContext = struct {
                                     .encoding = .buffer,
                                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                                    .dirfd = bun.toFD(root_dir.fd),
+                                    .dirfd = .fromStdDir(root_dir),
                                     .file = .{
-                                        .path = JSC.Node.PathLike{
-                                            .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
+                                        .path = .{
+                                            .string = bun.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
                                         },
                                     },
                                 },
@@ -14726,11 +15399,11 @@ pub const LinkerContext = struct {
                 break :brk null;
             };
 
-            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
-                JSC.Node.Arguments.WriteFile{
-                    .data = JSC.Node.StringOrBuffer{
-                        .buffer = JSC.Buffer{
+                .{
+                    .data = .{
+                        .buffer = .{
                             .buffer = .{
                                 .ptr = @constCast(code_result.buffer.ptr),
                                 // TODO: handle > 4 GB files
@@ -14742,10 +15415,10 @@ pub const LinkerContext = struct {
                     .encoding = .buffer,
                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                    .dirfd = bun.toFD(root_dir.fd),
+                    .dirfd = .fromStdDir(root_dir),
                     .file = .{
                         .path = JSC.Node.PathLike{
-                            .string = JSC.PathString.init(rel_path),
+                            .string = bun.PathString.init(rel_path),
                         },
                     },
                 },
@@ -14846,11 +15519,11 @@ pub const LinkerContext = struct {
                     }
                 }
 
-                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                     &pathbuf,
-                    JSC.Node.Arguments.WriteFile{
-                        .data = JSC.Node.StringOrBuffer{
-                            .buffer = JSC.Buffer{
+                    .{
+                        .data = .{
+                            .buffer = .{
                                 .buffer = .{
                                     .ptr = @constCast(bytes.ptr),
                                     .len = @as(u32, @truncate(bytes.len)),
@@ -14859,10 +15532,10 @@ pub const LinkerContext = struct {
                             },
                         },
                         .encoding = .buffer,
-                        .dirfd = bun.toFD(root_dir.fd),
+                        .dirfd = .fromStdDir(root_dir),
                         .file = .{
                             .path = JSC.Node.PathLike{
-                                .string = JSC.PathString.init(src.dest_path),
+                                .string = bun.PathString.init(src.dest_path),
                             },
                         },
                     },
@@ -15101,8 +15774,8 @@ pub const LinkerContext = struct {
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
-                !c.options.tree_shaking and
-                entry_point_kinds[source_index].isEntryPoint()))
+                    !c.options.tree_shaking and
+                    entry_point_kinds[source_index].isEntryPoint()))
             {
                 c.markPartLiveForTreeShaking(
                     @intCast(part_index),
@@ -15327,7 +16000,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and JSC.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -15618,9 +16291,9 @@ pub const LinkerContext = struct {
             // TODO: investigate if this is a bug
             // It implies there are imports being added without being resolved
             return .{
-            .value = .{},
-            .status = .external,
-        };
+                .value = .{},
+                .status = .external,
+            };
 
         // Is this an external file?
         const record: *const ImportRecord = import_records.at(named_import.import_record_index);
@@ -15968,7 +16641,7 @@ pub const LinkerContext = struct {
         j: *StringJoiner,
         count: u32,
     ) !Chunk.IntermediateOutput {
-        const trace = tracer(@src(), "breakOutputIntoPieces");
+        const trace = bun.perf.trace("Bundler.breakOutputIntoPieces");
         defer trace.end();
 
         const OutputPiece = Chunk.OutputPiece;
@@ -16133,7 +16806,7 @@ pub const PartRange = struct {
     part_index_end: u32 = 0,
 };
 
-const StableRef = packed struct {
+const StableRef = packed struct(u96) {
     stable_source_index: Index.Int,
     ref: Ref,
 
@@ -16660,7 +17333,7 @@ pub const Chunk = struct {
             source_index: Index,
         },
 
-        const Layers = bun.Cow(bun.BabyList(bun.css.LayerName), struct {
+        const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
                 return self.deepClone2(allocator);
@@ -17006,6 +17679,7 @@ pub const AstBuilder = struct {
     declared_symbols: js_ast.DeclaredSymbol.List,
     /// When set, codegen is altered
     hot_reloading: bool,
+    hmr_api_ref: Ref,
 
     // stub fields for ImportScanner duck typing
     comptime options: js_parser.Parser.Options = .{
@@ -17043,11 +17717,13 @@ pub const AstBuilder = struct {
             .named_exports = .{},
             .log = Logger.Log.init(allocator),
             .export_star_import_records = .{},
-            .module_ref = Ref.None,
             .declared_symbols = .{},
             .hot_reloading = hot_reloading,
+            .module_ref = undefined,
+            .hmr_api_ref = undefined,
         };
         ab.module_ref = try ab.newSymbol(.other, "module");
+        ab.hmr_api_ref = try ab.newSymbol(.other, "hmr");
         return ab;
     }
 
@@ -17076,7 +17752,6 @@ pub const AstBuilder = struct {
         try p.symbols.append(p.allocator, .{
             .kind = kind,
             .original_name = identifier,
-            .debug_mode_source_index = if (Environment.allow_assert) @intCast(p.source_index) else 0,
         });
         const ref: Ref = .{
             .inner_index = inner_index,
@@ -17220,6 +17895,7 @@ pub const AstBuilder = struct {
             var hmr_transform_ctx = js_parser.ConvertESMExportsForHmr{
                 .last_part = parts.last() orelse
                     unreachable, // was definitely allocated
+                .is_in_node_modules = p.source.path.isNodeModule(),
             };
             try hmr_transform_ctx.stmts.ensureTotalCapacity(p.allocator, prealloc_count: {
                 // get a estimate on how many statements there are going to be
@@ -17373,7 +18049,8 @@ const ExternalFreeFunctionAllocator = struct {
     const vtable: std.mem.Allocator.VTable = .{
         .alloc = &alloc,
         .free = &free,
-        .resize = &resize,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
     };
 
     pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
@@ -17386,15 +18063,11 @@ const ExternalFreeFunctionAllocator = struct {
         };
     }
 
-    fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
+    fn alloc(_: *anyopaque, _: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
         return null;
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
-    fn free(ext_free_function: *anyopaque, _: []u8, _: u8, _: usize) void {
+    fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
         const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);

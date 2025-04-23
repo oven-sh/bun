@@ -308,7 +308,7 @@ function TLSSocket(socket?, options?) {
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
-  const isNetSocketOrDuplex = socket instanceof NetSocket || socket instanceof Duplex;
+  const isNetSocketOrDuplex = socket instanceof Duplex;
 
   options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
 

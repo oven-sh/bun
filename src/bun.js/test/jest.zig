@@ -2206,7 +2206,7 @@ inline fn createEach(
 
     const allocator = bun.default_allocator;
     const name = ZigString.static(property);
-    const strong = .create(array, globalThis);
+    const strong = JSC.Strong.Optional.create(array, globalThis);
     const each_data = allocator.create(EachData) catch unreachable;
     each_data.* = EachData{
         .strong = strong,

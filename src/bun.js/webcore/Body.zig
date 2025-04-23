@@ -1520,7 +1520,7 @@ pub const ValueBufferer = struct {
             sink.js_sink = null;
             wrapper.sink.destroy();
         }
-        var ref = .create(err, sink.global);
+        var ref = JSC.Strong.Optional.create(err, sink.global);
         defer ref.deinit();
         sink.onFinishedBuffering(sink.ctx, "", .{ .JSValue = ref }, is_async);
     }

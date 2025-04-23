@@ -111,7 +111,6 @@ fn onRequireExtensionModify(global: *JSC.JSGlobalObject, str: []const u8, kind: 
         const gop = try list.getOrPut(bun.default_allocator, str);
         if (!gop.found_existing) {
             const dupe = try bun.default_allocator.dupe(u8, str);
-            errdefer bun.default_allocator.free(dupe);
             gop.key_ptr.* = dupe;
             if (is_built_in) {
                 vm.has_mutated_built_in_extensions += 1;

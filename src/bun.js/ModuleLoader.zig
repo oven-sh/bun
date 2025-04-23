@@ -376,7 +376,7 @@ pub const AsyncModule = struct {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
         const this_promise = JSValue.createInternalPromise(globalObject);
-        const promise = .create(this_promise, globalObject);
+        const promise = JSC.Strong.Optional.create(this_promise, globalObject);
 
         var buf = bun.StringBuilder{};
         buf.count(opts.referrer);

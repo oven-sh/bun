@@ -376,7 +376,7 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           let timer;
-          response.setTimeout = (msecs, callback) => {
+          res.setTimeout = (msecs, callback) => {
             if (timer) {
               clearTimeout(timer);
             }

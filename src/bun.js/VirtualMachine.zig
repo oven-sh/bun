@@ -179,7 +179,7 @@ destruct_main_thread_on_exit: bool,
 ///
 /// `.keys() == transpiler.resolver.opts.extra_cjs_extensions`, so
 /// mutations in this map must update the resolver.
-commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.CustomLoader.Packed) = .empty,
+commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.CustomLoader) = .empty,
 /// Incremented when the `require.extensions` for a built-in extension is mutated.
 /// An example is mutating `require.extensions['.js']` to intercept all '.js' files.
 /// The value is decremented when defaults are restored.

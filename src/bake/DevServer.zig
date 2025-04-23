@@ -72,8 +72,6 @@ html_router: HTMLRouter,
 assets: Assets,
 /// Similar to `assets`, specialized for the additional needs of source mappings.
 source_maps: SourceMapStore,
-// /// Allocations that require a reference count.
-// ref_strings: RefString.Store,
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
 /// serialization only happens once.
@@ -7124,55 +7122,6 @@ pub const SourceMapStore = struct {
         }
     }
 };
-
-// NOTE: not used but keeping around in case a use case is found soon
-// /// Instead of a pointer to `struct { data: []const u8, ref_count: u32 }`, all
-// /// reference counts are in a shared map. This is used by strings shared between
-// /// source maps and the incremental graph. Not thread-safe.
-// ///
-// /// Transfer from default allocator to RefString with `dev.ref_strings.register(slice)`
-// ///
-// /// Prefer `CowString` (maybe allocated or borrowed) or `[]const u8` (known lifetime) over this structure.
-// const RefString = struct {
-//     /// Allocated by `dev.allocator`, free with `.unref()`
-//     data: []const u8,
-
-//     pub fn deref(str: RefString, store: *Store) void {
-//         const index = store.strings.getIndex(str.ptr) orelse unreachable;
-//         const slice = store.strings.entries.slice();
-//         const ref_count = &slice.items(.value)[index];
-//         if (ref_count.* == 1) {
-//             store.strings.swapRemoveAt(index);
-//             dev.allocator.free(str.data);
-//         } else {
-//             ref_count.* -= 1;
-//         }
-//     }
-
-//     pub fn dupeRef(str: RefString, store: *Store) RefString {
-//         const ref_count = store.strings.getPtr(str.ptr) orelse unreachable;
-//         ref_count.* += 1;
-//         return str;
-//     }
-
-//     pub const Store = struct {
-//         /// Key -> Data. Value -> Reference count
-//         strings: AutoArrayHashMapUnmanaged([*]u8, u32),
-
-//         pub const empty: Store = .{ .strings = .empty };
-
-//         /// `data` must be owned by `dev.allocator`
-//         pub fn register(store: *Store, data: []u8) !RefString {
-//             const gop = try store.strings.getOrPut(dev.allocator, data.ptr);
-//             if (gop.found_existing) {
-//                 gop.value_ptr.* += 1;
-//             } else {
-//                 gop.value_ptr = 1;
-//             }
-//             return .{ .data = data };
-//         }
-//     };
-// };
 
 pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
     dev.bundler_options.plugin = plugins;

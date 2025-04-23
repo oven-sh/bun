@@ -1606,13 +1606,14 @@ pub export fn Bun__transpileFile(
                 .loader => |loader| {
                     lr.loader = loader;
                 },
-                .custom => |index| {
+                .custom => |strong| {
                     ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.empty,
                         .specifier = .empty,
                         .source_url = .empty,
-                        .cjs_custom_extension_index = index,
+                        .cjs_custom_extension_index = strong.get() orelse
+                            @panic("unexpected null when fetching custom extension"),
                         .tag = .common_js_custom_extension,
                     });
                     return null;
@@ -1731,13 +1732,14 @@ pub export fn Bun__transpileFile(
                     if (node_module_module.findLongestRegisteredExtension(jsc_vm, lr.path.text)) |entry| {
                         switch (entry) {
                             .loader => |loader| break :loader loader,
-                            .custom => |index| {
+                            .custom => |strong| {
                                 ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
                                     .allocator = null,
                                     .source_code = bun.String.empty,
                                     .specifier = .empty,
                                     .source_url = .empty,
-                                    .cjs_custom_extension_index = index,
+                                    .cjs_custom_extension_index = strong.get() orelse
+                                        @panic("unexpected null when fetching custom extension"),
                                     .tag = .common_js_custom_extension,
                                 });
                                 return null;

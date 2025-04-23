@@ -124,7 +124,7 @@ Bun.serve<WebSocketData>({
       data: {
         createdAt: Date.now(),
         channelId: new URL(req.url).searchParams.get("channelId"),
-        authToken: cookies["X-Token"],
+        authToken: cookies.get("X-Token"),
       },
     });
 

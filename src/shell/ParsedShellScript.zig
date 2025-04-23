@@ -48,7 +48,7 @@ pub fn finalize(
 
 pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const str_js = arguments.nextEat() orelse {
         return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
     };
@@ -177,6 +177,6 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
 const Node = JSC.Node;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const assert = bun.assert;
 const log = bun.Output.scoped(.ParsedShellScript, true);

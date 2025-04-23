@@ -472,4 +472,4 @@ pub fn addrInfoToJSArray(
     return array;
 }
 
-pub const internal = bun.JSC.DNS.InternalDNS;
+pub const internal = bun.api.DNS.InternalDNS;

@@ -1,14 +1,14 @@
 const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
-const Blob = bun.JSC.WebCore.Blob;
+const Blob = bun.webcore.Blob;
 const invalid_fd = bun.invalid_fd;
 
 const SystemError = JSC.SystemError;
 const SizeType = Blob.SizeType;
 const io = bun.io;
-const FileOpener = Store.FileOpener;
-const FileCloser = Store.FileCloser;
+const FileOpener = Blob.FileOpener;
+const FileCloser = Blob.FileCloser;
 const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
 const JSPromise = JSC.JSPromise;
@@ -51,8 +51,8 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
     };
 }
 
-const FileStore = Blob.FileStore;
-const ByteStore = Blob.ByteStore;
+const FileStore = Blob.Store.File;
+const ByteStore = Blob.Store.Bytes;
 const Store = Blob.Store;
 const ClosingState = Blob.ClosingState;
 
@@ -708,8 +708,8 @@ pub const ReadFileUV = struct {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if (this.size > @as(usize, std.math.maxInt(bun.windows.ULONG))) {
-            this.errno = bun.errnoToZigErr(bun.C.E.NOMEM);
-            this.system_error = bun.sys.Error.fromCode(bun.C.E.NOMEM, .read).toSystemError();
+            this.errno = bun.errnoToZigErr(bun.sys.E.NOMEM);
+            this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
             this.onFinish();
             return;
         }

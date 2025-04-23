@@ -31,6 +31,7 @@ pub export fn TextEncoder__encode8(
         return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
     }
 }
+
 pub export fn TextEncoder__encode16(
     globalThis: *JSGlobalObject,
     ptr: [*]const u16,
@@ -71,7 +72,7 @@ pub export fn TextEncoder__encode16(
             @TypeOf(slice),
             slice,
         ) catch {
-            return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
+            return globalThis.toInvalidArguments("Out of memory", .{});
         };
         return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
     }
@@ -242,6 +243,14 @@ pub export fn TextEncoder__encodeInto8(
         strings.copyLatin1IntoUTF8(output, []const u8, input);
     const sized: [2]u32 = .{ result.read, result.written };
     return @bitCast(sized);
+}
+
+comptime {
+    _ = &TextEncoder.TextEncoder__encode8;
+    _ = &TextEncoder.TextEncoder__encode16;
+    _ = &TextEncoder.TextEncoder__encodeInto8;
+    _ = &TextEncoder.TextEncoder__encodeInto16;
+    _ = &TextEncoder.TextEncoder__encodeRopeString;
 }
 
 const std = @import("std");

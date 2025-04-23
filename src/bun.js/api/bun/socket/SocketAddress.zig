@@ -377,7 +377,7 @@ pub fn address(this: *SocketAddress) bun.String {
     if (this._presentation.tag != .Dead) return this._presentation;
     var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
     const formatted = this._addr.fmt(&buf);
-    const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
+    const presentation = JSC.WebCore.encoding.toBunStringComptime(formatted, .latin1);
     bun.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;

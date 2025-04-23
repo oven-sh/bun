@@ -1570,7 +1570,10 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
 interface DOMException {}
 declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
   "DOMException",
-  { prototype: DOMException; new (): DOMException }
+  {
+    prototype: DOMException;
+    new (message?: string, name?: string): DOMException;
+  }
 >;
 
 interface FormData {
@@ -1741,57 +1744,7 @@ declare var Request: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface Response extends Bun.__internal.BunResponseOverride {}
-declare var Response: Bun.__internal.UseLibDomIfAvailable<
-  "Response",
-  {
-    new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): Response;
-    /**
-     * Create a new {@link Response} with a JSON body
-     *
-     * @param body - The body of the response
-     * @param options - options to pass to the response
-     *
-     * @example
-     *
-     * ```ts
-     * const response = Response.json({hi: "there"});
-     * console.assert(
-     *   await response.text(),
-     *   `{"hi":"there"}`
-     * );
-     * ```
-     * -------
-     *
-     * This is syntactic sugar for:
-     * ```js
-     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-     * ```
-     * @link https://github.com/whatwg/fetch/issues/1389
-     */
-    json(body?: any, init?: ResponseInit | number): Response;
-
-    /**
-     * Create a new {@link Response} that redirects to url
-     *
-     * @param url - the URL to redirect to
-     * @param status - the HTTP status code to use for the redirect
-     */
-    redirect(url: string, status?: number): Response;
-
-    /**
-     * Create a new {@link Response} that redirects to url
-     *
-     * @param url - the URL to redirect to
-     * @param options - options to pass to the response
-     */
-    redirect(url: string, init?: ResponseInit): Response;
-
-    /**
-     * Create a new {@link Response} that has a network error
-     */
-    error(): Response;
-  }
->;
+declare var Response: Bun.__internal.UseLibDomIfAvailable<"Response", Bun.__internal.ResponseConstructor>;
 
 /**
  * Extends Bun.TLSOptions with extra properties that are only supported in `fetch(url, {tls: ...})`

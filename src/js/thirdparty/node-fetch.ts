@@ -2,7 +2,7 @@ import type * as s from "stream";
 
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
-const WebResponse: typeof globalThis.Response = bindings[0];
+const WebResponse: Bun.__internal.BunResponseConstructorOverride = bindings[0];
 const WebRequest: typeof globalThis.Request = bindings[1];
 const Blob: typeof globalThis.Blob = bindings[2];
 const WebHeaders: typeof globalThis.Headers = bindings[3];
@@ -14,7 +14,8 @@ const nativeFetch = Bun.fetch;
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
 class Headers extends WebHeaders {
   raw() {
-    const obj = this.toJSON();
+    const obj = this.toJSON() as Record<string, string | string[]>;
+
     for (const key in obj) {
       const val = obj[key];
       if (!$isJSArray(val)) {
@@ -53,7 +54,7 @@ class Response extends WebResponse {
   get body() {
     let body = this[kBody];
     if (!body) {
-      var web = super.body;
+      const web = super.body;
       if (!web) return null;
       body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
     }
@@ -66,6 +67,7 @@ class Response extends WebResponse {
   }
 
   clone() {
+    // @ts-expect-error `super` is accessible here
     return Object.setPrototypeOf(super.clone(this), ResponsePrototype);
   }
 
@@ -115,6 +117,7 @@ class Response extends WebResponse {
     return "default";
   }
 }
+
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");

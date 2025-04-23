@@ -20,7 +20,31 @@ declare module "bun" {
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
     type LibOrFallbackRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
-    type LibOrFallbackResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
+
+    type LibOrFallbackResponse = LibDomIsLoaded extends true
+      ? {}
+      : {
+          readonly headers: Headers;
+          readonly ok: boolean;
+          readonly status: number;
+          readonly statusText: string;
+          readonly url: string;
+          readonly redirected: boolean;
+
+          get body(): ReadableStream | null;
+          get bodyUsed(): boolean;
+
+          get type(): import("undici-types").ResponseType;
+
+          arrayBuffer(): Promise<ArrayBuffer>;
+          blob(): Promise<Blob>;
+          formData(): Promise<FormData>;
+          json(): Promise<unknown>;
+          text(): Promise<string>;
+
+          clone(): Response;
+        };
+
     type LibOrFallbackResponseInit = LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit;
     type LibOrFallbackRequestInit = LibDomIsLoaded extends true
       ? {}
@@ -72,6 +96,55 @@ declare module "bun" {
 
     interface BunResponseOverride extends LibOrFallbackResponse {
       headers: BunHeadersOverride;
+    }
+
+    interface BunResponseConstructorOverride {
+      new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): BunResponseOverride;
+      /**
+       * Create a new {@link Response} with a JSON body
+       *
+       * @param body - The body of the response
+       * @param options - options to pass to the response
+       *
+       * @example
+       *
+       * ```ts
+       * const response = Response.json({hi: "there"});
+       * console.assert(
+       *   await response.text(),
+       *   `{"hi":"there"}`
+       * );
+       * ```
+       * -------
+       *
+       * This is syntactic sugar for:
+       * ```js
+       *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+       * ```
+       * @link https://github.com/whatwg/fetch/issues/1389
+       */
+      json(body?: any, init?: ResponseInit | number): Response;
+
+      /**
+       * Create a new {@link Response} that redirects to url
+       *
+       * @param url - the URL to redirect to
+       * @param status - the HTTP status code to use for the redirect
+       */
+      redirect(url: string, status?: number): Response;
+
+      /**
+       * Create a new {@link Response} that redirects to url
+       *
+       * @param url - the URL to redirect to
+       * @param options - options to pass to the response
+       */
+      redirect(url: string, init?: ResponseInit): Response;
+
+      /**
+       * Create a new {@link Response} that has a network error
+       */
+      error(): Response;
     }
   }
 }

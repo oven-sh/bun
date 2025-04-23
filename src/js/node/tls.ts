@@ -4,7 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const { addServerName } = require("internal/net");
 const { throwNotImplemented } = require("internal/shared");
-const { normalizeTLSArray, throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -210,19 +210,19 @@ var InternalSecureContext = class SecureContext {
       let cert = options.cert;
       if (cert) {
         throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = normalizeTLSArray(cert);
+        this.cert = cert;
       }
 
       let key = options.key;
       if (key) {
         throwOnInvalidTLSArray("options.key", key);
-        this.key = normalizeTLSArray(key);
+        this.key = key;
       }
 
       let ca = options.ca;
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = normalizeTLSArray(ca);
+        this.ca = ca;
       }
 
       let passphrase = options.passphrase;
@@ -514,18 +514,18 @@ function Server(options, secureConnectionListener): void {
       let key = options.key;
       if (key) {
         throwOnInvalidTLSArray("options.key", key);
-        this.key = normalizeTLSArray(key);
+        this.key = key;
       }
       let cert = options.cert;
       if (cert) {
         throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = normalizeTLSArray(cert);
+        this.cert = cert;
       }
 
       let ca = options.ca;
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = normalizeTLSArray(ca);
+        this.ca = ca;
       }
 
       let passphrase = options.passphrase;

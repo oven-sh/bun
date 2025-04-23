@@ -49,17 +49,6 @@ function isValidTLSArray(obj: unknown) {
   return false;
 }
 
-function normalizeTLSArray(obj: unknown) {
-  if (obj == null || obj === false) return undefined;
-  if (Array.isArray(obj)) {
-    return obj.map(normalizeTLSArray);
-  }
-  if (isPemObject(obj)) {
-    return obj.pem;
-  }
-  return obj;
-}
-
 const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArray, DataView, or BunFile";
 
-export { isValidTLSArray, isValidTLSItem, normalizeTLSArray, throwOnInvalidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES };
+export { isValidTLSArray, isValidTLSItem, throwOnInvalidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES };

@@ -26,4 +26,6 @@ function normalizeTLSArray(obj) {
   return obj;
 }
 
-export { isValidTLSArray, normalizeTLSArray };
+const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArray, DataView, or BunFile";
+
+export { isValidTLSArray, normalizeTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES };

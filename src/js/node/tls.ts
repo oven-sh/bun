@@ -4,7 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const { addServerName } = require("internal/net");
 const { throwNotImplemented } = require("internal/shared");
-const { normalizeTLSArray, isValidTLSArray } = require("internal/tls");
+const { normalizeTLSArray, isValidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -524,14 +524,14 @@ function Server(options, secureConnectionListener): void {
       let key = options.key;
       if (key) {
         if (!isValidTLSArray(key)) {
-          throw $ERR_INVALID_ARG_TYPE("options.key", ["string", "Buffer", "TypedArray", "BunFile", "array"], key);
+          throw $ERR_INVALID_ARG_TYPE("options.key", VALID_TLS_ERROR_MESSAGE_TYPES, key);
         }
         this.key = normalizeTLSArray(key);
       }
       let cert = options.cert;
       if (cert) {
         if (!isValidTLSArray(cert)) {
-          throw $ERR_INVALID_ARG_TYPE("options.cert", ["string", "Buffer", "TypedArray", "BunFile", "array"], cert);
+          throw $ERR_INVALID_ARG_TYPE("options.cert", VALID_TLS_ERROR_MESSAGE_TYPES, cert);
         }
         this.cert = normalizeTLSArray(cert);
       }
@@ -539,7 +539,7 @@ function Server(options, secureConnectionListener): void {
       let ca = options.ca;
       if (ca) {
         if (!isValidTLSArray(ca)) {
-          throw $ERR_INVALID_ARG_TYPE("options.ca", ["string", "Buffer", "TypedArray", "BunFile", "array"], ca);
+          throw $ERR_INVALID_ARG_TYPE("options.ca", VALID_TLS_ERROR_MESSAGE_TYPES, ca);
         }
         this.ca = normalizeTLSArray(ca);
       }

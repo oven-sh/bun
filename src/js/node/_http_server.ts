@@ -3,7 +3,7 @@ const { Duplex, Stream } = require("node:stream");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { isValidTLSArray } = require("internal/tls");
+const { isValidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -603,14 +603,14 @@ const Server = function Server(options, callback) {
     let key = options.key;
     if (key) {
       if (!isValidTLSArray(key)) {
-        throw $ERR_INVALID_ARG_TYPE("options.key", ["string", "Buffer", "TypedArray", "BunFile", "array"], key);
+        throw $ERR_INVALID_ARG_TYPE("options.key", VALID_TLS_ERROR_MESSAGE_TYPES, key);
       }
       this[isTlsSymbol] = true;
     }
     let cert = options.cert;
     if (cert) {
       if (!isValidTLSArray(cert)) {
-        throw $ERR_INVALID_ARG_TYPE("options.cert", ["string", "Buffer", "TypedArray", "BunFile", "array"], cert);
+        throw $ERR_INVALID_ARG_TYPE("options.cert", VALID_TLS_ERROR_MESSAGE_TYPES, cert);
       }
       this[isTlsSymbol] = true;
     }
@@ -618,7 +618,7 @@ const Server = function Server(options, callback) {
     let ca = options.ca;
     if (ca) {
       if (!isValidTLSArray(ca)) {
-        throw $ERR_INVALID_ARG_TYPE("options.ca", ["string", "Buffer", "TypedArray", "BunFile", "array"], ca);
+        throw $ERR_INVALID_ARG_TYPE("options.ca", VALID_TLS_ERROR_MESSAGE_TYPES, ca);
       }
       this[isTlsSymbol] = true;
     }

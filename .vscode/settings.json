@@ -27,18 +27,25 @@
   "git.ignoreLimitWarning": true,
 
   // Zig
-  "zig.initialSetupDone": true,
   "zig.buildOption": "build",
   "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
-  "zig.buildArgs": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"],
-  "zig.zls.buildOnSaveStep": "check",
-  // "zig.zls.enableBuildOnSave": true,
-  // "zig.buildOnSave": true,
+  // To activate in-editor incremental builds, run "Zig: Build Workspace"
+  "zig.zls.buildOnSaveArgs": [
+    "check",
+    "-Dcodegen-path=./build/debug/codegen",
+    "-fincremental",
+    "-Dno-llvm",
+    "--global-cache-dir",
+    "./build/debug/zls-cache/g"
+    // intentionally not setting a local cache dir
+  ],
+  "zig.zls.enableBuildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
-  "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
+  // TODO: make CI auto-install this commit of ZLS, to enable in-editor builds
+  // https://github.com/paperclover/zls/commit/00195e6d6fcf9a79ca0fba81f80128aa8a5d9509
+  // "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
   "zig.formattingProvider": "zls",
-  "zig.zls.enableInlayHints": false,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,

@@ -189,10 +189,10 @@ pub fn build(b: *Build) !void {
     const target = b.resolveTargetQuery(target_query);
 
     const codegen_path = b.pathFromRoot(
-        b.option([]const u8, "codegen_path", "Set the generated code directory") orelse
+        b.option([]const u8, "codegen-path", "Set the generated code directory") orelse
             "build/debug/codegen",
     );
-    const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse switch (b.release_mode) {
+    const codegen_embed = b.option(bool, "codegen-embed", "If codegen files should be embedded in the binary") orelse switch (b.release_mode) {
         .off => false,
         else => true,
     };
@@ -201,9 +201,9 @@ pub fn build(b: *Build) !void {
 
     b.reference_trace = b.reference_trace orelse 32;
 
-    const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
+    const obj_format = b.option(ObjectFormat, "obj-format", "Output file for object files") orelse .obj;
 
-    const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    const no_llvm = b.option(bool, "no-llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
 
     var build_options = BunBuildOptions{
         .target = target,
@@ -223,7 +223,7 @@ pub fn build(b: *Build) !void {
         },
 
         .reported_nodejs_version = try Version.parse(
-            b.option([]const u8, "reported_nodejs_version", "Reported Node.js version") orelse
+            b.option([]const u8, "reported-nodejs-version", "Reported Node.js version") orelse
                 "0.0.0-unset",
         ),
 
@@ -263,9 +263,9 @@ pub fn build(b: *Build) !void {
             break :sha sha;
         },
 
-        .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
-        .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
-        .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
+        .tracy_callstack_depth = b.option(u16, "tracy-callstack-depth", "Set the Tracy callstack depth") orelse 10,
+        .enable_logs = b.option(bool, "enable-logs", "Enable logs in release") orelse false,
+        .enable_asan = b.option(bool, "enable-asan", "Enable address sanitizer") orelse false,
     };
 
     // zig build obj
@@ -334,7 +334,6 @@ pub fn build(b: *Build) !void {
     }
 
     // zig build watch
-    // const enable_watch_step = b.option(bool, "watch_step", "Enable the watch step. This reads more files so it is off by default") orelse false;
     // if (no_llvm or enable_watch_step) {
     //     self_hosted_watch.selfHostedExeBuild(b, &build_options) catch @panic("OOM");
     // }
@@ -766,7 +765,7 @@ fn validateGeneratedPath(path: []const u8) void {
         std.debug.panic(
             \\Generated file '{s}' is missing!
             \\
-            \\Make sure to use CMake and Ninja, or pass a manual codegen folder with '-Dgenerated-code=...'
+            \\Make sure to use CMake and Ninja, or pass a manual codegen folder with '-Dcodegen-path=...'
         , .{path});
     }
 }

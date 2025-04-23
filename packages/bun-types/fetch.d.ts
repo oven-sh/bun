@@ -35,6 +35,8 @@ declare module "bun" {
           readonly referrerPolicy: import("undici-types").ReferrerPolicy;
           readonly keepalive: boolean;
           readonly signal: AbortSignal;
+
+          /** @deprecated Setting `.duplex` does nothing in Bun and will be removed in a future release */
           readonly duplex: import("undici-types").RequestDuplex;
 
           get url(): string;

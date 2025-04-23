@@ -1733,15 +1733,7 @@ declare var Headers: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface Request extends Bun.__internal.BunRequestOverride {}
-declare var Request: Bun.__internal.UseLibDomIfAvailable<
-  "Request",
-  {
-    prototype: Request;
-    new (requestInfo: string, init?: RequestInit): Request;
-    new (requestInfo: RequestInit & { url: string }): Request;
-    new (requestInfo: Request, init?: RequestInit): Request;
-  }
->;
+declare var Request: Bun.__internal.UseLibDomIfAvailable<"Request", Bun.__internal.BunRequestConstructorOverride>;
 
 interface Response extends Bun.__internal.BunResponseOverride {}
 declare var Response: Bun.__internal.UseLibDomIfAvailable<"Response", Bun.__internal.BunResponseConstructorOverride>;

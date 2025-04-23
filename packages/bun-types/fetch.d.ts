@@ -19,7 +19,37 @@ declare module "bun" {
 
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
-    type LibOrFallbackRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
+
+    type LibOrFallbackRequest = LibDomIsLoaded extends true
+      ? {}
+      : {
+          readonly cache: import("undici-types").RequestCache;
+          readonly credentials: import("undici-types").RequestCredentials;
+          readonly destination: import("undici-types").RequestDestination;
+          readonly headers: Headers;
+          readonly integrity: string;
+          readonly method: string;
+          readonly mode: import("undici-types").RequestMode;
+          readonly redirect: import("undici-types").RequestRedirect;
+          readonly referrer: string;
+          readonly referrerPolicy: import("undici-types").ReferrerPolicy;
+          readonly keepalive: boolean;
+          readonly signal: AbortSignal;
+          readonly duplex: import("undici-types").RequestDuplex;
+
+          get url(): string;
+
+          get body(): ReadableStream | null;
+          get bodyUsed(): boolean;
+
+          arrayBuffer(): Promise<ArrayBuffer>;
+          blob(): Promise<Blob>;
+          formData(): Promise<FormData>;
+          json(): Promise<unknown>;
+          text(): Promise<string>;
+
+          clone(): Request;
+        };
 
     type LibOrFallbackResponse = LibDomIsLoaded extends true
       ? {}
@@ -31,10 +61,10 @@ declare module "bun" {
           readonly url: string;
           readonly redirected: boolean;
 
+          get type(): import("undici-types").ResponseType;
+
           get body(): ReadableStream | null;
           get bodyUsed(): boolean;
-
-          get type(): import("undici-types").ResponseType;
 
           arrayBuffer(): Promise<ArrayBuffer>;
           blob(): Promise<Blob>;
@@ -98,7 +128,15 @@ declare module "bun" {
       headers: BunHeadersOverride;
     }
 
+    interface BunRequestConstructorOverride {
+      prototype: BunRequestOverride;
+      new (requestInfo: string | URL, init?: RequestInit): BunRequestOverride;
+      new (requestInfo: RequestInit & { url: string }): BunRequestOverride;
+      new (requestInfo: Request, init?: RequestInit): BunRequestOverride;
+    }
+
     interface BunResponseConstructorOverride {
+      prototype: BunResponseOverride;
       new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): BunResponseOverride;
       /**
        * Create a new {@link Response} with a JSON body
@@ -123,7 +161,7 @@ declare module "bun" {
        * ```
        * @link https://github.com/whatwg/fetch/issues/1389
        */
-      json(body?: any, init?: ResponseInit | number): Response;
+      json(body?: any, init?: ResponseInit | number): BunResponseOverride;
 
       /**
        * Create a new {@link Response} that redirects to url
@@ -131,7 +169,7 @@ declare module "bun" {
        * @param url - the URL to redirect to
        * @param status - the HTTP status code to use for the redirect
        */
-      redirect(url: string, status?: number): Response;
+      redirect(url: string, status?: number): BunResponseOverride;
 
       /**
        * Create a new {@link Response} that redirects to url
@@ -139,12 +177,12 @@ declare module "bun" {
        * @param url - the URL to redirect to
        * @param options - options to pass to the response
        */
-      redirect(url: string, init?: ResponseInit): Response;
+      redirect(url: string, init?: ResponseInit): BunResponseOverride;
 
       /**
        * Create a new {@link Response} that has a network error
        */
-      error(): Response;
+      error(): BunResponseOverride;
     }
   }
 }

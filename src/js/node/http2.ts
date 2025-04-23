@@ -3206,6 +3206,14 @@ class ClientHttp2Session extends Http2Session {
     const protocol = url.protocol || options?.protocol || "https:";
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
+    let host = "localhost";
+    if (url.hostname) {
+      host = url.hostname;
+      if (host[0] === "[") host = host.slice(1, -1);
+    } else if (url.host) {
+      host = url.host;
+    }
+
     function onConnect() {
       this.#onConnect(arguments);
       listener?.$call(this, this);
@@ -3228,13 +3236,13 @@ class ClientHttp2Session extends Http2Session {
         protocol,
         options
           ? {
-              host: url.hostname,
+              host,
               port,
               ALPNProtocols: ["h2"],
               ...options,
             }
           : {
-              host: url.hostname,
+              host,
               port,
               ALPNProtocols: ["h2"],
             },

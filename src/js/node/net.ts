@@ -543,7 +543,6 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   end(socket) {
     $debug("Bun.Socket end");
     const { self, that } = socket.data;
-    if (self[kended]) return;
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
@@ -750,86 +749,107 @@ class SocketHandle {
   }
   //TLS
   getPeerCertificate(abbreviated?) {
+    $debug("SocketHandle.getPeerCertificate", arguments);
     $assert(this.#socket != null);
     return this.#socket.getPeerCertificate(...arguments);
   }
   getTLSFinishedMessage() {
+    $debug("SocketHandle.getTLSFinishedMessage", arguments);
     $assert(this.#socket != null);
     return this.#socket.getTLSFinishedMessage(...arguments);
   }
   getTLSPeerFinishedMessage() {
+    $debug("SocketHandle.getTLSPeerFinishedMessage", arguments);
     $assert(this.#socket != null);
     return this.#socket.getTLSPeerFinishedMessage(...arguments);
   }
   getEphemeralKeyInfo() {
+    $debug("SocketHandle.getEphemeralKeyInfo", arguments);
     $assert(this.#socket != null);
     return this.#socket.getEphemeralKeyInfo(...arguments);
   }
   getCipher() {
+    $debug("SocketHandle.getCipher", arguments);
     $assert(this.#socket != null);
     return this.#socket.getCipher(...arguments);
   }
   renegotiate() {
+    $debug("SocketHandle.renegotiate", arguments);
     $assert(this.#socket != null);
     return this.#socket.renegotiate(...arguments);
   }
   disableRenegotiation() {
+    $debug("SocketHandle.disableRenegotiation", arguments);
     if (this.#socket == null) return;
     return this.#socket.disableRenegotiation(...arguments);
   }
   setVerifyMode(requestCert, rejectUnauthorized) {
+    $debug("SocketHandle.setVerifyMode", arguments);
     $assert(this.#socket != null);
     return this.#socket.setVerifyMode(...arguments);
   }
   getSession() {
+    $debug("SocketHandle.getSession", arguments);
     $assert(this.#socket != null);
     return this.#socket.getSession(...arguments);
   }
   setSession(session) {
+    $debug("SocketHandle.setSession", arguments);
     $assert(this.#socket != null);
     return this.#socket.setSession(...arguments);
   }
   getTLSTicket() {
+    $debug("SocketHandle.getTLSTicket", arguments);
     $assert(this.#socket != null);
     return this.#socket.getTLSTicket(...arguments);
   }
   exportKeyingMaterial(length, label, context) {
+    $debug("SocketHandle.exportKeyingMaterial", arguments);
     $assert(this.#socket != null);
     return this.#socket.exportKeyingMaterial(...arguments);
   }
   setMaxSendFragment(size: number) {
+    $debug("SocketHandle.setMaxSendFragment", arguments);
     $assert(this.#socket != null);
     return this.#socket.setMaxSendFragment(...arguments);
   }
   getSharedSigalgs() {
+    $debug("SocketHandle.getSharedSigalgs", arguments);
     $assert(this.#socket != null);
     return this.#socket.getSharedSigalgs(...arguments);
   }
   getTLSVersion() {
+    $debug("SocketHandle.getTLSVersion", arguments);
     $assert(this.#socket != null);
     return this.#socket.getTLSVersion(...arguments);
   }
   getX509Certificate() {
+    $debug("SocketHandle.getX509Certificate", arguments);
     $assert(this.#socket != null);
     return this.#socket.getX509Certificate(...arguments);
   }
   getPeerX509Certificate() {
+    $debug("SocketHandle.getPeerX509Certificate", arguments);
     $assert(this.#socket != null);
     return this.#socket.getPeerX509Certificate(...arguments);
   }
   upgradeTLS(options) {
+    $debug("SocketHandle.upgradeTLS", arguments);
     $assert(this.#socket != null);
     return this.#socket.upgradeTLS(...arguments);
   }
   setServername(name) {
+    $debug("SocketHandle.setServername", arguments);
     $assert(this.#socket != null);
     return this.#socket.setServername(...arguments);
   }
   getServername() {
+    $debug("SocketHandle.getServername", arguments);
     $assert(this.#socket != null);
     return this.#socket.getServername(...arguments);
   }
   getCertificate() {
+    $debug("SocketHandle.getCertificate", arguments);
     $assert(this.#socket != null);
     return this.#socket.getCertificate(...arguments);
   }
@@ -1085,7 +1105,6 @@ Socket.prototype.connect = function connect(...args) {
     ) {
       throw $ERR_MISSING_ARGS(["options", "port", "path"]);
     }
-    // this.remotePort = port;
     const bunTLS = this[bunTlsSymbol];
     var tls: any | undefined = undefined;
     if (typeof bunTLS === "function") {

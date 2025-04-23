@@ -18,14 +18,13 @@ function isValidTLSItem(obj: unknown) {
 }
 
 function findInvalidTLSItem(obj: unknown) {
-  if (isValidTLSItem(obj)) return null;
   if ($isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
       if (!isValidTLSItem(item)) return item;
     }
   }
-  return null;
+  return obj;
 }
 
 function throwOnInvalidTLSArray(name: string, value: unknown) {

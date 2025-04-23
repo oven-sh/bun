@@ -511,15 +511,16 @@ function Server(options, secureConnectionListener): void {
         convertALPNProtocols(ALPNProtocols, this);
       }
 
-      let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
       let cert = options.cert;
       if (cert) {
         throwOnInvalidTLSArray("options.cert", cert);
         this.cert = cert;
+      }
+
+      let key = options.key;
+      if (key) {
+        throwOnInvalidTLSArray("options.key", key);
+        this.key = key;
       }
 
       let ca = options.ca;

@@ -40,7 +40,7 @@ const {
   runSymbol,
   drainMicrotasks,
   setServerIdleTimeout,
-  setRequireHostHeader,
+  setServerCustomOptions,
 } = require("internal/http");
 
 const { format } = require("internal/util/inspect");
@@ -681,7 +681,13 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
-
+function onServerClientError(socket, errorCode: number, rawPacket: ArrayBuffer) {
+  const self = this as Server;
+  const err = new Error("Parse Error");
+  err.code = "HPE_UNEXPECTED_CONTENT_LENGTH";
+  err.rawPacket = rawPacket;
+  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, false));
+}
 const ServerPrototype = {
   constructor: Server,
   __proto__: EventEmitter.prototype,
@@ -893,7 +899,6 @@ const ServerPrototype = {
           socket,
           isAncientHTTP: boolean,
         ) {
-          console.log("onNodeHTTPRequest", headersArray);
           const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(isHTTPS);
           if (!socket) {
@@ -1056,7 +1061,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
-      setRequireHostHeader(this[serverSymbol], this.requireHostHeader);
+      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, onServerClientError.bind(this));
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();

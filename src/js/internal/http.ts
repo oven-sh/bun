@@ -8,7 +8,7 @@ const {
   setRequestTimeout,
   headersTuple,
   webRequestOrResponseHasBodyValue,
-  setRequireHostHeader,
+  setServerCustomOptions,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -20,7 +20,11 @@ const {
   setRequestTimeout: (req: Request, timeout: number) => boolean;
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
-  setRequireHostHeader: (server: any, requireHostHeader: boolean) => void;
+  setServerCustomOptions: (
+    server: any,
+    requireHostHeader: boolean,
+    onClientError: (socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+  ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
@@ -445,5 +449,5 @@ export {
   drainMicrotasks,
   setServerIdleTimeout,
   getRawKeys,
-  setRequireHostHeader,
+  setServerCustomOptions,
 };

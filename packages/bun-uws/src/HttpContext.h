@@ -304,9 +304,8 @@ private:
 
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
             if (returnedSocket == FULLPTR) {
-                auto onClientError = httpContextData->onClientError;
-                if(onClientError) {
-                    onClientError(httpResponseData->socketData, SSL, s, parserError, data, length);
+                if(httpContextData->onClientError) {
+                    httpContextData->onClientError(SSL, s, parserError, data, length);
                 }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
                 us_socket_write(SSL, s, httpErrorResponses[err].data(), (int) httpErrorResponses[err].length(), false);

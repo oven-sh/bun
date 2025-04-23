@@ -485,6 +485,28 @@ extern "C" void Bun__callNodeHTTPServerSocketOnClose(EncodedJSValue thisValue)
     response->onClose();
 }
 
+extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // socket without response because is not valid http
+    JSNodeHTTPServerSocket* socket = JSNodeHTTPServerSocket::create(
+        vm,
+        globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject),
+        (us_socket_t*)us_socket,
+        isSSL, nullptr);
+
+    RETURN_IF_EXCEPTION(scope, {});
+    if (socket) {
+        socket->strongThis.set(vm, socket);
+        return JSValue::encode(socket);
+    }
+    return JSValue::encode(JSC::jsNull());
+}
+
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer);
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
@@ -493,6 +515,7 @@ extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*)
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setRequireHostHeader(EncodedJSValue, bool, JSC::JSGlobalObject*);
+extern "C" void Server__setOnClientError(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -825,12 +848,6 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 template<bool isSSL>
 static void assignOnCloseFunction(uWS::TemplatedApp<isSSL>* app)
 {
-    app->setOnClientError([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, uint8_t errorCode, char* rawPacket, int rawPacketLength) -> void {
-        // auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
-        // ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        // socket->onClientError(errorCode, rawPacket, rawPacketLength);
-        printf("onClientError: %d\n", errorCode);
-    });
     app->setOnClose([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
@@ -1276,7 +1293,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObj
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetRequireHostHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1285,9 +1302,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetRequireHostHeader, (JSGlobalObject * globalObj
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
 
-    ASSERT(callFrame->argumentCount() == 2);
+    ASSERT(callFrame->argumentCount() >= 2);
 
     Server__setRequireHostHeader(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), globalObject);
+
+    if (callFrame->argumentCount() > 2) {
+        JSValue callback = callFrame->uncheckedArgument(2);
+        Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -1412,8 +1434,8 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         JSC::JSFunction::create(vm, globalObject, 2, "setServerIdleTimeout"_s, jsHTTPSetServerIdleTimeout, ImplementationVisibility::Public), 0);
 
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRequireHostHeader"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setRequireHostHeader"_s, jsHTTPSetRequireHostHeader, ImplementationVisibility::Public), 0);
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerCustomOptions"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setServerCustomOptions"_s, jsHTTPSetCustomOptions, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
         globalObject->JSResponseConstructor(), 0);

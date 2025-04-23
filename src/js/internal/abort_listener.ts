@@ -10,7 +10,7 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
 
   let removeEventListener;
   if (signal.aborted) {
-    queueMicrotask(() => listener());
+    queueMicrotask(() => listener(new Event("abort")));
   } else {
     // TODO(atlowChemi) add { subscription: true } and return directly
     signal.addEventListener("abort", listener, { once: true, [kResistStopPropagation]: true });

@@ -13,7 +13,24 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
 const ObjectKeys = Object.keys;
 
-const cluster = new EventEmitter();
+// Define NodeJS.Cluster interface for TypeScript type checking
+interface NodeJSCluster extends EventEmitter {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  Worker: typeof Worker;
+  workers: Record<string | number, any>;
+  settings: Record<string, any>;
+  SCHED_NONE: number;
+  SCHED_RR: number;
+  schedulingPolicy: number;
+  setupPrimary: (options?: any) => void;
+  setupMaster: (options?: any) => void;
+  fork: (env?: any) => any;
+  disconnect: (cb?: () => void) => void;
+}
+
+const cluster = new EventEmitter() as unknown as NodeJSCluster;
 const intercom = new EventEmitter();
 const SCHED_NONE = 1;
 const SCHED_RR = 2;
@@ -123,7 +140,7 @@ cluster.fork = function (env) {
   cluster.setupPrimary();
   const id = ++ids;
   const workerProcess = createWorkerProcess(id, env);
-  const worker = new Worker({
+  const worker = Worker({
     id: id,
     process: workerProcess,
   });
@@ -191,8 +208,9 @@ cluster.disconnect = function (cb) {
     process.nextTick(() => intercom.emit("disconnect"));
   } else {
     for (const worker of ObjectValues(cluster.workers)) {
-      if (worker.isConnected()) {
-        worker.disconnect();
+      const typedWorker = worker as { isConnected(): boolean; disconnect(): void };
+      if (typedWorker.isConnected()) {
+        typedWorker.disconnect();
       }
     }
   }

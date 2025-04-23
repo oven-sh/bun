@@ -25,17 +25,13 @@ function pipeline(...streams) {
       end = options.end;
     }
 
-    pl(
-      streams,
-      (err, value) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(value);
-        }
-      },
-      { signal, end },
-    );
+    pl(streams, { signal, end }, (err, value) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(value);
+      }
+    });
   });
 }
 

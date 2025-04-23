@@ -52,9 +52,9 @@ export function initializeTextEncoderStream() {
     return Promise.$resolve();
   };
 
-  const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);
+  const transform = ($createTransformStream as any)(startAlgorithm, transformAlgorithm, flushAlgorithm);
   $putByIdDirectPrivate(this, "textEncoderStreamTransform", transform);
-  $putByIdDirectPrivate(this, "textEncoderStreamEncoder", new $TextEncoderStreamEncoder());
+  $putByIdDirectPrivate(this, "textEncoderStreamEncoder", new (TextEncoder as any)());
 
   return this;
 }

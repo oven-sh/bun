@@ -20,7 +20,26 @@ const from = require("internal/streams/from");
 
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
-class Duplexify extends Duplex {
+// Define a more specific interface for the Duplexify class that includes the internal state properties
+interface DuplexifyState {
+  _readableState: {
+    readable: boolean;
+    ended: boolean;
+    endEmitted: boolean;
+  };
+  _writableState: {
+    writable: boolean;
+    ending: boolean;
+    ended: boolean;
+    finished: boolean;
+  };
+}
+
+// Extend Duplex with the internal state properties
+class Duplexify extends Duplex implements DuplexifyState {
+  _readableState: any;
+  _writableState: any;
+
   constructor(options) {
     super(options);
 
@@ -96,6 +115,7 @@ function duplexify(body, name?) {
           }
         },
         err => {
+          // destroyer expects 2 arguments (stream, err)
           destroyer(d, err);
         },
       );
@@ -167,6 +187,7 @@ function duplexify(body, name?) {
         d.push(null);
       },
       err => {
+        // destroyer expects 2 arguments (stream, err)
         destroyer(d, err);
       },
     );
@@ -235,7 +256,9 @@ function fromAsyncGen(fn) {
 }
 
 function _duplexify(pair) {
-  const r = pair.readable && typeof pair.readable.read !== "function" ? Readable.wrap(pair.readable) : pair.readable;
+  // Use type assertion to access the static wrap method on Readable
+  const r =
+    pair.readable && typeof pair.readable.read !== "function" ? (Readable as any).wrap(pair.readable) : pair.readable;
   const w = pair.writable;
 
   let readable = !!isReadable(r);
@@ -270,9 +293,11 @@ function _duplexify(pair) {
   });
 
   if (writable) {
-    eos(w, err => {
+    // eos expects 3 arguments (stream, options, callback)
+    eos(w, {}, err => {
       writable = false;
       if (err) {
+        // destroyer expects 2 arguments (stream, err)
         destroyer(r, err);
       }
       onfinished(err);
@@ -309,9 +334,11 @@ function _duplexify(pair) {
   }
 
   if (readable) {
-    eos(r, err => {
+    // eos expects 3 arguments (stream, options, callback)
+    eos(r, {}, err => {
       readable = false;
       if (err) {
+        // destroyer expects 2 arguments (stream, err)
         destroyer(r, err);
       }
       onfinished(err);
@@ -358,6 +385,7 @@ function _duplexify(pair) {
       callback(err);
     } else {
       onclose = callback;
+      // destroyer expects 2 arguments (stream, err)
       destroyer(w, err);
       destroyer(r, err);
     }

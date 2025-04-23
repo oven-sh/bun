@@ -1,6 +1,14 @@
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
+
+// Add StatsFs to NodeJS namespace to fix TypeScript error
+declare global {
+  namespace NodeJS {
+    interface StatsFs {}
+  }
+}
+
 const fs: typeof import("node:fs") = require("node:fs");
 const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {

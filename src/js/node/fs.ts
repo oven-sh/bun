@@ -118,9 +118,10 @@ function openAsBlob(path, options) {
 class StatWatcher extends EventEmitter {
   _handle: StatWatcherHandle | null;
 
-  constructor(path, options) {
+  constructor(path: string, options: any) {
     super();
-    this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
+    // Cast to StatWatcherHandle as watchFile returns a Promise in fs.promises
+    this._handle = fs.watchFile(path, options, this.#onChange.bind(this)) as unknown as StatWatcherHandle;
   }
 
   #onChange(curr, prev) {
@@ -165,7 +166,10 @@ var access = function access(path, mode, callback) {
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
-      fs.close(fd).then(() => callback(null), callback);
+      fs.close(fd).then(
+        () => callback(null),
+        reason => callback(reason),
+      );
     } else if (callback === undefined) {
       fs.close(fd).then(() => {});
     } else {
@@ -244,7 +248,7 @@ var access = function access(path, mode, callback) {
   fsync = function fsync(fd, callback) {
     ensureCallback(callback);
 
-    fs.fsync(fd).then(nullcallback(callback), callback);
+    (fs.fsync(fd) as Promise<void>).then(nullcallback(callback), callback);
   },
   ftruncate = function ftruncate(fd, len = 0, callback) {
     if ($isCallable(len)) {
@@ -254,7 +258,7 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
-    fs.ftruncate(fd, len).then(nullcallback(callback), callback);
+    (fs.ftruncate(fd, len) as Promise<void>).then(nullcallback(callback), callback);
   },
   futimes = function futimes(fd, atime, mtime, callback) {
     ensureCallback(callback);
@@ -318,7 +322,7 @@ var access = function access(path, mode, callback) {
   fdatasync = function fdatasync(fd, callback) {
     ensureCallback(callback);
 
-    fs.fdatasync(fd).then(nullcallback(callback), callback);
+    (fs.fdatasync(fd) as Promise<void>).then(nullcallback(callback), callback);
   },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
     // fd = getValidatedFd(fd); DEFERRED TO NATIVE
@@ -631,7 +635,7 @@ defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 // of this means we need to do path validation in the js side of things
 const statWatchers = new Map();
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
+  if (typeof p === "object" && p !== null && "href" in p) return Bun.fileURLToPath(p as URL);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
   return require("node:path").resolve(p);
 }
@@ -710,10 +714,11 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-const realpathSync: typeof import("node:fs").realpathSync =
+// realpathSync also has complex overloads
+const realpathSync: any =
   process.platform !== "win32"
     ? (fs.realpathSync.bind(fs) as any)
-    : function realpathSync(p, options) {
+    : function realpathSync(p: string, options?: string | { encoding?: string }) {
         let encoding;
         if (options) {
           if (typeof options === "string") encoding = options;
@@ -723,15 +728,15 @@ const realpathSync: typeof import("node:fs").realpathSync =
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
-        if (p instanceof URL) {
-          if (p.pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+        if (typeof p === "object" && p !== null && "href" in p) {
+          const url = p as URL;
+          if (url.pathname && url.pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", url.pathname);
           }
-          p = Bun.fileURLToPath(p as URL);
+          p = Bun.fileURLToPath(url);
         } else {
-          if (typeof p !== "string") {
-            p += "";
-          }
+          // Force convert to string
+          p = String(p);
           p = getValidatedPath(p);
         }
         throwIfNullBytesInFileName(p);
@@ -751,9 +756,9 @@ const realpathSync: typeof import("node:fs").realpathSync =
         pos = current.length;
 
         // On windows, check that the root exists. On unix there is no need.
-        let lastStat: StatsType = lstatSync(base, { throwIfNoEntry: true });
+        let lastStat = lstatSync(base, { throwIfNoEntry: true });
         if (lastStat === undefined) return;
-        knownHard.$add(base);
+        knownHard.add(base);
 
         const pathModule = require("node:path");
 
@@ -776,7 +781,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           }
 
           // Continue if not a symlink, break if a pipe/socket
-          if (knownHard.$has(base)) {
+          if (knownHard.has(base)) {
             if (lastStat.isFIFO() || lastStat.isSocket()) {
               break;
             }
@@ -784,16 +789,16 @@ const realpathSync: typeof import("node:fs").realpathSync =
           }
 
           let resolvedLink;
-          lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+          lastStat = fs.lstatSync(base, { throwIfNoEntry: true }) as unknown as Stats;
           if (lastStat === undefined) return;
 
           if (!lastStat.isSymbolicLink()) {
-            knownHard.$add(base);
+            knownHard.add(base);
             continue;
           }
 
-          lastStat = fs.statSync(base, { throwIfNoEntry: true });
-          const linkTarget = fs.readlinkSync(base);
+          lastStat = fs.statSync(base, { throwIfNoEntry: true }) as unknown as Stats;
+          const linkTarget = fs.readlinkSync(base) as string;
           resolvedLink = pathModule.resolve(previous, linkTarget);
 
           // Resolve the link, then start over
@@ -804,27 +809,32 @@ const realpathSync: typeof import("node:fs").realpathSync =
           pos = current.length;
 
           // On windows, check that the root exists. On unix there is no need.
-          if (!knownHard.$has(base)) {
-            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+          if (!knownHard.has(base)) {
+            lastStat = fs.lstatSync(base, { throwIfNoEntry: true }) as unknown as Stats;
             if (lastStat === undefined) return;
-            knownHard.$add(base);
+            knownHard.add(base);
           }
         }
 
         return encodeRealpathResult(p, encoding);
       };
-const realpath: typeof import("node:fs").realpath =
+// realpath has complex overloads, so we implement as any first then type cast
+const realpath: any =
   process.platform !== "win32"
-    ? (function realpath(p, options, callback) {
+    ? (function realpath(p: string, options: any, callback?: any) {
         if ($isCallable(options)) {
           callback = options;
           options = undefined;
         }
-        ensureCallback(callback);
+        // Ensure callback is a valid function
+        const cb = ensureCallback(callback) as (err: Error | null, resolvedPath: string) => void;
 
-        fs.realpath(p, options, false).then(function (resolvedPath) {
-          callback(null, resolvedPath);
-        }, callback);
+        fs.realpath(p, options, false).then(
+          function (value: unknown) {
+            cb(null, String(value));
+          },
+          (err: Error) => cb(err, "" as any),
+        );
       } as typeof import("node:fs").realpath)
     : (function realpath(p, options, callback) {
         if ($isCallable(options)) {
@@ -838,15 +848,15 @@ const realpath: typeof import("node:fs").realpath =
           else encoding = options?.encoding;
           encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
         }
-        if (p instanceof URL) {
-          if (p.pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+        if (typeof p === "object" && p !== null && "href" in p) {
+          const url = p as URL;
+          if (url.pathname && url.pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", url.pathname);
           }
-          p = Bun.fileURLToPath(p as URL);
+          p = Bun.fileURLToPath(url);
         } else {
-          if (typeof p !== "string") {
-            p += "";
-          }
+          // Force convert to string
+          p = String(p);
           p = getValidatedPath(p);
         }
         throwIfNullBytesInFileName(p);
@@ -1032,7 +1042,7 @@ class Dir {
   #handle: number;
   #path: PathLike;
   #options;
-  #entries: DirentType[] | null = null;
+  #entries: any[] | null = null;
 
   constructor(handle, path: PathLike, options) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
@@ -1049,7 +1059,7 @@ class Dir {
       withFileTypes: true,
       encoding: this.#options?.encoding,
       recursive: this.#options?.recursive,
-    }));
+    }) as any[]);
     return entries.shift() ?? null;
   }
 
@@ -1070,8 +1080,8 @@ class Dir {
         recursive: this.#options?.recursive,
       })
       .then(entries => {
-        this.#entries = entries;
-        return entries.shift() ?? null;
+        this.#entries = entries as unknown as Dirent[];
+        return (entries as unknown as Dirent[]).shift() ?? null;
       });
   }
 

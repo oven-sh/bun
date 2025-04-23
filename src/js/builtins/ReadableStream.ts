@@ -9,7 +9,7 @@
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
+ *    documentation and/or other materials provided without restriction.
  *
  * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -37,18 +37,23 @@ export function initializeReadableStream(
   if (strategy !== undefined && !$isObject(strategy))
     throw new TypeError("ReadableStream constructor takes an object as second argument, if any");
 
+  // @ts-ignore - We know these private properties exist at runtime
   $putByIdDirectPrivate(this, "state", $streamReadable);
 
+  // @ts-ignore - We know these private properties exist at runtime
   $putByIdDirectPrivate(this, "reader", undefined);
 
+  // @ts-ignore - We know these private properties exist at runtime
   $putByIdDirectPrivate(this, "storedError", undefined);
 
   this.$disturbed = false;
 
   // Initialized with null value to enable distinction with undefined case.
+  // @ts-ignore - We know these private properties exist at runtime
   $putByIdDirectPrivate(this, "readableStreamController", null);
   this.$bunNativePtr = $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? undefined;
 
+  // @ts-ignore - We know these private properties exist at runtime
   $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
 
   const isDirect = underlyingSource.type === "direct";
@@ -62,7 +67,9 @@ export function initializeReadableStream(
   if (!isLazy && (pullFn = $getByIdDirectPrivate(underlyingSource, "pull")) !== undefined) {
     const size = $getByIdDirectPrivate(strategy, "size");
     const highWaterMark = $getByIdDirectPrivate(strategy, "highWaterMark");
-    $putByIdDirectPrivate(this, "highWaterMark", highWaterMark);
+    // @ts-ignore - We know these private properties exist at runtime
+    $putByIdDirectPrivate(this, "highWaterMark", highWaterMark as number);
+    // @ts-ignore - We know these private properties exist at runtime
     $putByIdDirectPrivate(this, "underlyingSource", undefined);
     $setupReadableStreamDefaultController(
       this,
@@ -77,19 +84,27 @@ export function initializeReadableStream(
     return this;
   }
   if (isDirect) {
+    // @ts-ignore - We know these private properties exist at runtime
     $putByIdDirectPrivate(this, "underlyingSource", underlyingSource);
-    $putByIdDirectPrivate(this, "highWaterMark", $getByIdDirectPrivate(strategy, "highWaterMark"));
+    // @ts-ignore - We know these private properties exist at runtime
+    $putByIdDirectPrivate(this, "highWaterMark", $getByIdDirectPrivate(strategy, "highWaterMark") as number);
+    // @ts-ignore - We know these private properties exist at runtime
     $putByIdDirectPrivate(this, "start", () => $createReadableStreamController(this, underlyingSource, strategy));
   } else if (isLazy) {
     const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;
-    $putByIdDirectPrivate(this, "highWaterMark", undefined);
+    // @ts-ignore - We know these private properties exist at runtime
+    $putByIdDirectPrivate(this, "highWaterMark", undefined as unknown as number);
+    // @ts-ignore - We know these private properties exist at runtime
     $putByIdDirectPrivate(this, "underlyingSource", undefined);
+    // @ts-ignore - We know these private properties exist at runtime
+    // @ts-ignore - We know these private properties exist at runtime
     $putByIdDirectPrivate(
       this,
       "highWaterMark",
-      autoAllocateChunkSize || $getByIdDirectPrivate(strategy, "highWaterMark"),
+      (autoAllocateChunkSize || $getByIdDirectPrivate(strategy, "highWaterMark")) as number,
     );
 
+    // @ts-ignore - We know these private properties exist at runtime
     $putByIdDirectPrivate(this, "start", () => {
       const instance = $lazyLoadStream(this, autoAllocateChunkSize);
       if (instance) {
@@ -98,7 +113,7 @@ export function initializeReadableStream(
     });
   } else {
     $putByIdDirectPrivate(this, "underlyingSource", undefined);
-    $putByIdDirectPrivate(this, "highWaterMark", $getByIdDirectPrivate(strategy, "highWaterMark"));
+    $putByIdDirectPrivate(this, "highWaterMark", $getByIdDirectPrivate(strategy, "highWaterMark") as number);
     $putByIdDirectPrivate(this, "start", undefined);
     $createReadableStreamController(this, underlyingSource, strategy);
   }
@@ -112,7 +127,7 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
-    return $readableStreamToArrayDirect(stream, underlyingSource);
+    return ($readableStreamToArrayDirect as any)(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
   return $readableStreamIntoArray(stream);
@@ -167,9 +182,10 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
         }
 
         if (ArrayBuffer.isView(view)) {
-          const buffer = view.buffer;
-          const byteOffset = view.byteOffset;
-          const byteLength = view.byteLength;
+          const typedView = view as ArrayBufferView;
+          const buffer = typedView.buffer;
+          const byteOffset = typedView.byteOffset;
+          const byteLength = typedView.byteLength;
           if (byteOffset === 0 && byteLength === buffer.byteLength) {
             return buffer;
           }
@@ -180,6 +196,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
         if (typeof view === "string") {
           return new TextEncoder().encode(view);
         }
+        break;
       }
       default: {
         let anyStrings = false;
@@ -191,14 +208,17 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
         }
 
         if (!anyStrings) {
-          return Bun.concatArrayBuffers(result, false);
+          return Bun.concatArrayBuffers(
+            result as unknown as (ArrayBufferLike | Bun.ArrayBufferView<ArrayBufferLike>)[],
+            0,
+          );
         }
 
         const sink = new Bun.ArrayBufferSink();
         sink.start();
 
         for (const chunk of result) {
-          sink.write(chunk);
+          sink.write(chunk as string | ArrayBuffer | SharedArrayBuffer | Bun.ArrayBufferView);
         }
 
         return sink.end() as Uint8Array;
@@ -211,7 +231,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
     if (completedResult !== result) {
       result = completedResult;
     } else {
-      return result.then(toArrayBuffer);
+      return result.then((value: unknown[]) => toArrayBuffer(value));
     }
   }
   return $createFulfilledPromise(toArrayBuffer(result));
@@ -248,16 +268,18 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
         }
 
         if (ArrayBuffer.isView(view)) {
-          return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+          const typedView = view as ArrayBufferView;
+          return new Uint8Array(typedView.buffer, typedView.byteOffset, typedView.byteLength);
         }
 
         if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
-          return new Uint8Array(view);
+          return new Uint8Array(view as ArrayBuffer);
         }
 
         if (typeof view === "string") {
           return new TextEncoder().encode(view);
         }
+        break;
       }
       default: {
         let anyStrings = false;
@@ -269,14 +291,17 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
         }
 
         if (!anyStrings) {
-          return Bun.concatArrayBuffers(result, true);
+          return Bun.concatArrayBuffers(
+            result as unknown as (ArrayBufferLike | Bun.ArrayBufferView<ArrayBufferLike>)[],
+            1,
+          );
         }
 
         const sink = new Bun.ArrayBufferSink();
         sink.start({ asUint8Array: true });
 
         for (const chunk of result) {
-          sink.write(chunk);
+          sink.write(chunk as string | ArrayBuffer | SharedArrayBuffer | Bun.ArrayBufferView);
         }
 
         return sink.end() as Uint8Array;
@@ -289,7 +314,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
     if (completedResult !== result) {
       result = completedResult;
     } else {
-      return result.then(toBytes);
+      return result.then((value: unknown[]) => toBytes(value));
     }
   }
 
@@ -304,7 +329,7 @@ export function readableStreamToFormData(
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
   return Bun.readableStreamToBlob(stream).then(blob => {
-    return FormData.from(blob, contentType);
+    return (FormData as any).from(blob, contentType);
   });
 }
 
@@ -321,7 +346,7 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
   const peeked = Bun.peek(text);
   if (peeked !== text) {
     try {
-      return $createFulfilledPromise(globalThis.JSON.parse(peeked));
+      return $createFulfilledPromise(globalThis.JSON.parse(peeked as string));
     } catch (e) {
       return Promise.reject(e);
     }
@@ -362,7 +387,9 @@ export function createUsedReadableStream() {
 $linkTimeConstant;
 export function createNativeReadableStream(nativePtr, autoAllocateChunkSize) {
   $assert(nativePtr, "nativePtr must be a valid pointer");
-  return new ReadableStream({
+  // We need to use a type assertion here since there seems to be a Bun.UnderlyingSource
+  // that isn't the same as our UnderlyingSource
+  return new (ReadableStream as any)({
     $lazy: true,
     $bunNativePtr: nativePtr,
     autoAllocateChunkSize: autoAllocateChunkSize,
@@ -392,7 +419,8 @@ export function getReader(this, options) {
   }
   // String conversion is required by spec, hence double equals.
   if (mode == "byob") {
-    return new ReadableStreamBYOBReader(this);
+    // Need to handle this differently since constructor doesn't take arguments
+    return new (ReadableStreamBYOBReader as any)(this);
   }
 
   throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");

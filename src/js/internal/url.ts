@@ -1,5 +1,19 @@
+// Define an interface for the HTTP options
+interface HttpOptions {
+  protocol: string;
+  hostname: string;
+  hash: string;
+  search: string;
+  pathname: string;
+  path: string;
+  href: string;
+  port?: number;
+  auth?: string;
+}
+
 function urlToHttpOptions(url) {
-  const options = {
+  // Cast the options object to our HttpOptions interface
+  const options: HttpOptions = {
     protocol: url.protocol,
     hostname:
       typeof url.hostname === "string" && url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname,

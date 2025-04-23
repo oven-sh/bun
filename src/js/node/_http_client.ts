@@ -376,7 +376,9 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           let timer;
-          response.setTimeout = (msecs, callback) => {
+          // Native Response doesn't have setTimeout, this is Node.js specific
+          // We implement it ourselves instead of trying to assign to Response
+          res.setTimeout = (msecs, callback) => {
             if (timer) {
               clearTimeout(timer);
             }
@@ -387,6 +389,7 @@ function ClientRequest(input, options, cb) {
               res.emit("timeout");
               callback?.();
             }, msecs);
+            return res;
           };
           process.nextTick(
             (self, res) => {
@@ -464,7 +467,7 @@ function ClientRequest(input, options, cb) {
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
         const fail = (message, name, code, syscall) => {
-          const error = new Error(message);
+          const error = new Error(message) as NodeJS.ErrnoException;
           error.name = name;
           error.code = code;
           error.syscall = syscall;

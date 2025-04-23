@@ -297,7 +297,7 @@ function execFile(file, args, options, callback) {
       });
     }
 
-    ex.cmd = cmd;
+    (ex as Error & { cmd?: string }).cmd = cmd;
     callback(ex, stdout, stderr);
   }
 
@@ -322,7 +322,7 @@ function execFile(file, args, options, callback) {
     try {
       child.kill(options.killSignal);
     } catch (e) {
-      ex = e;
+      ex = e as Error | null;
       exitHandler();
     }
   }
@@ -520,11 +520,11 @@ function spawnSync(file, args, options) {
     var {
       stdout = null,
       stderr = null,
-      exitCode,
-      signalCode,
+      exitCode = 0,
+      signalCode = null,
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
-      pid,
+      pid = -1,
     } = Bun.spawnSync({
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
@@ -546,7 +546,17 @@ function spawnSync(file, args, options) {
     stderr = null;
   }
 
-  const result = {
+  interface SpawnSyncResult {
+    signal: string | null;
+    status: number;
+    output: [null, Buffer | string | null, Buffer | string | null];
+    pid: number;
+    error?: Error;
+    stdout?: Buffer | string | null;
+    stderr?: Buffer | string | null;
+  }
+
+  const result: SpawnSyncResult = {
     signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
@@ -559,11 +569,11 @@ function spawnSync(file, args, options) {
   }
 
   if (stdout && encoding && encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(encoding);
+    result.output[1] = result.output[1] != null ? Buffer.from(result.output[1].toString()).toString(encoding) : null;
   }
 
   if (stderr && encoding && encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(encoding);
+    result.output[2] = result.output[2] != null ? Buffer.from(result.output[2].toString()).toString(encoding) : null;
   }
 
   result.stdout = result.output[1];
@@ -1039,6 +1049,8 @@ class ChildProcess extends EventEmitter {
   pid;
   channel;
   killed = false;
+  send?: (message: any, handle?: any, options?: any, callback?: Function) => boolean;
+  disconnect?: () => void;
 
   [Symbol.dispose]() {
     if (!this.killed) {
@@ -1146,10 +1158,11 @@ class ChildProcess extends EventEmitter {
             // This can happen if the process was already killed.
             if (!value) return new ShimmedStdioOutStream();
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            const NativeReadable = require("internal/streams/native-readable");
+            const pipe = NativeReadable.constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
-            if (autoResume) pipe.resume();
+            if (autoResume && typeof pipe.resume === "function") pipe.resume();
             return pipe;
           }
           case "destroyed":
@@ -1339,8 +1352,8 @@ class ChildProcess extends EventEmitter {
     } catch (ex) {
       if (ex == null || typeof ex !== "object" || !Object.hasOwn(ex, "errno")) throw ex;
       this.#handle = null;
-      ex.syscall = "spawn " + this.spawnfile;
-      ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+      (ex as SystemErrorExtras).syscall = "spawn " + this.spawnfile;
+      (ex as SystemErrorExtras).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
       process.nextTick(() => {
         this.emit("error", ex);
         this.emit("close", (ex as SystemError).errno ?? -1);
@@ -1458,7 +1471,10 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
+function nodeToBun(
+  item: string | number | any,
+  index: number,
+): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1880,12 +1896,24 @@ function ERR_INVALID_OPT_VALUE(name, value) {
   return err;
 }
 
-class SystemError extends Error {
-  path;
-  syscall;
-  errno;
-  code;
-  constructor(message, path, syscall, errno, code) {
+interface SystemErrorExtras {
+  path?: string;
+  syscall?: string;
+  errno?: number;
+  code?: string;
+  pid?: number;
+  spawnargs?: string[];
+}
+
+class SystemError extends Error implements SystemErrorExtras {
+  path?: string;
+  syscall?: string;
+  errno?: number;
+  code?: string;
+  pid?: number;
+  spawnargs?: string[];
+
+  constructor(message: string, path?: string, syscall?: string, errno?: number, code?: string) {
     super(message);
     this.path = path;
     this.syscall = syscall;

@@ -55,11 +55,19 @@ export function asyncIterator(this: Console) {
       }
 
       while (true) {
-        const firstResult = reader.readMany();
+        // Cast reader to include readMany method
+        const typedReader = reader as ReadableStreamDefaultReader<Uint8Array> & {
+          readMany(): Promise<{ done: boolean; value: any[] }> | { done: boolean; value: any[] };
+        };
+        const firstResult = typedReader.readMany();
         if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+          const result = await (firstResult as unknown as Promise<{ done: boolean; value: any[] }>);
+          done = result.done;
+          value = result.value;
         } else {
-          ({ done, value } = firstResult);
+          const result = firstResult as { done: boolean; value: any[] };
+          done = result.done;
+          value = result.value;
         }
 
         if (done) {
@@ -130,7 +138,7 @@ export function write(this: Console, input) {
     wrote += writer.write(arguments[i]);
   }
 
-  writer.flush(true);
+  writer.flush();
   return wrote;
 }
 
@@ -462,8 +470,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           if (
             e != null &&
             typeof e === "object" &&
-            e.name === "RangeError" &&
-            e.message === "Maximum call stack size exceeded."
+            (e as Error).name === "RangeError" &&
+            (e as Error).message === "Maximum call stack size exceeded."
           )
             throw e;
           // Sorry, there's no proper way to pass along the error here.
@@ -580,10 +588,10 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
 
     trace: function trace(...args) {
-      const err: Error = {
+      const err = {
         name: "Trace",
         message: this[kFormatForStderr](args),
-      };
+      } as Error;
       Error.captureStackTrace(err, trace);
       this.error(err.stack);
     },
@@ -680,9 +688,19 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         const values = [];
         let length = 0;
         if (mapIter) {
-          for (; i < tabularData.length / 2; ++i) {
-            ArrayPrototypePush.$call(keys, _inspect(tabularData[i * 2]));
-            ArrayPrototypePush.$call(values, _inspect(tabularData[i * 2 + 1]));
+          // For iterators, collect entries manually
+          const tabularArray: any[] = [];
+          // Cast to any iterable type and collect entries
+          const iterator = (tabularData as any)[Symbol.iterator]();
+          let entry = iterator.next();
+          while (!entry.done) {
+            tabularArray.push(entry.value);
+            entry = iterator.next();
+          }
+
+          for (; i < tabularArray.length / 2; ++i) {
+            ArrayPrototypePush.$call(keys, _inspect(tabularArray[i * 2]));
+            ArrayPrototypePush.$call(values, _inspect(tabularArray[i * 2 + 1]));
             length++;
           }
         } else {

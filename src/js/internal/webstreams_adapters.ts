@@ -43,6 +43,8 @@ class ReadableFromWeb extends Readable {
   #closed;
   #pendingChunks;
   #stream;
+  // Add debug ID property for debugging
+  __id?: number;
 
   constructor(options, stream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
@@ -106,7 +108,9 @@ class ReadableFromWeb extends Readable {
         const firstResult = reader.readMany();
 
         if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+          // Cast the result to ensure TypeScript knows it has done and value properties
+          const result = (await firstResult) as { done: boolean; value: any };
+          ({ done, value } = result);
 
           if (this.#closed) {
             this.#pendingChunks.push(...value);
@@ -177,9 +181,12 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
     case cause?.code === "ERR_STREAM_PREMATURE_CLOSE": {
       return $makeAbortError(undefined, { cause });
     }
-    case ZLIB_FAILURES.has(cause?.code): {
+    case cause !== null && ZLIB_FAILURES.has(cause?.code): {
       const error = new TypeError(undefined, { cause });
-      error.code = cause.code;
+      // Only access code property if cause is not null
+      if (cause !== null) {
+        error.code = cause.code;
+      }
       return error;
     }
     default:
@@ -216,7 +223,8 @@ function newWritableStreamFromStreamWritable(streamWritable) {
     if (backpressurePromise !== undefined) backpressurePromise.resolve();
   }
 
-  const cleanup = finished(streamWritable, error => {
+  // finished expects 3 args (stream, options, callback)
+  const cleanup = finished(streamWritable, {}, error => {
     error = handleKnownInternalErrors(error);
 
     cleanup();
@@ -282,7 +290,15 @@ function newWritableStreamFromStreamWritable(streamWritable) {
   );
 }
 
-function newStreamWritableFromWritableStream(writableStream, options = kEmptyObject) {
+// Define interfaces for the options objects
+interface StreamWritableOptions {
+  highWaterMark?: number;
+  decodeStrings?: boolean;
+  objectMode?: boolean;
+  signal?: AbortSignal;
+}
+
+function newStreamWritableFromWritableStream(writableStream, options: StreamWritableOptions = kEmptyObject as any) {
   if (!$inheritsWritableStream(writableStream)) {
     throw $ERR_INVALID_ARG_TYPE("writableStream", "WritableStream", writableStream);
   }
@@ -332,7 +348,8 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
 
     write(chunk, encoding, callback) {
       if (typeof chunk === "string" && decodeStrings && !objectMode) {
-        const enc = normalizeEncoding(encoding);
+        // Provide a default value for encoding to ensure it's never undefined
+        const enc = normalizeEncoding(encoding ?? "utf8");
 
         if (enc === "utf8") {
           chunk = encoder.encode(chunk);
@@ -430,7 +447,14 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
   return writable;
 }
 
-function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObject) {
+interface StreamReadableOptions {
+  highWaterMark?: number;
+  encoding?: string;
+  objectMode?: boolean;
+  signal?: AbortSignal;
+}
+
+function newReadableStreamFromStreamReadable(streamReadable, options: StreamReadableOptions = kEmptyObject as any) {
   // Not using the internal/streams/utils isReadableNodeStream utility
   // here because it will return false if streamReadable is a Duplex
   // whose readable option is false. For a Duplex that is not readable,
@@ -475,7 +499,8 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
 
   streamReadable.pause();
 
-  const cleanup = finished(streamReadable, error => {
+  // finished expects 3 args (stream, options, callback)
+  const cleanup = finished(streamReadable, {}, error => {
     error = handleKnownInternalErrors(error);
 
     cleanup();
@@ -569,7 +594,22 @@ function newReadableWritablePairFromDuplex(duplex) {
   return { writable, readable };
 }
 
-function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = kEmptyObject) {
+// Interface for Duplex stream options
+interface DuplexStreamOptions {
+  allowHalfOpen?: boolean;
+  objectMode?: boolean;
+  encoding?: string;
+  decodeStrings?: boolean;
+  highWaterMark?: number;
+  signal?: AbortSignal;
+  readable?: boolean;
+  writable?: boolean;
+}
+
+function newStreamDuplexFromReadableWritablePair(
+  pair = kEmptyObject,
+  options: DuplexStreamOptions = kEmptyObject as any,
+) {
   validateObject(pair, "pair");
   const { readable: readableStream, writable: writableStream } = pair;
 
@@ -630,7 +670,8 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
 
     write(chunk, encoding, callback) {
       if (typeof chunk === "string" && decodeStrings && !objectMode) {
-        const enc = normalizeEncoding(encoding);
+        // Provide a default value for encoding to ensure it's never undefined
+        const enc = normalizeEncoding(encoding ?? "utf8");
 
         if (enc === "utf8") {
           chunk = encoder.encode(chunk);

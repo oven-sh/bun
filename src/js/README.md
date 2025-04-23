@@ -102,7 +102,6 @@ The preprocessor is smart enough to not replace `$` in strings, comments, regex,
 The module is then printed like:
 
 ```ts
-// @ts-nocheck
 $$capture_start$$(function () {
   const path = __intrinsic__requireId(23);
   // user code is pasted here

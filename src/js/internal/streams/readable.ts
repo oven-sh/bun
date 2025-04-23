@@ -318,7 +318,8 @@ Readable.prototype[SymbolAsyncDispose] = function () {
     error = this.readableEnded ? null : $makeAbortError();
     this.destroy(error);
   }
-  return new Promise((resolve, reject) => eos(this, err => (err && err !== error ? reject(err) : resolve(null))));
+  // eos expects 3 arguments (stream, options, callback)
+  return new Promise((resolve, reject) => eos(this, {}, err => (err && err !== error ? reject(err) : resolve(null))));
 };
 
 // Manually shove something into the read() buffer.
@@ -362,8 +363,8 @@ function readableAddChunkUnshiftByteMode(stream, state, chunk, encoding) {
         chunk = Buffer.from(chunk, encoding);
       }
     }
-  } else if (Stream._isArrayBufferView(chunk)) {
-    chunk = Stream._uint8ArrayToBuffer(chunk);
+  } else if ((Stream as any)._isArrayBufferView(chunk)) {
+    chunk = (Stream as any)._uint8ArrayToBuffer(chunk);
   } else if (chunk !== undefined && !(chunk instanceof Buffer)) {
     errorOrDestroy(stream, $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
     return false;
@@ -410,8 +411,8 @@ function readableAddChunkPushByteMode(stream, state, chunk, encoding) {
     }
   } else if (chunk instanceof Buffer) {
     encoding = "";
-  } else if (Stream._isArrayBufferView(chunk)) {
-    chunk = Stream._uint8ArrayToBuffer(chunk);
+  } else if ((Stream as any)._isArrayBufferView(chunk)) {
+    chunk = (Stream as any)._uint8ArrayToBuffer(chunk);
     encoding = "";
   } else if (chunk !== undefined) {
     errorOrDestroy(stream, $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
@@ -1244,18 +1245,26 @@ Readable.prototype.iterator = function (options) {
   return streamToAsyncIterator(this, options);
 };
 
+// Define a custom type that extends AsyncGenerator to include the stream property
+interface StreamAsyncIterator<T = any, TReturn = any, TNext = unknown> extends AsyncGenerator<T, TReturn, TNext> {
+  stream?: any;
+}
+
 function streamToAsyncIterator(stream, options?) {
   if (typeof stream.read !== "function") {
     stream = Readable.wrap(stream, { objectMode: true });
   }
 
-  const iter = createAsyncIterator(stream, options);
+  // Cast the result to our custom type that includes the stream property
+  const iter = createAsyncIterator(stream, options) as StreamAsyncIterator;
   iter.stream = stream;
   return iter;
 }
 
 async function* createAsyncIterator(stream, options) {
   let callback = nop;
+  // Initialize error variable to avoid "used before assigned" TypeScript error
+  let error: Error | null | undefined = undefined;
 
   function next(resolve) {
     if (this === stream) {

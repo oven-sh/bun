@@ -39,7 +39,7 @@ interface Agent extends InstanceType<typeof EventEmitter> {
 }
 
 // Define the constructor interface
-interface AgentConstructor {
+interface AgentConstructor extends Function {
   new (options?: any): Agent;
   (options?: any): Agent;
   defaultMaxSockets: number;
@@ -47,10 +47,12 @@ interface AgentConstructor {
   prototype: Agent;
 }
 
+// @ts-ignore - TS2350: We know this is a Constructor that can be called with new
 function Agent(options = kEmptyObject) {
+  // @ts-ignore - TS2350: We know this is a Constructor
   if (!(this instanceof Agent)) return new Agent(options);
 
-  EventEmitter.$apply(this, []);
+  EventEmitter.$call(this);
 
   this.defaultPort = 80;
   this.protocol = "http:";
@@ -65,6 +67,7 @@ function Agent(options = kEmptyObject) {
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;
+  // @ts-ignore - TS2339: Agent does have a defaultMaxSockets static property
   this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
   this.maxFreeSockets = options.maxFreeSockets || 256;
   this.scheduling = options.scheduling || "lifo";
@@ -75,18 +78,21 @@ function Agent(options = kEmptyObject) {
 }
 $toClass(Agent, "Agent", EventEmitter);
 
+// Set static properties on the function
+// Since we're using prototype-style definition, we add properties directly to the function
+Object.defineProperty(Agent, "defaultMaxSockets", {
+  value: Infinity,
+  writable: true,
+  configurable: true,
+  enumerable: true,
+});
+
 // Type assertion to help TypeScript understand Agent has static properties
 const AgentClass = Agent as unknown as AgentConstructor;
 
 ObjectDefineProperty(AgentClass, "globalAgent", {
   get: function () {
     return globalAgent;
-  },
-});
-
-ObjectDefineProperty(AgentClass, "defaultMaxSockets", {
-  get: function () {
-    return Infinity;
   },
 });
 
@@ -133,6 +139,7 @@ Agent.prototype.destroy = function () {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
 };
 
+// @ts-ignore - TS2350: Agent is callable with new
 var globalAgent = new Agent();
 
 const http_agent_exports = {

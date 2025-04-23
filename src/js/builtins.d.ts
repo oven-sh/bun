@@ -52,6 +52,8 @@ declare var $constructor;
 declare var $sloppy;
 /** Place this directly above a function declaration (like a decorator) to always inline the function */
 declare var $alwaysInline;
+/** Sets the prototype of an object directly (bypassing normal prototype chain) */
+declare function $setPrototypeDirect(target: any, prototype: any): void;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 /**
@@ -77,22 +79,37 @@ interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaul
   $error: typeof ReadableStreamDefaultController.prototype.error;
 }
 
+interface ReadableStreamDefaultReader<R = any> extends _ReadableStreamDefaultReader<R> {
+  $ownerReadableStream: ReadableStream<R>;
+  $closedPromiseCapability: any;
+  readMany(): ReadableStreamDefaultReadManyResult<R>;
+  ownerReadableStream?: ReadableStream<R>;
+  closedPromiseCapability?: any;
+}
+
 declare var ReadableStreamDefaultController: {
   prototype: ReadableStreamDefaultController;
+  // @ts-ignore - This is the actual constructor signature used at runtime
   new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStream<R = any> extends _ReadableStream<R> {
+interface ReadableStream<R = any> extends _ReadableStream<R>, Record<string, unknown> {
   $highWaterMark: number;
   $bunNativePtr: undefined | TODO;
-  $asyncContext?: {};
+  $asyncContext: any;
   $disturbed: boolean;
   $state: $streamClosed | $streamErrored | $streamReadable | $streamWritable | $streamClosedAndErrored;
+  $reader: ReadableStreamDefaultReader<R> | unknown;
+  $storedError: any;
+  $readableStreamController: ReadableStreamDefaultController<R> | null;
+  $underlyingSource: UnderlyingSource | undefined;
+  $start: any;
 }
 
 declare var ReadableStream: {
   prototype: ReadableStream;
-  new (): ReadableStream;
+  new <R = any>(underlyingSource?: UnderlyingSource<R>, strategy?: QueuingStrategy): ReadableStream<R>;
+  new <R = any>(underlyingSource?: DirectUnderlyingSource<R>, strategy?: QueuingStrategy): ReadableStream<R>;
 };
 
 interface Console {
@@ -331,7 +348,11 @@ declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined
 declare var $_events: TODO;
 declare function $abortAlgorithm(): TODO;
 declare function $abortSteps(): TODO;
-declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
+declare function $addAbortAlgorithmToSignal(
+  signal: AbortSignal,
+  algorithm: (reason: any) => void,
+  reason?: any,
+): number;
 declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
@@ -565,7 +586,25 @@ declare function $trunc(target: number): number;
 declare function $newPromiseCapability(C: PromiseConstructor): TODO;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
+declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
 declare function $newHandledRejectedPromise(error: unknown): Promise<never>;
+/**
+ * This function has complex signature handling with the arguments object internally
+ */
+declare function $pipeToShutdownWithAction(pipeState: any, action: () => Promise<any>, ...args: any[]): void;
+declare function $pipeToShutdown(pipeState: any, reason?: any): void;
+declare function $pipeToFinalize(pipeState: any, error?: any): void;
+
+// Declaration for the return type of $readableStreamDefaultReaderRead
+interface ReadableStreamReadResult<T> {
+  done: boolean;
+  value: T | undefined;
+}
+
+// Missing type declarations for stream types
+declare const $ReadableStream: any;
+declare const $ReadableStreamDefaultReader: any;
+declare function $readableStreamDefaultReaderRead(reader: any): Promise<ReadableStreamReadResult<any>>;
 
 declare const __internal: unique symbol;
 interface InternalFieldObject<T extends any[]> {
@@ -590,39 +629,134 @@ declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
 declare interface ArrayBufferConstructor<T> extends ClassWithIntrinsics<ArrayBufferConstructor<T>> {}
 declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConstructor<T>> {}
 
-declare interface UnderlyingSource {
+declare interface UnderlyingSource<R = any> {
   $lazy?: boolean;
   $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
-  $stream?: ReadableStream;
+  $stream?: ReadableStream<R>;
+  type?: string;
+  $data?: any;
+
+  start?: (controller: ReadableStreamDefaultController<R>) => void | Promise<void>;
+  pull?: (controller: ReadableStreamDefaultController<R>) => void | Promise<void>;
+  cancel?: (reason: any) => void | Promise<void>;
+}
+
+type QueuingStrategyHighWaterMark = number;
+type QueuingStrategySize = (chunk: any) => number;
+
+interface QueuingStrategy {
+  highWaterMark?: number;
+  size?: QueuingStrategySize;
+}
+
+interface DirectUnderlyingSource<R = any> extends UnderlyingSource<R> {
+  type: "direct";
 }
 
 declare class OutOfMemoryError {
   constructor();
 }
 
-declare class ReadableStreamDefaultController {
+declare class ReadableStreamDefaultController<R = any> {
   constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    size: unknown,
-    highWaterMark: unknown,
-    $isReadableStream: typeof $isReadableStream,
+    stream: ReadableStream<R>,
+    underlyingSource: UnderlyingSource<R>,
+    size: ((chunk: R) => number) | undefined,
+    highWaterMark: number,
+    isReadableStream: typeof $isReadableStream,
   );
+
+  desiredSize: number | null;
+  close(): void;
+  enqueue(chunk?: any): void;
+  error(e?: any): void;
+
+  // Internal properties
+  $controlledReadableStream: ReadableStream<R>;
+  $pullAgain: boolean;
+  $pulling: boolean;
+  $started: number;
+  $closeRequested: boolean;
+  $queue: any[];
+  $pullAlgorithm: () => Promise<void>;
+  $cancelAlgorithm: (reason: any) => Promise<void>;
+  $strategy: {
+    highWaterMark: number;
+    size?: (chunk: R) => number;
+  };
 }
 declare class ReadableByteStreamController {
   constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    strategy: unknown,
-    $isReadableStream: typeof $isReadableStream,
+    stream: ReadableStream<Uint8Array>,
+    underlyingSource: UnderlyingSource<Uint8Array>,
+    highWaterMark: number,
+    isReadableStream: typeof $isReadableStream,
   );
+
+  byobRequest: ReadableStreamBYOBRequest | null;
+  desiredSize: number | null;
+  close(): void;
+  enqueue(chunk: ArrayBufferView): void;
+  error(e?: any): void;
+
+  // Internal properties
+  $controlledReadableStream: ReadableStream<Uint8Array>;
+  $pullAgain: boolean;
+  $pulling: boolean;
+  $started: number;
+  $closeRequested: boolean;
+  $strategy: QueuingStrategy;
+  $pendingPullIntos: any[];
+  $queue: any[];
 }
 declare class ReadableStreamBYOBRequest {
-  constructor(stream: unknown, view: unknown, $isReadableStream: typeof $isReadableStream);
+  constructor(controller: ReadableByteStreamController, view: ArrayBufferView);
+
+  view: ArrayBufferView;
+  respond(bytesWritten: number): void;
+  respondWithNewView(view: ArrayBufferView): void;
+
+  // Internal properties
+  $associatedReadableByteStreamController: ReadableByteStreamController;
 }
+/**
+ * ReadableStreamBYOBReader is initialized through initializeReadableStreamBYOBReader
+ * which gets the stream parameter and sets up the reader.
+ */
 declare class ReadableStreamBYOBReader {
-  constructor(stream: unknown);
+  constructor();
+  read(view: ArrayBufferView): Promise<ReadableStreamBYOBReadResult>;
+  releaseLock(): void;
+  readonly closed: Promise<undefined>;
+  cancel(reason?: any): Promise<void>;
+
+  // Internal properties
+  ownerReadableStream?: ReadableStream;
+  closedPromiseCapability?: any;
+  readIntoRequests?: any;
+}
+
+declare var ReadableStreamBYOBReader: {
+  prototype: ReadableStreamBYOBReader;
+  new (stream: ReadableStream): ReadableStreamBYOBReader;
+};
+
+declare var ReadableByteStreamController: {
+  prototype: ReadableByteStreamController;
+  // @ts-ignore - This is the actual constructor signature used at runtime
+  new (): ReadableByteStreamController;
+};
+
+interface ReadableStreamBYOBReadResult {
+  done: boolean;
+  value: ArrayBufferView;
+}
+
+interface ReadableStreamDefaultReadManyResult<T> {
+  done: boolean;
+  value: Array<T>;
+  size?: number;
 }
 
 // Inlining our enum types
@@ -650,7 +784,7 @@ interface String {
 
 declare var $Buffer: {
   new (array: Array): Buffer;
-  new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (arrayBuffer: ArrayBufferLike | ArrayBufferView, byteOffset?: number, length?: number): Buffer;
   new (buffer: Buffer): Buffer;
   new (size: number): Buffer;
   new (string: string, encoding?: BufferEncoding): Buffer;

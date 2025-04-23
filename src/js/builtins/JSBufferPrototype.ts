@@ -3,6 +3,7 @@
 
 interface BufferExt extends Buffer {
   $dataView?: DataView;
+  buffer: ArrayBufferLike; // Override inherited buffer property to handle SharedArrayBuffer case
 
   toString(encoding?: BufferEncoding, start?: number, end?: number): string;
   toString(offset: number, length: number, encoding?: BufferEncoding): string;
@@ -683,7 +684,8 @@ export function slice(this: BufferExt, start, end) {
 
   var start_ = adjustOffset(start, byteLength);
   var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;
-  return new $Buffer(buffer, byteOffset + start_, end_ > start_ ? end_ - start_ : 0);
+  // Use ArrayBufferLike here to handle both ArrayBuffer and SharedArrayBuffer
+  return new $Buffer(buffer as ArrayBufferLike, byteOffset + start_, end_ > start_ ? end_ - start_ : 0);
 }
 
 $getter;

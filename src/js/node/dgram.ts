@@ -98,6 +98,14 @@ function EINVAL(syscall) {
 
 let dns;
 
+// Define interface for UDP handle
+interface UDPHandle {
+  lookup?: Function;
+  onmessage?: Function;
+  [kOwnerSymbol]?: any;
+  socket?: any;
+}
+
 function newHandle(type, lookup) {
   if (lookup === undefined) {
     if (dns === undefined) {
@@ -109,7 +117,7 @@ function newHandle(type, lookup) {
     validateFunction(lookup, "lookup");
   }
 
-  const handle = {};
+  const handle: UDPHandle = {};
   if (type === "udp4") {
     handle.lookup = FunctionPrototypeBind.$call(lookup4, handle, lookup);
   } else if (type === "udp6") {
@@ -638,18 +646,24 @@ function doSend(ex, self, ip, list, address, port, callback) {
       success = socket.send(data);
     }
   } catch (e) {
-    err = e;
+    // Define extended error type with networking properties
+    interface NetworkError extends Error {
+      address?: string;
+      port?: number;
+      code?: string;
+    }
+    err = e as NetworkError;
   }
   // TODO check if this makes sense
   if (callback) {
     if (err) {
-      err.address = ip;
-      err.port = port;
-      err.message = `send ${err.code} ${ip}:${port}`;
+      (err as NetworkError).address = ip;
+      (err as NetworkError).port = port;
+      (err as NetworkError).message = `send ${(err as NetworkError).code} ${ip}:${port}`;
       process.nextTick(callback, err);
     } else {
       const sent = success ? data.byteLength : 0;
-      process.nextTick(callback, null, sent);
+      process.nextTick(callback, null as null, sent);
     }
   }
 

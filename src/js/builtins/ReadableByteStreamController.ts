@@ -78,7 +78,7 @@ export function byobRequest(this) {
         firstDescriptor.byteOffset + firstDescriptor.bytesFilled,
         firstDescriptor.byteLength - firstDescriptor.bytesFilled,
       );
-      $putByIdDirectPrivate(this, "byobRequest", new ReadableStreamBYOBRequest(this, view, $isReadableStream));
+      $putByIdDirectPrivate(this, "byobRequest", new (ReadableStreamBYOBRequest as any)(this, view, $isReadableStream));
     }
   }
 

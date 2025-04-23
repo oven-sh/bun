@@ -51,8 +51,9 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
-const kIncomingMessage = Symbol("IncomingMessage");
-const kServerResponse = Symbol("ServerResponse");
+// Declare as unique symbols to fix TS1166 error
+const kIncomingMessage: unique symbol = Symbol("IncomingMessage") as any;
+const kServerResponse: unique symbol = Symbol("ServerResponse") as any;
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
@@ -165,8 +166,9 @@ const ServerResponsePrototype = {
     this._writeRaw(head, "ascii", cb);
   },
 
-  writeProcessing(cb) {
+  writeProcessing(cb?) {
     this._writeRaw("HTTP/1.1 102 Processing\r\n\r\n", "ascii", cb);
+    return this;
   },
   writeContinue(cb) {
     this.socket[kHandle]?.response?.writeContinue();
@@ -175,18 +177,18 @@ const ServerResponsePrototype = {
 
   // This end method is actually on the OutgoingMessage prototype in Node.js
   // But we don't want it for the fetch() response version.
-  end(chunk, encoding, callback) {
+  end(chunk?: string | Buffer | Uint8Array, encoding?: BufferEncoding, callback?: () => void) {
     const handle = this[kHandle];
     if (handle?.aborted) {
       return this;
     }
 
     if ($isCallable(chunk)) {
-      callback = chunk;
+      callback = chunk as () => void;
       chunk = undefined;
       encoding = undefined;
     } else if ($isCallable(encoding)) {
-      callback = encoding;
+      callback = encoding as () => void;
       encoding = undefined;
     } else if (!$isCallable(callback)) {
       callback = undefined;
@@ -284,15 +286,15 @@ const ServerResponsePrototype = {
     return !this._ended || !hasServerResponseFinished(this);
   },
 
-  write(chunk, encoding, callback) {
+  write(chunk?: string | Buffer | Uint8Array, encoding?: BufferEncoding, callback?: () => void) {
     const handle = this[kHandle];
 
     if ($isCallable(chunk)) {
-      callback = chunk;
+      callback = chunk as () => void;
       chunk = undefined;
       encoding = undefined;
     } else if ($isCallable(encoding)) {
-      callback = encoding;
+      callback = encoding as () => void;
       encoding = undefined;
     } else if (!$isCallable(callback)) {
       callback = undefined;
@@ -432,9 +434,9 @@ const ServerResponsePrototype = {
     }
   },
 
-  writeHead(statusCode, statusMessage, headers) {
+  writeHead(statusCode: number, statusMessage?: string | object, headers?: object) {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
-      _writeHead(statusCode, statusMessage, headers, this);
+      _writeHead(statusCode, statusMessage as string, headers, this);
       updateHasBody(this, statusCode);
       this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
     }
@@ -538,6 +540,24 @@ const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback
   });
 };
 
+// Add interface for NodeHTTPServerSocket to include _httpMessage
+interface NodeHTTPServerSocket extends InstanceType<typeof Duplex> {
+  _httpMessage?: ServerResponse;
+  server: Server;
+  encrypted?: boolean;
+  _requestCount?: number;
+}
+
+// Define AddressInfo interface
+interface AddressInfo {
+  address: string;
+  family: string;
+  port: number;
+  path?: string;
+  host?: string;
+  tls?: any;
+}
+
 function onNodeHTTPServerSocketTimeout() {
   const req = this[kRequest];
   const reqTimeout = req && !req.complete && req.emit("timeout", this);
@@ -582,7 +602,33 @@ function emitListeningNextTick(self, hostname, port) {
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-type Server = InstanceType<typeof Server>;
+// Extended interface to ensure Server type has all required properties
+interface HTTPServer<Request = IncomingMessage, Response = ServerResponse> extends EventEmitter {
+  maxRequestsPerSocket: number;
+  timeout: number;
+  keepAliveTimeout: number;
+  maxHeadersCount: number;
+  headersTimeout: number;
+  requestTimeout: number;
+  listening: boolean;
+  _unref: boolean;
+  insecureHTTPParser?: boolean;
+  joinDuplicateHeaders?: boolean;
+  requireHostHeader?: boolean;
+  rejectNonStandardBodyWrites?: boolean;
+  connectionsCheckingInterval?: number;
+  maxHeaderSize?: number;
+  setTimeout(msecs: number, callback?: () => void): this;
+  listen(...args: any[]): this;
+  close(callback?: (err?: Error) => void): void;
+  address(): AddressInfo | null;
+  ref(): this;
+  unref(): this;
+  closeAllConnections(): void;
+  closeIdleConnections(): void;
+}
+
+type Server<Request = IncomingMessage, Response = ServerResponse> = HTTPServer<Request, Response>;
 const Server = function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -666,8 +712,8 @@ const Server = function Server(options, callback) {
 } as unknown as typeof import("node:http").Server;
 Object.defineProperty(Server, "name", { value: "Server" });
 
-function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
-  const socket: NodeHTTPServerSocket = this;
+function onServerRequestEvent(this: NodeHTTPServerSocket, event: number) {
+  const socket = this as NodeHTTPServerSocket;
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
@@ -685,8 +731,10 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
 const ServerPrototype = {
   constructor: Server,
   __proto__: EventEmitter.prototype,
-  [kIncomingMessage]: undefined,
-  [kServerResponse]: undefined,
+  // Using string property names instead of computed property names for symbols
+  // to avoid TS1166 error: Computed property name must be a simple literal or unique symbol
+  kIncomingMessage: undefined,
+  kServerResponse: undefined,
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -732,9 +780,9 @@ const ServerPrototype = {
     return promise;
   },
 
-  address() {
+  address(): AddressInfo | null {
     if (!this[serverSymbol]) return null;
-    return this[serverSymbol].address;
+    return this[serverSymbol].address as AddressInfo;
   },
 
   listen() {
@@ -826,7 +874,7 @@ const ServerPrototype = {
           data: null,
           addressType: 4,
         };
-        sendHelper(message, null);
+        sendHelper(message, null, null);
       });
 
       server[kRealListen](tls, port, host, socketPath, true, onListen);
@@ -994,7 +1042,7 @@ const ServerPrototype = {
             http_res.on("finish", http_res.detachSocket.bind(http_res, socket));
           }
 
-          const { resolve, promise } = $newPromiseCapability(Promise);
+          const { resolve, promise } = $newPromiseCapability(GlobalPromise);
           resolveFunction = resolve;
 
           return promise;

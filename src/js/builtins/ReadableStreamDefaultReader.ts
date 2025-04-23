@@ -50,20 +50,21 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
   if (!stream) throw new TypeError("readMany() called on a reader owned by no readable stream");
 
   const state = $getByIdDirectPrivate(stream, "state");
-  stream.$disturbed = true;
+  (stream as ReadableStream).$disturbed = true;
   if (state === $streamErrored) {
     throw $getByIdDirectPrivate(stream, "storedError");
   }
 
-  var controller = $getByIdDirectPrivate(stream, "readableStreamController");
+  var controller = $getByIdDirectPrivate(stream, "readableStreamController") as ReadableStreamDefaultController;
+  var queue: any;
   if (controller) {
-    var queue = $getByIdDirectPrivate(controller, "queue");
+    queue = $getByIdDirectPrivate(controller, "queue");
   }
 
   if (!queue && state !== $streamClosed) {
     // This is a ReadableStream direct controller implemented in JS
     // It hasn't been started yet.
-    return controller.$pull(controller).$then(function ({ done, value }) {
+    return (controller as any).$pull(controller).$then(function ({ done, value }) {
       return done ? { done: true, value: value ? [value] : [], size: 0 } : { value: [value], size: 1, done: false };
     });
   } else if (!queue) {
@@ -123,7 +124,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     if (result.done) {
       return { value: resultValue ? [resultValue] : [], size: 0, done: true };
     }
-    var controller = $getByIdDirectPrivate(stream, "readableStreamController");
+    var controller = $getByIdDirectPrivate(stream, "readableStreamController") as ReadableStreamDefaultController;
 
     var queue = $getByIdDirectPrivate(controller, "queue");
     var value = [resultValue].concat(queue.content.toArray(false));
@@ -145,7 +146,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
 
     var size = queue.size;
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
-      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
+      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream") as ReadableStream);
     } else if ($isReadableStreamDefaultController(controller)) {
       $readableStreamDefaultControllerCallPullIfNeeded(controller);
     } else if ($isReadableByteStreamController(controller)) {
@@ -161,7 +162,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     return { value: [], size: 0, done: true };
   }
 
-  var pullResult = controller.$pull(controller);
+  var pullResult = (controller as any).$pull(controller);
   if (pullResult && $isPromise(pullResult)) {
     return pullResult.then(onPullMany) as any;
   }

@@ -46,15 +46,18 @@ class WeakRefMap extends SafeMap {
   }
 
   get(key) {
-    return super.get(key)?.get();
+    const ref = super.get(key);
+    return ref ? ref.get() : undefined;
   }
 
   incRef(key) {
-    return super.get(key)?.incRef();
+    const ref = super.get(key);
+    return ref ? ref.incRef() : undefined;
   }
 
   decRef(key) {
-    return super.get(key)?.decRef();
+    const ref = super.get(key);
+    return ref ? ref.decRef() : undefined;
   }
 }
 
@@ -306,17 +309,19 @@ class TracingChannel {
   traceSync(fn, context = {}, thisArg, ...args) {
     const { start, end, error } = this;
 
-    return start.runStores(context, () => {
+    // Use type assertion for context
+    const typedContext = context as { result?: any; error?: any };
+    return start.runStores(typedContext, () => {
       try {
         const result = fn.$apply(thisArg, args);
-        context.result = result;
+        typedContext.result = result;
         return result;
       } catch (err) {
-        context.error = err;
-        error.publish(context);
+        typedContext.error = err;
+        error.publish(typedContext);
         throw err;
       } finally {
-        end.publish(context);
+        end.publish(typedContext);
       }
     });
   }
@@ -324,24 +329,27 @@ class TracingChannel {
   tracePromise(fn, context = {}, thisArg, ...args) {
     const { start, end, asyncStart, asyncEnd, error } = this;
 
+    // Use type assertion for context
+    const typedContext = context as { result?: any; error?: any };
+
     function reject(err) {
-      context.error = err;
-      error.publish(context);
-      asyncStart.publish(context);
+      typedContext.error = err;
+      error.publish(typedContext);
+      asyncStart.publish(typedContext);
       // TODO: Is there a way to have asyncEnd _after_ the continuation?
-      asyncEnd.publish(context);
+      asyncEnd.publish(typedContext);
       return PromiseReject(err);
     }
 
     function resolve(result) {
-      context.result = result;
-      asyncStart.publish(context);
+      typedContext.result = result;
+      asyncStart.publish(typedContext);
       // TODO: Is there a way to have asyncEnd _after_ the continuation?
-      asyncEnd.publish(context);
+      asyncEnd.publish(typedContext);
       return result;
     }
 
-    return start.runStores(context, () => {
+    return start.runStores(typedContext, () => {
       try {
         let promise = fn.$apply(thisArg, args);
         // Convert thenables to native promises
@@ -350,11 +358,11 @@ class TracingChannel {
         }
         return PromisePrototypeThen(promise, resolve, reject);
       } catch (err) {
-        context.error = err;
-        error.publish(context);
+        typedContext.error = err;
+        error.publish(typedContext);
         throw err;
       } finally {
-        end.publish(context);
+        end.publish(typedContext);
       }
     });
   }
@@ -362,22 +370,25 @@ class TracingChannel {
   traceCallback(fn, position = -1, context = {}, thisArg, ...args) {
     const { start, end, asyncStart, asyncEnd, error } = this;
 
+    // Use type assertion for context
+    const typedContext = context as { result?: any; error?: any };
+
     function wrappedCallback(err, res) {
       if (err) {
-        context.error = err;
-        error.publish(context);
+        typedContext.error = err;
+        error.publish(typedContext);
       } else {
-        context.result = res;
+        typedContext.result = res;
       }
 
       // Using runStores here enables manual context failure recovery
-      asyncStart.runStores(context, () => {
+      asyncStart.runStores(typedContext, () => {
         try {
           if (callback) {
             return callback.$apply(this, arguments);
           }
         } finally {
-          asyncEnd.publish(context);
+          asyncEnd.publish(typedContext);
         }
       });
     }
@@ -386,15 +397,15 @@ class TracingChannel {
     validateFunction(callback, "callback");
     ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
-    return start.runStores(context, () => {
+    return start.runStores(typedContext, () => {
       try {
         return fn.$apply(thisArg, args);
       } catch (err) {
-        context.error = err;
-        error.publish(context);
+        typedContext.error = err;
+        error.publish(typedContext);
         throw err;
       } finally {
-        end.publish(context);
+        end.publish(typedContext);
       }
     });
   }

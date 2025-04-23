@@ -16,6 +16,18 @@
 // const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { isPromise } = require("node:util/types");
+
+interface CopyOptions {
+  dereference?: boolean;
+  filter?: (src: string, dest: string) => boolean | Promise<boolean>;
+  recursive?: boolean;
+  force?: boolean;
+  errorOnExist?: boolean;
+  preserveTimestamps?: boolean;
+  mode?: number;
+  verbatimSymlinks?: boolean;
+}
 
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseReject = Promise.reject;
@@ -23,7 +35,7 @@ const ArrayPrototypeFilter = Array.prototype.filter;
 const StringPrototypeSplit = String.prototype.split;
 const ArrayPrototypeEvery = Array.prototype.every;
 
-async function cpFn(src, dest, opts) {
+async function cpFn(src: string, dest: string, opts: CopyOptions) {
   const stats = await checkPaths(src, dest, opts);
   const { srcStat, destStat, skipped } = stats;
   if (skipped) return;
@@ -247,7 +259,7 @@ async function setDestTimestampsAndMode(srcMode, src, dest) {
   return setDestMode(dest, srcMode);
 }
 
-function setDestMode(dest, srcMode) {
+function setDestMode(dest: string, srcMode: number) {
   return chmod(dest, srcMode);
 }
 
@@ -264,13 +276,13 @@ function onDir(srcStat, destStat, src, dest, opts) {
   return copyDir(src, dest, opts);
 }
 
-async function mkDirAndCopy(srcMode, src, dest, opts) {
+async function mkDirAndCopy(srcMode: number, src: string, dest: string, opts: CopyOptions) {
   await mkdir(dest);
   await copyDir(src, dest, opts);
   return setDestMode(dest, srcMode);
 }
 
-async function copyDir(src, dest, opts) {
+async function copyDir(src: string, dest: string, opts: CopyOptions) {
   const dir = await opendir(src);
 
   for await (const { name } of dir) {

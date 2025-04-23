@@ -76,8 +76,8 @@ export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdin
 
 export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
-  // @ts-expect-error
-  const source = native.$bunNativePtr;
+  // This is a Bun-specific internal property
+  const source = (native as any).$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -86,7 +86,9 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
-    reader ??= native.getReader();
+    reader ??= native.getReader() as ReadableStreamDefaultReader<Uint8Array> & {
+      readMany(): Promise<{ done: boolean; value: any[] }>;
+    };
     source.updateRef(true);
     shouldUnref = false;
     if (needsInternalReadRefresh) {
@@ -192,14 +194,15 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
         }
       }
     } catch (err) {
-      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+      const error = err as Error;
+      if (error?.code === "ERR_STREAM_RELEASE_LOCK") {
         // The stream was unref()ed. It may be ref()ed again in the future,
         // or maybe it has already been ref()ed again and we just need to
         // restart the internalRead() function. triggerRead() will figure that out.
         triggerRead.$call(stream, undefined);
         return;
       }
-      stream.destroy(err);
+      stream.destroy(error);
     }
   }
 
@@ -398,7 +401,8 @@ export function windowsEnv(
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+      const result = typeof p !== "symbol" ? delete internalEnv[k] : false;
+      return result;
     },
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
@@ -407,7 +411,8 @@ export function windowsEnv(
         envMapList.push(p);
       }
       editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      $Object.$defineProperty(internalEnv, k, attributes);
+      return true;
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;

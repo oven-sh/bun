@@ -61,7 +61,7 @@ export function initializeTextDecoderStream() {
     return Promise.$resolve();
   };
 
-  const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);
+  const transform = ($createTransformStream as any)(startAlgorithm, transformAlgorithm, flushAlgorithm);
   $putByIdDirectPrivate(this, "textDecoderStreamTransform", transform);
 
   const fatal = !!options.fatal;

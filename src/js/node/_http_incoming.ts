@@ -85,14 +85,14 @@ function assignHeaders(object, req) {
   }
 }
 
-function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
+function onIncomingMessagePauseNodeHTTPResponse(this: typeof IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
     handle.pause();
   }
 }
 
-function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
+function onIncomingMessageResumeNodeHTTPResponse(this: typeof IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
     const resumed = handle.resume();
@@ -104,6 +104,10 @@ function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
       this.push(resumed);
     }
   }
+}
+
+interface IncomingMessage {
+  _dumped: boolean;
 }
 
 function IncomingMessage(req, options = defaultIncomingOpts) {
@@ -168,13 +172,8 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
   this._readableState.readingMore = true;
 }
 
-function onDataIncomingMessage(
-  this: import("node:http").IncomingMessage,
-  chunk,
-  isLast,
-  aborted: NodeHTTPResponseAbortEvent,
-) {
-  if (aborted === NodeHTTPResponseAbortEvent.abort) {
+function onDataIncomingMessage(this: import("node:http").IncomingMessage, chunk, isLast, aborted: number) {
+  if (aborted === NodeHTTPResponseAbortEvent) {
     this.destroy();
     return;
   }
@@ -305,7 +304,7 @@ const IncomingMessagePrototype = {
 
     // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event
     if (isAbortError(err)) {
-      err = undefined;
+      err = null;
     }
 
     var nodeHTTPResponse = this[kHandle];
@@ -393,7 +392,6 @@ const IncomingMessagePrototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    this.take;
     const req = this[kHandle] || this[webRequestOrResponse];
 
     if (req) {

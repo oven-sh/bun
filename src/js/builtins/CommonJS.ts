@@ -15,6 +15,22 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
+// Type assertion for Loader
+declare global {
+  interface LoaderModule {
+    dependenciesMap: Map<string, LoaderEntry>;
+  }
+
+  // Define the properties we're accessing on Loader
+  interface LoaderExtended {
+    getModuleNamespaceObject: (module: any) => any;
+    parseModule: (key: string, sourceCodeObject: JSCSourceCodeObject) => any;
+    requestedModules: (mod: any) => string[];
+    ensureRegistered: (key: string) => any;
+    linkAndEvaluateModule: (specifier: string, options?: any) => any;
+  }
+}
+
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith("node:")) {
@@ -115,7 +131,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
     // If we can pull out a ModuleNamespaceObject, let's do it.
     if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-      const namespace = Loader.getModuleNamespaceObject(esm!.module);
+      const namespace = (Loader as unknown as LoaderExtended).getModuleNamespaceObject(esm!.module);
       // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
       // Various libraries expect __esModule to be set when using ESM from require().
       // We don't want to always inject the __esModule export into every module,
@@ -198,7 +214,8 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
         // - we've never fetched it
         // - a fetch is in progress
         (!$isPromise(fetch) ||
-          ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
+          ($getPromiseInternalField(fetch as Promise<symbol>, $promiseFieldFlags) & $promiseStateMask) ===
+            $promiseStatePending))
     ) {
       // force it to be no longer pending
       $fulfillModuleSync(key);
@@ -214,14 +231,20 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
     if (state < $ModuleLink && $isPromise(fetch)) {
       // This will probably never happen, but just in case
-      if (($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending) {
+      if (
+        ($getPromiseInternalField(fetch as Promise<symbol>, $promiseFieldFlags) & $promiseStateMask) ===
+        $promiseStatePending
+      ) {
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
       }
 
       // this pulls it out of the promise without delaying by a tick
       // the promise is already fulfilled by $fulfillModuleSync
-      const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
-      moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
+      const sourceCodeObject = $getPromiseInternalField(
+        fetch as Promise<symbol>,
+        $promiseFieldReactionsOrResult,
+      ) as JSCSourceCodeObject;
+      moduleRecordPromise = (loader as unknown as LoaderExtended).parseModule(key, sourceCodeObject);
     }
     let mod = entry?.module;
 
@@ -251,14 +274,14 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
     // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
     $setStateToMax(entry, $ModuleLink);
     const dependenciesMap = mod.dependenciesMap;
-    const requestedModules = loader.requestedModules(mod);
+    const requestedModules = (loader as unknown as LoaderExtended).requestedModules(mod);
     const dependencies = $newArrayWithSize<string>(requestedModules.length);
     for (var i = 0, length = requestedModules.length; i < length; ++i) {
       const depName = requestedModules[i];
       // optimization: if it starts with a slash then it's an absolute path
       // we don't need to run the resolver a 2nd time
       const depKey = depName[0] === "/" ? depName : loader.resolve(depName, key);
-      const depEntry = loader.ensureRegistered(depKey);
+      const depEntry = (loader as unknown as LoaderExtended).ensureRegistered(depKey);
 
       if (depEntry.state < $ModuleLink) {
         queue.push(depKey);
@@ -274,13 +297,13 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
     entry.satisfy = Promise.$resolve(entry);
     entry.isSatisfied = true;
 
-    key = queue.shift();
+    key = queue.shift() as string;
     while (key && (registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
-      key = queue.shift();
+      key = queue.shift() as string;
     }
   }
 
-  var linkAndEvaluateResult = loader.linkAndEvaluateModule(resolvedSpecifier, undefined);
+  var linkAndEvaluateResult = (loader as unknown as LoaderExtended).linkAndEvaluateModule(resolvedSpecifier, undefined);
   if (linkAndEvaluateResult && $isPromise(linkAndEvaluateResult)) {
     // if you use top-level await, or any dependencies use top-level await, then we throw here
     // this means the module will still actually load eventually, but that's okay.
@@ -303,7 +326,7 @@ export function requireESM(this, resolved: string) {
   if (!entry || !entry.evaluated || !entry.module) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
-  var exports = Loader.getModuleNamespaceObject(entry.module);
+  var exports = (Loader as unknown as LoaderExtended).getModuleNamespaceObject(entry.module);
 
   return exports;
 }
@@ -322,7 +345,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
 
   // If we can pull out a ModuleNamespaceObject, let's do it.
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    const namespace = Loader.getModuleNamespaceObject(esm!.module);
+    const namespace = (Loader as unknown as LoaderExtended).getModuleNamespaceObject(esm!.module);
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
     // Various libraries expect __esModule to be set when using ESM from require().
     // We don't want to always inject the __esModule export into every module,
@@ -358,7 +381,7 @@ export function createRequireCache() {
 
       const esm = Loader.registry.$get(key);
       if (esm?.evaluated) {
-        const namespace = Loader.getModuleNamespaceObject(esm.module);
+        const namespace = (Loader as unknown as LoaderExtended).getModuleNamespaceObject(esm.module);
         const mod = $createCommonJSModule(key, namespace, true, undefined);
         $requireMap.$set(key, mod);
         return mod;
@@ -376,9 +399,9 @@ export function createRequireCache() {
     },
 
     deleteProperty(_target, key: string) {
-      moduleMap.$delete(key);
-      $requireMap.$delete(key);
-      Loader.registry.$delete(key);
+      moduleMap.delete(key);
+      $requireMap.delete(key);
+      Loader.registry.delete(key);
       return true;
     },
 

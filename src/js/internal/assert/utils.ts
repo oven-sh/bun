@@ -148,6 +148,9 @@ function loadAssertionError() {
 // }
 
 function getErrMessage(_message: string, _value: unknown, _fn: Function): string | undefined {
+  // This function contains only commented-out code, so explicitly return undefined
+  return undefined;
+
   // const tmpLimit = Error.stackTraceLimit;
   // const errorStackTraceLimitIsWritable = isErrorStackTraceLimitWritable();
   // Make sure the limit is set to 1. Otherwise it could fail (<= 0) or it

@@ -1,11 +1,19 @@
 //! JS code for bake
 /// <reference path="../../bake/bake.d.ts" />
+/// <reference path="../builtins.d.ts" />
 import type { Bake } from "bun";
 
 type FrameworkPrerender = Bake.ServerEntryPoint["prerender"];
 type FrameworkGetParams = Bake.ServerEntryPoint["getParams"];
 type TypeAndFlags = number;
 type FileIndex = number;
+
+// Define the GetParamIterator interface to satisfy TypeScript
+interface GetParamIterator {
+  [Symbol.asyncIterator]?(): AsyncIterator<Record<string, string>>;
+  [Symbol.iterator]?(): Iterator<Record<string, string>>;
+  pages?: Array<Record<string, string>>;
+}
 
 /**
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
@@ -25,7 +33,7 @@ export function renderRoutesForProdStatic(
   sourceRouteFiles: string[],
   paramInformation: Array<null | string[]>,
   styles: string[][],
-): Promise<void> {
+): Promise<void[]> {
   $debug({
     outBase,
     allServerFiles,
@@ -124,24 +132,34 @@ export function renderRoutesForProdStatic(
       if (paramInformation[i] != null) {
         const getParam = getParams[type];
         $assert(getParam != null && $isCallable(getParam));
-        const paramGetter: Bake.GetParamIterator = await getParam({
+        const paramGetter: GetParamIterator = await getParam({
           pageModule,
           layouts,
         });
         if (paramGetter[Symbol.asyncIterator] != undefined) {
-          for await (const params of paramGetter) {
+          for await (const params of paramGetter as AsyncIterable<Record<string, string>>) {
             callRouteGenerator(type, i, layouts, pageModule, params);
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
-          for (const params of paramGetter) {
-            callRouteGenerator(type, i, layouts, pageModule, params);
+          // Cast to any to avoid TS2802 error with for...of and Iterable
+          const iteratorFn = paramGetter[Symbol.iterator];
+          if (iteratorFn) {
+            const iterator = iteratorFn.call(paramGetter);
+            let result = iterator.next();
+            while (!result.done) {
+              const params = result.value as Record<string, string>;
+              callRouteGenerator(type, i, layouts, pageModule, params);
+              result = iterator.next();
+            }
           }
-        } else {
+        } else if (paramGetter.pages != undefined) {
           await Promise.all(
             paramGetter.pages.map(params => {
               callRouteGenerator(type, i, layouts, pageModule, params);
             }),
           );
+        } else {
+          throw new Error(`Invalid GetParamIterator result from route ${JSON.stringify(sourceRouteFiles[i])}`);
         }
       } else {
         await doGenerateRoute(type, i, layouts, pageModule, null);

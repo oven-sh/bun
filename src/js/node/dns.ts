@@ -1,5 +1,5 @@
 // Hardcoded module "node:dns"
-const dns = Bun.dns;
+const dns = Bun.dns as unknown as DNS;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("./net");
 const {
@@ -71,24 +71,34 @@ const getRuntimeDefaultResultOrderOption = $newZigFunction(
   0,
 );
 
-function newResolver(options) {
-  if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
-  }
-  return newResolver.zig(options);
+// Add type definition for function with zig property
+interface ResolverCreator extends Function {
+  zig?: Function;
 }
 
-function defaultResultOrder() {
-  if (typeof defaultResultOrder.value === "undefined") {
-    defaultResultOrder.value = getRuntimeDefaultResultOrderOption();
+const newResolver: ResolverCreator = function (options) {
+  if (!(newResolver as ResolverCreator).zig) {
+    (newResolver as ResolverCreator).zig = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
+  }
+  return (newResolver as ResolverCreator).zig!(options);
+};
+
+// Create interface for function with value property
+interface ResultOrderFunction extends Function {
+  value?: string;
+}
+
+const defaultResultOrder: ResultOrderFunction = function () {
+  if (typeof (defaultResultOrder as ResultOrderFunction).value === "undefined") {
+    (defaultResultOrder as ResultOrderFunction).value = getRuntimeDefaultResultOrderOption();
   }
 
-  return defaultResultOrder.value;
-}
+  return (defaultResultOrder as ResultOrderFunction).value;
+};
 
 function setDefaultResultOrder(order) {
   validateOrder(order);
-  defaultResultOrder.value = order;
+  (defaultResultOrder as ResultOrderFunction).value = order;
 }
 
 function getDefaultResultOrder() {
@@ -98,7 +108,8 @@ function getDefaultResultOrder() {
 function setServersOn(servers, object) {
   validateArray(servers, "servers");
 
-  const triples = [];
+  // Use a more specific type for DNS server entries
+  const triples: Array<[number, string, number]> = [];
 
   servers.forEach((server, i) => {
     validateString(server, `servers[${i}]`);
@@ -217,18 +228,23 @@ function validateLocalAddresses(first, second) {
   }
 }
 
-function invalidHostname(hostname) {
-  if (invalidHostname.warned) {
+// Create interface for function with warned property
+interface WarningFunction extends Function {
+  warned?: boolean;
+}
+
+const invalidHostname: WarningFunction = function (hostname) {
+  if ((invalidHostname as WarningFunction).warned) {
     return;
   }
 
-  invalidHostname.warned = true;
+  (invalidHostname as WarningFunction).warned = true;
   process.emitWarning(
     `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
     "DeprecationWarning",
     "DEP0118",
   );
-}
+};
 
 function translateLookupOptions(options) {
   if (!options || typeof options !== "object") {
@@ -331,7 +347,10 @@ function lookupService(address, port, callback) {
 
   validateString(address);
 
-  dns.lookupService(address, port).then(
+  // Convert port to string if it's a number
+  const portStr = typeof port === "number" ? String(port) : port;
+
+  dns.lookupService(address, portStr).then(
     results => {
       callback(null, ...results);
     },
@@ -665,9 +684,17 @@ const mapLookupAll = res => {
   return { address, family };
 };
 
+// Define DNS Error interface
+interface DNSError extends Error {
+  name: string;
+  code: string;
+  errno: number;
+  syscall: string;
+}
+
 function throwIfEmpty(res) {
   if (res.length === 0) {
-    const err = new Error("No records found");
+    const err = new Error("No records found") as DNSError;
     err.name = "DNSException";
     err.code = "ENODATA";
     // Hardcoded errno
@@ -767,10 +794,12 @@ const promises = {
         service,
       }));
     } catch (err) {
-      if (err.name === "TypeError" || err.name === "RangeError") {
-        throw err;
+      // Use type assertion to properly handle error object
+      const error = err as Error;
+      if (error.name === "TypeError" || error.name === "RangeError") {
+        throw error;
       }
-      return Promise.reject(withTranslatedError(err));
+      return Promise.reject(withTranslatedError(error));
     }
   },
 
@@ -838,6 +867,7 @@ const promises = {
 
   Resolver: class Resolver {
     #resolver;
+    _handle: any;
 
     constructor(options) {
       validateResolverOptions(options);

@@ -481,7 +481,8 @@ function cc(options) {
     throw new Error("Expected options to be an object");
   }
 
-  let path = options?.source;
+  const typedOptions = options as { source: string | string[] };
+  let path = typedOptions.source;
   if (!path) {
     throw new Error("Expected source to be a string to a file path");
   }
@@ -492,7 +493,7 @@ function cc(options) {
   } else {
     path = normalizePath(path);
   }
-  options.source = path;
+  typedOptions.source = path;
 
   const result = ccFn(options);
   if (Error.isError(result)) throw result;

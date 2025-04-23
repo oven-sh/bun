@@ -22,17 +22,25 @@ interface BundlerPlugin {
   promises: Array<Promise<any>> | undefined;
 
   onBeforeParse: (filter: RegExp, namespace: string, addon: unknown, symbol: string, external?: unknown) => void;
-  $napiDlopenHandle: number;
 }
 
 // Extra types
 type Setup = BunPlugin["setup"];
 type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
-interface BuildConfigExt extends BuildConfig {
-  // we support esbuild-style 'entryPoints' capitalization
-  entryPoints?: string[];
-  // plugins is guaranteed to not be null
+// Create a partial type rather than extending BuildConfig to avoid interface extension issues
+interface BuildConfigExt {
+  // Base properties from BuildConfig
+  entrypoints?: string[];
   plugins: BunPlugin[];
+  target?: "browser" | "bun" | "node";
+  root?: string;
+  minify?: boolean | MinifyObj;
+  // esbuild-style 'entryPoints' capitalization
+  entryPoints?: string[];
+  // experimental CSS support
+  experimentalCss?: boolean;
+  // experimental HTML support
+  experimentalHtml?: boolean;
 }
 interface PluginBuilderExt extends PluginBuilder {
   resolve: AnyFunction;
@@ -60,6 +68,8 @@ export function loadAndResolvePluginsForServe(
     experimentalHtml: true,
     target: "browser",
     root: bunfig_folder,
+    plugins: [],
+    entrypoints: [],
   };
 
   class InvalidBundlerPluginError extends TypeError {
@@ -138,7 +148,11 @@ export function runSetupFunction(
     if (map === onBeforeParsePlugins) {
       isOnBeforeParse = true;
       // TODO: how to check if it a napi module here?
-      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+      if (
+        !callback ||
+        !$isObject(callback) ||
+        !(callback as unknown as { $napiDlopenHandle?: unknown }).$napiDlopenHandle
+      ) {
         throw new TypeError(
           "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
         );
@@ -287,7 +301,7 @@ export function runSetupFunction(
     return this.promises;
   };
 
-  var setupResult = setup({
+  const pluginBuilder = {
     config: config,
     onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
@@ -315,7 +329,9 @@ export function runSetupFunction(
       platform: config.target === "bun" ? "node" : config.target,
     },
     esbuild: {},
-  } as PluginBuilderExt);
+  } as unknown as PluginBuilderExt;
+
+  var setupResult = setup(pluginBuilder);
 
   if (setupResult && $isPromise(setupResult)) {
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
@@ -378,7 +394,12 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           continue;
         }
 
-        var { path, namespace: userNamespace = inputNamespace, external } = result;
+        // Cast to a known type to avoid property access errors
+        var {
+          path,
+          namespace: userNamespace = inputNamespace,
+          external,
+        } = result as { path: string; namespace?: string; external?: boolean };
         if (!(typeof path === "string") || !(typeof userNamespace === "string")) {
           throw new TypeError("onResolve plugins must return an object with a string 'path' and string 'loader' field");
         }

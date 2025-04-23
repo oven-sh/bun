@@ -98,12 +98,11 @@ class CallTracker {
       name: fn.name || "calls",
     });
     const tracked = new Proxy(fn, {
-      __proto__: null,
       apply(fn, thisArg, argList) {
         context.track(thisArg, argList);
         return fn.$apply(thisArg, argList);
       },
-    });
+    } as ProxyHandler<typeof fn>);
     this.#callChecks.add(context);
     this.#trackedFunctions.set(tracked, context);
     return tracked;

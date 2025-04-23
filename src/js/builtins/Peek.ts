@@ -1,8 +1,9 @@
 export function peek(promise: unknown): unknown {
   $assert($promiseStatePending == 0);
 
-  return $isPromise(promise) && $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask
-    ? $getPromiseInternalField(promise, $promiseFieldReactionsOrResult)
+  return $isPromise(promise) &&
+    $getPromiseInternalField(promise as Promise<unknown>, $promiseFieldFlags) & $promiseStateMask
+    ? $getPromiseInternalField(promise as Promise<unknown>, $promiseFieldReactionsOrResult)
     : promise;
 }
 
@@ -13,7 +14,7 @@ export function peekStatus(promise: unknown): string {
 
   return ["pending", "fulfilled", "rejected"][
     $isPromise(promise) //
-      ? $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask
+      ? $getPromiseInternalField(promise as Promise<unknown>, $promiseFieldFlags) & $promiseStateMask
       : 1
   ];
 }

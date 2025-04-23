@@ -45,7 +45,47 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const SymbolIterator = Symbol.iterator;
 
-type nodeAssert = typeof import("node:assert");
+// Use interface instead of type to avoid "refers to a type, but used as a namespace" error
+interface AssertPredicate {
+  (actual: unknown): boolean;
+  name?: string;
+}
+
+// Define a proper interface for nodeAssert
+interface nodeAssert {
+  (value: unknown, message?: string | Error): asserts value;
+  ok(value: unknown, message?: string | Error): asserts value;
+  fail(message?: string | Error): never;
+  fail(actual: unknown, expected: unknown, message?: string | Error, operator?: string, stackStartFn?: Function): never;
+  equal(actual: unknown, expected: unknown, message?: string | Error): void;
+  notEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  deepEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  notDeepEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  strictEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  notStrictEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  deepStrictEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  notDeepStrictEqual(actual: unknown, expected: unknown, message?: string | Error): void;
+  throws(block: () => unknown, message?: string | Error): void;
+  throws(block: () => unknown, error: RegExp | Function | Object | Error, message?: string | Error): void;
+  doesNotThrow(block: () => unknown, message?: string | Error): void;
+  doesNotThrow(block: () => unknown, error: RegExp | Function | Object | Error, message?: string | Error): void;
+  rejects(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
+  rejects(
+    block: (() => Promise<unknown>) | Promise<unknown>,
+    error: RegExp | Function | Object | Error,
+    message?: string | Error,
+  ): Promise<void>;
+  doesNotReject(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
+  doesNotReject(
+    block: (() => Promise<unknown>) | Promise<unknown>,
+    error: RegExp | Function | Object | Error,
+    message?: string | Error,
+  ): Promise<void>;
+  ifError(value: unknown): void;
+  match(string: string, regexp: RegExp, message?: string | Error): void;
+  doesNotMatch(string: string, regexp: RegExp, message?: string | Error): void;
+  strict: nodeAssert;
+}
 
 function isDeepEqual(a, b) {
   return Bun.deepEquals(a, b, false);
@@ -86,7 +126,15 @@ const NO_EXCEPTION_SENTINEL = {};
 // both the actual and expected values to the assertion error for
 // display purposes.
 
-function innerFail(obj) {
+interface FailureInfo {
+  actual: unknown;
+  expected: unknown;
+  message?: string | Error;
+  operator: string;
+  stackStartFn: Function;
+}
+
+function innerFail(obj: FailureInfo) {
   if (obj.message instanceof Error) throw obj.message;
 
   throw new AssertionError(obj);
@@ -116,7 +164,7 @@ function fail(
     internalMessage = true;
     message = "Failed";
   } else if (argsLen === 1) {
-    message = actual;
+    message = actual as string | Error | undefined;
     actual = undefined;
   } else {
     if (warned === false) {
@@ -172,8 +220,8 @@ Object.defineProperty(assert, "AssertionError", {
  */
 
 function ok(value: unknown, message?: string | Error): asserts value;
-function ok(...args: unknown[]): void {
-  innerOk(ok, args.length, ...args);
+function ok(value: unknown, message?: string | Error): void {
+  innerOk(ok, arguments.length, value, message);
 }
 assert.ok = ok;
 
@@ -508,7 +556,7 @@ assert.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected
 };
 
 class Comparison {
-  constructor(obj, keys, actual) {
+  constructor(obj, keys, actual?) {
     for (const key of keys) {
       if (key in obj) {
         if (
@@ -787,49 +835,69 @@ function expectsNoError(stackStartFn, actual, error, message) {
 }
 
 /**
- * Expects the function `promiseFn` to throw an error.
- * @param {() => any} promiseFn
- * @param {...any} [args]
+ * Expects the function `fn` to throw an error.
+ * @param {() => any} fn
+ * @param {nodeAssert.AssertPredicate} [error]
+ * @param {string | Error} [message]
  * @returns {void}
  */
-assert.throws = function throws(promiseFn: () => Promise<unknown> | Promise<unknown>, ...args: unknown[]): void {
-  expectsError(throws, getActual(promiseFn), ...args);
+assert.throws = function throws(
+  fn: () => unknown,
+  error?: RegExp | Function | Object | Error,
+  message?: string | Error,
+): void {
+  expectsError(throws, getActual(fn), error, message);
 };
 
 /**
- * Expects `promiseFn` function or its value to reject.
- * @param {() => Promise<any>} promiseFn
- * @param {...any} [args]
+ * Expects `block` function or its value to reject.
+ * @param {(() => Promise<unknown>) | Promise<unknown>} block
+ * @param {RegExp | Function | Object | Error} [error]
+ * @param {string | Error} [message]
  * @returns {Promise<void>}
  */
 function rejects(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
 function rejects(
   block: (() => Promise<unknown>) | Promise<unknown>,
-  error: nodeAssert.AssertPredicate,
+  error: RegExp | Function | Object | Error,
   message?: string | Error,
 ): Promise<void>;
-assert.rejects = async function rejects(promiseFn: () => Promise<unknown>, ...args: any[]): Promise<void> {
-  expectsError(rejects, await waitForActual(promiseFn), ...args);
+assert.rejects = async function rejects(
+  block: (() => Promise<unknown>) | Promise<unknown>,
+  error?: RegExp | Function | Object | Error,
+  message?: string | Error,
+): Promise<void> {
+  expectsError(rejects, await waitForActual(block), error, message);
 };
 
 /**
  * Asserts that the function `fn` does not throw an error.
  * @param {() => any} fn
- * @param {...any} [args]
+ * @param {RegExp | Function | Object | Error} [error]
+ * @param {string | Error} [message]
  * @returns {void}
  */
-assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args: unknown[]): void {
-  expectsNoError(doesNotThrow, getActual(fn), ...args);
+assert.doesNotThrow = function doesNotThrow(
+  fn: () => unknown,
+  error?: RegExp | Function | Object | Error,
+  message?: string | Error,
+): void {
+  expectsNoError(doesNotThrow, getActual(fn), error, message);
 };
 
 /**
  * Expects `fn` or its value to not reject.
- * @param {() => Promise<any>} fn
- * @param {...any} [args]
+ * @param {(() => Promise<unknown>) | Promise<unknown>} fn
+ * @param {RegExp | Function | Object | Error} [error]
+ * @param {string | Error} [message]
  * @returns {Promise<void>}
  */
-assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...args: unknown[]): Promise<void> {
-  expectsNoError(doesNotReject, await waitForActual(fn), ...args);
+assert.doesNotReject = async function doesNotReject(
+  fn: (() => Promise<unknown>) | Promise<unknown>,
+  error?: RegExp | Function | Object | Error,
+  message?: string | Error,
+): Promise<void> {
+  expectsNoError(doesNotReject, await waitForActual(fn), error, message);
 };
 
 /**
@@ -840,11 +908,11 @@ assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, 
 assert.ifError = function ifError(err: unknown): void {
   if (err !== null && err !== undefined) {
     let message = "ifError got unwanted exception: ";
-    if (typeof err === "object" && typeof err.message === "string") {
-      if (err.message.length === 0 && err.constructor) {
-        message += err.constructor.name;
+    if (typeof err === "object" && typeof (err as Error).message === "string") {
+      if ((err as Error).message.length === 0 && (err as Error).constructor) {
+        message += (err as Error).constructor.name;
       } else {
-        message += err.message;
+        message += (err as Error).message;
       }
     } else {
       const inspect = lazyInspect();
@@ -861,7 +929,7 @@ assert.ifError = function ifError(err: unknown): void {
     });
 
     // Make sure we actually have a stack trace!
-    const origStack = err.stack;
+    const origStack = (err as Error).stack;
 
     if (typeof origStack === "string") {
       // This will remove any duplicated frames from the error frames taken
@@ -976,11 +1044,24 @@ function strict(...args) {
   innerOk(strict, args.length, ...args);
 }
 
-assert.strict = ObjectAssign(strict, assert, {
+// Create a new strict assert object to avoid modifying the readonly property
+const strictAssert = ObjectAssign(strict, assert, {
   equal: assert.strictEqual,
   deepEqual: assert.deepStrictEqual,
   notEqual: assert.notStrictEqual,
   notDeepEqual: assert.notDeepStrictEqual,
 });
 
-assert.strict.strict = assert.strict;
+// Now assign it to assert.strict
+Object.defineProperty(assert, "strict", {
+  value: strictAssert,
+  writable: true,
+  configurable: true,
+});
+
+// Set strict.strict to itself in a way that avoids the readonly property error
+Object.defineProperty(assert.strict, "strict", {
+  value: assert.strict,
+  writable: true,
+  configurable: true,
+});

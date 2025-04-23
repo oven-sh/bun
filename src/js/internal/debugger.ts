@@ -32,8 +32,8 @@ class SocketFramer {
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
-    socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(data);
+    (socket as any).$write(socketFramerMessageLengthBuffer);
+    (socket as any).$write(data);
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
@@ -235,7 +235,7 @@ class Debugger {
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
         hostname,
-        port,
+        port: port ? parseInt(port) : undefined,
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });

@@ -147,6 +147,16 @@ export function readableByteStreamControllerClose(controller) {
   $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 
+// Define Dequeue interface based on usage in the file
+interface Dequeue<T> {
+  peek(): T | undefined;
+  push(item: T): void;
+  shift(): T | undefined;
+  clear(): void;
+  isEmpty(): boolean;
+  isNotEmpty(): boolean;
+}
+
 export function readableByteStreamControllerClearPendingPullIntos(controller) {
   $readableByteStreamControllerInvalidateBYOBRequest(controller);
   var existing: Dequeue<PullIntoDescriptor> = $getByIdDirectPrivate(controller, "pendingPullIntos");
@@ -227,24 +237,37 @@ export function readableByteStreamControllerPull(controller) {
 }
 
 export function readableByteStreamControllerShouldCallPull(controller) {
-  $assert(controller);
-  const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+  // If controller is null or undefined, we can't call pull
+  if (!controller) return false;
+
+  // From this point forward, controller is non-null
+  // Create a non-null version of controller to satisfy TypeScript
+  const controllerNonNull = controller as NonNullable<typeof controller>;
+
+  $assert(controllerNonNull);
+  const stream = $getByIdDirectPrivate(controllerNonNull, "controlledReadableStream");
   if (!stream) {
     return false;
   }
 
   if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return false;
-  if ($getByIdDirectPrivate(controller, "closeRequested")) return false;
-  if (!($getByIdDirectPrivate(controller, "started") > 0)) return false;
+  if ($getByIdDirectPrivate(controllerNonNull, "closeRequested")) return false;
+  if (!($getByIdDirectPrivate(controllerNonNull, "started") > 0)) return false;
   const reader = $getByIdDirectPrivate(stream, "reader");
 
   if (reader && ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!reader.$bunNativePtr)) return true;
+  // Using a non-null assertion is appropriate here since we've already checked reader is truthy
   if (
+    reader &&
     $readableStreamHasBYOBReader(stream) &&
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests")?.isNotEmpty()
+    $getByIdDirectPrivate(reader!, "readIntoRequests")?.isNotEmpty()
   )
     return true;
-  if ($readableByteStreamControllerGetDesiredSize(controller) > 0) return true;
+
+  // TypeScript can't tell that controller is non-null here
+  // @ts-ignore - We've already checked that controller is non-null at the top of the function
+  if ($readableByteStreamControllerGetDesiredSize(controllerNonNull) > 0) return true;
+
   return false;
 }
 

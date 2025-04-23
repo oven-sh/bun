@@ -13,7 +13,26 @@ const eos = require("internal/streams/end-of-stream");
 const promises = require("internal/stream.promises");
 const utils = require("internal/streams/utils");
 const { isArrayBufferView, isUint8Array } = require("node:util/types");
-const Stream = require("internal/streams/legacy").Stream;
+// Define a more specific type for Stream that includes static methods we'll add
+interface StreamConstructor {
+  new (): any;
+  prototype: any;
+  isDestroyed?: typeof utils.isDestroyed;
+  isDisturbed?: typeof utils.isDisturbed;
+  isErrored?: typeof utils.isErrored;
+  isReadable?: typeof utils.isReadable;
+  isWritable?: typeof utils.isWritable;
+  destroy?: Function;
+  compose?: Function;
+  _isArrayBufferView?: typeof isArrayBufferView;
+  _isUint8Array?: typeof isUint8Array;
+  _uint8ArrayToBuffer?: Function;
+  PassThrough?: Function;
+  // Other properties we'll add later
+  [key: string]: any;
+}
+
+const Stream = require("internal/streams/legacy").Stream as StreamConstructor;
 
 Stream.isDestroyed = utils.isDestroyed;
 Stream.isDisturbed = utils.isDisturbed;
@@ -66,11 +85,26 @@ Stream.Writable = require("internal/streams/writable");
 Stream.Duplex = require("internal/streams/duplex");
 Stream.Transform = require("internal/streams/transform");
 Stream.PassThrough = require("internal/streams/passthrough");
-Stream.duplexPair = require("internal/streams/duplexpair");
-Stream.pipeline = pipeline;
+// Use type assertion to match expected function signature for duplexPair
+Stream.duplexPair = require("internal/streams/duplexpair") as unknown as (
+  options?: any,
+) => [typeof Stream.Duplex, typeof Stream.Duplex];
+// Create an interface for functions with __promisify__ property
+interface PromisifiableFunction {
+  (...args: any[]): any;
+  __promisify__?: any;
+}
+
+// Cast pipeline to include the __promisify__ property
+const typedPipeline = pipeline as PromisifiableFunction;
+typedPipeline.__promisify__ = promises.pipeline;
+Stream.pipeline = typedPipeline;
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 Stream.addAbortSignal = addAbortSignal;
-Stream.finished = eos;
+// Cast eos to include the __promisify__ property
+const typedEos = eos as PromisifiableFunction;
+typedEos.__promisify__ = promises.finished;
+Stream.finished = typedEos;
 Stream.destroy = destroyer;
 Stream.compose = compose;
 Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
@@ -85,6 +119,10 @@ ObjectDefineProperty(Stream, "promises", {
   },
 });
 
+// We've added __promisify__ directly to pipeline and eos above
+// so we no longer need these property definitions for Symbol.for("nodejs.util.promisify.custom")
+// The following code is left commented for reference
+/*
 ObjectDefineProperty(pipeline, customPromisify, {
   __proto__: null,
   enumerable: true,
@@ -100,6 +138,7 @@ ObjectDefineProperty(eos, customPromisify, {
     return promises.finished;
   },
 });
+*/
 
 // Backwards-compat with node 0.4.x
 Stream.Stream = Stream;

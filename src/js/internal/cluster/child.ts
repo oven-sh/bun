@@ -9,7 +9,18 @@ const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ObjectAssign = Object.assign;
 
-const cluster = new EventEmitter();
+// Define NodeJS.Cluster interface for TypeScript type checking
+interface NodeJSCluster extends EventEmitter {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  worker: any | null;
+  Worker: typeof Worker;
+  _setupWorker: () => void;
+  _getServer: (obj: any, options: any, cb: any) => void;
+}
+
+const cluster = new EventEmitter() as unknown as NodeJSCluster;
 const handles = new Map();
 const indexes = new Map();
 const noop = FunctionPrototype;
@@ -26,8 +37,9 @@ cluster.worker = null;
 cluster.Worker = Worker;
 
 cluster._setupWorker = function () {
-  const worker = new Worker({
-    id: +process.env.NODE_UNIQUE_ID | 0,
+  // Use Worker as a function rather than a constructor
+  const worker = Worker({
+    id: +process.env.NODE_UNIQUE_ID! | 0,
     process: process,
     state: "online",
   });
@@ -148,7 +160,8 @@ function rr(message, { indexesKey, index }, cb) {
 
   let key = message.key;
 
-  let fakeHandle: Timer | null = null;
+  // Use NodeJS.Timeout or any for fakeHandle type
+  let fakeHandle: NodeJS.Timeout | null = null;
 
   function ref() {
     if (!fakeHandle) {
@@ -188,7 +201,7 @@ function rr(message, { indexesKey, index }, cb) {
     key = undefined;
   }
 
-  function getsockname(out) {
+  function getsockname(out: any) {
     if (key) ObjectAssign(out, message.sockname);
 
     return 0;
@@ -240,7 +253,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+Worker.prototype._disconnect = function (primaryInitiated?) {
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 

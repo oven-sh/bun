@@ -80,13 +80,16 @@ export default function compose(...streams) {
   // TODO(ronag): Avoid double buffering.
   // Implement Writable/Readable/Duplex traits.
   // See, https://github.com/nodejs/node/pull/33515.
+  // Define options for Duplex constructor
+  // Note: writable/readable flags aren't part of DuplexOptions, they're used to configure behavior
+  // We use type assertion to allow these properties
   d = new Duplex({
     // TODO (ronag): highWaterMark?
     writableObjectMode: !!head?.writableObjectMode,
     readableObjectMode: !!tail?.readableObjectMode,
-    writable,
-    readable,
-  });
+    writable: writable,
+    readable: readable,
+  } as any);
 
   if (writable) {
     if (isNodeStream(head)) {
@@ -137,7 +140,8 @@ export default function compose(...streams) {
 
     const toRead = isTransformStream(tail) ? tail.readable : tail;
 
-    eos(toRead, () => {
+    // eos expects 3 arguments (stream, options, callback)
+    eos(toRead, {}, () => {
       if (onfinish) {
         const cb = onfinish;
         onfinish = null;

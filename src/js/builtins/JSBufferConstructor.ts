@@ -6,7 +6,7 @@ export function from(value, encodingOrOffset, length) {
 
   if (typeof value === "object" && value !== null) {
     if ($inheritsArrayBuffer(value)) return new $Buffer(value, encodingOrOffset, length);
-    if ($isTypedArrayView(value)) return new $Buffer(value, encodingOrOffset, length);
+    if ($isTypedArrayView(value)) return new $Buffer(value as ArrayBufferView, encodingOrOffset, length);
 
     const valueOf = value.valueOf && value.valueOf();
     if (valueOf != null && valueOf !== value && (typeof valueOf === "string" || typeof valueOf === "object")) {

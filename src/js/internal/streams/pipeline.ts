@@ -42,6 +42,7 @@ function destroyer(stream, reading, writing) {
     destroy: err => {
       if (finished) return;
       finished = true;
+      // destroyer requires 2 arguments: (stream, error)
       destroyImpl.destroyer(stream, err || $ERR_STREAM_DESTROYED("pipe"));
     },
     cleanup,
@@ -123,7 +124,8 @@ async function pumpToNode(iterable, writable, finish, { end }) {
 
     finish();
   } catch (err) {
-    finish(error !== err ? aggregateTwoErrors(error, err) : err);
+    // Cast the error to ensure it matches the expected type
+    finish(error !== err ? aggregateTwoErrors(error, err as Error) : err);
   } finally {
     cleanup();
     writable.off("drain", resume);
@@ -245,6 +247,7 @@ function pipelineImpl(streams, callback, opts?) {
       }
 
       if (end) {
+        // destroyer function expects 3 parameters (stream, reading, writing)
         const { destroy, cleanup } = destroyer(stream, reading, writing);
         destroys.push(destroy);
 
@@ -337,6 +340,7 @@ function pipelineImpl(streams, callback, opts?) {
 
         ret = pt;
 
+        // destroyer function expects 3 parameters (stream, reading, writing)
         const { destroy, cleanup } = destroyer(ret, false, true);
         destroys.push(destroy);
         if (isLastStream) {

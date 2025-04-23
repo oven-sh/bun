@@ -82,7 +82,8 @@ function watch(
 
         return() {
           if (!closed) {
-            watcher.close();
+            // watcher is the Promise result from fs.watch() that returns a FSWatcher
+            (watcher as any).close();
             closed = true;
             if (nextEventResolve) {
               const resolve = nextEventResolve;
@@ -570,7 +571,7 @@ function asyncWrap(fn: any, name: string) {
     createWriteStream(options = kEmptyObject) {
       const fd = this[kFd];
       throwEBADFIfNecessary("createWriteStream", fd);
-      return new (require("internal/fs/streams").WriteStream)(undefined, {
+      return new (require("internal/fs/streams").WriteStream)(null, {
         highWaterMark: 64 * 1024,
         ...options,
         fd: this,

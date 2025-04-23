@@ -6,7 +6,8 @@ const kCallback = Symbol("Callback");
 const kInitOtherSide = Symbol("InitOtherSide");
 
 class DuplexSide extends Duplex {
-  #otherSide = null;
+  // Type the private field to be either null or DuplexSide
+  #otherSide: DuplexSide | null = null;
   [kCallback]: (() => void) | null = null;
 
   constructor(options) {
@@ -14,7 +15,7 @@ class DuplexSide extends Duplex {
     this.#otherSide = null;
   }
 
-  [kInitOtherSide](otherSide) {
+  [kInitOtherSide](otherSide: DuplexSide) {
     // Ensure this can only be set once, to enforce encapsulation.
     if (this.#otherSide === null) {
       this.#otherSide = otherSide;
@@ -37,14 +38,19 @@ class DuplexSide extends Duplex {
     if (chunk.length === 0) {
       process.nextTick(callback);
     } else {
-      this.#otherSide.push(chunk);
-      this.#otherSide[kCallback] = callback;
+      // Assert that #otherSide is not null before accessing its methods
+      // TypeScript can't see through the $assert call above
+      const otherSide = this.#otherSide as DuplexSide;
+      otherSide.push(chunk);
+      otherSide[kCallback] = callback;
     }
   }
 
   _final(callback) {
-    this.#otherSide.on("end", callback);
-    this.#otherSide.push(null);
+    // Assert that #otherSide is not null before accessing its methods
+    const otherSide = this.#otherSide as DuplexSide;
+    otherSide.on("end", callback);
+    otherSide.push(null);
   }
 }
 

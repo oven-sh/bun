@@ -134,7 +134,7 @@ yourself with Bun.serve().
     return acc.slice(0, i);
   });
 
-  if (path.platform === "win32") {
+  if (process.platform === "win32") {
     longestCommonPath = longestCommonPath.replaceAll("\\", "/");
   }
 

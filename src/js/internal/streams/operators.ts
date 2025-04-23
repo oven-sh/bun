@@ -262,7 +262,8 @@ async function reduce(reducer, initialValue, options) {
   if (options?.signal?.aborted) {
     const err = $makeAbortError(undefined, { cause: options.signal.reason });
     this.once("error", () => {}); // The error is already propagated
-    await finished(this.destroy(err));
+    // finished expects 2 arguments (stream, callback) here we provide empty options as the second argument
+    await finished(this.destroy(err), {});
     throw err;
   }
   const ac = new AbortController();

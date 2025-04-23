@@ -111,6 +111,267 @@ declare module "bun" {
   var FFI: any;
   /** This version of fetch is untamperable */
   var fetch: typeof globalThis.fetch;
+
+  type DigestEncoding = "hex" | "base64" | "base64url" | "latin1" | "binary";
+
+  interface CryptoHasher {
+    hash(
+      algorithm: string,
+      data: string | ArrayBuffer | ArrayBufferView,
+      encoding?: DigestEncoding | BufferEncoding | TypedArray,
+    ): Buffer | string | TypedArray;
+  }
+
+  var CryptoHasher: {
+    hash(
+      algorithm: string,
+      data: string | ArrayBuffer | ArrayBufferView,
+      encoding?: DigestEncoding | BufferEncoding | TypedArray,
+    ): Buffer | string | TypedArray;
+  };
+
+  interface SpawnOptions {
+    cmd: string[];
+    stdio?: Array<string | number | null | NodeJS.TypedArray | ArrayBufferView>;
+    cwd?: string;
+    env?: Record<string, string>;
+    detached?: boolean;
+    onExit?: (handle: any, exitCode: number, signalCode: string | null, err: Error | null) => void;
+    lazy?: boolean;
+    ipc?: ((message: any) => void) | undefined;
+    onDisconnect?: ((ok: boolean) => void) | undefined;
+    serialization?: string;
+    argv0?: string;
+    windowsHide?: boolean;
+    windowsVerbatimArguments?: boolean;
+  }
+
+  interface SpawnHandle {
+    pid: number;
+    stdin?: any;
+    stdout?: any;
+    stderr?: any;
+    stdio?: any[];
+    killed?: boolean;
+    connected?: boolean;
+    kill(signal?: string | number): boolean;
+    ref(): void;
+    unref(): void;
+    disconnect(): void;
+    send(message: any): boolean;
+  }
+
+  function spawn(options: SpawnOptions): SpawnHandle;
+
+  interface UDPSocketOptions {
+    hostname: string;
+    port: number;
+    flags?: number;
+    socket: {
+      data: (socket: any, data: Buffer, port: number, address: string) => void;
+      error: (error: Error) => void;
+    };
+  }
+
+  function udpSocket(options: UDPSocketOptions): Promise<any>;
+
+  interface DNSResolverOptions {
+    timeout?: number;
+    tries?: number;
+    family?: number;
+    hints?: number;
+    verbatim?: boolean;
+    all?: boolean;
+    addrconfig?: boolean;
+    v4mapped?: boolean;
+    ttl?: boolean;
+    servers?: string[];
+    resultOrder?: string;
+    [key: string]: any;
+  }
+
+  interface DNSResolver {
+    getServers(): string[];
+    setServers(servers: string[]): void;
+    resolve(hostname: string, rrtype?: string): Promise<any[]>;
+    resolve4(hostname: string, options?: { ttl?: boolean }): Promise<any[]>;
+    resolve6(hostname: string, options?: { ttl?: boolean }): Promise<any[]>;
+    resolveAny(hostname: string): Promise<any[]>;
+    resolveCname(hostname: string): Promise<string[]>;
+    resolveMx(hostname: string): Promise<{ priority: number; exchange: string }[]>;
+    resolveNs(hostname: string): Promise<string[]>;
+    resolveTxt(hostname: string): Promise<string[][]>;
+    resolveSrv(hostname: string): Promise<{ priority: number; weight: number; port: number; name: string }[]>;
+    resolvePtr(hostname: string): Promise<string[]>;
+    resolveNaptr(hostname: string): Promise<any[]>;
+    resolveSoa(hostname: string): Promise<any>;
+    reverse(ip: string): Promise<string[]>;
+    lookup(hostname: string, options?: DNSResolverOptions): Promise<any>;
+    lookupService(address: string, port: string | number): Promise<{ hostname: string; service: string }>;
+    _handle?: any;
+  }
+
+  var dns: DNSResolver;
+}
+
+// Constants for EventEmitter
+declare const kCapture: unique symbol;
+declare const kErrorMonitor: unique symbol;
+declare const kMaxEventTargetListeners: unique symbol;
+declare const kMaxEventTargetListenersWarned: unique symbol;
+declare const kWatermarkData: unique symbol;
+declare const kRejection: unique symbol;
+declare const kFirstEventParam: unique symbol;
+
+// Base EventEmitter interface
+interface EventEmitter {
+  // We use non-optional _events to avoid TypeScript undefined warnings
+  _events: {
+    [key: string]: any;
+    [key: symbol]: any;
+    __proto__: null;
+    newListener?: any;
+    removeListener?: any;
+  };
+  _eventsCount: number;
+  _maxListeners?: number;
+  [kCapture]?: boolean;
+  [kRejection]?: Function;
+
+  emit(type: string, ...args: any[]): boolean;
+  on(type: string, listener: Function): this;
+  once(type: string, listener: Function): this;
+  off(type: string, listener: Function): this;
+  addListener(type: string, listener: Function): this;
+  removeListener(type: string, listener: Function): this;
+  prependListener(type: string, listener: Function): this;
+  prependOnceListener(type: string, listener: Function): this;
+  removeAllListeners(type?: string | symbol): this;
+  setMaxListeners(n: number): this;
+  getMaxListeners(): number;
+  listeners(type: string): Function[];
+  rawListeners(type: string): Function[];
+  listenerCount(type: string, listener?: Function): number;
+  eventNames(): (string | symbol)[];
+  pause?(): void;
+  resume?(): void;
+}
+
+// DOM-like event target interface
+interface JSEventTarget {
+  addEventListener(type: string, listener: Function, options?: any): void;
+  removeEventListener(type: string, listener: Function, options?: any): void;
+}
+
+// Event options interface to use with empty objects
+interface EventOptions {
+  signal?: AbortSignal;
+}
+
+// Options for event stream
+interface EventStreamOptions {
+  signal?: AbortSignal;
+  highWaterMark?: number;
+  highWatermark?: number; // Alternative spelling
+  lowWaterMark?: number;
+  lowWatermark?: number; // Alternative spelling
+  close?: string[];
+  [kFirstEventParam]?: boolean;
+}
+
+// Wrapper for once listener
+interface WrappedListener extends Function {
+  listener: Function;
+}
+
+// Interface for error with additional properties for listener warnings
+interface MaxListenersWarning extends Error {
+  emitter: any;
+  type: string;
+  count: number;
+}
+
+interface FixedQueue {
+  isEmpty(): boolean;
+  shift(): any;
+  push(item: any): void;
+}
+
+interface AbortSignal {
+  aborted: boolean;
+  reason?: any;
+  addEventListener(type: string, listener: Function, options?: any): void;
+  removeEventListener(type: string, listener: Function, options?: any): void;
+}
+
+// AsyncResource from async_hooks
+interface AsyncResourceConstructor {
+  new (name: string, options?: { triggerAsyncId?: number; requireManualDestroy?: boolean }): AsyncResource;
+}
+
+interface AsyncResource {
+  runInAsyncScope(fn: Function, thisArg?: any, ...args: any[]): any;
+  emitDestroy(): void;
+}
+
+// Common empty object used in the Node.js implementation
+declare const kEmptyObject: Readonly<{ __proto__: null }>;
+
+// Error constructor helpers for node errors
+declare function $ERR_INVALID_ARG_TYPE(name: string, expected: string | string[], actual: any): Error;
+
+// Add to global Function interface to support the listener property
+interface Function {
+  listener?: Function;
+}
+
+// Watcher handle for fs.watchFile
+interface StatWatcherHandle {
+  ref(): void;
+  unref(): void;
+  close(): void;
+}
+
+// File system types
+interface Stats {
+  dev: number;
+  ino: number;
+  mode: number;
+  nlink: number;
+  uid: number;
+  gid: number;
+  rdev: number;
+  size: number;
+  blksize: number;
+  blocks: number;
+  atimeMs: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  birthtimeMs: number;
+  atime: Date;
+  mtime: Date;
+  ctime: Date;
+  birthtime: Date;
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isBlockDevice(): boolean;
+  isCharacterDevice(): boolean;
+  isSymbolicLink(): boolean;
+  isFIFO(): boolean;
+  isSocket(): boolean;
+}
+
+interface Dirent {
+  name: string;
+  parentPath?: string;
+  path?: string;
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isBlockDevice(): boolean;
+  isCharacterDevice(): boolean;
+  isSymbolicLink(): boolean;
+  isFIFO(): boolean;
+  isSocket(): boolean;
 }
 
 /**
@@ -150,7 +411,17 @@ interface LoaderModule {
 
 declare interface Error {
   code?: string;
+  context?: any;
 }
+
+declare function $ERR_UNHANDLED_ERROR(stringifiedErr: any): Error;
+declare function $makeAbortError(message?: string, options?: { cause?: any }): Error;
+declare function $isPromise(value: any): boolean;
+declare function $newPromiseCapability(Promise: PromiseConstructor): {
+  resolve: Function;
+  reject: Function;
+  promise: Promise<any>;
+};
 
 interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
@@ -223,3 +494,37 @@ declare function $newZigFunction<T = (...args: any) => any>(
  */
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
+
+// DNS module type with all exported properties and methods
+interface DNS extends DNSResolver {
+  ADDRCONFIG: number;
+  V4MAPPED: number;
+  ALL: number;
+  NODATA: string;
+  FORMERR: string;
+  SERVFAIL: string;
+  NOTFOUND: string;
+  NOTIMP: string;
+  REFUSED: string;
+  BADQUERY: string;
+  BADNAME: string;
+  BADFAMILY: string;
+  BADRESP: string;
+  CONNREFUSED: string;
+  TIMEOUT: string;
+  EOF: string;
+  FILE: string;
+  NOMEM: string;
+  DESTRUCTION: string;
+  BADSTR: string;
+  BADFLAGS: string;
+  NONAME: string;
+  BADHINTS: string;
+  NOTINITIALIZED: string;
+  LOADIPHLPAPI: string;
+  ADDRGETNETWORKPARAMS: string;
+  CANCELLED: string;
+
+  // Adding these to fix TS errors
+  reverse(ip: string): Promise<string[]>;
+}

@@ -438,8 +438,8 @@ function _write(stream, chunk, encoding, cb?) {
       }
     } else if (chunk instanceof Buffer) {
       encoding = "buffer";
-    } else if (Stream._isArrayBufferView(chunk)) {
-      chunk = Stream._uint8ArrayToBuffer(chunk);
+    } else if ((Stream as any)._isArrayBufferView(chunk)) {
+      chunk = (Stream as any)._uint8ArrayToBuffer(chunk);
       encoding = "buffer";
     } else {
       throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
@@ -1115,8 +1115,9 @@ Writable.prototype[SymbolAsyncDispose] = function () {
     error = this.writableFinished ? null : $makeAbortError();
     this.destroy(error);
   }
+  // eos expects 3 arguments: (stream, options, callback)
   return new Promise((resolve, reject) =>
-    eos(this, err => (err && err.name !== "AbortError" ? reject(err) : resolve(null))),
+    eos(this, {}, err => (err && err.name !== "AbortError" ? reject(err) : resolve(null))),
   );
 };
 

@@ -1,6 +1,9 @@
 const { validateInteger } = require("internal/validators");
 const { Agent, globalAgent, NODE_HTTP_WARNING } = require("node:_http_agent");
-const { ClientRequest } = require("node:_http_client");
+// ClientRequest is a class constructor that's imported from an internal module
+const {
+  ClientRequest,
+}: { ClientRequest: new (url: string | URL, options?: any, cb?: Function) => any } = require("node:_http_client");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { Server, ServerResponse } = require("node:_http_server");

@@ -18,6 +18,12 @@ function defineCustomPromisifyArgs(target, args) {
   return args;
 }
 
+// Define a proper type for promisify function with custom property
+interface PromisifyFunction {
+  (original: any): any;
+  custom: symbol;
+}
+
 var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   const custom = original[kCustomPromisifiedSymbol];
@@ -67,7 +73,8 @@ var promisify = function promisify(original) {
   defineCustomPromisify(fn, fn);
   return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
 };
-promisify.custom = kCustomPromisifiedSymbol;
+// Cast the function to our interface type that has the custom property
+(promisify as PromisifyFunction).custom = kCustomPromisifiedSymbol;
 
 // Load node:timers/promises promisified functions onto the global timers.
 {
@@ -94,5 +101,5 @@ promisify.custom = kCustomPromisifiedSymbol;
 export default {
   defineCustomPromisify,
   defineCustomPromisifyArgs,
-  promisify,
+  promisify: promisify as PromisifyFunction,
 };

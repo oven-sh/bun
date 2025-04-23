@@ -2,9 +2,15 @@ const { kInternalSocketData, serverSymbol } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
 const { Duplex } = require("internal/stream");
 
+// Import missing types
+import type { Server } from "node:http";
+import type { OutgoingMessage } from "node:http";
+import type { IncomingMessage as Request } from "node:http";
+
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [typeof Server, typeof OutgoingMessage, typeof Request];
+  // Using a standard property declaration with symbol key
+  socketData?: [typeof Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -16,7 +22,9 @@ var FakeSocket = class Socket extends Duplex {
     // Call server.requestIP() without doing any property getter twice.
     var internalData;
     return (this.#address ??=
-      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
+      (internalData = this[kInternalSocketData] as [typeof Server, typeof OutgoingMessage, typeof Request])?.[0]?.[
+        serverSymbol
+      ].requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -31,7 +39,7 @@ var FakeSocket = class Socket extends Duplex {
   };
 
   _destroy(_err, _callback) {
-    const socketData = this[kInternalSocketData];
+    const socketData = this[kInternalSocketData] as [typeof Server, typeof OutgoingMessage, typeof Request];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
   }
@@ -105,7 +113,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
-    const socketData = this[kInternalSocketData];
+    const socketData = this[kInternalSocketData] as [typeof Server, typeof OutgoingMessage, typeof Request];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
 
     const http_res = socketData[1];

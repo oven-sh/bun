@@ -49,7 +49,18 @@ const {
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 const { isPromise } = require("node:util/types");
 
-function cpSyncFn(src, dest, opts) {
+interface CopyOptions {
+  dereference?: boolean;
+  filter?: (src: string, dest: string) => boolean;
+  recursive?: boolean;
+  force?: boolean;
+  errorOnExist?: boolean;
+  preserveTimestamps?: boolean;
+  mode?: number;
+  verbatimSymlinks?: boolean;
+}
+
+function cpSyncFn(src: string, dest: string, opts: CopyOptions) {
   // Warn about using preserveTimestamps on 32-bit node
   // if (opts.preserveTimestamps && process.arch === "ia32") {
   //   const warning = "Using the preserveTimestamps option in 32-bit " + "node is not recommended";
@@ -157,7 +168,7 @@ function checkParentPathsSync(src, srcStat, dest) {
   return checkParentPathsSync(src, srcStat, destParent);
 }
 
-function checkParentDir(destStat, src, dest, opts) {
+function checkParentDir(destStat: import("fs").Stats | null, src: string, dest: string, opts: CopyOptions) {
   const destParent = dirname(dest);
   if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
   return getStats(destStat, src, dest, opts);
@@ -165,11 +176,11 @@ function checkParentDir(destStat, src, dest, opts) {
 
 function getStats(destStat, src, dest, opts) {
   const statSyncFn = opts.dereference ? statSync : lstatSync;
-  const srcStat = statSyncFn(src);
+  const srcStat = statSyncFn(src) as import("fs").Stats;
 
-  if (srcStat.isDirectory() && opts.recursive) {
-    return onDir(srcStat, destStat, src, dest, opts);
-  } else if (srcStat.isDirectory()) {
+  if ((srcStat as import("fs").Stats).isDirectory() && opts.recursive) {
+    return onDir(srcStat as import("fs").Stats, destStat, src, dest, opts);
+  } else if ((srcStat as import("fs").Stats).isDirectory()) {
     // throw new ERR_FS_EISDIR({
     //   message: `${src} is a directory (not copied)`,
     //   path: src,
@@ -178,11 +189,15 @@ function getStats(destStat, src, dest, opts) {
     //   code: "EISDIR",
     // });
     throw new Error(`${src} is a directory (not copied)`);
-  } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {
-    return onFile(srcStat, destStat, src, dest, opts);
-  } else if (srcStat.isSymbolicLink()) {
+  } else if (
+    (srcStat as import("fs").Stats).isFile() ||
+    (srcStat as import("fs").Stats).isCharacterDevice() ||
+    (srcStat as import("fs").Stats).isBlockDevice()
+  ) {
+    return onFile(srcStat as import("fs").Stats, destStat, src, dest, opts);
+  } else if ((srcStat as import("fs").Stats).isSymbolicLink()) {
     return onLink(destStat, src, dest, opts);
-  } else if (srcStat.isSocket()) {
+  } else if ((srcStat as import("fs").Stats).isSocket()) {
     // throw new ERR_FS_CP_SOCKET({
     //   message: `cannot copy a socket file: ${dest}`,
     //   path: dest,
@@ -211,7 +226,7 @@ function getStats(destStat, src, dest, opts) {
   throw new Error(`cannot copy an unknown file type: ${dest}`);
 }
 
-function onFile(srcStat, destStat, src, dest, opts) {
+function onFile(srcStat: import("fs").Stats, destStat, src, dest, opts) {
   if (!destStat) return copyFile(srcStat, src, dest, opts);
   return mayCopyFile(srcStat, src, dest, opts);
 }
@@ -262,11 +277,11 @@ function setDestTimestamps(src, dest) {
   // The initial srcStat.atime cannot be trusted
   // because it is modified by the read(2) system call
   // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-  const updatedSrcStat = statSync(src);
-  return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
+  const updatedSrcStat = statSync(src) as import("fs").Stats;
+  return utimesSync(dest, updatedSrcStat.atime as Date | number, updatedSrcStat.mtime as Date | number);
 }
 
-function onDir(srcStat, destStat, src, dest, opts) {
+function onDir(srcStat: import("fs").Stats, destStat, src, dest, opts) {
   if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
   return copyDir(src, dest, opts);
 }
@@ -336,7 +351,8 @@ function onLink(destStat, src, dest, opts) {
   // Prevent copy if src is a subdir of dest since unlinking
   // dest in this case would result in removing src contents
   // and therefore a broken symlink would be created.
-  if (statSync(dest).isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc)) {
+  const destStat = statSync(dest) as import("fs").Stats;
+  if (destStat.isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc)) {
     // throw new ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY({
     //   message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
     //   path: dest,

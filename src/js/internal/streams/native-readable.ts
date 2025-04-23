@@ -52,7 +52,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options);
+  // Cast standard Readable to NativeReadable to allow accessing our custom properties
+  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
 
@@ -73,6 +74,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
     stream[kHighWaterMark] = 256 * 1024;
   }
 
+  // Assign ref/unref methods to the stream
   stream.ref = ref;
   stream.unref = unref;
   if (process.platform === "win32") {
@@ -255,4 +257,10 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+// Define NativeReadableConstructor interface to represent the return value
+interface NativeReadableConstructor {
+  constructNativeReadable: typeof constructNativeReadable;
+}
+
+// Export the module as NativeReadableConstructor
+export default { constructNativeReadable } as NativeReadableConstructor;

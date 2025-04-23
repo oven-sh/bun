@@ -37,8 +37,10 @@ function Duplex(options) {
     // [destroyImpl.kDestroy]: undefined,
   };
 
-  this._readableState = new Readable.ReadableState(options, this, true);
-  this._writableState = new Writable.WritableState(options, this, true);
+  // Use type assertions to access the ReadableState and WritableState constructors
+  // These are internal classes exported from the readable and writable modules
+  this._readableState = new (Readable as any).ReadableState(options, this, true);
+  this._writableState = new (Writable as any).WritableState(options, this, true);
 
   if (options) {
     this.allowHalfOpen = options.allowHalfOpen !== false;

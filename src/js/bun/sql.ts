@@ -40,6 +40,8 @@ const escapeIdentifier = function escape(str) {
 };
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
+  command: string | null = null;
+  count: number | null = null;
 
   constructor() {
     super();
@@ -812,7 +814,7 @@ class PooledConnection {
     } catch {}
   }
   flush() {
-    this.connection?.flush();
+    (this.connection as any)?.flush();
   }
   retry() {
     // if pool is closed, we can't retry
@@ -1029,7 +1031,7 @@ class ConnectionPool {
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         if (connection.state === PooledConnectionState.connected) {
-          connection.connection?.flush();
+          (connection.connection as any)?.flush();
         }
       }
     }

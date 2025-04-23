@@ -39,9 +39,9 @@
     "./build/debug/zls-cache/g"
     // intentionally not setting a local cache dir
   ],
-  "zig.zls.enableBuildOnSave": true,
+  "zig.zls.enableBuildOnSave": false,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
-  "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
+  "zig.pathas it spawns a new process every save which ": "${workspaceFolder}/vendor/zig/zig.exe",
   // TODO: make CI auto-install this commit of ZLS, to enable in-editor builds
   // https://github.com/paperclover/zls/commit/00195e6d6fcf9a79ca0fba81f80128aa8a5d9509
   // "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",

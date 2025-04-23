@@ -16,14 +16,14 @@ const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
 const uws = bun.uws;
-
+const api = bun.api;
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
-postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 
 entropy_cache: ?*EntropyCache = null,
 
@@ -35,7 +35,7 @@ cleanup_hooks: std.ArrayListUnmanaged(CleanupHook) = .{},
 
 file_polls_: ?*Async.FilePoll.Store = null,
 
-global_dns_data: ?*JSC.DNS.GlobalData = null,
+global_dns_data: ?*bun.api.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
@@ -335,7 +335,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
-                .file = Blob.FileStore{
+                .file = .{
                     .pathlike = .{
                         .fd = fd,
                     },
@@ -366,7 +366,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
-                .file = Blob.FileStore{
+                .file = .{
                     .pathlike = .{
                         .fd = fd,
                     },
@@ -396,7 +396,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .allocator = default_allocator,
             .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
-                .file = Blob.FileStore{
+                .file = .{
                     .pathlike = .{ .fd = fd },
                     .is_atty = if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false,
                     .mode = mode,
@@ -442,9 +442,9 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
     return ctx;
 }
 
-pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
+pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *api.DNS.DNSResolver {
     if (rare.global_dns_data == null) {
-        rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+        rare.global_dns_data = api.DNS.GlobalData.init(vm.allocator, vm);
         rare.global_dns_data.?.resolver.ref(); // live forever
     }
 

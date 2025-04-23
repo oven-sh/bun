@@ -3,13 +3,13 @@ const JSC = bun.JSC;
 const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.Encoder;
+const Encoder = JSC.WebCore.encoding;
 const Mutex = bun.Mutex;
 
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -17,7 +17,9 @@ const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
+const webcore = bun.webcore;
 
+// TODO: make this a top-level struct
 pub const FSWatcher = struct {
     pub const js = JSC.Codegen.JSFSWatcher;
     pub const toJS = js.toJS;
@@ -28,7 +30,7 @@ pub const FSWatcher = struct {
     verbose: bool = false,
 
     mutex: Mutex,
-    signal: ?*JSC.AbortSignal,
+    signal: ?*webcore.AbortSignal,
     persistent: bool,
     path_watcher: ?*PathWatcher.PathWatcher,
     poll_ref: Async.KeepAlive = .{},
@@ -200,7 +202,7 @@ pub const FSWatcher = struct {
     };
 
     pub const FSWatchTaskWindows = struct {
-        event: Event = .{ .@"error" = .{ .errno = @intFromEnum(bun.C.SystemErrno.EINVAL), .syscall = .watch } },
+        event: Event = .{ .@"error" = .{ .errno = @intFromEnum(bun.sys.SystemErrno.EINVAL), .syscall = .watch } },
         ctx: *FSWatcher,
 
         /// Unused: To match the API of the posix version
@@ -337,7 +339,7 @@ pub const FSWatcher = struct {
         path: PathLike,
         listener: JSC.JSValue,
         global_this: *JSC.JSGlobalObject,
-        signal: ?*JSC.AbortSignal,
+        signal: ?*webcore.AbortSignal,
         persistent: bool,
         recursive: bool,
         encoding: JSC.Node.Encoding,
@@ -351,7 +353,7 @@ pub const FSWatcher = struct {
             defer if (should_deinit_path) path.deinit();
 
             var listener: JSC.JSValue = .zero;
-            var signal: ?*JSC.AbortSignal = null;
+            var signal: ?*webcore.AbortSignal = null;
             var persistent: bool = true;
             var recursive: bool = false;
             var encoding: JSC.Node.Encoding = .utf8;
@@ -387,7 +389,7 @@ pub const FSWatcher = struct {
 
                     // abort signal
                     if (try options_or_callable.getTruthy(ctx, "signal")) |signal_| {
-                        if (JSC.AbortSignal.fromJS(signal_)) |signal_obj| {
+                        if (webcore.AbortSignal.fromJS(signal_)) |signal_obj| {
                             //Keep it alive
                             signal_.ensureStillAlive();
                             signal = signal_obj;

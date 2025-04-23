@@ -48,7 +48,7 @@ pub const ZigString = extern struct {
     pub fn encodeWithAllocator(this: ZigString, allocator: std.mem.Allocator, encoding: JSC.Node.Encoding) []u8 {
         return switch (this.as()) {
             inline else => |repr| switch (encoding) {
-                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
+                inline else => |enc| JSC.WebCore.encoding.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
             },
         };
     }
@@ -235,7 +235,7 @@ pub const ZigString = extern struct {
             return this.len * 2;
         }
 
-        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
+        return JSC.WebCore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
     }
 
     pub fn latin1ByteLength(this: ZigString) usize {
@@ -257,7 +257,7 @@ pub const ZigString = extern struct {
             return strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16SliceAligned());
         }
 
-        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
+        return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
     }
 
     pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) OOM![]u8 {

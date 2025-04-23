@@ -10,16 +10,16 @@ const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
-const CopyFilePromiseTask = bun.JSC.WebCore.Blob.Store.CopyFilePromiseTask;
+const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-const ReadFileTask = bun.JSC.WebCore.Blob.ReadFileTask;
-const WriteFileTask = bun.JSC.WebCore.Blob.WriteFileTask;
-const napi_async_work = JSC.napi.napi_async_work;
+const ReadFileTask = bun.webcore.Blob.read_file.ReadFileTask;
+const WriteFileTask = bun.webcore.Blob.write_file.WriteFileTask;
+const napi_async_work = bun.api.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
-const NapiFinalizerTask = bun.JSC.napi.NapiFinalizerTask;
+const NapiFinalizerTask = bun.api.napi.NapiFinalizerTask;
 
 const Waker = bun.Async.Waker;
 
@@ -100,7 +100,7 @@ pub fn WorkTask(comptime Context: type) type {
         allocator: std.mem.Allocator,
         globalThis: *JSC.JSGlobalObject,
         concurrent_task: ConcurrentTask = .{},
-        async_task_tracker: JSC.AsyncTaskTracker,
+        async_task_tracker: JSC.Debugger.AsyncTaskTracker,
 
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
@@ -112,7 +112,7 @@ pub fn WorkTask(comptime Context: type) type {
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
-                .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
+                .async_task_tracker = JSC.Debugger.AsyncTaskTracker.init(vm),
             });
             this.ref.ref(this.event_loop.virtual_machine);
 
@@ -378,56 +378,57 @@ pub const JSCScheduler = struct {
     }
 };
 
-const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
-const HotReloadTask = JSC.HotReloader.HotReloadTask;
-const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
+const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
+const HotReloadTask = JSC.hot_reloader.HotReloader.Task;
+const FSWatchTask = bun.api.node.fs.Watcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
-const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
+const GetAddrInfoRequestTask = bun.api.DNS.GetAddrInfoRequest.Task;
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 
-const Stat = JSC.Node.Async.stat;
-const Lstat = JSC.Node.Async.lstat;
-const Fstat = JSC.Node.Async.fstat;
-const Open = JSC.Node.Async.open;
-const ReadFile = JSC.Node.Async.readFile;
-const WriteFile = JSC.Node.Async.writeFile;
-const CopyFile = JSC.Node.Async.copyFile;
-const Read = JSC.Node.Async.read;
-const Write = JSC.Node.Async.write;
-const Truncate = JSC.Node.Async.truncate;
-const FTruncate = JSC.Node.Async.ftruncate;
-const Readdir = JSC.Node.Async.readdir;
-const ReaddirRecursive = JSC.Node.Async.readdir_recursive;
-const Readv = JSC.Node.Async.readv;
-const Writev = JSC.Node.Async.writev;
-const Close = JSC.Node.Async.close;
-const Rm = JSC.Node.Async.rm;
-const Rmdir = JSC.Node.Async.rmdir;
-const Chown = JSC.Node.Async.chown;
-const FChown = JSC.Node.Async.fchown;
-const Utimes = JSC.Node.Async.utimes;
-const Lutimes = JSC.Node.Async.lutimes;
-const Chmod = JSC.Node.Async.chmod;
-const Fchmod = JSC.Node.Async.fchmod;
-const Link = JSC.Node.Async.link;
-const Symlink = JSC.Node.Async.symlink;
-const Readlink = JSC.Node.Async.readlink;
-const Realpath = JSC.Node.Async.realpath;
-const RealpathNonNative = JSC.Node.Async.realpathNonNative;
-const Mkdir = JSC.Node.Async.mkdir;
-const Fsync = JSC.Node.Async.fsync;
-const Rename = JSC.Node.Async.rename;
-const Fdatasync = JSC.Node.Async.fdatasync;
-const Access = JSC.Node.Async.access;
-const AppendFile = JSC.Node.Async.appendFile;
-const Mkdtemp = JSC.Node.Async.mkdtemp;
-const Exists = JSC.Node.Async.exists;
-const Futimes = JSC.Node.Async.futimes;
-const Lchmod = JSC.Node.Async.lchmod;
-const Lchown = JSC.Node.Async.lchown;
-const StatFS = JSC.Node.Async.statfs;
-const Unlink = JSC.Node.Async.unlink;
+const AsyncFS = bun.api.node.fs.Async;
+const Stat = AsyncFS.stat;
+const Lstat = AsyncFS.lstat;
+const Fstat = AsyncFS.fstat;
+const Open = AsyncFS.open;
+const ReadFile = AsyncFS.readFile;
+const WriteFile = AsyncFS.writeFile;
+const CopyFile = AsyncFS.copyFile;
+const Read = AsyncFS.read;
+const Write = AsyncFS.write;
+const Truncate = AsyncFS.truncate;
+const FTruncate = AsyncFS.ftruncate;
+const Readdir = AsyncFS.readdir;
+const ReaddirRecursive = AsyncFS.readdir_recursive;
+const Readv = AsyncFS.readv;
+const Writev = AsyncFS.writev;
+const Close = AsyncFS.close;
+const Rm = AsyncFS.rm;
+const Rmdir = AsyncFS.rmdir;
+const Chown = AsyncFS.chown;
+const FChown = AsyncFS.fchown;
+const Utimes = AsyncFS.utimes;
+const Lutimes = AsyncFS.lutimes;
+const Chmod = AsyncFS.chmod;
+const Fchmod = AsyncFS.fchmod;
+const Link = AsyncFS.link;
+const Symlink = AsyncFS.symlink;
+const Readlink = AsyncFS.readlink;
+const Realpath = AsyncFS.realpath;
+const RealpathNonNative = AsyncFS.realpathNonNative;
+const Mkdir = AsyncFS.mkdir;
+const Fsync = AsyncFS.fsync;
+const Rename = AsyncFS.rename;
+const Fdatasync = AsyncFS.fdatasync;
+const Access = AsyncFS.access;
+const AppendFile = AsyncFS.appendFile;
+const Mkdtemp = AsyncFS.mkdtemp;
+const Exists = AsyncFS.exists;
+const Futimes = AsyncFS.futimes;
+const Lchmod = AsyncFS.lchmod;
+const Lchown = AsyncFS.lchown;
+const StatFS = AsyncFS.statfs;
+const Unlink = AsyncFS.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
 
@@ -445,14 +446,14 @@ const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
-const TimeoutObject = JSC.BunTimer.TimeoutObject;
-const ImmediateObject = JSC.BunTimer.ImmediateObject;
+const TimeoutObject = Timer.TimeoutObject;
+const ImmediateObject = Timer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
-const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
+const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
 const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
-const FlushPendingFileSinkTask = JSC.WebCore.FlushPendingFileSinkTask;
+const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -824,8 +825,8 @@ pub const EventLoop = struct {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    immediate_tasks: std.ArrayListUnmanaged(*JSC.BunTimer.ImmediateObject) = .{},
-    next_immediate_tasks: std.ArrayListUnmanaged(*JSC.BunTimer.ImmediateObject) = .{},
+    immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+    next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSC.JSGlobalObject = undefined,
@@ -838,7 +839,7 @@ pub const EventLoop = struct {
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
-    imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
+    imminent_gc_timer: std.atomic.Value(?*Timer.WTFTimer) = .{ .raw = null },
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
@@ -1113,8 +1114,8 @@ pub const EventLoop = struct {
                     transform_task.*.runFromJS();
                     transform_task.deinit();
                 },
-                @field(Task.Tag, @typeName(JSC.napi.napi_async_work)) => {
-                    const transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
+                @field(Task.Tag, @typeName(bun.api.napi.napi_async_work)) => {
+                    const transform_task: *bun.api.napi.napi_async_work = task.get(bun.api.napi.napi_async_work).?;
                     transform_task.*.runFromJS();
                 },
                 @field(Task.Tag, @typeName(ThreadSafeFunction)) => {
@@ -1723,7 +1724,7 @@ pub const EventLoop = struct {
         this.tasks.writeItem(task) catch unreachable;
     }
 
-    pub fn enqueueImmediateTask(this: *EventLoop, task: *JSC.BunTimer.ImmediateObject) void {
+    pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
         this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
     }
 
@@ -1917,12 +1918,6 @@ pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 }
 
-// pub const EventLoopRefImpl = struct {
-//     fn enqueueTask(ref: anytype) {
-//         const event_loop_ctx =
-//     }
-// };
-
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: ConcurrentTaskQueue = .{},
@@ -1934,8 +1929,8 @@ pub const MiniEventLoop = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
     pipe_read_buffer: ?*PipeReadBuffer = null,
-    stdout_store: ?*bun.JSC.WebCore.Blob.Store = null,
-    stderr_store: ?*bun.JSC.WebCore.Blob.Store = null,
+    stdout_store: ?*bun.webcore.Blob.Store = null,
+    stderr_store: ?*bun.webcore.Blob.Store = null,
     const PipeReadBuffer = [256 * 1024]u8;
 
     pub threadlocal var globalInitialized: bool = false;
@@ -2140,7 +2135,7 @@ pub const MiniEventLoop = struct {
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
-                    .file = JSC.WebCore.Blob.FileStore{
+                    .file = .{
                         .pathlike = .{
                             .fd = fd,
                         },
@@ -2171,7 +2166,7 @@ pub const MiniEventLoop = struct {
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
-                    .file = JSC.WebCore.Blob.FileStore{
+                    .file = .{
                         .pathlike = .{
                             .fd = fd,
                         },
@@ -2570,3 +2565,5 @@ pub const PosixSignalTask = struct {
         Bun__onSignalForJS(number, globalObject);
     }
 };
+
+const Timer = bun.api.Timer;

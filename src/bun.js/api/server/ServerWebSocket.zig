@@ -1,14 +1,14 @@
 handler: *WebSocketServer.Handler,
 this_value: JSValue = .zero,
 flags: Flags = .{},
-signal: ?*JSC.AbortSignal = null,
+signal: ?*bun.webcore.AbortSignal = null,
 
 // We pack the per-socket data into this struct below
 const Flags = packed struct(u64) {
     ssl: bool = false,
     closed: bool = false,
     opened: bool = false,
-    binary_type: JSC.BinaryType = .Buffer,
+    binary_type: JSC.ArrayBuffer.BinaryType = .Buffer,
     packed_websocket_ptr: u57 = 0,
 
     inline fn websocket(this: Flags) uws.AnyWebSocket {
@@ -1135,7 +1135,7 @@ pub fn getBinaryType(
 pub fn setBinaryType(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
     log("setBinaryType()", .{});
 
-    const btype = JSC.BinaryType.fromJSValue(globalThis, value) catch return false;
+    const btype = JSC.ArrayBuffer.BinaryType.fromJSValue(globalThis, value) catch return false;
     switch (btype orelse
         // some other value which we don't support
         .Float64Array) {

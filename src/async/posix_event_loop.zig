@@ -157,9 +157,9 @@ pub const FilePoll = struct {
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
     const FileSink = JSC.WebCore.FileSink.Poll;
-    const DNSResolver = JSC.DNS.DNSResolver;
-    const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
-    const Request = JSC.DNS.InternalDNS.Request;
+    const DNSResolver = bun.api.DNS.DNSResolver;
+    const GetAddrInfoRequest = bun.api.DNS.GetAddrInfoRequest;
+    const Request = bun.api.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
 
@@ -904,7 +904,7 @@ pub const FilePoll = struct {
                         &timeout,
                     );
 
-                    if (bun.C.getErrno(rc) == .INTR) continue;
+                    if (bun.sys.getErrno(rc) == .INTR) continue;
                     break :rc rc;
                 }
             };
@@ -921,7 +921,7 @@ pub const FilePoll = struct {
                 // indicate the error condition.
             }
 
-            const errno = bun.C.getErrno(rc);
+            const errno = bun.sys.getErrno(rc);
 
             if (errno != .SUCCESS) {
                 this.deactivate(loop);
@@ -1073,7 +1073,7 @@ pub const FilePoll = struct {
                 // indicate the error condition.
             }
 
-            const errno = bun.C.getErrno(rc);
+            const errno = bun.sys.getErrno(rc);
             switch (rc) {
                 std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},

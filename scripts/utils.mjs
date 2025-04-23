@@ -1345,11 +1345,13 @@ export async function getLastSuccessfulBuild() {
  * @param {string} filename Absolute path to file to upload
  */
 export async function uploadArtifact(filename) {
-  if (true) {
+  if (isBuildkite) {
     await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
       cwd: dirname(filename),
       stdio: "inherit",
     });
+  } else {
+    console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
 }
 

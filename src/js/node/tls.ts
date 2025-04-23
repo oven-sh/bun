@@ -1,10 +1,15 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView, isArrayBuffer, isTypedArray } = require("node:util/types");
+const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
 const { addServerName } = require("internal/net");
 const { throwNotImplemented } = require("internal/shared");
-const { normalizeTLSArray, isValidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES } = require("internal/tls");
+const {
+  normalizeTLSArray,
+  isValidTLSArray,
+  VALID_TLS_ERROR_MESSAGE_TYPES,
+  throwOnInvalidTLSArray,
+} = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -205,33 +210,23 @@ var InternalSecureContext = class SecureContext {
 
   constructor(options) {
     const context = {};
+
     if (options) {
-      let key = options.key;
-      if (key) {
-        if (!isValidTLSArray(key)) {
-          throw new TypeError(
-            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.key = normalizeTLSArray(key);
-      }
       let cert = options.cert;
       if (cert) {
-        if (!isValidTLSArray(cert)) {
-          throw new TypeError(
-            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
+        throwOnInvalidTLSArray("options.cert", cert);
         this.cert = normalizeTLSArray(cert);
+      }
+
+      let key = options.key;
+      if (key) {
+        throwOnInvalidTLSArray("options.key", key);
+        this.key = normalizeTLSArray(key);
       }
 
       let ca = options.ca;
       if (ca) {
-        if (!isValidTLSArray(ca)) {
-          throw new TypeError(
-            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
+        throwOnInvalidTLSArray("options.ca", ca);
         this.ca = normalizeTLSArray(ca);
       }
 

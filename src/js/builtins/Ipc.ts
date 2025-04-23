@@ -218,14 +218,9 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen(
-        {
-          [Symbol.for("::bun-fd::")]: fd,
-        },
-        () => {
-          emit(target, serialized.message, server);
-        },
-      );
+      server.listen({ fd }, () => {
+        emit(target, serialized.message, server);
+      });
       return;
     }
     case "net.Socket": {

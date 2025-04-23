@@ -1335,8 +1335,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let reusePort = false;
   let ipv6Only = false;
   let fd;
-  if (typeof port === "object" && Symbol.for("::bun-fd::") in port) {
-    fd = port[Symbol.for("::bun-fd::")];
+  if (typeof port === "object" && "fd" in port) {
+    fd = port.fd;
     port = undefined;
   }
   //port is actually path

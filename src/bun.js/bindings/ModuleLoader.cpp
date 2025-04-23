@@ -101,8 +101,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-
+        object->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, void());
 
         auto len = properties.size() + 1;
@@ -116,7 +115,9 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
                 hasDefault = true;
             }
             exportNames.append(entry);
-            exportValues.append(object->get(globalObject, entry));
+            JSValue value = object->get(globalObject, entry);
+            RETURN_IF_EXCEPTION(throwScope, void());
+            exportValues.append(value);
         }
 
         if (!hasDefault) {

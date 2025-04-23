@@ -13,8 +13,6 @@ const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 const isMainThread = Bun.isMainThread;
 const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
 
-type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
-
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
@@ -212,29 +210,36 @@ class Worker extends EventEmitter {
   #urlToRevoke = "";
   #isRunning = false;
 
-  constructor(filename: string, options: NodeWorkerOptions = {}) {
+  constructor(filename: string | URL, options: import("node:worker_threads").WorkerOptions = {}) {
     super();
+
+    if (typeof filename !== "string" && !(filename instanceof URL)) {
+      throw $ERR_INVALID_ARG_TYPE("filename", ["string", "an instance of URL"], filename);
+    }
+
     for (const key of unsupportedOptions) {
       if (key in options && options[key] != null) {
         warnNotImplementedOnce(`worker_threads.Worker option "${key}"`);
       }
     }
 
+    const filenameAsString = filename instanceof URL ? filename.toString() : filename;
+
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
       if (options[builtinsGeneratorHatesEval]) {
         // TODO: consider doing this step in native code and letting the Blob be cleaned up by the
         // C++ Worker object's destructor
-        const blob = new Blob([filename], { type: "" });
+        const blob = new Blob([filenameAsString], { type: "" });
         this.#urlToRevoke = filename = URL.createObjectURL(blob);
       } else {
         // if options.eval = false, allow the constructor below to fail, if
         // we convert the code to a blob, it will succeed.
-        this.#urlToRevoke = filename;
+        this.#urlToRevoke = filenameAsString;
       }
     }
     try {
-      this.#worker = new WebWorker(filename, options);
+      this.#worker = new WebWorker(filenameAsString, options);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);

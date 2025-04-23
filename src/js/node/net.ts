@@ -751,87 +751,87 @@ class SocketHandle {
   //TLS
   getPeerCertificate(abbreviated?) {
     $assert(this.#socket != null);
-    return this.#socket.getPeerCertificate(abbreviated);
+    return this.#socket.getPeerCertificate(...arguments);
   }
   getTLSFinishedMessage() {
     $assert(this.#socket != null);
-    return this.#socket.getTLSFinishedMessage();
+    return this.#socket.getTLSFinishedMessage(...arguments);
   }
   getTLSPeerFinishedMessage() {
     $assert(this.#socket != null);
-    return this.#socket.getTLSPeerFinishedMessage();
+    return this.#socket.getTLSPeerFinishedMessage(...arguments);
   }
   getEphemeralKeyInfo() {
     $assert(this.#socket != null);
-    return this.#socket.getEphemeralKeyInfo();
+    return this.#socket.getEphemeralKeyInfo(...arguments);
   }
   getCipher() {
     $assert(this.#socket != null);
-    return this.#socket.getCipher();
+    return this.#socket.getCipher(...arguments);
   }
   renegotiate() {
     $assert(this.#socket != null);
-    return this.#socket.renegotiate();
+    return this.#socket.renegotiate(...arguments);
   }
   disableRenegotiation() {
     if (this.#socket == null) return;
-    return this.#socket.disableRenegotiation();
+    return this.#socket.disableRenegotiation(...arguments);
   }
   setVerifyMode(requestCert, rejectUnauthorized) {
     $assert(this.#socket != null);
-    return this.#socket.setVerifyMode(requestCert, rejectUnauthorized);
+    return this.#socket.setVerifyMode(...arguments);
   }
   getSession() {
     $assert(this.#socket != null);
-    return this.#socket.getSession();
+    return this.#socket.getSession(...arguments);
   }
   setSession(session) {
     $assert(this.#socket != null);
-    return this.#socket.setSession(session);
+    return this.#socket.setSession(...arguments);
   }
   getTLSTicket() {
     $assert(this.#socket != null);
-    return this.#socket.getTLSTicket();
+    return this.#socket.getTLSTicket(...arguments);
   }
   exportKeyingMaterial(length, label, context) {
     $assert(this.#socket != null);
-    return this.#socket.exportKeyingMaterial(length, label, context);
+    return this.#socket.exportKeyingMaterial(...arguments);
   }
   setMaxSendFragment(size: number) {
     $assert(this.#socket != null);
-    return this.#socket.setMaxSendFragment(size);
+    return this.#socket.setMaxSendFragment(...arguments);
   }
   getSharedSigalgs() {
     $assert(this.#socket != null);
-    return this.#socket.getSharedSigalgs();
+    return this.#socket.getSharedSigalgs(...arguments);
   }
   getTLSVersion() {
     $assert(this.#socket != null);
-    return this.#socket.getTLSVersion();
+    return this.#socket.getTLSVersion(...arguments);
   }
   getX509Certificate() {
     $assert(this.#socket != null);
-    return this.#socket.getX509Certificate();
+    return this.#socket.getX509Certificate(...arguments);
   }
   getPeerX509Certificate() {
     $assert(this.#socket != null);
-    return this.#socket.getPeerX509Certificate();
+    return this.#socket.getPeerX509Certificate(...arguments);
   }
   upgradeTLS(options) {
     $assert(this.#socket != null);
-    return this.#socket.upgradeTLS(options);
+    return this.#socket.upgradeTLS(...arguments);
   }
   setServername(name) {
     $assert(this.#socket != null);
-    return this.#socket.setServername(name);
+    return this.#socket.setServername(...arguments);
   }
   getServername() {
     $assert(this.#socket != null);
-    return this.#socket.getServername();
+    return this.#socket.getServername(...arguments);
   }
   getCertificate() {
     $assert(this.#socket != null);
-    return this.#socket.getCertificate();
+    return this.#socket.getCertificate(...arguments);
   }
   //TLS
   get bytesWritten() {

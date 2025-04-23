@@ -6,8 +6,6 @@ const {
   NodeHTTPHeaderState,
   kAbortController,
   fakeSocketSymbol,
-  validateHeaderName,
-  validateHeaderValue,
   headersSymbol,
   kBodyChunks,
   kEmitState,
@@ -22,6 +20,8 @@ const {
   Headers,
   getRawKeys,
 } = require("internal/http");
+
+const { validateHeaderName, validateHeaderValue } = require("node:_http_common");
 
 const { FakeSocket } = require("internal/http/FakeSocket");
 
@@ -161,7 +161,7 @@ const OutgoingMessagePrototype = {
   setTimeout(msecs, callback) {
     if (this.destroyed) return this;
 
-    this.timeout = msecs = validateMsecs(msecs, "msecs");
+    this.timeout = msecs = validateMsecs(msecs, "timeout");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.

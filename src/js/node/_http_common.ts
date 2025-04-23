@@ -2,7 +2,8 @@ const { checkIsHttpToken } = require("internal/validators");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
-const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+let headerCharRegex;
+
 /**
  * True if val contains an invalid field-vchar
  *  field-value    = *( field-content / obs-fold )
@@ -10,6 +11,9 @@ const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
  *  field-vchar    = VCHAR / obs-text
  */
 function checkInvalidHeaderChar(val: string) {
+  if (!headerCharRegex) {
+    headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+  }
   return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 

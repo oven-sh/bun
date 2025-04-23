@@ -2687,9 +2687,32 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    const { resolve, promise } = $newPromiseCapability(Promise);
-    this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
+    const { promise, resolve, reject } = $newPromiseCapability(Promise);
+    const data = ArrayPrototypeJoin.$call(this.#todo, "");
+    // Clear pending actions before writing
     this.#todo = [];
+
+    const stream = this.#stream;
+    const onError = err => {
+      stream.removeListener("error", onError);
+      reject(err);
+    };
+
+    stream.once("error", onError);
+
+    try {
+      stream.write(data, err => {
+        stream.removeListener("error", onError);
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    } catch (err) {
+      stream.removeListener("error", onError);
+      reject(err);
+    }
 
     return promise;
   }

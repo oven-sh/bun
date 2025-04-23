@@ -22,7 +22,7 @@
 
 #include <vector>
 #include "MoveOnlyFunction.h"
-
+#include "HttpParser.h"
 namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
@@ -43,7 +43,7 @@ struct alignas(16) HttpContextData {
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
-    using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength)>;
+    using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -69,6 +69,11 @@ private:
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;
         filterHandlers.clear();
+    }
+
+    public:
+    bool isSecure() const {
+        return flags.isSecure;
     }
 };
 

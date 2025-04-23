@@ -7344,14 +7344,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
             if (this.on_clienterror.get()) |callback| {
-                const node_socket = Bun__createNodeHTTPServerSocket(protocol_enum == .https, socket, this.globalThis);
+                const is_ssl = protocol_enum == .https;
+                const node_socket = Bun__createNodeHTTPServerSocket(is_ssl, socket, this.globalThis);
                 if (node_socket.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
 
                 const error_code_value = JSValue.jsNumber(error_code);
                 const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet);
-                _ = callback.call(this.globalThis, .undefined, &.{ node_socket, error_code_value, raw_packet_value }) catch |err|
+                _ = callback.call(this.globalThis, .undefined, &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err|
                     this.globalThis.takeException(err);
             }
         }

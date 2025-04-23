@@ -615,7 +615,7 @@ public:
     }
 
     void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
-        httpContext->getSocketContextData()->onClientError = onClientError;
+        httpContext->getSocketContextData()->onClientError = std::move(onClientError);
     }
 
     TemplatedApp &&run() {

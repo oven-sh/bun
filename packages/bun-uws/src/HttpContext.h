@@ -31,7 +31,7 @@
 #include <string_view>
 #include <iostream>
 #include "MoveOnlyFunction.h"
-
+#include "HttpParser.h"
 namespace uWS {
 template<bool> struct HttpResponse;
 
@@ -76,11 +76,6 @@ private:
                     httpContextData->flags.isSecure = success;
                     if(httpContextData->flags.rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
-                            // TODO: emit clientError event
-                            // auto onClientError = httpContextData->onClientError;
-                            // if(onClientError) {
-                            //     onClientError(httpContextData->socketData, SSL, s, verify_error.error, verify_error.cert_verify_result, verify_error.depth);
-                            // }
                             // we failed to handshake, close the socket
                             us_socket_close(SSL, s, 0, nullptr);
                             return;
@@ -127,8 +122,10 @@ private:
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            if(SSL && !httpContextData->flags.isSecure) {
-                // TODO: emit clientError event ECONNRESET
+            if(httpContextData->flags.isParsingHttp) {
+                if(httpContextData->onClientError) {
+                    httpContextData->onClientError(SSL, s,uWS::HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
+                }
             }
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
@@ -210,6 +207,7 @@ private:
                 }
 
                 httpResponseData->fromAncientRequest = httpRequest->isAncient();
+
 
                 /* Select the router based on SNI (only possible for SSL) */
                 auto *selectedRouter = &httpContextData->router;
@@ -301,7 +299,6 @@ private:
 
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
-
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
             if (returnedSocket == FULLPTR) {
                 if(httpContextData->onClientError) {

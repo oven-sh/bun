@@ -23,7 +23,7 @@ const {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
-    onClientError: (socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+    onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;

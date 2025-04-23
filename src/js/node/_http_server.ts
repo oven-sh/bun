@@ -681,12 +681,29 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
-function onServerClientError(socket, errorCode: number, rawPacket: ArrayBuffer) {
+function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   const err = new Error("Parse Error");
-  err.code = "HPE_UNEXPECTED_CONTENT_LENGTH";
+  switch (errorCode) {
+    case 2:
+      err.code = "HPE_UNEXPECTED_CONTENT_LENGTH";
+      break;
+    case 3:
+      err.code = "HPE_INVALID_TRANSFER_ENCODING";
+      break;
+    case 8:
+      err.code = "HPE_INVALID_EOF_STATE";
+      break;
+    case 9:
+      err.code = "ECONNRESET";
+      err.message = "Connection reset by peer";
+      break;
+    default:
+      err.code = "HPE_INTERNAL";
+      break;
+  }
   err.rawPacket = rawPacket;
-  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, false));
+  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, ssl));
 }
 const ServerPrototype = {
   constructor: Server,
@@ -1113,6 +1130,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     handle.duplex = this;
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
+  }
+
+  get _secureEstablished() {
+    return !!this[kHandle]?.secureEstablished;
   }
 
   #closeHandle(handle, callback) {

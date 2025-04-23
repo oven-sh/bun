@@ -51,17 +51,13 @@ namespace uWS
     enum HttpParserError: uint8_t {
         HTTP_PARSER_ERROR_NONE = 0,
         HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
-        HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 2,
         HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH = 2,
-        HTTP_PARSER_ERROR_MISSING_HOST_HEADER = 3,
-        // HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING = 4,
-        // HTTP_PARSER_ERROR_INVALID_HEADER_FIELDS = 5,
-        HTTP_PARSER_ERROR_INVALID_REQUEST = 6,
-        // HTTP_PARSER_ERROR_INVALID_RESPONSE = 7,
-        // HTTP_PARSER_ERROR_INVALID_STATUS_CODE = 8,
-        // HTTP_PARSER_ERROR_INVALID_METHOD = 9,
-        HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 10,
+        HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING = 3,
+        HTTP_PARSER_ERROR_MISSING_HOST_HEADER = 4,
+        HTTP_PARSER_ERROR_INVALID_REQUEST = 5,
+        HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 6,
         HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
+        HTTP_PARSER_ERROR_INVALID_EOF = 8,
     };
 
     struct HttpRequest
@@ -488,7 +484,7 @@ namespace uWS
                 /* Assuming it is 505 HTTP Version Not Supported */
                 switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
                     case 0x1:
-                        err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;;
+                        err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;
                         parserError = HTTP_PARSER_ERROR_INVALID_HTTP_VERSION;
                         break;
                     case 0x2:
@@ -652,7 +648,7 @@ namespace uWS
                 /* Returning fullptr is the same as calling the errorHandler */
                 /* We could be smart and set an error in the context along with this, to indicate what
                  * http error response we might want to return */
-                return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST, FULLPTR};
+                return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING, FULLPTR};
             }
 
             /* Parse query */

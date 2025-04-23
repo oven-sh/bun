@@ -682,7 +682,7 @@ install_common_software() {
 	esac
 
 	case "$distro" in
-	amzn)
+	amzn | alpine)
 		install_packages \
 			tar
 		;;
@@ -1335,6 +1335,27 @@ install_chromium() {
 	esac
 }
 
+install_age() {
+	# we only use this to encrypt core dumps, which we only have on Linux
+	case "$os" in
+	linux)
+		age_tarball=""
+		case "$arch" in
+		x64)
+			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
+			;;
+		aarch64)
+			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
+			;;
+		esac
+
+		age_extract_dir="$(create_tmp_directory)"
+		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
+		execute_sudo mv "$age_extract_dir/age/age" /usr/local/bin/age
+		;;
+	esac
+}
+
 configure_core_dumps() {
 	# we only have core dumps on Linux
 	case "$os" in
@@ -1350,28 +1371,6 @@ configure_core_dumps() {
 
 		# load the new configuration
 		execute_sudo sysctl -p "$sysctl_file"
-
-		# install age for encryption
-		age_tarball=""
-		case "$arch" in
-		x64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
-			;;
-		aarch64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
-			;;
-		esac
-
-		age_extract_dir="$(create_tmp_directory)"
-		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
-		execute_sudo mv "$age_extract_dir/age/age" /usr/local/bin/age
-
-		case "$distro" in
-		alpine)
-			# we need GNU tar (instead of busybox) so we can use its sparse file support
-			install_packages tar
-			;;
-		esac
 		;;
 	esac
 }
@@ -1401,6 +1400,7 @@ main() {
 	install_build_essentials
 	install_chromium
 	install_fuse_python
+	install_age
 	configure_core_dumps
 	clean_system
 }

@@ -126,7 +126,7 @@ rare_data: ?*JSC.RareData = null,
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 entry_point_result: struct {
-    value: JSC.Strong = .empty,
+    value: JSC.Strong.Optional = .empty,
     cjs_set_value: bool = false,
 } = .{},
 

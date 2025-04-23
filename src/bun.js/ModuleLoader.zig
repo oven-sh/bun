@@ -69,7 +69,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
 pub const AsyncModule = struct {
     // This is all the state used by the printer to print the module
     parse_result: ParseResult,
-    promise: JSC.Strong = .empty,
+    promise: JSC.Strong.Optional = .empty,
     path: Fs.Path,
     specifier: string = "",
     referrer: string = "",
@@ -376,7 +376,7 @@ pub const AsyncModule = struct {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
         const this_promise = JSValue.createInternalPromise(globalObject);
-        const promise = JSC.Strong.create(this_promise, globalObject);
+        const promise = .create(this_promise, globalObject);
 
         var buf = bun.StringBuilder{};
         buf.count(opts.referrer);
@@ -1612,8 +1612,7 @@ pub export fn Bun__transpileFile(
                         .source_code = bun.String.empty,
                         .specifier = .empty,
                         .source_url = .empty,
-                        .cjs_custom_extension_index = strong.get() orelse
-                            @panic("unexpected null when fetching custom extension"),
+                        .cjs_custom_extension_index = strong.get(),
                         .tag = .common_js_custom_extension,
                     });
                     return null;
@@ -1738,8 +1737,7 @@ pub export fn Bun__transpileFile(
                                     .source_code = bun.String.empty,
                                     .specifier = .empty,
                                     .source_url = .empty,
-                                    .cjs_custom_extension_index = strong.get() orelse
-                                        @panic("unexpected null when fetching custom extension"),
+                                    .cjs_custom_extension_index = strong.get(),
                                     .tag = .common_js_custom_extension,
                                 });
                                 return null;
@@ -2163,7 +2161,7 @@ pub const RuntimeTranspilerStore = struct {
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
             .loader = loader,
-            .promise = JSC.Strong.create(JSValue.fromCell(promise), globalObject),
+            .promise = .create(JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
@@ -2181,7 +2179,7 @@ pub const RuntimeTranspilerStore = struct {
         non_threadsafe_input_specifier: String,
         non_threadsafe_referrer: String,
         loader: options.Loader,
-        promise: JSC.Strong = .empty,
+        promise: JSC.Strong.Optional = .empty,
         vm: *VirtualMachine,
         globalThis: *JSGlobalObject,
         fetcher: Fetcher,

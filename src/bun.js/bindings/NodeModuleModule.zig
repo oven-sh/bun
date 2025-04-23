@@ -119,7 +119,7 @@ fn onRequireExtensionModify(global: *JSC.JSGlobalObject, str: []const u8, kind: 
             gop.value_ptr.* = switch (loader) {
                 .loader => loader,
                 .custom => .{
-                    .custom = JSC.Strong.create(value, global),
+                    .custom = .create(value, global),
                 },
             };
         } else {
@@ -132,10 +132,8 @@ fn onRequireExtensionModify(global: *JSC.JSGlobalObject, str: []const u8, kind: 
                     gop.value_ptr.* = loader;
                 },
                 .custom => switch (gop.value_ptr.*) {
-                    .loader => gop.value_ptr.* = .{ .custom = JSC.Strong.create(value, global) },
-                    .custom => |*strong| {
-                        strong.set(global, value);
-                    },
+                    .loader => gop.value_ptr.* = .{ .custom = .create(value, global) },
+                    .custom => |*strong| strong.set(global, value),
                 },
             }
         }

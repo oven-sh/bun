@@ -2014,7 +2014,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     return list.toOwnedSlice(allocator);
 }
 
-pub const EachData = struct { strong: JSC.Strong, is_test: bool };
+pub const EachData = struct { strong: JSC.Strong.Optional, is_test: bool };
 
 fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
@@ -2206,7 +2206,7 @@ inline fn createEach(
 
     const allocator = bun.default_allocator;
     const name = ZigString.static(property);
-    const strong = JSC.Strong.create(array, globalThis);
+    const strong = .create(array, globalThis);
     const each_data = allocator.create(EachData) catch unreachable;
     each_data.* = EachData{
         .strong = strong,

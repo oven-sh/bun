@@ -91,8 +91,8 @@ has_tailwind_plugin_hack: ?bun.StringArrayHashMapUnmanaged(void) = null,
 
 // These values are handles to the functions in `hmr-runtime-server.ts`.
 // For type definitions, see `./bake.private.d.ts`
-server_fetch_function_callback: JSC.Strong,
-server_register_update_callback: JSC.Strong,
+server_fetch_function_callback: JSC.Strong.Optional,
+server_register_update_callback: JSC.Strong.Optional,
 
 // Watching
 bun_watcher: *bun.Watcher,
@@ -234,13 +234,13 @@ pub const RouteBundle = struct {
 
         /// Cached to avoid re-creating the array every request.
         /// TODO: Invalidated when a layout is added or removed from this route.
-        cached_module_list: JSC.Strong,
+        cached_module_list: JSC.Strong.Optional,
         /// Cached to avoid re-creating the string every request.
         /// TODO: Invalidated when any client file associated with the route is updated.
-        cached_client_bundle_url: JSC.Strong,
+        cached_client_bundle_url: JSC.Strong.Optional,
         /// Cached to avoid re-creating the array every request.
         /// Invalidated when the list of CSS files changes.
-        cached_css_file_array: JSC.Strong,
+        cached_css_file_array: JSC.Strong.Optional,
 
         /// When state == .evaluation_failure, this is populated with the route
         /// evaluation error mirrored in the dev server hash map
@@ -337,7 +337,7 @@ pub const RouteBundle = struct {
         if (self.client_bundle) |bundle| cost += bundle.memoryCost();
         switch (self.data) {
             .framework => {
-                // the JSC.Strong children do not support memoryCost. likely not needed
+                // the JSC.Strong.Optional children do not support memoryCost. likely not needed
                 // .evaluate_failure is not owned
             },
             .html => |*html| {
@@ -944,10 +944,10 @@ fn initServerRuntime(dev: *DevServer) void {
     const fetch_function = interface.get(dev.vm.global, "handleRequest") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
     bun.assert(fetch_function.isCallable());
-    dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
+    dev.server_fetch_function_callback = .create(fetch_function, dev.vm.global);
     const register_update = interface.get(dev.vm.global, "registerUpdate") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
-    dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
+    dev.server_register_update_callback = .create(register_update, dev.vm.global);
 
     fetch_function.ensureStillAlive();
     register_update.ensureStillAlive();
@@ -1388,7 +1388,7 @@ fn onFrameworkRequestWithBundle(
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
                 const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
                 dev.releaseRelativePathBuf();
-                router_type.server_file_string = JSC.Strong.create(str, dev.vm.global);
+                router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
             },
             // routeModules
@@ -1416,7 +1416,7 @@ fn onFrameworkRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                bundle.cached_module_list = JSC.Strong.create(arr, global);
+                bundle.cached_module_list = .create(arr, global);
                 break :arr arr;
             },
             // clientId
@@ -1429,13 +1429,13 @@ fn onFrameworkRequestWithBundle(
                 }) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_client_bundle_url = .create(js, dev.vm.global);
                 break :str js;
             },
             // styles
             bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                bundle.cached_css_file_array = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
         },

@@ -1351,7 +1351,7 @@ install_age() {
 
 		age_extract_dir="$(create_tmp_directory)"
 		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
-		execute_sudo mv "$age_extract_dir/age/age" /usr/local/bin/age
+		move_to_bin "$age_extract_dir/age/age"
 		;;
 	esac
 }
@@ -1371,6 +1371,11 @@ configure_core_dumps() {
 
 		# load the new configuration
 		execute_sudo sysctl -p "$sysctl_file"
+
+		# ensure that a regular user will be able to run sysctl
+		if [ -d /sbin ]; then
+			append_to_path /sbin
+		fi
 		;;
 	esac
 }

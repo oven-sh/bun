@@ -476,7 +476,7 @@ async function runTests() {
         // change /foo/bar/%e-%p.core to /foo/bar
         coresDir = dirname(sysctl.stdout);
       } else {
-        throw new Error(`Failed to check core_pattern: ${coresDir.error}`);
+        throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
       }
 
       const coresDirBase = dirname(coresDir);

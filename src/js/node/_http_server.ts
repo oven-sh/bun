@@ -893,6 +893,7 @@ const ServerPrototype = {
           socket,
           isAncientHTTP: boolean,
         ) {
+          console.log("onNodeHTTPRequest", headersArray);
           const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(isHTTPS);
           if (!socket) {

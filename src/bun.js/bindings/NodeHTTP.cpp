@@ -825,6 +825,12 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 template<bool isSSL>
 static void assignOnCloseFunction(uWS::TemplatedApp<isSSL>* app)
 {
+    app->setOnClientError([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, uint8_t errorCode, char* rawPacket, int rawPacketLength) -> void {
+        // auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
+        // ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
+        // socket->onClientError(errorCode, rawPacket, rawPacketLength);
+        printf("onClientError: %d\n", errorCode);
+    });
     app->setOnClose([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);

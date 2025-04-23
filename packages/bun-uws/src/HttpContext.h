@@ -73,9 +73,14 @@ private:
                 // if we are closing or already closed, we don't need to do anything
                 if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-
+                    httpContextData->flags.isSecure = success;
                     if(httpContextData->flags.rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
+                            // TODO: emit clientError event
+                            // auto onClientError = httpContextData->onClientError;
+                            // if(onClientError) {
+                            //     onClientError(httpContextData->socketData, SSL, s, verify_error.error, verify_error.cert_verify_result, verify_error.depth);
+                            // }
                             // we failed to handshake, close the socket
                             us_socket_close(SSL, s, 0, nullptr);
                             return;
@@ -118,8 +123,13 @@ private:
             /* Get socket ext */
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
+
+
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+            if(SSL && !httpContextData->flags.isSecure) {
+                // TODO: emit clientError event ECONNRESET
+            }
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
             }

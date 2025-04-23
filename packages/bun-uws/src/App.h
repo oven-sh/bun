@@ -614,6 +614,10 @@ public:
         httpContext->getSocketContextData()->onSocketClosed = onClose;
     }
 
+    void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
+        httpContext->getSocketContextData()->onClientError = onClientError;
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);

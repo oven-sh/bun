@@ -356,6 +356,8 @@ function ClientRequest(input, options, cb) {
         fetchOptions.unix = socketPath;
       }
 
+      console.log("fetchOptions", fetchOptions);
+
       //@ts-ignore
       this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
         if (this.aborted) {

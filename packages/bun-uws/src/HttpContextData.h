@@ -32,6 +32,7 @@ struct HttpFlags {
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
+    bool isSecure: 1 = false;
 };
 
 template <bool SSL>

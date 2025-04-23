@@ -2896,6 +2896,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_header = false;
     var override_host_header = false;
     var override_user_agent = false;
+    var original_content_length: ?string = null;
 
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
@@ -2906,7 +2907,9 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         // we manage those
         switch (hash) {
             hashHeaderConst("Content-Length"),
-            => continue,
+            => {
+                original_content_length = this.headerStr(header_values[i]);
+            },
             hashHeaderConst("Connection") => {
                 if (!this.flags.disable_keepalive) {
                     continue;
@@ -2991,6 +2994,12 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
         }
+        header_count += 1;
+    } else if (original_content_length) |content_length| {
+        request_headers_buf[header_count] = .{
+            .name = content_length_header_name,
+            .value = content_length,
+        };
         header_count += 1;
     }
 

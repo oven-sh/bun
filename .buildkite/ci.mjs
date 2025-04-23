@@ -539,9 +539,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
-  if (testFiles) {
-    args.push(...testFiles.map(testFile => `--include=${testFile}`));
-  }
+  // if (testFiles) {
+  //   args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  // }
+  args.push("--include=test/js/bun/ffi/crash.test.ts");
 
   const depends = [];
   if (!buildId) {

@@ -524,18 +524,14 @@ function Server(options, secureConnectionListener): void {
       let key = options.key;
       if (key) {
         if (!isValidTLSArray(key)) {
-          throw new TypeError(
-            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
+          throw $ERR_INVALID_ARG_TYPE("options.key", ["string", "Buffer", "TypedArray", "BunFile", "array"], key);
         }
         this.key = normalizeTLSArray(key);
       }
       let cert = options.cert;
       if (cert) {
         if (!isValidTLSArray(cert)) {
-          throw new TypeError(
-            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
+          throw $ERR_INVALID_ARG_TYPE("options.cert", ["string", "Buffer", "TypedArray", "BunFile", "array"], cert);
         }
         this.cert = normalizeTLSArray(cert);
       }
@@ -543,28 +539,26 @@ function Server(options, secureConnectionListener): void {
       let ca = options.ca;
       if (ca) {
         if (!isValidTLSArray(ca)) {
-          throw new TypeError(
-            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
+          throw $ERR_INVALID_ARG_TYPE("options.ca", ["string", "Buffer", "TypedArray", "BunFile", "array"], ca);
         }
         this.ca = normalizeTLSArray(ca);
       }
 
       let passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
       }
       this.passphrase = passphrase;
 
       let servername = options.servername;
       if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
       }
       this.servername = servername;
 
       let secureOptions = options.secureOptions || 0;
       if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
       }
       this.secureOptions = secureOptions;
 

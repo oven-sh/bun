@@ -87,7 +87,7 @@ const caArrDataView = toDataView(caCert);
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.key" property must be of type string or an ' +
-             'instance of Buffer, TypedArray, or DataView.' +
+             'instance of Buffer, TypedArray, DataView, or BunFile.' +
              common.invalidArgTypeHelper(val)
   });
 });
@@ -113,7 +113,7 @@ const caArrDataView = toDataView(caCert);
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.cert" property must be of type string or an ' +
-             'instance of Buffer, TypedArray, or DataView.' +
+             'instance of Buffer, TypedArray, DataView, or BunFile.' +
              common.invalidArgTypeHelper(val)
   });
 });
@@ -148,7 +148,7 @@ const caArrDataView = toDataView(caCert);
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
     message: 'The "options.ca" property must be of type string or an instance' +
-             ' of Buffer, TypedArray, or DataView.' +
+             ' of Buffer, TypedArray, DataView, or BunFile.' +
              common.invalidArgTypeHelper(val)
   });
 });

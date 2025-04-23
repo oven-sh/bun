@@ -12,7 +12,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
 const logger = bun.logger;

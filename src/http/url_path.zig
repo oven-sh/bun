@@ -7,7 +7,6 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 const std = @import("std");

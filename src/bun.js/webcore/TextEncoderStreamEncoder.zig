@@ -105,11 +105,11 @@ fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, i
 
     const Prepend = struct {
         bytes: [4]u8,
-        len: u3,
+        len: u8,
 
         pub const replacement: @This() = .{ .bytes = .{ 0xef, 0xbf, 0xbd, 0 }, .len = 3 };
 
-        pub fn fromSequence(seq: [4]u8, length: u3) @This() {
+        pub fn fromSequence(seq: [4]u8, length: u8) @This() {
             return .{ .bytes = seq, .len = length };
         }
     };

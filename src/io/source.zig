@@ -214,7 +214,7 @@ pub const Source = union(enum) {
             },
             else => .{
                 .err = .{
-                    .errno = @intFromEnum(bun.C.E.NOTSUP),
+                    .errno = @intFromEnum(bun.sys.E.NOTSUP),
                     .syscall = .uv_tty_set_mode,
                     .fd = this.getFd(),
                 },

@@ -3,7 +3,7 @@ const { Duplex, Stream } = require("node:stream");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-
+const { isValidTLSArray } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -25,7 +25,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  isValidTLSArray,
   ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,

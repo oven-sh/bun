@@ -4,6 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const { addServerName } = require("internal/net");
 const { throwNotImplemented } = require("internal/shared");
+const { normalizeTLSArray, isValidTLSArray } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -37,17 +38,6 @@ function parseCertString() {
 
 const rejectUnauthorizedDefault =
   process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
-function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
-  if (Array.isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
-      const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
-    }
-    return true;
-  }
-  return false;
-}
 
 function unfqdn(host) {
   return RegExpPrototypeSymbolReplace.$call(/[.]$/, host, "");
@@ -223,7 +213,7 @@ var InternalSecureContext = class SecureContext {
             "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
-        this.key = key;
+        this.key = normalizeTLSArray(key);
       }
       let cert = options.cert;
       if (cert) {
@@ -232,7 +222,7 @@ var InternalSecureContext = class SecureContext {
             "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
-        this.cert = cert;
+        this.cert = normalizeTLSArray(cert);
       }
 
       let ca = options.ca;
@@ -242,7 +232,7 @@ var InternalSecureContext = class SecureContext {
             "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
-        this.ca = ca;
+        this.ca = normalizeTLSArray(ca);
       }
 
       let passphrase = options.passphrase;
@@ -538,7 +528,7 @@ function Server(options, secureConnectionListener): void {
             "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
-        this.key = key;
+        this.key = normalizeTLSArray(key);
       }
       let cert = options.cert;
       if (cert) {
@@ -547,7 +537,7 @@ function Server(options, secureConnectionListener): void {
             "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
-        this.cert = cert;
+        this.cert = normalizeTLSArray(cert);
       }
 
       let ca = options.ca;
@@ -557,7 +547,7 @@ function Server(options, secureConnectionListener): void {
             "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
           );
         }
-        this.ca = ca;
+        this.ca = normalizeTLSArray(ca);
       }
 
       let passphrase = options.passphrase;

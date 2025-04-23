@@ -1744,7 +1744,7 @@ declare var Request: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface Response extends Bun.__internal.BunResponseOverride {}
-declare var Response: Bun.__internal.UseLibDomIfAvailable<"Response", Bun.__internal.ResponseConstructor>;
+declare var Response: Bun.__internal.UseLibDomIfAvailable<"Response", Bun.__internal.BunResponseConstructorOverride>;
 
 /**
  * Extends Bun.TLSOptions with extra properties that are only supported in `fetch(url, {tls: ...})`

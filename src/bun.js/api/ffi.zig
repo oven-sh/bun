@@ -14,9 +14,7 @@ const Fs = @import("../../fs.zig");
 const options = @import("../../options.zig");
 const ZigString = bun.JSC.ZigString;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
 
-const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
@@ -758,10 +756,10 @@ pub const FFI = struct {
 
             function.compile(napi_env) catch |err| {
                 if (!globalThis.hasException()) {
-                    const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
+                    const ret = globalThis.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
                         @errorName(err),
                         function_name,
-                    }, globalThis);
+                    });
                     return globalThis.throwValue(ret);
                 }
                 return error.JSError;
@@ -776,11 +774,11 @@ pub const FFI = struct {
                 },
                 .compiled => |*compiled| {
                     const str = ZigString.init(bun.asByteSlice(function_name));
-                    const cb = JSC.NewRuntimeFunction(
+                    const cb = JSC.host_fn.NewRuntimeFunction(
                         globalThis,
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
-                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        bun.cast(*const JSC.JSHostFn, compiled.ptr),
                         false,
                         true,
                         function.symbol_from_dynamic_library,
@@ -817,11 +815,11 @@ pub const FFI = struct {
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
         if (!interface.isObject()) {
-            return JSC.toInvalidArguments("Expected object", .{}, globalThis);
+            return globalThis.toInvalidArguments("Expected object", .{});
         }
 
         if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable()) {
-            return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
+            return globalThis.toInvalidArguments("Expected callback function", .{});
         }
 
         const allocator = VirtualMachine.get().allocator;
@@ -906,7 +904,7 @@ pub const FFI = struct {
         const allocator = VirtualMachine.get().allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-            return JSC.toInvalidArguments("Expected an object", .{}, global);
+            return global.toInvalidArguments("Expected an object", .{});
         }
 
         var function: Function = .{ .allocator = allocator };
@@ -991,7 +989,7 @@ pub const FFI = struct {
     /// Creates an Exception object indicating that options object is invalid.
     /// The exception is not thrown on the VM.
     fn invalidOptionsArg(global: *JSGlobalObject) JSValue {
-        return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
+        return global.toInvalidArguments("Expected an options object with symbol names", .{});
     }
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object_value: JSC.JSValue) JSC.JSValue {
@@ -1024,7 +1022,7 @@ pub const FFI = struct {
         };
 
         if (name.len == 0) {
-            return JSC.toInvalidArguments("Invalid library name", .{}, global);
+            return global.toInvalidArguments("Invalid library name", .{});
         }
 
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
@@ -1037,7 +1035,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
-            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
+            return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
         var dylib: std.DynLib = brk: {
@@ -1073,7 +1071,7 @@ pub const FFI = struct {
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name }, global);
+                    const ret = global.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name });
                     for (symbols.values()) |*value| {
                         bun.default_allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(bun.default_allocator);
@@ -1087,11 +1085,11 @@ pub const FFI = struct {
             }
 
             function.compile(napi_env) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
+                const ret = global.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
                     name,
-                }, global);
+                });
                 for (symbols.values()) |*value| {
                     value.deinit(global);
                 }
@@ -1120,11 +1118,11 @@ pub const FFI = struct {
                 },
                 .compiled => |*compiled| {
                     const str = ZigString.init(bun.asByteSlice(function_name));
-                    const cb = JSC.NewRuntimeFunction(
+                    const cb = JSC.host_fn.NewRuntimeFunction(
                         global,
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
-                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        bun.cast(*const JSC.JSHostFn, compiled.ptr),
                         false,
                         true,
                         function.symbol_from_dynamic_library,
@@ -1167,7 +1165,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
-            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
+            return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
         var obj = JSValue.createEmptyObject(global, symbols.count());
@@ -1180,7 +1178,7 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
 
             if (function.symbol_from_dynamic_library == null) {
-                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)}, global);
+                const ret = global.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)});
                 for (symbols.values()) |*value| {
                     allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
@@ -1190,10 +1188,10 @@ pub const FFI = struct {
             }
 
             function.compile(napi_env) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
+                const ret = global.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
-                }, global);
+                });
                 for (symbols.values()) |*value| {
                     value.deinit(global);
                 }
@@ -1223,11 +1221,11 @@ pub const FFI = struct {
                 .compiled => |*compiled| {
                     const name = &ZigString.init(bun.asByteSlice(function_name));
 
-                    const cb = JSC.NewRuntimeFunction(
+                    const cb = JSC.host_fn.NewRuntimeFunction(
                         global,
                         name,
                         @as(u32, @intCast(function.arg_types.items.len)),
-                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        bun.cast(*JSC.JSHostFn, compiled.ptr),
                         false,
                         true,
                         function.symbol_from_dynamic_library,
@@ -1290,7 +1288,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
+                    return global.toTypeError(.INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()});
                 });
             }
         }
@@ -1322,7 +1320,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
+                return global.toTypeError(.INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()});
             };
         }
 
@@ -1381,7 +1379,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
+                return global.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop});
             }
 
             var function: Function = .{ .allocator = allocator };
@@ -2401,8 +2399,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.State) void {
         state.addSymbol("memset", &memset) catch unreachable;
         state.addSymbol("memcpy", &memcpy) catch unreachable;
-        state.addSymbol("NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open) catch unreachable;
-        state.addSymbol("NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close) catch unreachable;
+        state.addSymbol("NapiHandleScope__open", &bun.api.napi.NapiHandleScope.NapiHandleScope__open) catch unreachable;
+        state.addSymbol("NapiHandleScope__close", &bun.api.napi.NapiHandleScope.NapiHandleScope__close) catch unreachable;
 
         state.addSymbol("JSVALUE_TO_INT64_SLOW", workaround.JSVALUE_TO_INT64) catch unreachable;
         state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;

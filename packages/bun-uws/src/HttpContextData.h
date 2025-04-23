@@ -52,6 +52,7 @@ private:
     bool isParsingHttp = false;
     bool rejectUnauthorized = false;
     bool usingCustomExpectHandler = false;
+    bool requireHostHeader = true;
 
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;

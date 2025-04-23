@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .dlopen => |path| try writer.print("loading native module: {s}", .{path}),
         }
     }
 };
@@ -294,7 +294,7 @@ pub fn crashHandler(
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},
@@ -1493,7 +1493,7 @@ fn crash() noreturn {
         .windows => {
             // This exit code is what Node.js uses when it calls
             // abort. This is relied on by their Node-API tests.
-            bun.C.quick_exit(134);
+            bun.c.quick_exit(134);
         },
         else => {
             // Install default handler so that the tkill below will terminate.

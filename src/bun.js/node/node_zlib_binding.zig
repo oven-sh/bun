@@ -7,6 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 const debug = bun.Output.scoped(.zlib, true);
+const Buffer = bun.api.node.Buffer;
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).ptr;
@@ -20,10 +21,10 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         if (data.isString()) {
             break :blk data.asString().toSlice(globalThis, bun.default_allocator);
         }
-        const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data) orelse {
+        const buffer: Buffer = Buffer.fromJS(globalThis, data) orelse {
             const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
             defer ty_str.deinit();
-            return globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
+            return globalThis.ERR(.INVALID_ARG_TYPE, "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
         };
         break :blk ZigString.Slice.fromUTF8NeverFree(buffer.slice());
     };
@@ -42,10 +43,10 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const max = std.math.maxInt(u32);
 
         if (@floor(valuef) != valuef) {
-            return globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be an integer. Received {}", .{ "value", valuef }).throw();
+            return globalThis.ERR(.OUT_OF_RANGE, "The value of \"{s}\" is out of range. It must be an integer. Received {}", .{ "value", valuef }).throw();
         }
         if (valuef < min or valuef > max) {
-            return globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ "value", min, max, valuef }).throw();
+            return globalThis.ERR(.OUT_OF_RANGE, "The value of \"{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ "value", min, max, valuef }).throw();
         }
         break :blk @intFromFloat(valuef);
     };
@@ -61,7 +62,7 @@ pub fn CompressionStream(comptime T: type) type {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                return globalThis.ERR_MISSING_ARGS("write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
             }
 
             var in_off: u32 = 0;
@@ -149,7 +150,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this_value.ensureStillAlive();
 
-            if (!(this.checkError(global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
+            if (!(checkError(this, global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
                 return;
             }
 
@@ -160,14 +161,14 @@ pub fn CompressionStream(comptime T: type) type {
 
             vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
-            if (this.pending_close) _ = this._close();
+            if (this.pending_close) _ = closeInternal(this);
         }
 
         pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                return globalThis.ERR_MISSING_ARGS("writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
             }
 
             var in_off: u32 = 0;
@@ -211,7 +212,7 @@ pub fn CompressionStream(comptime T: type) type {
             const this_value = callframe.this();
 
             this.stream.doWork();
-            if (try this.checkError(globalThis, this_value)) {
+            if (try checkError(this, globalThis, this_value)) {
                 this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
                 this.write_in_progress = false;
             }
@@ -223,7 +224,7 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const err = this.stream.reset();
             if (err.isError()) {
-                try this.emitError(globalThis, callframe.this(), err);
+                try emitError(this, globalThis, callframe.this(), err);
             }
             return .undefined;
         }
@@ -231,11 +232,11 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             _ = globalThis;
             _ = callframe;
-            this._close();
+            closeInternal(this);
             return .undefined;
         }
 
-        fn _close(this: *T) void {
+        fn closeInternal(this: *T) void {
             if (this.write_in_progress) {
                 this.pending_close = true;
                 return;
@@ -261,7 +262,7 @@ pub fn CompressionStream(comptime T: type) type {
         fn checkError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue) !bool {
             const err = this.stream.getErrorInfo();
             if (!err.isError()) return true;
-            try this.emitError(globalThis, this_value, err);
+            try emitError(this, globalThis, this_value, err);
             return false;
         }
 
@@ -277,7 +278,7 @@ pub fn CompressionStream(comptime T: type) type {
             _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
-            if (this.pending_close) _ = this._close();
+            if (this.pending_close) _ = closeInternal(this);
         }
 
         pub fn finalize(this: *T) void {
@@ -321,7 +322,15 @@ pub const SNativeZlib = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace CompressionStream(@This());
+    const impl = CompressionStream(@This());
+    pub const write = impl.write;
+    pub const runFromJSThread = impl.runFromJSThread;
+    pub const writeSync = impl.writeSync;
+    pub const reset = impl.reset;
+    pub const close = impl.close;
+    pub const setOnError = impl.setOnError;
+    pub const getOnError = impl.getOnError;
+    pub const finalize = impl.finalize;
 
     ref_count: RefCount,
     mode: bun.zlib.NodeMode,
@@ -371,7 +380,7 @@ pub const SNativeZlib = struct {
         const this_value = callframe.this();
 
         if (arguments.len != 7) {
-            return globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
         }
 
         const windowBits = try validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null);
@@ -400,7 +409,7 @@ pub const SNativeZlib = struct {
         const arguments = callframe.argumentsUndef(2).slice();
 
         if (arguments.len != 2) {
-            return globalThis.ERR_MISSING_ARGS("params(level, strategy)", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "params(level, strategy)", .{}).throw();
         }
 
         const level = try validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null);
@@ -408,7 +417,7 @@ pub const SNativeZlib = struct {
 
         const err = this.stream.setParams(level, strategy);
         if (err.isError()) {
-            try this.emitError(globalThis, callframe.this(), err);
+            try impl.emitError(this, globalThis, callframe.this(), err);
         }
         return .undefined;
     }
@@ -695,7 +704,15 @@ pub const SNativeBrotli = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace CompressionStream(@This());
+    const impl = CompressionStream(@This());
+    pub const write = impl.write;
+    pub const runFromJSThread = impl.runFromJSThread;
+    pub const writeSync = impl.writeSync;
+    pub const reset = impl.reset;
+    pub const close = impl.close;
+    pub const setOnError = impl.setOnError;
+    pub const getOnError = impl.getOnError;
+    pub const finalize = impl.finalize;
 
     ref_count: RefCount,
     mode: bun.zlib.NodeMode,
@@ -751,7 +768,7 @@ pub const SNativeBrotli = struct {
         const arguments = callframe.argumentsUndef(3).slice();
         const this_value = callframe.this();
         if (arguments.len != 3) {
-            return globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "init(params, writeResult, writeCallback)", .{}).throw();
         }
 
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
@@ -764,7 +781,7 @@ pub const SNativeBrotli = struct {
 
         var err = this.stream.init();
         if (err.isError()) {
-            try this.emitError(globalThis, this_value, err);
+            try impl.emitError(this, globalThis, this_value, err);
             return JSC.jsBoolean(false);
         }
 
@@ -777,7 +794,7 @@ pub const SNativeBrotli = struct {
             }
             err = this.stream.setParams(@intCast(i), d);
             if (err.isError()) {
-                // try this.emitError(globalThis, err); //XXX: onerror isn't set yet
+                // try impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
                 return JSC.jsBoolean(false);
             }
         }

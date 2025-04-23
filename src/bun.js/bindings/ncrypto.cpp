@@ -253,7 +253,7 @@ DataPointer DataPointer::resize(size_t len)
 {
     size_t actual_len = std::min(len_, len);
     auto buf = release();
-    if (actual_len == len_) return DataPointer(buf);
+    if (actual_len == len_) return DataPointer(buf.data, actual_len);
     buf.data = OPENSSL_realloc(buf.data, actual_len);
     buf.len = actual_len;
     return DataPointer(buf);
@@ -440,6 +440,14 @@ int BignumPointer::operator<=>(const BIGNUM* other) const noexcept
     if (bn_ != nullptr && other == nullptr) return 1;
     if (bn_ == nullptr && other == nullptr) return 0;
     return BN_cmp(bn_.get(), other);
+}
+
+DataPointer BignumPointer::toHex(const BIGNUM* bn)
+{
+    if (bn == nullptr) return {};
+    char* hex = BN_bn2hex(bn);
+    if (!hex) return {};
+    return DataPointer(hex, strlen(hex));
 }
 
 DataPointer BignumPointer::toHex() const
@@ -4419,6 +4427,15 @@ const EC_GROUP* Ec::getGroup() const
 int Ec::getCurve() const
 {
     return EC_GROUP_get_curve_name(getGroup());
+}
+
+int Ec::GetCurveIdFromName(const char* name)
+{
+    int nid = EC_curve_nist2nid(name);
+    if (nid == NID_undef) {
+        nid = OBJ_sn2nid(name);
+    }
+    return nid;
 }
 
 // ============================================================================

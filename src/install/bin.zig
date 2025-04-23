@@ -7,7 +7,6 @@ const Global = bun.Global;
 const std = @import("std");
 const strings = bun.strings;
 const Environment = @import("../env.zig");
-const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
 const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
@@ -586,14 +585,14 @@ pub const Bin = extern struct {
 
         err: ?anyerror = null,
 
-        pub var umask: bun.C.Mode = 0;
+        pub var umask: bun.Mode = 0;
 
         var has_set_umask = false;
 
         pub fn ensureUmask() void {
             if (!has_set_umask) {
                 has_set_umask = true;
-                umask = bun.C.umask(0);
+                umask = bun.sys.umask(0);
             }
         }
 
@@ -640,7 +639,7 @@ pub const Bin = extern struct {
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)
             else {
-                const target = bun.sys.openat(bun.invalid_fd, abs_target, bun.O.RDONLY, 0).unwrap() catch |err| {
+                const target = bun.sys.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch |err| {
                     if (err != error.EISDIR) {
                         // ignore directories, creating a shim for one won't do anything
                         this.err = err;
@@ -659,7 +658,7 @@ pub const Bin = extern struct {
 
             if (comptime !Environment.isWindows) {
                 // any error here is ignored
-                const bin = bun.sys.File.openat(bun.invalid_fd, abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
+                const bin = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
                 defer bin.close();
 
                 var shebang_buf: [1024]u8 = undefined;

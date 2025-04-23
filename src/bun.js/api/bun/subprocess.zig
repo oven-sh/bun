@@ -34,10 +34,10 @@ ipc_data: ?IPC.IPCData,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
-abort_signal: ?*JSC.AbortSignal = null,
+abort_signal: ?*webcore.AbortSignal = null,
 
 event_loop_timer_refd: bool = false,
-event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+event_loop_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .SubprocessTimeout,
     .next = .{
         .sec = 0,
@@ -232,7 +232,7 @@ pub fn createResourceUsageObject(this: *Subprocess, globalObject: *JSGlobalObjec
     const pid_rusage = this.pid_rusage orelse brk: {
         if (Environment.isWindows) {
             if (this.process.poller == .uv) {
-                this.pid_rusage = PosixSpawn.uv_getrusage(&this.process.poller.uv);
+                this.pid_rusage = PosixSpawn.process.uv_getrusage(&this.process.poller.uv);
                 break :brk this.pid_rusage.?;
             }
         }
@@ -626,7 +626,7 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) JSC.API.Bun.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
     this.setEventLoopTimerRefd(false);
     if (this.event_loop_timer.state == .CANCELLED) return .disarm;
     if (this.hasExited()) {
@@ -775,7 +775,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     const ipc_data = &(this.ipc_data orelse {
         if (this.hasExited()) {
-            return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
+            return global.ERR(.IPC_CHANNEL_CLOSED, "Subprocess.send() cannot be used after the process has exited.", .{}).throw();
         } else {
             return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
         }
@@ -792,17 +792,17 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 
     if (good) {
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, callback, .null);
+            callback.callNextTick(global, .{JSValue.null});
             // we need to wait until the send is actually completed to trigger the callback
         }
     } else {
         const ex = global.createTypeErrorInstance("process.send() failed", .{});
         ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
         if (callback.isFunction()) {
-            JSC.Bun__Process__queueNextTick1(global, callback, ex);
+            callback.callNextTick(global, .{ex});
         } else {
             const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            JSC.Bun__Process__queueNextTick1(global, fnvalue, ex);
+            fnvalue.callNextTick(global, .{ex});
         }
     }
 
@@ -873,7 +873,7 @@ pub fn getStdio(
 }
 
 pub const Source = union(enum) {
-    blob: JSC.WebCore.AnyBlob,
+    blob: JSC.WebCore.Blob.Any,
     array_buffer: JSC.ArrayBuffer.Strong,
     detached: void,
 
@@ -913,29 +913,30 @@ pub const StaticPipeWriter = NewStaticPipeWriter(Subprocess);
 
 pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
     return struct {
+        const This = @This();
+
+        ref_count: WriterRefCount,
         writer: IOWriter = .{},
         stdio_result: StdioResult,
         source: Source = .{ .detached = {} },
         process: *ProcessType = undefined,
         event_loop: JSC.EventLoopHandle,
-        ref_count: WriterRefCount,
         buffer: []const u8 = "",
 
         // It seems there is a bug in the Zig compiler. We'll get back to this one later
-        const WriterRefCount = bun.ptr.RefCount(This, "ref_count", _deinit, .{});
-        pub usingnamespace bun.ptr.RefCount(This, "ref_count", _deinit, .{});
+        const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});
+        pub const ref = WriterRefCount.ref;
+        pub const deref = WriterRefCount.deref;
 
-        const This = @This();
         const print = bun.Output.scoped(.StaticPipeWriter, false);
 
-        pub const IOWriter = bun.io.BufferedWriter(
-            This,
-            onWrite,
-            onError,
-            onClose,
-            getBuffer,
-            flush,
-        );
+        pub const IOWriter = bun.io.BufferedWriter(@This(), struct {
+            pub const onWritable = null;
+            pub const getBuffer = This.getBuffer;
+            pub const onClose = This.onClose;
+            pub const onError = This.onError;
+            pub const onWrite = This.onWrite;
+        });
         pub const Poll = IOWriter;
 
         pub fn updateRef(this: *This, add: bool) void {
@@ -1476,7 +1477,7 @@ const Writable = union(enum) {
                     }
                     return pipe.toJSWithDestructor(
                         globalThis,
-                        JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                        JSC.WebCore.Sink.DestructorPtr.init(subprocess),
                     );
                 }
             },
@@ -2299,7 +2300,7 @@ pub fn spawnMaybeSync(
                         "";
                     if (display_path.len > 0) {
                         var systemerror = err.withPath(display_path).toSystemError();
-                        if (errno == .NOENT) systemerror.errno = -bun.C.UV_ENOENT;
+                        if (errno == .NOENT) systemerror.errno = -bun.sys.UV_E.NOENT;
                         return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
                     }
                 },
@@ -2432,7 +2433,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdin == .pipe) {
-        subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+        subprocess.stdin.pipe.signal = JSC.WebCore.streams.Signal.init(&subprocess.stdin);
     }
 
     const out = if (comptime !is_sync)
@@ -2604,7 +2605,7 @@ fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bu
     const err = JSC.SystemError{
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
-        .errno = -bun.C.UV_ENOENT,
+        .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.createUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));
@@ -2694,6 +2695,7 @@ const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
+const webcore = bun.webcore;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const which = bun.which;
@@ -2706,10 +2708,10 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Body = JSC.WebCore.Body;
 const IPClog = Output.scoped(.IPC, false);
 
-const PosixSpawn = bun.posix.spawn;
-const Rusage = bun.posix.spawn.Rusage;
-const Process = bun.posix.spawn.Process;
-const WaiterThread = bun.posix.spawn.WaiterThread;
+const PosixSpawn = bun.spawn;
+const Rusage = bun.spawn.Rusage;
+const Process = bun.spawn.Process;
+const WaiterThread = bun.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

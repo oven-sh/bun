@@ -4,14 +4,14 @@ pub const JSValkeyClient = struct {
     globalObject: *JSC.JSGlobalObject,
     this_value: JSC.JSRef = JSC.JSRef.empty(),
     poll_ref: bun.Async.KeepAlive = .{},
-    timer: JSC.BunTimer.EventLoopTimer = .{
+    timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
         .next = .{
             .sec = 0,
             .nsec = 0,
         },
     },
-    reconnect_timer: JSC.BunTimer.EventLoopTimer = .{
+    reconnect_timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionReconnect,
         .next = .{
             .sec = 0,
@@ -186,7 +186,7 @@ pub const JSValkeyClient = struct {
             this.connect() catch |err| {
                 this.poll_ref.unref(this.client.vm);
                 this.client.flags.needs_to_open_socket = true;
-                const err_value = globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
+                const err_value = globalObject.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
                 promise_ptr.reject(globalObject, err_value);
                 return promise;
             };
@@ -250,7 +250,7 @@ pub const JSValkeyClient = struct {
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive
-    fn addTimer(this: *JSValkeyClient, timer: *JSC.BunTimer.EventLoopTimer, next_timeout_ms: u32) void {
+    fn addTimer(this: *JSValkeyClient, timer: *Timer.EventLoopTimer, next_timeout_ms: u32) void {
         this.ref();
         defer this.deref();
 
@@ -274,7 +274,7 @@ pub const JSValkeyClient = struct {
     }
 
     /// Safely remove a timer with proper reference counting and event loop keepalive
-    fn removeTimer(this: *JSValkeyClient, timer: *JSC.BunTimer.EventLoopTimer) void {
+    fn removeTimer(this: *JSValkeyClient, timer: *Timer.EventLoopTimer) void {
         if (timer.state == .ACTIVE) {
 
             // Store VM reference to use later
@@ -309,7 +309,7 @@ pub const JSValkeyClient = struct {
         this.timer.state = .CANCELLED;
     }
 
-    pub fn onConnectionTimeout(this: *JSValkeyClient) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onConnectionTimeout(this: *JSValkeyClient) Timer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
 
         // Mark timer as fired
@@ -342,7 +342,7 @@ pub const JSValkeyClient = struct {
         return .disarm;
     }
 
-    pub fn onReconnectTimer(this: *JSValkeyClient) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onReconnectTimer(this: *JSValkeyClient) Timer.EventLoopTimer.Arm {
         debug("Reconnect timer fired, attempting to reconnect", .{});
 
         // Mark timer as fired and store important values before doing any derefs
@@ -385,7 +385,7 @@ pub const JSValkeyClient = struct {
         this.poll_ref.ref(vm);
 
         this.connect() catch |err| {
-            this.failWithJSValue(this.globalObject.ERR_SOCKET_CLOSED_BEFORE_CONNECTION("{s} reconnecting", .{@errorName(err)}).toJS());
+            this.failWithJSValue(this.globalObject.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, "{s} reconnecting", .{@errorName(err)}).toJS());
             this.poll_ref.disable();
             return;
         };
@@ -582,7 +582,7 @@ pub const JSValkeyClient = struct {
 
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;
-                const err_value = globalThis.ERR_SOCKET_CLOSED_BEFORE_CONNECTION(" {s} connecting to Valkey", .{@errorName(err)}).toJS();
+                const err_value = globalThis.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
                 const promise = JSC.JSPromise.create(globalThis);
                 promise.reject(globalThis, err_value);
                 return promise;
@@ -869,3 +869,5 @@ const Socket = uws.AnySocket;
 const RedisError = protocol.RedisError;
 const Command = @import("ValkeyCommand.zig");
 const BoringSSL = bun.BoringSSL;
+
+const Timer = bun.api.Timer;

@@ -10,7 +10,7 @@ const PathString = bun.PathString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FD = bun.FD;
-const C = bun.C;
+
 const ast = @import("../import_record.zig");
 const logger = bun.logger;
 const options = @import("../options.zig");
@@ -720,7 +720,7 @@ pub const Resolver = struct {
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
                 strings.hasPrefixComptime(import_path, "bun:") or
-                bun.JSC.HardcodedModule.Alias.has(import_path, r.opts.target))
+                bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path, r.opts.target))
             {
                 return .{
                     .success = Result{
@@ -1248,7 +1248,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.JSC.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.JSC.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
                         return .{ .not_found = {} };
                     }
 
@@ -3166,7 +3166,7 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
                             .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
@@ -4356,7 +4356,7 @@ pub const GlobalCache = enum {
 
 comptime {
     _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&JSC.toJSHostFunction(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
+    @export(&JSC.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 

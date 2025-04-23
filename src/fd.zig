@@ -52,8 +52,17 @@ pub const FD = packed struct(backing_int) {
 
     /// Initialize using the c-runtime / libuv file descriptor
     pub fn fromUV(value: uv_file) FD {
+        if (@inComptime() and !(0 <= value and value <= 2))
+            @compileError(std.fmt.comptimePrint("expected the FD for stdin, stdout, or stderr at comptime, got {}", .{value}));
         return if (is_posix)
-            .{ .kind = .system, .value = .{ .as_system = value } }
+            switch (value) {
+                // workaround for https://github.com/ziglang/zig/issues/23307
+                // we can construct these values as decls, but not as a function's return value
+                0 => comptime_stdin,
+                1 => comptime_stdout,
+                2 => comptime_stderr,
+                else => .{ .kind = .system, .value = .{ .as_system = value } },
+            }
         else
             .{ .kind = .uv, .value = .{ .as_uv = value } };
     }
@@ -194,7 +203,7 @@ pub const FD = packed struct(backing_int) {
                     maybe_windows_fd.close();
                 }
                 return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.E.MFILE),
+                    .errno = @intFromEnum(bun.sys.E.MFILE),
                     .syscall = syscall_tag,
                 } };
             },
@@ -243,14 +252,14 @@ pub const FD = packed struct(backing_int) {
         const result: ?bun.sys.Error = switch (os) {
             .linux => result: {
                 bun.assert(fd.native() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.close(fd.native()))) {
+                break :result switch (bun.sys.getErrno(bun.sys.syscall.close(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .mac => result: {
                 bun.assert(fd.native() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.native()))) {
+                break :result switch (bun.sys.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
@@ -266,7 +275,7 @@ pub const FD = packed struct(backing_int) {
                         null;
                 },
                 .windows => |handle| result: {
-                    break :result switch (bun.windows.NtClose(handle)) {
+                    break :result switch (bun.c.NtClose(handle)) {
                         .SUCCESS => null,
                         else => |rc| bun.sys.Error{
                             .errno = if (bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno()) |errno| @intFromEnum(errno) else 1,
@@ -395,7 +404,7 @@ pub const FD = packed struct(backing_int) {
         pub fn hash(_: @This(), fd: FD) u64 {
             // a file descriptor is i32 on linux, u64 on windows
             // the goal here is to do zero work and widen the 32 bit type to 64
-            return @as(if (os == .windows) u64 else u32, @bitCast(fd));
+            return @as(if (backing_int == u64) u64 else u32, @bitCast(fd));
         }
 
         pub fn eql(_: @This(), a: FD, b: FD) bool {
@@ -633,6 +642,21 @@ pub var windows_cached_fd_set: if (Environment.isDebug) bool else void = if (Env
 pub var windows_cached_stdin: FD = undefined;
 pub var windows_cached_stdout: FD = undefined;
 pub var windows_cached_stderr: FD = undefined;
+
+// workaround for https://github.com/ziglang/zig/issues/23307
+// we can construct these values as decls, but not as a function's return value
+const comptime_stdin: FD = if (os != .windows)
+    .{ .kind = .system, .value = .{ .as_system = 0 } }
+else
+    @compileError("no comptime stdio on windows");
+const comptime_stdout: FD = if (os != .windows)
+    .{ .kind = .system, .value = .{ .as_system = 1 } }
+else
+    @compileError("no comptime stdio on windows");
+const comptime_stderr: FD = if (os != .windows)
+    .{ .kind = .system, .value = .{ .as_system = 2 } }
+else
+    @compileError("no comptime stdio on windows");
 
 const fd_t = std.posix.fd_t;
 const HANDLE = bun.windows.HANDLE;

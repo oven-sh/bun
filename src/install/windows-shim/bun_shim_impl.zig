@@ -737,7 +737,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         // Prepare stdio for the child process, as after this we are going to *immediatly* exit
         // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
         bun.Output.Source.Stdio.restore();
-        bun.C.windows_enable_stdio_inheritance();
+        bun.windows.windows_enable_stdio_inheritance();
     }
 
     // I attempted to use lower level methods for this, but it really seems

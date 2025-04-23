@@ -208,7 +208,7 @@ const methodMessageMapping = {
   queryServer,
 };
 
-function onmessage(message, handle) {
+function onmessage(message, _handle) {
   const worker = this;
 
   const fn = methodMessageMapping[message.act];

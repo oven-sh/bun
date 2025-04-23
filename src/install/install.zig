@@ -16,7 +16,6 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const std = @import("std");
 const uws = @import("../deps/uws.zig");
 const JSC = bun.JSC;
@@ -1411,7 +1410,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 stackpath[entry.path.len] = 0;
                                 const path: [:0]u8 = stackpath[0..entry.path.len :0];
                                 const basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
-                                switch (C.clonefileat(
+                                switch (bun.c.clonefileat(
                                     entry.dir.fd,
                                     basename,
                                     destination_dir_.fd,
@@ -1464,7 +1463,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             }
 
-            return switch (C.clonefileat(
+            return switch (bun.c.clonefileat(
                 this.cache_dir.fd,
                 this.cache_dir_subpath,
                 destination_dir.fd,
@@ -1505,7 +1504,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
         };
 
-        threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
+        threadlocal var node_fs_for_package_installer: bun.JSC.Node.fs.NodeFS = .{};
 
         fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
             const destbase = destination_dir;
@@ -1685,7 +1684,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                             if (comptime Environment.isPosix) {
                                 const stat = in_file.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                                _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
                             bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
@@ -5143,7 +5142,7 @@ pub const PackageManager = struct {
         try buffered_writer.flush();
 
         if (comptime Environment.isPosix) {
-            _ = C.fchmod(
+            _ = bun.c.fchmod(
                 tmpfile.fd.cast(),
                 // chmod 666,
                 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
@@ -8962,7 +8961,7 @@ pub const PackageManager = struct {
         }
 
         if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            bun.spawn.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {
@@ -11189,7 +11188,7 @@ pub const PackageManager = struct {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             const workspace_package_json_file = (try bun.sys.File.openat(
-                bun.invalid_fd,
+                .cwd(),
                 path,
                 bun.O.RDWR,
                 0,
@@ -11734,7 +11733,7 @@ pub const PackageManager = struct {
                         defer outfile.close();
 
                         const stat = in_file.stat() catch continue;
-                        _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                        _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
 
                         bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
@@ -12240,8 +12239,8 @@ pub const PackageManager = struct {
             .posix,
         );
 
-        var nodefs = bun.JSC.Node.NodeFS{};
-        const args = bun.JSC.Node.Arguments.Mkdir{
+        var nodefs = bun.JSC.Node.fs.NodeFS{};
+        const args = bun.JSC.Node.fs.Arguments.Mkdir{
             .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
         };
         if (nodefs.mkdirRecursive(args).asErr()) |e| {
@@ -13672,9 +13671,9 @@ pub const PackageManager = struct {
                                         Global.exit(1);
                                     };
 
-                                    const is_writable = if (stat.uid == bun.C.getuid())
+                                    const is_writable = if (stat.uid == bun.c.getuid())
                                         stat.mode & bun.S.IWUSR > 0
-                                    else if (stat.gid == bun.C.getgid())
+                                    else if (stat.gid == bun.c.getgid())
                                         stat.mode & bun.S.IWGRP > 0
                                     else
                                         stat.mode & bun.S.IWOTH > 0;
@@ -14113,7 +14112,7 @@ pub const PackageManager = struct {
 
             // Attempt to create a new node_modules folder
             if (bun.sys.mkdir("node_modules", 0o755).asErr()) |err| {
-                if (err.errno != @intFromEnum(bun.C.E.EXIST)) {
+                if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
                     Output.err(err, "could not create the <b>\"node_modules\"<r> directory", .{});
                     Global.crash();
                 }

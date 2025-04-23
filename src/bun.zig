@@ -88,19 +88,21 @@ pub const JSError = error{
 
 pub const JSOOM = OOM || JSError;
 
-pub const detectCI = @import("./ci_info.zig").detectCI;
+pub const detectCI = @import("ci_info.zig").detectCI;
 
-/// Adding to this namespace is considered deprecated.
-///
-/// If the declaration truly came from C, it should be perfectly possible to
-/// translate the definition and put it in `c-headers-for-zig.h`, and available
-/// via the lowercase `c` namespace. Wrappers around functions should go in a
-/// more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
-///
-/// By avoiding manual transcription of C headers into Zig, we avoid bugs due to
-/// different definitions between platforms, as well as very common mistakes
-/// that can be made when porting definitions. It also keeps code much cleaner.
-pub const C = @import("c.zig");
+/// Cross-platform system APIs
+pub const sys = @import("sys.zig");
+/// Deprecated: use bun.sys.S
+pub const S = sys.S;
+pub const O = sys.O;
+pub const Mode = sys.Mode;
+
+// Platform-specific system APIs. If something can be implemented on multiple
+// platforms, it does not belong in these three namespaces.
+pub const windows = @import("windows.zig");
+pub const darwin = @import("darwin.zig");
+pub const linux = @import("linux.zig");
+
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
 
@@ -116,9 +118,15 @@ pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
 
+// This file is gennerated, but cant be placed in the build/debug/codegen
+// folder because zig will complain about outside-of-module stuff
 /// All functions and interfaces provided from Bun's `bindgen` utility.
 pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
+
 comptime {
+    // This file is gennerated, but cant be placed in the build/debug/codegen
+    // folder because zig will complain about outside-of-module stuff
+    _ = &@import("bun.js/bindings/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
 }
 
@@ -135,7 +143,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
-pub const Bitflags = @import("./bitflags.zig").Bitflags;
+pub const bits = @import("bits.zig");
 pub const css = @import("./css/css_parser.zig");
 pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
@@ -387,9 +395,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
-pub const linux = struct {
-    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
-};
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {
@@ -623,7 +628,16 @@ pub const invalid_fd: FileDescriptor = .invalid;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("jsc.zig");
+/// Deprecated: Prefer the lowercase `jsc` since it is a namespace and not a struct.
+pub const JSC = jsc;
+
+/// Bindings to JavaScriptCore and other JavaScript primatives.
+/// Web and runtime-specific APIs should go in `webcore` and `api`.
+pub const jsc = @import("bun.js/jsc.zig");
+/// JavaScript Web APIs
+pub const webcore = @import("bun.js/webcore.zig");
+/// "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
+pub const api = @import("bun.js/api.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -978,7 +992,7 @@ pub fn parseDouble(input: []const u8) !f64 {
     if (comptime Environment.isWasm) {
         return try std.fmt.parseFloat(f64, input);
     }
-    return JSC.WTF.parseDouble(input);
+    return JSC.wtf.parseDouble(input);
 }
 
 pub const SignalCode = enum(u8) {
@@ -1545,7 +1559,7 @@ pub fn reloadProcess(
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
         // see becomeWatcherManager
-        const rc = bun.windows.TerminateProcess(bun.windows.GetCurrentProcess(), win32.watcher_reload_exit);
+        const rc = c.TerminateProcess(c.GetCurrentProcess(), windows.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
             if (may_return) {
@@ -1562,7 +1576,6 @@ pub fn reloadProcess(
         }
     }
 
-    const PosixSpawn = posix.spawn;
     const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
     for (bun.argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
@@ -1589,24 +1602,24 @@ pub fn reloadProcess(
 
     // macOS doesn't have CLOEXEC, so we must go through posix_spawn
     if (comptime Environment.isMac) {
-        var actions = PosixSpawn.Actions.init() catch unreachable;
+        var actions = spawn.Actions.init() catch unreachable;
         actions.inherit(.stdin()) catch unreachable;
         actions.inherit(.stdout()) catch unreachable;
         actions.inherit(.stderr()) catch unreachable;
 
-        var attrs = PosixSpawn.Attr.init() catch unreachable;
+        var attrs = spawn.Attr.init() catch unreachable;
         attrs.resetSignals() catch {};
 
         attrs.set(
-            C.translated.POSIX_SPAWN_CLOEXEC_DEFAULT |
+            c.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
                 // than returning to the caller, posix_spawn(2)
                 // and posix_spawnp(2) will behave as a more
                 // featureful execve(2).
-                C.translated.POSIX_SPAWN_SETEXEC |
-                C.translated.POSIX_SPAWN_SETSIGDEF | C.translated.POSIX_SPAWN_SETSIGMASK,
+                c.POSIX_SPAWN_SETEXEC |
+                c.POSIX_SPAWN_SETSIGDEF | c.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
-        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
+        switch (spawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
                 if (may_return) {
                     Output.errGeneric("Failed to reload process: {s}", .{@tagName(err.getErrno())});
@@ -1929,8 +1942,8 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 pub const StatFS = switch (Environment.os) {
-    .mac => C.translated.struct_statfs,
-    .linux => C.translated.struct_statfs,
+    .mac => bun.c.struct_statfs,
+    .linux => bun.c.struct_statfs,
     else => windows.libuv.uv_statfs_t,
 };
 
@@ -1997,212 +2010,11 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
     }
 }
 
-pub const posix = struct {
-    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
-};
-
-pub const win32 = struct {
-    const w = std.os.windows;
-
-    /// Returns the original mode, or null on failure
-    pub fn updateStdioModeFlags(i: bun.FD.Stdio, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
-        const fd = i.fd();
-        var original_mode: w.DWORD = 0;
-        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
-                return windows.getLastError();
-            }
-        } else return windows.getLastError();
-        return original_mode;
-    }
-
-    const watcherChildEnv: [:0]const u16 = strings.toUTF16Literal("_BUN_WATCHER_CHILD");
-    // magic exit code to indicate to the watcher manager that the child process should be re-spawned
-    // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
-    const watcher_reload_exit: w.DWORD = 3224497970;
-
-    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
-
-    pub fn isWatcherChild() bool {
-        var buf: [1]u16 = undefined;
-        return windows.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
-    }
-
-    pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
-        // this process will be the parent of the child process that actually runs the script
-        var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        C.windows_enable_stdio_inheritance();
-        const job = windows.CreateJobObjectA(null, null) orelse Output.panic(
-            "Could not create watcher Job Object: {s}",
-            .{@tagName(std.os.windows.kernel32.GetLastError())},
-        );
-        var jeli = std.mem.zeroes(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
-        jeli.BasicLimitInformation.LimitFlags =
-            windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
-            windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
-            windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |
-            windows.JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
-        if (windows.SetInformationJobObject(
-            job,
-            windows.JobObjectExtendedLimitInformation,
-            &jeli,
-            @sizeOf(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
-        ) == 0) {
-            Output.panic(
-                "Could not configure watcher Job Object: {s}",
-                .{@tagName(std.os.windows.kernel32.GetLastError())},
-            );
-        }
-
-        while (true) {
-            spawnWatcherChild(allocator, &procinfo, job) catch |err| {
-                handleErrorReturnTrace(err, @errorReturnTrace());
-                if (err == error.Win32Error) {
-                    Output.panic("Failed to spawn process: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
-                }
-                Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
-            };
-            w.WaitForSingleObject(procinfo.hProcess, w.INFINITE) catch |err| {
-                Output.panic("Failed to wait for child process: {s}\n", .{@errorName(err)});
-            };
-            var exit_code: w.DWORD = 0;
-            if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
-                const err = windows.GetLastError();
-                _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
-                Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
-            }
-            _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
-
-            // magic exit code to indicate that the child process should be re-spawned
-            if (exit_code == watcher_reload_exit) {
-                continue;
-            } else {
-                Global.exit(exit_code);
-            }
-        }
-    }
-
-    pub fn spawnWatcherChild(
-        allocator: std.mem.Allocator,
-        procinfo: *std.os.windows.PROCESS_INFORMATION,
-        job: w.HANDLE,
-    ) !void {
-        // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
-        var attr_size: usize = undefined;
-        _ = windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
-        const p = try allocator.alloc(u8, attr_size);
-        defer allocator.free(p);
-        if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) == 0) {
-            return error.Win32Error;
-        }
-        if (windows.UpdateProcThreadAttribute(
-            p.ptr,
-            0,
-            windows.PROC_THREAD_ATTRIBUTE_JOB_LIST,
-            @ptrCast(&job),
-            @sizeOf(w.HANDLE),
-            null,
-            null,
-        ) == 0) {
-            return error.Win32Error;
-        }
-
-        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT;
-
-        const image_path = windows.exePathW();
-        var wbuf: WPathBuffer = undefined;
-        @memcpy(wbuf[0..image_path.len], image_path);
-        wbuf[image_path.len] = 0;
-
-        const image_pathZ = wbuf[0..image_path.len :0];
-
-        const kernelenv = w.kernel32.GetEnvironmentStringsW();
-        defer {
-            if (kernelenv) |envptr| {
-                _ = w.kernel32.FreeEnvironmentStringsW(envptr);
-            }
-        }
-
-        var size: usize = 0;
-        if (kernelenv) |pointer| {
-            // check that env is non-empty
-            if (pointer[0] != 0 or pointer[1] != 0) {
-                // array is terminated by two nulls
-                while (pointer[size] != 0 or pointer[size + 1] != 0) size += 1;
-                size += 1;
-            }
-        }
-        // now pointer[size] is the first null
-
-        const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
-        defer allocator.free(envbuf);
-        if (kernelenv) |pointer| {
-            @memcpy(envbuf[0..size], pointer);
-        }
-        @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
-        envbuf[size + watcherChildEnv.len] = '=';
-        envbuf[size + watcherChildEnv.len + 1] = '1';
-        envbuf[size + watcherChildEnv.len + 2] = 0;
-        envbuf[size + watcherChildEnv.len + 3] = 0;
-
-        var startupinfo = windows.STARTUPINFOEXW{
-            .StartupInfo = .{
-                .cb = @sizeOf(windows.STARTUPINFOEXW),
-                .lpReserved = null,
-                .lpDesktop = null,
-                .lpTitle = null,
-                .dwX = 0,
-                .dwY = 0,
-                .dwXSize = 0,
-                .dwYSize = 0,
-                .dwXCountChars = 0,
-                .dwYCountChars = 0,
-                .dwFillAttribute = 0,
-                .dwFlags = w.STARTF_USESTDHANDLES,
-                .wShowWindow = 0,
-                .cbReserved2 = 0,
-                .lpReserved2 = null,
-                .hStdInput = std.io.getStdIn().handle,
-                .hStdOutput = std.io.getStdOut().handle,
-                .hStdError = std.io.getStdErr().handle,
-            },
-            .lpAttributeList = p.ptr,
-        };
-        @memset(std.mem.asBytes(procinfo), 0);
-        const rc = w.kernel32.CreateProcessW(
-            image_pathZ.ptr,
-            bun.windows.GetCommandLineW(),
-            null,
-            null,
-            1,
-            flags,
-            envbuf.ptr,
-            null,
-            @ptrCast(&startupinfo),
-            procinfo,
-        );
-        if (rc == 0) {
-            return error.Win32Error;
-        }
-        var is_in_job: w.BOOL = 0;
-        _ = windows.IsProcessInJob(procinfo.hProcess, job, &is_in_job);
-        assert(is_in_job != 0);
-        _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
-    }
-};
-
-pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
+pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 
 pub fn isRegularFile(mode: anytype) bool {
     return S.ISREG(@intCast(mode));
 }
-
-pub const sys = @import("./sys.zig");
-pub const O = sys.O;
-
-pub const Mode = C.Mode;
-
-pub const windows = @import("./windows.zig");
 
 pub const LazyBoolValue = enum {
     unknown,
@@ -2751,12 +2563,12 @@ pub const io = @import("./io/io.zig");
 
 const errno_map = errno_map: {
     var max_value = 0;
-    for (std.enums.values(C.SystemErrno)) |v|
+    for (std.enums.values(sys.SystemErrno)) |v|
         max_value = @max(max_value, @intFromEnum(v));
 
     var map: [max_value + 1]anyerror = undefined;
     @memset(&map, error.Unexpected);
-    for (std.enums.values(C.SystemErrno)) |v|
+    for (std.enums.values(sys.SystemErrno)) |v|
         map[@intFromEnum(v)] = @field(anyerror, @tagName(v));
 
     break :errno_map map;
@@ -2786,8 +2598,6 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 
     return error.Unexpected;
 }
-
-pub const S = if (Environment.isWindows) C.S else std.posix.S;
 
 pub const brotli = @import("./brotli.zig");
 
@@ -3186,7 +2996,7 @@ pub fn getRoughTickCount() timespec {
             pub var clock_id: std.os.linux.CLOCK = .REALTIME;
             pub fn get() void {
                 var res = timespec{};
-                _ = std.os.linux.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res));
+                std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
                 if (res.ms() <= 1) {
                     clock_id = .MONOTONIC_COARSE;
                 } else {
@@ -3401,7 +3211,7 @@ pub fn memmove(output: []u8, input: []const u8) void {
     }
 
     if (Environment.isNative and !@inComptime()) {
-        C.memmove(output.ptr, input.ptr, input.len);
+        _ = c.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {
             out.* = input_byte;
@@ -3657,7 +3467,9 @@ pub inline fn take(val: anytype) ?@typeInfo(@typeInfo(@TypeOf(val)).pointer.chil
 /// This function deinitializes the value and sets the optional to null.
 pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
     if (val.*) |*v| {
-        v.deinit(allocator);
+        if (@hasDecl(@TypeOf(v.*), "deinit")) {
+            v.deinit(allocator);
+        }
         val.* = null;
     }
 }
@@ -3772,7 +3584,7 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
 
 pub const S3 = @import("./s3/client.zig");
-pub const ptr = @import("./ptr.zig");
+pub const ptr = @import("ptr.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -3788,3 +3600,15 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
 pub const valkey = @import("./valkey/index.zig");
+pub const highway = @import("./highway.zig");
+
+pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
+
+pub fn move(dest: []u8, src: []const u8) void {
+    if (comptime Environment.allow_assert) {
+        if (src.len != dest.len) {
+            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
+        }
+    }
+    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
+}

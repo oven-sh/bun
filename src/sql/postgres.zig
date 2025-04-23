@@ -50,35 +50,35 @@ pub const AnyPostgresError = error{
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
     const error_code: JSC.Error = switch (err) {
-        error.ConnectionClosed => JSC.Error.ERR_POSTGRES_CONNECTION_CLOSED,
-        error.ExpectedRequest => JSC.Error.ERR_POSTGRES_EXPECTED_REQUEST,
-        error.ExpectedStatement => JSC.Error.ERR_POSTGRES_EXPECTED_STATEMENT,
-        error.InvalidBackendKeyData => JSC.Error.ERR_POSTGRES_INVALID_BACKEND_KEY_DATA,
-        error.InvalidBinaryData => JSC.Error.ERR_POSTGRES_INVALID_BINARY_DATA,
-        error.InvalidByteSequence => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE,
-        error.InvalidByteSequenceForEncoding => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
-        error.InvalidCharacter => JSC.Error.ERR_POSTGRES_INVALID_CHARACTER,
-        error.InvalidMessage => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE,
-        error.InvalidMessageLength => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE_LENGTH,
-        error.InvalidQueryBinding => JSC.Error.ERR_POSTGRES_INVALID_QUERY_BINDING,
-        error.InvalidServerKey => JSC.Error.ERR_POSTGRES_INVALID_SERVER_KEY,
-        error.InvalidServerSignature => JSC.Error.ERR_POSTGRES_INVALID_SERVER_SIGNATURE,
-        error.MultidimensionalArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
-        error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
-        error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
-        error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
-        error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
-        error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
-        error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
-        error.TLSUpgradeFailed => JSC.Error.ERR_POSTGRES_TLS_UPGRADE_FAILED,
-        error.UnexpectedMessage => JSC.Error.ERR_POSTGRES_UNEXPECTED_MESSAGE,
-        error.UNKNOWN_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
-        error.UNSUPPORTED_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
-        error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
-        error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
-        error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
-        error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
-        error.UnknownFormatCode => JSC.Error.ERR_POSTGRES_UNKNOWN_FORMAT_CODE,
+        error.ConnectionClosed => .POSTGRES_CONNECTION_CLOSED,
+        error.ExpectedRequest => .POSTGRES_EXPECTED_REQUEST,
+        error.ExpectedStatement => .POSTGRES_EXPECTED_STATEMENT,
+        error.InvalidBackendKeyData => .POSTGRES_INVALID_BACKEND_KEY_DATA,
+        error.InvalidBinaryData => .POSTGRES_INVALID_BINARY_DATA,
+        error.InvalidByteSequence => .POSTGRES_INVALID_BYTE_SEQUENCE,
+        error.InvalidByteSequenceForEncoding => .POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
+        error.InvalidCharacter => .POSTGRES_INVALID_CHARACTER,
+        error.InvalidMessage => .POSTGRES_INVALID_MESSAGE,
+        error.InvalidMessageLength => .POSTGRES_INVALID_MESSAGE_LENGTH,
+        error.InvalidQueryBinding => .POSTGRES_INVALID_QUERY_BINDING,
+        error.InvalidServerKey => .POSTGRES_INVALID_SERVER_KEY,
+        error.InvalidServerSignature => .POSTGRES_INVALID_SERVER_SIGNATURE,
+        error.MultidimensionalArrayNotSupportedYet => .POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
+        error.NullsInArrayNotSupportedYet => .POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
+        error.Overflow => .POSTGRES_OVERFLOW,
+        error.PBKDFD2 => .POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
+        error.SASL_SIGNATURE_MISMATCH => .POSTGRES_SASL_SIGNATURE_MISMATCH,
+        error.SASL_SIGNATURE_INVALID_BASE64 => .POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
+        error.TLSNotAvailable => .POSTGRES_TLS_NOT_AVAILABLE,
+        error.TLSUpgradeFailed => .POSTGRES_TLS_UPGRADE_FAILED,
+        error.UnexpectedMessage => .POSTGRES_UNEXPECTED_MESSAGE,
+        error.UNKNOWN_AUTHENTICATION_METHOD => .POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
+        error.UNSUPPORTED_AUTHENTICATION_METHOD => .POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
+        error.UnsupportedByteaFormat => .POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
+        error.UnsupportedArrayFormat => .POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
+        error.UnsupportedIntegerSize => .POSTGRES_UNSUPPORTED_INTEGER_SIZE,
+        error.UnsupportedNumericFormat => .POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
+        error.UnknownFormatCode => .POSTGRES_UNKNOWN_FORMAT_CODE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -249,7 +249,7 @@ pub const PostgresSQLContext = struct {
     }
 
     comptime {
-        const js_init = JSC.toJSHostFunction(init);
+        const js_init = JSC.toJSHostFn(init);
         @export(&js_init, .{ .name = "PostgresSQLContext__init" });
     }
 };
@@ -561,7 +561,7 @@ pub const PostgresSQLQuery = struct {
 
     pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(6).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const query = args.nextEat() orelse {
             return globalThis.throw("query must be a string", .{});
@@ -833,7 +833,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     comptime {
-        const jscall = JSC.toJSHostFunction(call);
+        const jscall = JSC.toJSHostFn(call);
         @export(&jscall, .{ .name = "PostgresSQLQuery__createInstance" });
     }
 };
@@ -1208,7 +1208,7 @@ pub const PostgresSQLConnection = struct {
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    timer: JSC.BunTimer.EventLoopTimer = .{
+    timer: bun.api.Timer.EventLoopTimer = .{
         .tag = .PostgresSQLConnectionTimeout,
         .next = .{
             .sec = 0,
@@ -1220,7 +1220,7 @@ pub const PostgresSQLConnection = struct {
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     max_lifetime_interval_ms: u32 = 0,
-    max_lifetime_timer: JSC.BunTimer.EventLoopTimer = .{
+    max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
         .tag = .PostgresSQLConnectionMaxLifetime,
         .next = .{
             .sec = 0,
@@ -1455,7 +1455,7 @@ pub const PostgresSQLConnection = struct {
         this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
     }
 
-    pub fn onConnectionTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
 
         this.timer.state = .FIRED;
@@ -1470,23 +1470,23 @@ pub const PostgresSQLConnection = struct {
 
         switch (this.status) {
             .connected => {
-                this.failFmt(.ERR_POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+                this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
             },
             else => {
-                this.failFmt(.ERR_POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+                this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
             },
             .sent_startup_message => {
-                this.failFmt(.ERR_POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+                this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
             },
         }
         return .disarm;
     }
 
-    pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
+    pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
         debug("onMaxLifetimeTimeout", .{});
         this.max_lifetime_timer.state = .FIRED;
         if (this.status == .failed) return .disarm;
-        this.failFmt(.ERR_POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+        this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
         return .disarm;
     }
 
@@ -1794,7 +1794,7 @@ pub const PostgresSQLConnection = struct {
     }
 
     comptime {
-        const jscall = JSC.toJSHostFunction(call);
+        const jscall = JSC.toJSHostFn(call);
         @export(&jscall, .{ .name = "PostgresSQLConnection__createInstance" });
     }
 
@@ -2055,6 +2055,10 @@ pub const PostgresSQLConnection = struct {
     pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
+        return .undefined;
+    }
+    pub fn doFlush(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        this.flushData();
         return .undefined;
     }
 
@@ -2399,7 +2403,7 @@ pub const PostgresSQLConnection = struct {
                 };
 
                 var stack_buf: [70]DataCell = undefined;
-                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSC__JSObject__maxInlineCapacity)];
+                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSObject.maxInlineCapacity())];
                 var free_cells = false;
                 defer {
                     for (cells[0..putter.count]) |*cell| {
@@ -2408,7 +2412,7 @@ pub const PostgresSQLConnection = struct {
                     if (free_cells) bun.default_allocator.free(cells);
                 }
 
-                if (statement.fields.len >= JSC.JSC__JSObject__maxInlineCapacity) {
+                if (statement.fields.len >= JSC.JSObject.maxInlineCapacity()) {
                     cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
@@ -3006,7 +3010,7 @@ pub const PostgresSQLStatement = struct {
                 nonDuplicatedCount -= 1;
             }
         }
-        const ids = if (nonDuplicatedCount <= JSC.JSC__JSObject__maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+        const ids = if (nonDuplicatedCount <= JSC.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
 
         var i: usize = 0;
         for (this.fields) |*field| {
@@ -3030,7 +3034,7 @@ pub const PostgresSQLStatement = struct {
             i += 1;
         }
 
-        if (nonDuplicatedCount > JSC.JSC__JSObject__maxInlineCapacity) {
+        if (nonDuplicatedCount > JSC.JSObject.maxInlineCapacity()) {
             this.cached_structure.set(globalObject, null, ids);
         } else {
             this.cached_structure.set(globalObject, JSC.JSObject.createStructure(

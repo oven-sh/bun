@@ -9,7 +9,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const cli = @import("../cli.zig");
 
 const Command = cli.Command;
@@ -478,7 +478,7 @@ pub const BunxCommand = struct {
         //     where a user can replace the directory with malicious code.
         //
         // If this format changes, please update cache clearing code in package_manager_command.zig
-        const uid = if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId();
+        const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
@@ -543,7 +543,7 @@ pub const BunxCommand = struct {
                 if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
-                            const fd = bun.sys.openat(bun.invalid_fd, destination, bun.O.RDONLY, 0).unwrap() catch {
+                            const fd = bun.sys.openat(.cwd(), destination, bun.O.RDONLY, 0).unwrap() catch {
                                 // if we cant open this, we probably will just fail when we run it
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;

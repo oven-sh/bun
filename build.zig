@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const Build = std.Build;
 const Step = Build.Step;
 const Compile = Step.Compile;
-const LazyPath = Step.LazyPath;
+const LazyPath = Build.LazyPath;
 const Target = std.Target;
 const ResolvedTarget = std.Build.ResolvedTarget;
 const CrossTarget = std.zig.CrossTarget;
@@ -21,18 +21,18 @@ const pathRel = fs.path.relative;
 /// When updating this, make sure to adjust SetupZig.cmake
 const recommended_zig_version = "0.14.0";
 
-comptime {
-    if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-        @compileError(
-            "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-                builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-                "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-                "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-                "comment this error out.",
-        );
-    }
-}
+// comptime {
+//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
+//         @compileError(
+//             "" ++
+//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
+//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
+//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
+//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
+//                 "comment this error out.",
+//         );
+//     }
+// }
 
 const zero_sha = "0000000000000000000000000000000000000000";
 
@@ -94,6 +94,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
 
         const mod = opts.createModule();
         this.cached_options_module = mod;
@@ -199,10 +200,7 @@ pub fn build(b: *Build) !void {
 
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
 
-    b.reference_trace = ref_trace: {
-        const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 24;
-        break :ref_trace if (trace == 0) null else trace;
-    };
+    b.reference_trace = b.reference_trace orelse 32;
 
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
@@ -336,6 +334,22 @@ pub fn build(b: *Build) !void {
         b.default_step.dependOn(step);
     }
 
+    // zig build watch
+    // const enable_watch_step = b.option(bool, "watch_step", "Enable the watch step. This reads more files so it is off by default") orelse false;
+    // if (no_llvm or enable_watch_step) {
+    //     self_hosted_watch.selfHostedExeBuild(b, &build_options) catch @panic("OOM");
+    // }
+
+    // zig build check-debug
+    {
+        const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+        }, &.{.Debug});
+    }
+
     // zig build check-all
     {
         const step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
@@ -389,7 +403,22 @@ pub fn build(b: *Build) !void {
     // zig build translate-c-headers
     {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
-        step.dependOn(&b.addInstallFile(getTranslateC(b, b.graph.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+        for ([_]TargetDescription{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
+        }) |t| {
+            const resolved = t.resolveTarget(b);
+            step.dependOn(
+                &b.addInstallFile(getTranslateC(b, resolved, .Debug), b.fmt("translated-c-headers/{s}.zig", .{
+                    resolved.result.zigTriple(b.allocator) catch @panic("OOM"),
+                })).step,
+            );
+        }
     }
 
     // zig build enum-extractor
@@ -406,23 +435,32 @@ pub fn build(b: *Build) !void {
     }
 }
 
-pub fn addMultiCheck(
+const TargetDescription = struct {
+    os: OperatingSystem,
+    arch: Arch,
+    musl: bool = false,
+
+    fn resolveTarget(desc: TargetDescription, b: *Build) std.Build.ResolvedTarget {
+        return b.resolveTargetQuery(.{
+            .os_tag = OperatingSystem.stdOSTag(desc.os),
+            .cpu_arch = desc.arch,
+            .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
+            .os_version_min = getOSVersionMin(desc.os),
+            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
+        });
+    }
+};
+
+fn addMultiCheck(
     b: *Build,
     parent_step: *Step,
     root_build_options: BunBuildOptions,
-    to_check: []const struct { os: OperatingSystem, arch: Arch, musl: bool = false },
+    to_check: []const TargetDescription,
     optimize: []const std.builtin.OptimizeMode,
 ) void {
     for (to_check) |check| {
         for (optimize) |mode| {
-            const check_target = b.resolveTargetQuery(.{
-                .os_tag = OperatingSystem.stdOSTag(check.os),
-                .cpu_arch = check.arch,
-                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_arch_os,
-                .os_version_min = getOSVersionMin(check.os),
-                .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
-            });
-
+            const check_target = check.resolveTarget(b);
             var options: BunBuildOptions = .{
                 .target = check_target,
                 .os = check.os,
@@ -446,7 +484,13 @@ pub fn addMultiCheck(
     }
 }
 
-fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.TranslateC {
+fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
+    const target = b.resolveTargetQuery(q: {
+        var query = initial_target.query;
+        if (query.os_tag == .windows)
+            query.abi = .gnu;
+        break :q query;
+    });
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c-headers-for-zig.h"),
         .target = target,
@@ -462,7 +506,35 @@ fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.buil
         const str, const value = entry;
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
-    return translate_c;
+
+    if (target.result.os.tag == .windows) {
+        // translate-c is unable to translate the unsuffixed windows functions
+        // like `SetCurrentDirectory` since they are defined with an odd macro
+        // that translate-c doesn't handle.
+        //
+        //     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
+        //
+        // In these cases, it's better to just reference the underlying function
+        // directly: SetCurrentDirectoryW. To make the error better, a post
+        // processing step is applied to the translate-c file.
+        //
+        // Additionally, this step makes it so that decls like NTSTATUS and
+        // HANDLE point to the standard library structures.
+        const helper_exe = b.addExecutable(.{
+            .name = "process_windows_translate_c",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/codegen/process_windows_translate_c.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }),
+        });
+        const in = translate_c.getOutput();
+        const run = b.addRunArtifact(helper_exe);
+        run.addFileArg(in);
+        const out = run.addOutputFileArg("c-headers-for-zig.zig");
+        return out;
+    }
+    return translate_c.getOutput();
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
@@ -581,7 +653,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     mod.addImport("build_options", opts.buildOptionsModule(b));
 
     const translate_c = getTranslateC(b, opts.target, opts.optimize);
-    mod.addImport("translated-c-headers", translate_c.createModule());
+    mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",

@@ -1,6 +1,7 @@
 // import type { Readable, Writable } from "node:stream";
 // import type { WorkerOptions } from "node:worker_threads";
-declare const self: typeof globalThis;
+declare const self: WebWorker;
+
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
@@ -234,7 +235,7 @@ class Worker extends EventEmitter {
       }
     }
     try {
-      this.#worker = new WebWorker(filename, options);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
@@ -341,7 +342,8 @@ class Worker extends EventEmitter {
     let error = event?.error;
     if (!error) {
       error = new Error(event.message, { cause: event });
-      const stack = event?.stack;
+      const stack = "stack" in event ? event.stack : undefined;
+
       if (stack) {
         error.stack = stack;
       }

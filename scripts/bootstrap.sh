@@ -1340,7 +1340,7 @@ configure_core_dumps() {
 	case "$os" in
 	linux)
 		# set up a directory that the test runner will look in after running tests
-		cores_dir="/var/bun-cores"
+		cores_dir="/var/bun-cores-$distro-$release-$arch"
 		sysctl_file="/etc/sysctl.d/local.conf"
 		create_directory "$cores_dir"
 		# ensure core_pattern will point there

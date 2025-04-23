@@ -466,34 +466,45 @@ async function runTests() {
 
   if (options["coredump-upload"]) {
     try {
+      // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
       const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
-      let coresDir = "/var/bun-cores";
+      let coresDir = "";
       if (sysctl.ok) {
         if (coresDir.startsWith("|")) {
           throw new Error("cores are being piped not saved");
         }
+        // change /foo/bar/%e-%p.core to /foo/bar
         coresDir = dirname(sysctl.stdout);
       } else {
-        console.warn(`Failed to check core_pattern, defaulting to ${coresDir}`);
+        throw new Error(`Failed to check core_pattern: ${coresDir.error}`);
       }
+
+      const coresDirBase = dirname(coresDir);
+      const coresDirName = basename(coresDir);
 
       if (readdirSync(coresDir).length > 0) {
         const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
-        const outfileName = "bun-cores.tar.gz.age";
+        const outfileName = `${coresDirName}.tar.gz.age`;
         const outfileAbs = join(outdir, outfileName);
 
         const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu";
 
+        // Run tar in the parent directory of coresDir so that it creates archive entries with
+        // coresDirName in them. This way when you extract the tarball you get a folder named
+        // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
+        // current directory
         const zipAndEncrypt = await spawnSafe({
           command: "sh",
           args: [
             "-c",
             // tar -S: handle sparse files efficiently
-            `set -euo pipefail && tar -Sc *.core | gzip -6 | age -e -r ${ageRecipient} -o "$0"`,
+            `set -euo pipefail && tar -Sc "$0" | gzip -6 | age -e -r ${ageRecipient} -o "$1"`,
             // $0
+            coresDirName,
+            // $1
             outfileAbs,
           ],
-          cwd: coresDir,
+          cwd: coresDirBase,
           stdout: () => {},
         });
         if (!zipAndEncrypt.ok) {

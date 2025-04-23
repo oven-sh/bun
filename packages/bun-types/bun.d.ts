@@ -6246,7 +6246,7 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: boolean;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *

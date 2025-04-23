@@ -700,12 +700,12 @@ class SocketHandle {
   }
   setNoDelay(noDelay?: boolean) {
     $debug("SocketHandle.setNoDelay");
-    $assert(this.#socket != null);
+    if (this.#socket == null) return;
     return this.#socket.setNoDelay(noDelay);
   }
   setKeepAlive(enable?: boolean, initialDelay?: number) {
     $debug("SocketHandle.setKeepAlive");
-    $assert(this.#socket != null);
+    if (this.#socket == null) return;
     return this.#socket.setKeepAlive(enable, initialDelay);
   }
   resume() {
@@ -774,7 +774,7 @@ class SocketHandle {
     return this.#socket.renegotiate();
   }
   disableRenegotiation() {
-    $assert(this.#socket != null);
+    if (this.#socket == null) return;
     return this.#socket.disableRenegotiation();
   }
   setVerifyMode(requestCert, rejectUnauthorized) {
@@ -1928,7 +1928,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
   let tls = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
-    tls = bunTLS.$call(self, port, address, true);
+    tls = bunTLS.$call(self, port, self._host, true);
     self._requestCert = true; // Client always request Cert
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = options;
@@ -2068,7 +2068,7 @@ function internalConnectMultiple(context, canceled?) {
   let tls = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
-    tls = bunTLS.$call(self, port, address, true);
+    tls = bunTLS.$call(self, port, self._host, true);
     self._requestCert = true; // Client always request Cert
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = context.options;

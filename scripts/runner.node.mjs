@@ -482,15 +482,15 @@ async function runTests() {
         const outfileName = "bun-cores.tar.gz.age";
         const outfileAbs = join(outdir, outfileName);
 
+        const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu";
+
         const zipAndEncrypt = await spawnSafe({
           command: "sh",
           args: [
             "-c",
             // tar -S: handle sparse files efficiently
-            'set -euo pipefail && tar -Sc *.core | gzip -6 | node "$0" > "$1"',
+            `set -euo pipefail && tar -Sc *.core | gzip -6 | age -e -r ${ageRecipient} -o "$0"`,
             // $0
-            join(import.meta.dirname, "age-encrypt.mjs"),
-            // $1
             outfileAbs,
           ],
           cwd: coresDir,

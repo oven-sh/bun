@@ -27,6 +27,13 @@ namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
 
+struct HttpFlags {
+    bool isParsingHttp: 1 = false;
+    bool rejectUnauthorized: 1 = false;
+    bool usingCustomExpectHandler: 1 = false;
+    bool requireHostHeader: 1 = true;
+};
+
 template <bool SSL>
 struct alignas(16) HttpContextData {
     template <bool> friend struct HttpContext;
@@ -35,6 +42,7 @@ struct alignas(16) HttpContextData {
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    using OnClientErrorCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength);
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -49,13 +57,11 @@ private:
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
-    bool isParsingHttp = false;
-    bool rejectUnauthorized = false;
-    bool usingCustomExpectHandler = false;
-    bool requireHostHeader = true;
-
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
+    OnClientErrorCallback onClientError = nullptr;
+
+    HttpFlags flags;
 
     // TODO: SNI
     void clearRoutes() {

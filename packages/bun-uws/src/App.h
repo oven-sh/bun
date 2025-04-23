@@ -620,12 +620,12 @@ public:
     }
 
     TemplatedApp &&setUsingCustomExpectHandler(bool value) {
-        httpContext->getSocketContextData()->usingCustomExpectHandler = value;
+        httpContext->getSocketContextData()->flags.usingCustomExpectHandler = value;
         return std::move(*this);
     }
 
     TemplatedApp &&setRequireHostHeader(bool value) {
-        httpContext->getSocketContextData()->requireHostHeader = value;
+        httpContext->getSocketContextData()->flags.requireHostHeader = value;
         return std::move(*this);
     }
 

@@ -74,7 +74,7 @@ private:
                 if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
-                    if(httpContextData->rejectUnauthorized) {
+                    if(httpContextData->flags.rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
                             // we failed to handshake, close the socket
                             us_socket_close(SSL, s, 0, nullptr);
@@ -163,7 +163,7 @@ private:
             ((AsyncSocket<SSL> *) s)->cork();
 
             /* Mark that we are inside the parser now */
-            httpContextData->isParsingHttp = true;
+            httpContextData->flags.isParsingHttp = true;
 
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
@@ -174,7 +174,7 @@ private:
 #endif
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
-            auto [err, returnedSocket] = httpResponseData->consumePostPadded(httpContextData->requireHostHeader,data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto [err, parserError, returnedSocket] = httpResponseData->consumePostPadded(httpContextData->flags.requireHostHeader,data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -290,10 +290,14 @@ private:
             });
 
             /* Mark that we are no longer parsing Http */
-            httpContextData->isParsingHttp = false;
+            httpContextData->flags.isParsingHttp = false;
 
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
             if (returnedSocket == FULLPTR) {
+                auto onClientError = httpContextData->onClientError;
+                if(onClientError) {
+                    onClientError(httpResponseData->socketData, SSL, s, parserError, data, length);
+                }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
                 us_socket_write(SSL, s, httpErrorResponses[err].data(), (int) httpErrorResponses[err].length(), false);
                 us_socket_shutdown(SSL, s);
@@ -467,7 +471,7 @@ public:
         /* Init socket context data */
         auto* httpContextData = new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
         if(options.request_cert && options.reject_unauthorized) {
-            httpContextData->rejectUnauthorized = true;
+            httpContextData->flags.rejectUnauthorized = true;
         }
         return httpContext->init();
     }
@@ -515,7 +519,7 @@ public:
             }
         }
 
-        const bool &customContinue = httpContextData->usingCustomExpectHandler;
+        const bool &customContinue = httpContextData->flags.usingCustomExpectHandler;
 
         httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), &customContinue](auto *r) mutable {
             auto user = r->getUserData();

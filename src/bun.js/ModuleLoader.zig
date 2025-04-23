@@ -2931,12 +2931,6 @@ pub const HardcodedModule = enum {
 
             // These are returned in builtinModules, but probably not many
             // packages use them so we will just alias them.
-            .{ "node:_http_agent", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_client", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_common", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_incoming", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_server", .{ .path = "node:http", .node_builtin = true } },
             .{ "node:_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
             .{ "node:_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
             .{ "node:_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
@@ -2945,12 +2939,6 @@ pub const HardcodedModule = enum {
             .{ "node:_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
             .{ "node:_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
             .{ "node:_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
-            .{ "_http_agent", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_client", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_common", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_incoming", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_server", .{ .path = "node:http", .node_builtin = true } },
             .{ "_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
             .{ "_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
             .{ "_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },

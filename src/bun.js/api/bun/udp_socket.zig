@@ -133,7 +133,7 @@ pub const UDPSocketConfig = struct {
     connect: ?ConnectConfig = null,
     port: u16,
     flags: i32,
-    binary_type: JSC.BinaryType = .Buffer,
+    binary_type: JSC.ArrayBuffer.BinaryType = .Buffer,
     on_data: JSValue = .zero,
     on_drain: JSValue = .zero,
     on_error: JSValue = .zero,
@@ -190,7 +190,7 @@ pub const UDPSocketConfig = struct {
                     return globalThis.throwInvalidArguments("Expected \"socket.binaryType\" to be a string", .{});
                 }
 
-                config.binary_type = try JSC.BinaryType.fromJSValue(globalThis, value) orelse {
+                config.binary_type = try JSC.ArrayBuffer.BinaryType.fromJSValue(globalThis, value) orelse {
                     return globalThis.throwInvalidArguments("Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'", .{});
                 };
             }
@@ -333,7 +333,7 @@ pub const UDPSocket = struct {
             this.closed = true;
             defer this.deinit();
             if (err != 0) {
-                const code = @tagName(bun.C.SystemErrno.init(@as(c_int, @intCast(err))).?);
+                const code = @tagName(bun.sys.SystemErrno.init(@as(c_int, @intCast(err))).?);
                 const sys_err = JSC.SystemError{
                     .errno = err,
                     .code = bun.String.static(code),
@@ -570,7 +570,7 @@ pub const UDPSocket = struct {
                 }
             }
 
-            return bun.JSC.Maybe(void).errno(@as(bun.C.E, @enumFromInt(std.c._errno().*)), tag);
+            return bun.JSC.Maybe(void).errno(@as(bun.sys.E, @enumFromInt(std.c._errno().*)), tag);
         } else {
             return bun.JSC.Maybe(void).errnoSys(res, tag);
         }

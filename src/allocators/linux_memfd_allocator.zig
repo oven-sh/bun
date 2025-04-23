@@ -76,7 +76,7 @@ pub const LinuxMemFdAllocator = struct {
         };
     };
 
-    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.webcore.Blob.Store.Bytes) {
         var size = len;
 
         // size rounded up to nearest page
@@ -95,7 +95,7 @@ pub const LinuxMemFdAllocator = struct {
         )) {
             .result => |slice| {
                 return .{
-                    .result = bun.JSC.WebCore.Blob.ByteStore{
+                    .result = bun.webcore.Blob.Store.Bytes{
                         .cap = @truncate(slice.len),
                         .ptr = slice.ptr,
                         .len = @truncate(len),
@@ -123,7 +123,7 @@ pub const LinuxMemFdAllocator = struct {
         return bytes.len >= 1024 * 1024 * 8;
     }
 
-    pub fn create(bytes: []const u8) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn create(bytes: []const u8) bun.JSC.Maybe(bun.webcore.Blob.Store.Bytes) {
         if (comptime !bun.Environment.isLinux) {
             unreachable;
         }

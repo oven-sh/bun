@@ -500,7 +500,7 @@ pub const Process = struct {
                 .waiter_thread, .fd => {
                     const err = std.c.kill(this.pid, signal);
                     if (err != 0) {
-                        const errno_ = bun.C.getErrno(err);
+                        const errno_ = bun.sys.getErrno(err);
 
                         // if the process was already killed don't throw
                         if (errno_ != .SRCH)
@@ -514,7 +514,7 @@ pub const Process = struct {
                 .uv => |*handle| {
                     if (handle.kill(signal).toError(.kill)) |err| {
                         // if the process was already killed don't throw
-                        if (err.errno != @intFromEnum(bun.C.E.SRCH)) {
+                        if (err.errno != @intFromEnum(bun.sys.E.SRCH)) {
                             return .{ .err = err };
                         }
                     }
@@ -1141,7 +1141,7 @@ pub const PosixSpawnResult = struct {
             pidfd_flags,
         );
         while (true) {
-            switch (bun.C.getErrno(rc)) {
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => return JSC.Maybe(PidFDType){ .result = @intCast(rc) },
                 .INTR => {
                     rc = std.os.linux.pidfd_open(
@@ -1825,9 +1825,9 @@ pub const sync = struct {
         chunks: std.ArrayList([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
 
-        err: bun.C.E = .SUCCESS,
+        err: bun.sys.E = .SUCCESS,
         context: *SyncWindowsProcess,
-        onDoneCallback: *const fn (*SyncWindowsProcess, tag: SyncWindowsProcess.OutFd, chunks: []const []u8, err: bun.C.E) void = &SyncWindowsProcess.onReaderDone,
+        onDoneCallback: *const fn (*SyncWindowsProcess, tag: SyncWindowsProcess.OutFd, chunks: []const []u8, err: bun.sys.E) void = &SyncWindowsProcess.onReaderDone,
         tag: SyncWindowsProcess.OutFd,
 
         pub const new = bun.TrivialNew(@This());
@@ -1840,7 +1840,7 @@ pub const sync = struct {
             this.chunks.append(@constCast(data)) catch bun.outOfMemory();
         }
 
-        fn onError(this: *SyncWindowsPipeReader, err: bun.C.E) void {
+        fn onError(this: *SyncWindowsPipeReader, err: bun.sys.E) void {
             this.err = err;
             this.pipe.close(onClose);
         }
@@ -1872,7 +1872,7 @@ pub const sync = struct {
 
         stderr: []const []u8 = &.{},
         stdout: []const []u8 = &.{},
-        err: bun.C.E = .SUCCESS,
+        err: bun.sys.E = .SUCCESS,
         waiting_count: u8 = 1,
         process: *Process,
         status: ?Status = null,
@@ -1884,7 +1884,7 @@ pub const sync = struct {
             this.process.deref();
         }
 
-        pub fn onReaderDone(this: *SyncWindowsProcess, tag: OutFd, chunks: []const []u8, err: bun.C.E) void {
+        pub fn onReaderDone(this: *SyncWindowsProcess, tag: OutFd, chunks: []const []u8, err: bun.sys.E) void {
             switch (tag) {
                 .stderr => {
                     this.stderr = chunks;
@@ -2175,7 +2175,7 @@ pub const sync = struct {
             }
 
             const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
-            switch (bun.C.getErrno(rc)) {
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {},
                 .AGAIN, .INTR => continue,
                 else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },

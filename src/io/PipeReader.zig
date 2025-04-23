@@ -467,7 +467,7 @@ const PosixBufferedReader = struct {
                             }
 
                             if (comptime file_type == .pipe) {
-                                if (bun.Environment.isMac or !bun.C.RWFFlagSupport.isMaybeSupported()) {
+                                if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
                                     switch (bun.isReadable(fd)) {
                                         .ready => {},
                                         .hup => {
@@ -559,7 +559,7 @@ const PosixBufferedReader = struct {
                     }
 
                     if (comptime file_type == .pipe) {
-                        if (bun.Environment.isMac or !bun.C.RWFFlagSupport.isMaybeSupported()) {
+                        if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
                             switch (bun.isReadable(fd)) {
                                 .ready => {},
                                 .hup => {
@@ -867,7 +867,7 @@ pub const WindowsBufferedReader = struct {
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {
         const source = this.source orelse return .{
             .err = .{
-                .errno = @intFromEnum(bun.C.E.BADF),
+                .errno = @intFromEnum(bun.sys.E.BADF),
                 .syscall = .uv_tty_set_mode,
             },
         };
@@ -970,7 +970,7 @@ pub const WindowsBufferedReader = struct {
                 }
                 // ops we should not hit this lets fail with EPIPE
                 bun.assert(false);
-                return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .read) }, "", .progress);
+                return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.sys.E.PIPE, .read) }, "", .progress);
             },
         }
     }
@@ -978,7 +978,7 @@ pub const WindowsBufferedReader = struct {
     pub fn startReading(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
         if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
         this.flags.is_paused = false;
-        const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
+        const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.sys.E.BADF, .read) };
         bun.assert(!source.isClosed());
 
         switch (source) {

@@ -88,19 +88,21 @@ pub const JSError = error{
 
 pub const JSOOM = OOM || JSError;
 
-pub const detectCI = @import("./ci_info.zig").detectCI;
+pub const detectCI = @import("ci_info.zig").detectCI;
 
-/// Adding to this namespace is considered deprecated.
-///
-/// If the declaration truly came from C, it should be perfectly possible to
-/// translate the definition and put it in `c-headers-for-zig.h`, and available
-/// via the lowercase `c` namespace. Wrappers around functions should go in a
-/// more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
-///
-/// By avoiding manual transcription of C headers into Zig, we avoid bugs due to
-/// different definitions between platforms, as well as very common mistakes
-/// that can be made when porting definitions. It also keeps code much cleaner.
-pub const C = @import("c.zig");
+/// Cross-platform system APIs
+pub const sys = @import("sys.zig");
+/// Deprecated: use bun.sys.S
+pub const S = sys.S;
+pub const O = sys.O;
+pub const Mode = sys.Mode;
+
+// Platform-specific system APIs. If something can be implemented on multiple
+// platforms, it does not belong in these three namespaces.
+pub const windows = @import("windows.zig");
+pub const darwin = @import("darwin.zig");
+pub const linux = @import("linux.zig");
+
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
 
@@ -116,9 +118,15 @@ pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
 
+// This file is gennerated, but cant be placed in the build/debug/codegen
+// folder because zig will complain about outside-of-module stuff
 /// All functions and interfaces provided from Bun's `bindgen` utility.
 pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
+
 comptime {
+    // This file is gennerated, but cant be placed in the build/debug/codegen
+    // folder because zig will complain about outside-of-module stuff
+    _ = &@import("bun.js/bindings/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
 }
 
@@ -387,9 +395,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
-pub const linux = struct {
-    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
-};
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {
@@ -623,7 +628,16 @@ pub const invalid_fd: FileDescriptor = .invalid;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("jsc.zig");
+/// Deprecated: Prefer the lowercase `jsc` since it is a namespace and not a struct.
+pub const JSC = jsc;
+
+/// Bindings to JavaScriptCore and other JavaScript primatives.
+/// Web and runtime-specific APIs should go in `webcore` and `api`.
+pub const jsc = @import("bun.js/jsc.zig");
+/// JavaScript Web APIs
+pub const webcore = @import("bun.js/webcore.zig");
+/// "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
+pub const api = @import("bun.js/api.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -978,7 +992,7 @@ pub fn parseDouble(input: []const u8) !f64 {
     if (comptime Environment.isWasm) {
         return try std.fmt.parseFloat(f64, input);
     }
-    return JSC.WTF.parseDouble(input);
+    return JSC.wtf.parseDouble(input);
 }
 
 pub const SignalCode = enum(u8) {
@@ -2002,13 +2016,6 @@ pub fn isRegularFile(mode: anytype) bool {
     return S.ISREG(@intCast(mode));
 }
 
-pub const sys = @import("./sys.zig");
-pub const O = sys.O;
-
-pub const Mode = C.Mode;
-
-pub const windows = @import("./windows.zig");
-
 pub const LazyBoolValue = enum {
     unknown,
     no,
@@ -2556,12 +2563,12 @@ pub const io = @import("./io/io.zig");
 
 const errno_map = errno_map: {
     var max_value = 0;
-    for (std.enums.values(C.SystemErrno)) |v|
+    for (std.enums.values(sys.SystemErrno)) |v|
         max_value = @max(max_value, @intFromEnum(v));
 
     var map: [max_value + 1]anyerror = undefined;
     @memset(&map, error.Unexpected);
-    for (std.enums.values(C.SystemErrno)) |v|
+    for (std.enums.values(sys.SystemErrno)) |v|
         map[@intFromEnum(v)] = @field(anyerror, @tagName(v));
 
     break :errno_map map;
@@ -2591,8 +2598,6 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 
     return error.Unexpected;
 }
-
-pub const S = if (Environment.isWindows) C.S else std.posix.S;
 
 pub const brotli = @import("./brotli.zig");
 
@@ -3206,7 +3211,7 @@ pub fn memmove(output: []u8, input: []const u8) void {
     }
 
     if (Environment.isNative and !@inComptime()) {
-        C.memmove(output.ptr, input.ptr, input.len);
+        _ = c.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {
             out.* = input_byte;
@@ -3595,3 +3600,15 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
 pub const valkey = @import("./valkey/index.zig");
+pub const highway = @import("./highway.zig");
+
+pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
+
+pub fn move(dest: []u8, src: []const u8) void {
+    if (comptime Environment.allow_assert) {
+        if (src.len != dest.len) {
+            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
+        }
+    }
+    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
+}

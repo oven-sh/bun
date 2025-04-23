@@ -500,7 +500,7 @@ async function runTests() {
           throw new Error(zipAndEncrypt.error);
         }
         console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes)`);
-        await uploadArtifact(outfileName, outdir);
+        await uploadArtifact(outfileAbs);
       }
     } catch (err) {
       console.error("Error collecting and uploading core dumps:", err);

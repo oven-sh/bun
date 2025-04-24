@@ -2687,10 +2687,9 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    const data = ArrayPrototypeJoin.$call(this.#todo, "");
     return new Promise(resolve => {
+      this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
       this.#todo = [];
-      this.#stream.write(data, resolve);
     });
   }
 

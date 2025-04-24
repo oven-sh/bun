@@ -58,6 +58,7 @@ namespace uWS
         HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 6,
         HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
         HTTP_PARSER_ERROR_INVALID_EOF = 8,
+        HTTP_PARSER_ERROR_INVALID_METHOD = 9,
     };
 
     struct HttpRequest
@@ -325,6 +326,18 @@ namespace uWS
             return (void *)p;
         }
 
+        static bool isAlpha(std::string_view str) {
+            if (str.empty()) return false;
+            
+            for (char c : str) {
+                if (!isAlphaChar(c))
+                    return false;
+            }
+            return true;
+        }
+        static inline bool isAlphaChar(char c) {
+            return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+        }
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
             // We can check 8 because:
             // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
@@ -370,7 +383,13 @@ namespace uWS
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
-            while (data[0] > 32) data++;
+            while (data[0] > 32) {
+                if (!isAlphaChar(data[0])) {
+                    return (char *) 0x3;
+                }
+                data++;
+                
+            }
             if (&data[1] == end) [[unlikely]] {
                 return nullptr;
             }
@@ -378,6 +397,9 @@ namespace uWS
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
+                if(!isAlpha(header.key)) {
+                    return (char *) 0x3;
+                }
                 /* Scan for less than 33 (catches post padded CR and fails) */
                 start = data;
                 for (; true; data += 8) {
@@ -479,7 +501,7 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            if ((char *) 3 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
+            if ((char *) 4 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
                 switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
@@ -490,6 +512,10 @@ namespace uWS
                     case 0x2:
                         err = HTTP_ERROR_400_BAD_REQUEST;
                         parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
+                        break;
+                    case 0x3:
+                        err = HTTP_ERROR_400_BAD_REQUEST;
+                        parserError = HTTP_PARSER_ERROR_INVALID_METHOD;
                         break;
                     default: {
                         err = 0;

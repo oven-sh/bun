@@ -5209,7 +5209,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// So we have to store it.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
 
-        on_clienterror: JSC.Strong = .empty,
+        on_clienterror: JSC.Strong.Optional = .empty,
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -7676,25 +7676,25 @@ pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, glo
     if (server.as(HTTPServer)) |this| {
         if (this.app) |app| {
             this.on_clienterror.clearWithoutDeallocation();
-            this.on_clienterror = JSC.Strong.create(callback, globalThis);
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*HTTPServer, this, HTTPServer.onClientErrorCallback);
         }
     } else if (server.as(HTTPSServer)) |this| {
         if (this.app) |app| {
             this.on_clienterror.clearWithoutDeallocation();
-            this.on_clienterror = JSC.Strong.create(callback, globalThis);
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*HTTPSServer, this, HTTPSServer.onClientErrorCallback);
         }
     } else if (server.as(DebugHTTPServer)) |this| {
         if (this.app) |app| {
             this.on_clienterror.clearWithoutDeallocation();
-            this.on_clienterror = JSC.Strong.create(callback, globalThis);
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*DebugHTTPServer, this, DebugHTTPServer.onClientErrorCallback);
         }
     } else if (server.as(DebugHTTPSServer)) |this| {
         if (this.app) |app| {
             this.on_clienterror.clearWithoutDeallocation();
-            this.on_clienterror = JSC.Strong.create(callback, globalThis);
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*DebugHTTPSServer, this, DebugHTTPSServer.onClientErrorCallback);
         }
     }

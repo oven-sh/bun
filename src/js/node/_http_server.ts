@@ -40,7 +40,7 @@ const {
   runSymbol,
   drainMicrotasks,
   setServerIdleTimeout,
-  setRequireHostHeader,
+  setServerCustomOptions,
 } = require("internal/http");
 
 const { format } = require("internal/util/inspect");
@@ -48,6 +48,7 @@ const { format } = require("internal/util/inspect");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { kIncomingMessage } = require("node:_http_common");
+const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
@@ -681,12 +682,35 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
-
+function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
+  const self = this as Server;
+  const err = new Error("Parse Error");
+  switch (errorCode) {
+    case 2:
+      err.code = "HPE_UNEXPECTED_CONTENT_LENGTH";
+      break;
+    case 3:
+      err.code = "HPE_INVALID_TRANSFER_ENCODING";
+      break;
+    case 8:
+      err.code = "HPE_INVALID_EOF_STATE";
+      break;
+    case 9:
+      err.code = "HPE_INVALID_METHOD";
+      break;
+    default:
+      err.code = "HPE_INTERNAL";
+      break;
+  }
+  err.rawPacket = rawPacket;
+  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, ssl));
+}
 const ServerPrototype = {
   constructor: Server,
   __proto__: EventEmitter.prototype,
   [kIncomingMessage]: undefined,
   [kServerResponse]: undefined,
+  [kConnectionsCheckingInterval]: { _destroyed: false },
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -719,6 +743,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    this[kConnectionsCheckingInterval]._destroyed = true;
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     server.stop();
   },
@@ -1055,7 +1080,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
-      setRequireHostHeader(this[serverSymbol], this.requireHostHeader);
+      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, onServerClientError.bind(this));
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -1107,6 +1132,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     handle.duplex = this;
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
+  }
+
+  get _secureEstablished() {
+    return !!this[kHandle]?.secureEstablished;
   }
 
   #closeHandle(handle, callback) {
@@ -1695,4 +1724,5 @@ function ensureReadableStreamController(run) {
 export default {
   Server,
   ServerResponse,
+  kConnectionsCheckingInterval,
 };

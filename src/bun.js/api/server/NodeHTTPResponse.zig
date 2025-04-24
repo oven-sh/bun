@@ -297,6 +297,7 @@ pub fn create(
     if (method.hasRequestBody() or method == HTTP.Method.GET) {
         const req_len: usize = brk: {
             if (request.header("content-length")) |content_length| {
+                log("content-length: {s}", .{content_length});
                 break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
             }
 

@@ -23,8 +23,9 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
+import { tls as COMMON_TLS_CERT } from "harness";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as stream from "node:stream";
@@ -2416,4 +2417,96 @@ it("should reject non-standard body writes when rejectNonStandardBodyWrites is t
       }
     }
   }
+});
+
+test("request.socket._secureEstablished should identify if the request is secure", async () => {
+  {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = createHttpsServer(COMMON_TLS_CERT, (request, response) => {
+      // Run the check function
+      expect(request.socket._secureEstablished).toBe(true);
+      response.writeHead(200, {});
+      response.end("ok");
+      server.close();
+      resolve();
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      fetch(`https://localhost:${port}`, {
+        tls: {
+          ca: COMMON_TLS_CERT.cert,
+        },
+      }).catch(reject);
+    });
+
+    await promise;
+  }
+
+  {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = createServer((request, response) => {
+      // Run the check function
+      expect(request.socket._secureEstablished).toBe(false);
+      response.writeHead(200, {});
+      response.end("ok");
+      server.close();
+      resolve();
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      fetch(`http://localhost:${port}`).catch(reject);
+    });
+
+    await promise;
+  }
+});
+
+test("should emit clientError when Content-Length is invalid", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const server = http.createServer(reject);
+
+  server.on("clientError", (err, socket) => {
+    resolve(err);
+    socket.destroy();
+  });
+
+  await once(server.listen(0), "listening");
+
+  const client = connect(server.address().port, () => {
+    // HTTP request with invalid Content-Length
+    // The Content-Length says 10 but the actual body is 20 bytes
+    // Send the request
+    client.write(
+      `POST /test HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nContent-Type: text/plain\r\nContent-Length: invalid\r\n\r\n`,
+    );
+  });
+
+  const err = (await promise) as Error;
+  expect(err.code).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");
+});
+
+test("should emit clientError when mixing Content-Length and Transfer-Encoding", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const server = http.createServer(reject);
+
+  server.on("clientError", (err, socket) => {
+    resolve(err);
+    socket.destroy();
+  });
+
+  await once(server.listen(0), "listening");
+
+  const client = connect(server.address().port, () => {
+    // HTTP request with invalid Content-Length
+    // The Content-Length says 10 but the actual body is 20 bytes
+    // Send the request
+    client.write(
+      `POST /test HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nHello`,
+    );
+  });
+
+  const err = (await promise) as Error;
+  expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
 });

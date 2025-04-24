@@ -92,7 +92,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   if (name == null) name = constructor.name;
 
   // it's useful to avoid the prefix, but module not found has a prefixed and unprefixed version
-  const codeWithoutPrefix = code === 'ERR_MODULE_NOT_FOUND' ? code : code.replace(/^ERR_/, '');
+  const codeWithoutPrefix = code === "ERR_MODULE_NOT_FOUND" ? code : code.replace(/^ERR_/, "");
 
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;

@@ -95,7 +95,7 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     msg[kBytesWritten] += len;
   }
 
-  function connectionCorkNT(conn) {
+  function connectionUnCorkNT(conn) {
     conn.uncork();
   }
   let lazyCrlfBuf;
@@ -135,7 +135,7 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
 
   if (!fromEnd && msg.socket && !msg.socket.writableCorked) {
     msg.socket.cork();
-    process.nextTick(connectionCorkNT, msg.socket);
+    process.nextTick(connectionUnCorkNT, msg.socket);
   }
 
   let ret;

@@ -164,8 +164,8 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
 void NodeVMGlobalObject::finishCreation(JSC::VM&, NodeVMContextOptions options)
 {
     Base::finishCreation(vm());
-    setEvalEnabled(options.allowStrings, "TODO(@heimskr)"_s);
-    setWebAssemblyEnabled(options.allowWasm, "TODO(@heimskr)"_s);
+    setEvalEnabled(options.allowStrings, "Code generation from strings disallowed for this context"_s);
+    setWebAssemblyEnabled(options.allowWasm, "Wasm code generation disallowed by embedder"_s);
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)

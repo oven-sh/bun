@@ -3360,7 +3360,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       if (options !== undefined) {
-        if (!$isObject(options)) {
+        if (!$isObject(options) || $isArray(options)) {
           throw $ERR_INVALID_ARG_TYPE("options", "object", options);
         }
         if (options.endStream !== undefined && typeof options.endStream !== "boolean") {

@@ -694,10 +694,6 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     case 8:
       err.code = "HPE_INVALID_EOF_STATE";
       break;
-    case 9:
-      err.code = "ECONNRESET";
-      err.message = "Connection reset by peer";
-      break;
     default:
       err.code = "HPE_INTERNAL";
       break;

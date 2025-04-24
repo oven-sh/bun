@@ -2133,10 +2133,10 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
 }
 
 // must match src/bun.js/node/types.zig#Encoding, which matches WebCore::BufferEncodingType
-enum class NapiStringEncoding : uint8_t {
-    utf8 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf8),
-    utf16le = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
-    latin1 = static_cast<uint8_t>(WebCore::BufferEncodingType::latin1),
+enum class NapiStringEncoding : uint16_t {
+    utf8 = static_cast<uint16_t>(WebCore::BufferEncodingType::utf8),
+    utf16le = static_cast<uint16_t>(WebCore::BufferEncodingType::utf16le),
+    latin1 = static_cast<uint16_t>(WebCore::BufferEncodingType::latin1),
 };
 
 template<NapiStringEncoding...>

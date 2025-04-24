@@ -525,15 +525,15 @@ public:
             }
         }
 
-        const bool &customContinue = httpContextData->flags.usingCustomExpectHandler;
+        
 
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), &customContinue](auto *r) mutable {
+        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
             user.httpRequest->setParameterOffsets(&parameterOffsets);
 
-            if (!customContinue) {
+            if (!httpContextData->flags.usingCustomExpectHandler) {
                 /* Middleware? Automatically respond to expectations */
                 std::string_view expect = user.httpRequest->getHeader("expect");
                 if (expect.length() && expect == "100-continue") {
